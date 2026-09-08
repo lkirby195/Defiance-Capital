@@ -1,0 +1,19 @@
+# Client-supplied, never commit
+templates/
+fixtures/historical/
+
+# Secrets and env
+.env
+.env.*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Local data
+*.db
+*.sqlite
