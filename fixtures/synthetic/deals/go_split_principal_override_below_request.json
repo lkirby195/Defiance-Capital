@@ -1,0 +1,55 @@
+{
+  "name": "go_split_principal_override_below_request",
+  "description": "SPLIT_PRINCIPAL in Tulsa; the team sets the Principal Note to $80,000 so Tranche A is capped at the contingency-adjusted rehab budget ($66,000) and the commitment ($146,000) lands below the $170,000 requested. Leverage on the smaller commitment clears every cap. Go with an Info flag.",
+  "inputs": {
+    "deal": {
+      "product": "SPLIT_PRINCIPAL",
+      "purchase_price": "150000.00",
+      "rehab_budget": "60000.00",
+      "loan_requested": "170000.00",
+      "as_is_value": "230000.00",
+      "arv": "290000.00",
+      "purchase_portion_override": "80000.00"
+    },
+    "state": "OK",
+    "borrower": {
+      "credit_range_self_reported": "T2",
+      "experience_bucket_self_reported": "3_5",
+      "repeat_borrower_self_reported": false
+    },
+    "court_records": {
+      "as_of": "2026-09-09"
+    }
+  },
+  "expected": {
+    "verdict": "GO",
+    "flags": [
+      {
+        "code": "COMMITMENT_BELOW_REQUEST",
+        "severity": "INFO"
+      }
+    ],
+    "credit_tranche": "T2",
+    "experience_tier": "E2",
+    "repeat_borrower_override_applied": false,
+    "all_pass": true,
+    "commitment": "146000.00",
+    "funded_at_close": "80000.00",
+    "split": {
+      "purchase_portion": "80000.00",
+      "rehab_portion": "66000.00"
+    },
+    "metrics": {
+      "LTC": "PASS",
+      "LTV_AS_IS": "PASS",
+      "LTARV": "PASS"
+    },
+    "reasons_contain": [
+      "Info: SPLIT_PRINCIPAL commitment $146,000.00 (Principal Note $80,000.00 + Tranche A $66,000.00) is below the $170,000.00 requested",
+      "capped at the contingency-adjusted rehab budget $66,000.00"
+    ],
+    "reply_contains": [
+      "fit on first pass"
+    ]
+  }
+}

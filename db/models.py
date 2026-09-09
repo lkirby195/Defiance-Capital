@@ -38,8 +38,10 @@ from schema.models import (
     DocumentKind,
     ExperienceBucket,
     Product,
+    ProductSource,
     State,
     StatedExit,
+    StateSource,
     Status,
     TermBucket,
     Tranche,
@@ -133,6 +135,9 @@ class Property(Base):
     parcel_id: Mapped[str | None] = mapped_column(String(64))
     county: Mapped[str | None] = mapped_column(String(100))
     state: Mapped[State] = mapped_column(_enum(State, "state_code"), nullable=False)
+    state_source: Mapped[StateSource] = mapped_column(
+        _enum(StateSource, "state_source"), nullable=False
+    )
     created_at: Mapped[datetime] = _created_at()
 
 
@@ -155,7 +160,13 @@ class Deal(Base):
     """One per property x borrower inquiry; holds the current IntakeRecord state.  # SPEC §5"""
 
     __tablename__ = "deals"
-    __table_args__ = (Index("ix_deals_status", "status"),)
+    __table_args__ = (
+        Index("ix_deals_status", "status"),
+        CheckConstraint(
+            "(product IS NULL) = (product_source IS NULL)",
+            name="ck_deals_product_and_source_together",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     borrower_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -167,6 +178,9 @@ class Deal(Base):
     channel: Mapped[Channel] = mapped_column(_enum(Channel, "channel"), nullable=False)
     status: Mapped[Status] = mapped_column(_enum(Status, "deal_status"), nullable=False)
     product: Mapped[Product | None] = mapped_column(_enum(Product, "product"))
+    product_source: Mapped[ProductSource | None] = mapped_column(
+        _enum(ProductSource, "product_source")
+    )
     credit_range_self_reported: Mapped[Tranche | None] = mapped_column(
         _enum(Tranche, "credit_tranche")
     )
@@ -179,6 +193,9 @@ class Deal(Base):
     loan_requested: Mapped[Decimal | None] = mapped_column(MONEY)
     term_bucket: Mapped[TermBucket | None] = mapped_column(_enum(TermBucket, "term_bucket"))
     stated_exit: Mapped[StatedExit | None] = mapped_column(_enum(StatedExit, "stated_exit"))
+    # Team-supplied actuals overriding the %-of-value opex defaults (SPEC §8.6); annual USD.
+    actual_annual_taxes_usd: Mapped[Decimal | None] = mapped_column(MONEY)
+    actual_annual_insurance_usd: Mapped[Decimal | None] = mapped_column(MONEY)
     missing_fields: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     credit_authorization_signed: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"

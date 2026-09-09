@@ -11,13 +11,24 @@ import pytest
 from intake.normalize import (
     MINIMUM_FIELDS,
     ParsedIntake,
+    infer_product,
     infer_state,
     normalize,
     normalize_address,
     normalize_phone,
 )
 from intake.parsers.team_form import TeamEntryForm, parse_team_form
-from schema.models import BorrowerInfo, Channel, DealInfo, PropertyInfo, State, Status
+from schema.models import (
+    BorrowerInfo,
+    Channel,
+    DealInfo,
+    Product,
+    ProductSource,
+    PropertyInfo,
+    State,
+    StateSource,
+    Status,
+)
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/synthetic/team_entry_complete.json"
 
@@ -159,3 +170,97 @@ def test_infer_state(address: str | None, expected: State) -> None:
 def test_team_form_rejects_unknown_fields() -> None:
     with pytest.raises(ValueError):
         TeamEntryForm.model_validate({"fico": 720})
+
+
+# --- state_source (Phase 1 review) and actual opex pass-through ------------------------------
+
+
+def test_state_entered_by_the_team_is_recorded_as_entered() -> None:
+    form = complete_form(state="CO")  # address says OK; the explicit entry wins
+    record = normalize(parse_team_form(form), Channel.TEAM, {})
+    assert record.property.state is State.CO
+    assert record.property.state_source is StateSource.ENTERED
+
+
+def test_state_inferred_from_the_address_is_recorded_as_inferred() -> None:
+    record = normalize(parse_team_form(complete_form()), Channel.TEAM, {})
+    assert record.property.state is State.OK
+    assert record.property.state_source is StateSource.INFERRED
+
+
+def test_entered_other_is_not_overridden_by_the_address() -> None:
+    form = complete_form(state="OTHER")  # address says OK
+    record = normalize(parse_team_form(form), Channel.TEAM, {})
+    assert record.property.state is State.OTHER
+    assert record.property.state_source is StateSource.ENTERED
+
+
+def test_no_address_and_no_state_is_inferred_other() -> None:
+    record = normalize(ParsedIntake(), Channel.SMS, "hi")
+    assert record.property.state is State.OTHER
+    assert record.property.state_source is StateSource.INFERRED
+
+
+def test_prenormalized_inferred_state_is_re_inferred_from_the_address() -> None:
+    parsed = ParsedIntake(
+        property=PropertyInfo(
+            address_raw="1 Main St, Denver, CO 80202",
+            state=State.OK,
+            state_source=StateSource.INFERRED,
+        )
+    )
+    record = normalize(parsed, Channel.LINK, {})
+    assert record.property.state is State.CO
+
+
+def test_actual_opex_pass_through_the_team_form() -> None:
+    form = complete_form(actual_annual_taxes_usd="2400.00", actual_annual_insurance_usd="900.00")
+    record = normalize(parse_team_form(form), Channel.TEAM, {})
+    assert record.deal.actual_annual_taxes_usd == Decimal("2400.00")
+    assert record.deal.actual_annual_insurance_usd == Decimal("900.00")
+    assert (
+        normalize(parse_team_form(complete_form()), Channel.TEAM, {}).deal.actual_annual_taxes_usd
+        is None
+    )
+
+
+# --- product inference (review decision) -------------------------------------------------------
+
+
+def test_product_is_inferred_from_the_rehab_budget() -> None:
+    assert infer_product(Decimal("0")) is Product.NO_DRAW
+    assert infer_product(Decimal("0.00")) is Product.NO_DRAW
+    assert infer_product(Decimal("0.01")) is Product.SPLIT_DRAW
+    assert infer_product(Decimal("50000")) is Product.SPLIT_DRAW
+    assert infer_product(None) is None
+
+
+def test_wholetail_and_split_principal_are_never_inferred() -> None:
+    inferred = {infer_product(Decimal(x)) for x in ("0", "1", "42000", "999999")}
+    assert inferred == {Product.NO_DRAW, Product.SPLIT_DRAW}
+
+
+def test_inferred_product_is_recorded_as_inferred() -> None:
+    record = normalize(parse_team_form(complete_form()), Channel.TEAM, {})  # rehab 42,000
+    assert record.deal.product is Product.SPLIT_DRAW
+    assert record.deal.product_source is ProductSource.INFERRED
+    record = normalize(parse_team_form(complete_form(rehab_budget="0")), Channel.TEAM, {})
+    assert record.deal.product is Product.NO_DRAW
+    assert record.deal.product_source is ProductSource.INFERRED
+
+
+def test_entered_product_wins_and_is_recorded_as_entered() -> None:
+    record = normalize(parse_team_form(complete_form(product="WHOLETAIL")), Channel.TEAM, {})
+    assert record.deal.product is Product.WHOLETAIL
+    assert record.deal.product_source is ProductSource.ENTERED
+    form = complete_form(rehab_budget="0", product="SPLIT_PRINCIPAL")
+    record = normalize(parse_team_form(form), Channel.TEAM, {})
+    assert record.deal.product is Product.SPLIT_PRINCIPAL  # inference does not override
+
+
+def test_product_stays_unset_until_the_rehab_budget_is_known() -> None:
+    form = TeamEntryForm(address="12 Elm St, Denver, CO 80202", purchase_price=Decimal("100000"))
+    record = normalize(parse_team_form(form), Channel.TEAM, {})
+    assert record.deal.product is None
+    assert record.deal.product_source is None
+    assert "deal.rehab_budget" in record.missing_fields

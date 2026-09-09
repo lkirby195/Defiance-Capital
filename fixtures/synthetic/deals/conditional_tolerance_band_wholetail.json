@@ -1,0 +1,50 @@
+{
+  "name": "conditional_tolerance_band_wholetail",
+  "description": "WHOLETAIL in Colorado Springs; LTV 76.0% is over the 75.0% cap but inside the 5 pt band. Conditional.",
+  "inputs": {
+    "deal": {
+      "product": "WHOLETAIL",
+      "purchase_price": "240000.00",
+      "rehab_budget": "5000.00",
+      "loan_requested": "190000.00",
+      "as_is_value": "250000.00",
+      "arv": "290000.00"
+    },
+    "state": "CO",
+    "borrower": {
+      "credit_range_self_reported": "T2",
+      "experience_bucket_self_reported": "3_5",
+      "repeat_borrower_self_reported": false
+    },
+    "court_records": {
+      "as_of": "2026-09-09"
+    }
+  },
+  "expected": {
+    "verdict": "CONDITIONAL",
+    "flags": [
+      {
+        "code": "LTV_AS_IS_OVER_CAP",
+        "severity": "SOFT"
+      }
+    ],
+    "credit_tranche": "T2",
+    "experience_tier": "E2",
+    "repeat_borrower_override_applied": false,
+    "all_pass": false,
+    "commitment": "190000.00",
+    "funded_at_close": "190000.00",
+    "metrics": {
+      "LTC": "PASS",
+      "LTV_AS_IS": "WITHIN_TOLERANCE",
+      "LTARV": "PASS"
+    },
+    "reasons_contain": [
+      "LTV (as-is) 76.0% is over the 75.0% cap",
+      "within the 5.0 pt tolerance band (limit 80.0%)"
+    ],
+    "reply_contains": [
+      "lower loan amount"
+    ]
+  }
+}
