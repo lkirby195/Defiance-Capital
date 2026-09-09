@@ -40,6 +40,7 @@ from schema.models import (
     Product,
     State,
     StatedExit,
+    StateSource,
     Status,
     TermBucket,
     Tranche,
@@ -133,6 +134,9 @@ class Property(Base):
     parcel_id: Mapped[str | None] = mapped_column(String(64))
     county: Mapped[str | None] = mapped_column(String(100))
     state: Mapped[State] = mapped_column(_enum(State, "state_code"), nullable=False)
+    state_source: Mapped[StateSource] = mapped_column(
+        _enum(StateSource, "state_source"), nullable=False
+    )
     created_at: Mapped[datetime] = _created_at()
 
 
@@ -179,6 +183,9 @@ class Deal(Base):
     loan_requested: Mapped[Decimal | None] = mapped_column(MONEY)
     term_bucket: Mapped[TermBucket | None] = mapped_column(_enum(TermBucket, "term_bucket"))
     stated_exit: Mapped[StatedExit | None] = mapped_column(_enum(StatedExit, "stated_exit"))
+    # Team-supplied actuals overriding the %-of-value opex defaults (SPEC §8.6); annual USD.
+    actual_annual_taxes_usd: Mapped[Decimal | None] = mapped_column(MONEY)
+    actual_annual_insurance_usd: Mapped[Decimal | None] = mapped_column(MONEY)
     missing_fields: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     credit_authorization_signed: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC
 from decimal import Decimal
 
@@ -11,13 +12,17 @@ from pydantic import ValidationError
 from schema.generate import INTAKE_JSON, render
 from schema.models import (
     Channel,
+    CourtFlag,
     DealInfo,
     ExperienceBucket,
     ExperienceTier,
     IntakeRecord,
     Product,
+    PropertyInfo,
+    ScreenFlag,
     State,
     StatedExit,
+    StateSource,
     Status,
     TermBucket,
     Tranche,
@@ -104,3 +109,38 @@ def test_unknown_fields_rejected() -> None:
         IntakeRecord(channel=Channel.TEAM, raw_payload={}, bogus=1)
     with pytest.raises(ValidationError):
         IntakeRecord(channel=Channel.TEAM, raw_payload={}, borrower={"fico": 700})
+
+
+# --- Phase 1 review: state_source, actual opex; Phase 2a: flag codes --------------------------
+
+
+def test_state_source_enum_and_default() -> None:
+    assert [m.value for m in StateSource] == ["ENTERED", "INFERRED"]
+    assert PropertyInfo().state_source is StateSource.INFERRED
+    assert PropertyInfo(state="CO", state_source="ENTERED").state_source is StateSource.ENTERED
+
+
+def test_flag_codes_are_stable_and_do_not_collide() -> None:
+    assert all(m.value == m.name for m in ScreenFlag)
+    assert all(m.value == m.name for m in CourtFlag)
+    assert {m.value for m in ScreenFlag}.isdisjoint({m.value for m in CourtFlag})
+
+
+def test_actual_opex_fields_are_optional_annual_money() -> None:
+    assert DealInfo().actual_annual_taxes_usd is None
+    assert DealInfo().actual_annual_insurance_usd is None
+    deal = DealInfo(actual_annual_taxes_usd="2400.50", actual_annual_insurance_usd=0)
+    assert deal.actual_annual_taxes_usd == Decimal("2400.50")
+    assert deal.actual_annual_insurance_usd == 0
+    with pytest.raises(ValidationError):
+        DealInfo(actual_annual_insurance_usd=Decimal("-1"))
+    with pytest.raises(ValidationError):
+        DealInfo(actual_annual_taxes_usd=Decimal("1.005"))
+
+
+def test_committed_intake_json_carries_the_new_fields() -> None:
+    schema = json.loads(INTAKE_JSON.read_text(encoding="utf-8"))
+    assert "state_source" in schema["$defs"]["PropertyInfo"]["properties"]
+    assert "actual_annual_taxes_usd" in schema["$defs"]["DealInfo"]["properties"]
+    assert "actual_annual_insurance_usd" in schema["$defs"]["DealInfo"]["properties"]
+    assert schema["$defs"]["StateSource"]["enum"] == ["ENTERED", "INFERRED"]

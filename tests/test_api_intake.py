@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from api.main import app
 from db.models import Borrower, Deal, Entity, IntakeSubmission, Property
 from db.session import get_session
-from schema.models import Channel, State, Status, TermBucket, Tranche
+from schema.models import Channel, State, StateSource, Status, TermBucket, Tranche
 from tests.conftest import requires_db
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/synthetic/team_entry_complete.json"
@@ -55,7 +55,9 @@ def test_complete_team_entry_is_stored(client: TestClient, db_session: Session) 
     assert deal.borrower is not None and deal.borrower.phone == "+19185550142"
     assert [e.name for e in deal.borrower.entities] == ["Whitfield Holdings LLC"]
     assert deal.property is not None and deal.property.state is State.OK
+    assert deal.property.state_source is StateSource.INFERRED  # no state on the form
     assert deal.property.address_normalized == "1412 S CHEYENNE AVE, TULSA, OK 74119"
+    assert deal.actual_annual_taxes_usd is None and deal.actual_annual_insurance_usd is None
     assert len(deal.submissions) == 1
     assert deal.submissions[0].raw_payload["borrower_phone"] == "(918) 555-0142"
 
@@ -96,3 +98,34 @@ def test_unknown_field_is_rejected(client: TestClient) -> None:
 def test_bad_money_is_rejected(client: TestClient) -> None:
     response = client.post("/intake/team", json={"purchase_price": "100.123"})
     assert response.status_code == 422
+
+
+def test_entered_state_and_actual_opex_are_stored(client: TestClient, db_session: Session) -> None:
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    payload.update(
+        {
+            "state": "OK",
+            "actual_annual_taxes_usd": "2400.00",
+            "actual_annual_insurance_usd": "900.00",
+        }
+    )
+    response = client.post("/intake/team", json=payload)
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["property"]["state_source"] == "ENTERED"
+    assert body["deal"]["actual_annual_taxes_usd"] == "2400.00"
+    deal = db_session.get(Deal, body["id"])
+    assert deal is not None and deal.property is not None
+    assert deal.property.state is State.OK
+    assert deal.property.state_source is StateSource.ENTERED
+    assert deal.actual_annual_taxes_usd == Decimal("2400.00")
+    assert deal.actual_annual_insurance_usd == Decimal("900.00")
+
+
+def test_inferred_state_source_is_stored(client: TestClient, db_session: Session) -> None:
+    response = client.post("/intake/team", json={"address": "12 Elm St, Denver, CO 80202"})
+    assert response.status_code == 201, response.text
+    deal = db_session.get(Deal, response.json()["id"])
+    assert deal is not None and deal.property is not None
+    assert deal.property.state is State.CO
+    assert deal.property.state_source is StateSource.INFERRED

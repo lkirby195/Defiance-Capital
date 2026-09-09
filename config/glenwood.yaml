@@ -78,10 +78,21 @@ takeout:                                  # SPEC §8.6 hold exit (DSCR)
     insurance_pct_of_value: 0.005
 
 downside:                                 # SPEC §8.6 REO downside
-  cap_rates:                              # by market; keyed by state until GLENWOOD defines markets
-    OK: 0.08
-    CO: 0.065
-    OTHER: 0.075
+  cap_rates:                              # by market: metro first, state default as fallback
+    # Metro keys are UPPER_SNAKE (config.normalize_metro); an unknown metro uses the state default.
+    OK:
+      default: 0.08
+      metros:
+        OKLAHOMA_CITY: 0.08
+        TULSA: 0.08
+    CO:
+      default: 0.065
+      metros:
+        DENVER: 0.065
+        COLORADO_SPRINGS: 0.065
+    OTHER:
+      default: 0.075
+      metros: {}
   reo_haircut: 0.15
   foreclosure_costs_usd: 10000
 

@@ -1,0 +1,73 @@
+{
+  "name": "conditional_missing_as_is_state_other_split_draw",
+  "description": "SPLIT_DRAW on a Texas property (state OTHER) with no as-is value (LTV on purchase price), verified deed history showing 2 deals vs. self-reported 3-5, and a judgment satisfied inside the 3-year lookback. Four soft flags. Conditional.",
+  "inputs": {
+    "deal": {
+      "product": "SPLIT_DRAW",
+      "purchase_price": "180000.00",
+      "rehab_budget": "30000.00",
+      "loan_requested": "130000.00",
+      "as_is_value": null,
+      "arv": "260000.00"
+    },
+    "state": "OTHER",
+    "borrower": {
+      "credit_range_self_reported": "T2",
+      "experience_bucket_self_reported": "3_5",
+      "repeat_borrower_self_reported": false,
+      "verified_deals_36mo": 2
+    },
+    "court_records": {
+      "as_of": "2026-09-09",
+      "satisfied_judgment_or_released_lien_dates": [
+        "2025-01-10"
+      ]
+    }
+  },
+  "expected": {
+    "verdict": "CONDITIONAL",
+    "flags": [
+      {
+        "code": "EXPERIENCE_MISMATCH",
+        "severity": "SOFT"
+      },
+      {
+        "code": "SATISFIED_JUDGMENT_OR_RELEASED_LIEN_IN_LOOKBACK",
+        "severity": "SOFT"
+      },
+      {
+        "code": "STATE_NOT_SERVED",
+        "severity": "SOFT"
+      },
+      {
+        "code": "AS_IS_VALUE_MISSING",
+        "severity": "SOFT"
+      }
+    ],
+    "credit_tranche": "T2",
+    "experience_tier": "E1",
+    "repeat_borrower_override_applied": false,
+    "all_pass": true,
+    "commitment": "130000.00",
+    "funded_at_close": "97000.00",
+    "split": {
+      "purchase_portion": "97000.00",
+      "rehab_portion": "33000.00"
+    },
+    "metrics": {
+      "LTC": "PASS",
+      "LTV_AS_IS": "PASS",
+      "LTARV": "PASS"
+    },
+    "reasons_contain": [
+      "Verified 2 deal(s) in the last 36 months (E1) differs from self-reported bucket 3_5 (E2)",
+      "3-year lookback (on or after 2023-09-09)",
+      "outside the served states (OK, CO)",
+      "LTV computed on the purchase price instead"
+    ],
+    "reply_contains": [
+      "we lend in OK, CO",
+      "as-is value"
+    ]
+  }
+}

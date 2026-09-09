@@ -14,7 +14,7 @@ import hashlib
 import json
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NamedTuple
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -191,10 +191,40 @@ class TakeoutConfig(_Section):
     opex_defaults: OpexDefaults
 
 
+CapRate = Annotated[Decimal, Field(gt=0, le=1)]
+
+
+def normalize_metro(name: str) -> str:
+    """Metro key form: trimmed, upper-cased, internal whitespace and hyphens as underscores."""
+    return "_".join(name.strip().upper().replace("-", " ").split())
+
+
+class CapRateChoice(NamedTuple):
+    """Result of a cap-rate lookup: the rate and the level it came from."""
+
+    rate: Decimal
+    level: Literal["metro", "state"]
+    key: str  # the metro key matched, or the state code
+
+
+class CapRateTree(_Section):
+    """Cap rates for one state: per-metro values with the state-level ``default`` as fallback."""
+
+    default: CapRate
+    metros: dict[str, CapRate] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _metro_keys_are_normalized(self) -> CapRateTree:
+        bad = [k for k in self.metros if not k or normalize_metro(k) != k]
+        if bad:
+            raise ValueError(f"metro keys must be UPPER_SNAKE (got {', '.join(bad)})")
+        return self
+
+
 class DownsideConfig(_Section):
     """REO downside assumptions.  # SPEC §8.6"""
 
-    cap_rates: dict[State, Annotated[Decimal, Field(gt=0, le=1)]]
+    cap_rates: dict[State, CapRateTree]  # keyed by metro, falling back to the state default
     reo_haircut: Pct
     foreclosure_costs_usd: Money
 
@@ -204,6 +234,15 @@ class DownsideConfig(_Section):
         if missing:
             raise ValueError(f"downside.cap_rates is missing: {', '.join(missing)}")
         return self
+
+    def cap_rate(self, state: State, metro: str | None = None) -> CapRateChoice:
+        """Metro cap rate when ``metro`` is configured for ``state``, else the state default."""
+        tree = self.cap_rates[state]
+        if metro:
+            key = normalize_metro(metro)
+            if key in tree.metros:
+                return CapRateChoice(tree.metros[key], "metro", key)
+        return CapRateChoice(tree.default, "state", state.value)
 
 
 class StatesConfig(_Section):

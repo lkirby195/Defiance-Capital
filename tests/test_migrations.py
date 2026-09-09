@@ -10,15 +10,17 @@ from alembic.runtime.migration import MigrationContext
 from sqlalchemy import Engine, inspect
 
 from db.models import Base
-from tests.conftest import TEST_DATABASE_URL, requires_db
+from tests.conftest import requires_db
 
 pytestmark = requires_db
 
 
 @pytest.fixture
-def alembic_cfg(monkeypatch: pytest.MonkeyPatch, test_engine: Engine) -> AlembicConfig:
+def alembic_cfg(
+    monkeypatch: pytest.MonkeyPatch, test_engine: Engine, test_database_url: str
+) -> AlembicConfig:
     Base.metadata.drop_all(test_engine)
-    monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
+    monkeypatch.setenv("DATABASE_URL", test_database_url)
     return AlembicConfig("alembic.ini")
 
 

@@ -1,0 +1,54 @@
+{
+  "name": "go_split_principal_repeat_override",
+  "description": "SPLIT_PRINCIPAL in Oklahoma City; first-time investor (E0) but a repeat GLENWOOD borrower with clean payoff history, so the tier is lifted to the config minimum E2. Leverage under every cap. Go.",
+  "inputs": {
+    "deal": {
+      "product": "SPLIT_PRINCIPAL",
+      "purchase_price": "150000.00",
+      "rehab_budget": "60000.00",
+      "loan_requested": "170000.00",
+      "as_is_value": "230000.00",
+      "arv": "290000.00"
+    },
+    "state": "OK",
+    "borrower": {
+      "credit_range_self_reported": "T3",
+      "experience_bucket_self_reported": "0",
+      "repeat_borrower_self_reported": true,
+      "repeat_borrower_verified": "CLEAN"
+    },
+    "court_records": {
+      "as_of": "2026-09-09"
+    }
+  },
+  "expected": {
+    "verdict": "GO",
+    "flags": [
+      {
+        "code": "REPEAT_BORROWER_OVERRIDE_APPLIED",
+        "severity": "INFO"
+      }
+    ],
+    "credit_tranche": "T3",
+    "experience_tier": "E2",
+    "repeat_borrower_override_applied": true,
+    "all_pass": true,
+    "commitment": "170000.00",
+    "funded_at_close": "104000.00",
+    "split": {
+      "purchase_portion": "104000.00",
+      "rehab_portion": "66000.00"
+    },
+    "metrics": {
+      "LTC": "PASS",
+      "LTV_AS_IS": "PASS",
+      "LTARV": "PASS"
+    },
+    "reasons_contain": [
+      "experience tier raised from E0 to E2 (config minimum E2)"
+    ],
+    "reply_contains": [
+      "fit on first pass"
+    ]
+  }
+}

@@ -7,7 +7,8 @@ once it is complete and ready to screen (SPEC §7 screens every complete intake)
 
 Normalization here is deliberately light: the phone goes to E.164 for NANP
 numbers so it works as the borrower match key (SPEC §5), the address gets
-whitespace/case cleanup, and the state is inferred from the address text.
+whitespace/case cleanup, and the state is inferred from the address text unless a
+person entered it (``state_source`` records which).
 Parcel, county, and USPS-form addresses come from enrichment (SPEC §6).
 """
 
@@ -24,6 +25,7 @@ from schema.models import (
     IntakeRecord,
     PropertyInfo,
     State,
+    StateSource,
     Status,
 )
 
@@ -139,8 +141,10 @@ def normalize(
     )
     address_raw = clean_text(parsed.property.address_raw)
     state = parsed.property.state
-    if state is State.OTHER:
+    state_source = parsed.property.state_source
+    if state_source is not StateSource.ENTERED:
         state = infer_state(address_raw)
+        state_source = StateSource.INFERRED
     prop = parsed.property.model_copy(
         update={
             "address_raw": address_raw,
@@ -149,6 +153,7 @@ def normalize(
             "listing_url": clean_text(parsed.property.listing_url),
             "county": clean_text(parsed.property.county),
             "state": state,
+            "state_source": state_source,
         }
     )
     missing = missing_fields(borrower, prop, parsed.deal)

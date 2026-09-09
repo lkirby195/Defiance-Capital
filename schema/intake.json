@@ -105,6 +105,40 @@
       "additionalProperties": false,
       "description": "Deal terms as requested by the borrower.  # SPEC \u00a74.5",
       "properties": {
+        "actual_annual_insurance_usd": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Actual Annual Insurance Usd"
+        },
+        "actual_annual_taxes_usd": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Actual Annual Taxes Usd"
+        },
         "loan_requested": {
           "anyOf": [
             {
@@ -248,6 +282,10 @@
         "state": {
           "$ref": "#/$defs/State",
           "default": "OTHER"
+        },
+        "state_source": {
+          "$ref": "#/$defs/StateSource",
+          "default": "INFERRED"
         }
       },
       "title": "PropertyInfo",
@@ -261,6 +299,15 @@
         "OTHER"
       ],
       "title": "State",
+      "type": "string"
+    },
+    "StateSource": {
+      "description": "Whether ``property.state`` was entered by a person or inferred from the address.",
+      "enum": [
+        "ENTERED",
+        "INFERRED"
+      ],
+      "title": "StateSource",
       "type": "string"
     },
     "StatedExit": {

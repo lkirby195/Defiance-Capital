@@ -1,0 +1,63 @@
+{
+  "name": "decline_leverage_split_principal",
+  "description": "SPLIT_PRINCIPAL in Oklahoma City; loan far above the LTC and LTV caps (HARD), LTARV exactly at cap + band (SOFT). Decline on leverage.",
+  "inputs": {
+    "deal": {
+      "product": "SPLIT_PRINCIPAL",
+      "purchase_price": "100000.00",
+      "rehab_budget": "40000.00",
+      "loan_requested": "135000.00",
+      "as_is_value": "110000.00",
+      "arv": "180000.00"
+    },
+    "state": "OK",
+    "borrower": {
+      "credit_range_self_reported": "T3",
+      "experience_bucket_self_reported": "1_2",
+      "repeat_borrower_self_reported": false
+    },
+    "court_records": {
+      "as_of": "2026-09-09"
+    }
+  },
+  "expected": {
+    "verdict": "DECLINE",
+    "flags": [
+      {
+        "code": "LTC_OVER_CAP",
+        "severity": "HARD"
+      },
+      {
+        "code": "LTV_AS_IS_OVER_CAP",
+        "severity": "HARD"
+      },
+      {
+        "code": "LTARV_OVER_CAP",
+        "severity": "SOFT"
+      }
+    ],
+    "credit_tranche": "T3",
+    "experience_tier": "E1",
+    "repeat_borrower_override_applied": false,
+    "all_pass": false,
+    "commitment": "135000.00",
+    "funded_at_close": "91000.00",
+    "split": {
+      "purchase_portion": "91000.00",
+      "rehab_portion": "44000.00"
+    },
+    "metrics": {
+      "LTC": "FAIL",
+      "LTV_AS_IS": "FAIL",
+      "LTARV": "WITHIN_TOLERANCE"
+    },
+    "reasons_contain": [
+      "LTC 92.5% exceeds the 80.0% cap",
+      "5.0 pt tolerance band (limit 85.0%)",
+      "LTARV 75.0% is over the 70.0% cap"
+    ],
+    "reply_contains": [
+      "not a fit"
+    ]
+  }
+}

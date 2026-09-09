@@ -52,6 +52,7 @@ def find_or_create_property(session: Session, info: PropertyInfo) -> Property | 
             listing_url=info.listing_url,
             county=info.county,
             state=info.state,
+            state_source=info.state_source,
         )
         session.add(prop)
         session.flush()
@@ -74,6 +75,8 @@ def create_deal_from_intake(session: Session, record: IntakeRecord) -> Deal:
         loan_requested=record.deal.loan_requested,
         term_bucket=record.deal.term_bucket,
         stated_exit=record.deal.stated_exit,
+        actual_annual_taxes_usd=record.deal.actual_annual_taxes_usd,
+        actual_annual_insurance_usd=record.deal.actual_annual_insurance_usd,
         missing_fields=list(record.missing_fields),
     )
     deal.submissions.append(
