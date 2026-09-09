@@ -1,0 +1,373 @@
+{
+  "$defs": {
+    "BorrowerInfo": {
+      "additionalProperties": false,
+      "description": "Who the borrower is; credit and experience are self-reported here.  # SPEC \u00a74.5",
+      "properties": {
+        "credit_range": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Tranche"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "email": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Email"
+        },
+        "entity_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entity Name"
+        },
+        "experience_bucket": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExperienceBucket"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "phone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Phone"
+        },
+        "repeat_borrower": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repeat Borrower"
+        }
+      },
+      "title": "BorrowerInfo",
+      "type": "object"
+    },
+    "Channel": {
+      "description": "Intake channel.  # SPEC \u00a74.2",
+      "enum": [
+        "SMS",
+        "LINK",
+        "CONTRACT",
+        "TEAM"
+      ],
+      "title": "Channel",
+      "type": "string"
+    },
+    "DealInfo": {
+      "additionalProperties": false,
+      "description": "Deal terms as requested by the borrower.  # SPEC \u00a74.5",
+      "properties": {
+        "loan_requested": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loan Requested"
+        },
+        "purchase_price": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Purchase Price"
+        },
+        "rehab_budget": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rehab Budget"
+        },
+        "stated_exit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StatedExit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "term_bucket": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TermBucket"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "DealInfo",
+      "type": "object"
+    },
+    "ExperienceBucket": {
+      "description": "Self-reported deals completed in the last 3 years.  # SPEC \u00a74.1",
+      "enum": [
+        "0",
+        "1_2",
+        "3_5",
+        "6_PLUS"
+      ],
+      "title": "ExperienceBucket",
+      "type": "string"
+    },
+    "PropertyInfo": {
+      "additionalProperties": false,
+      "description": "Subject property; address or listing URL satisfies the minimum.  # SPEC \u00a74.5",
+      "properties": {
+        "address_normalized": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Address Normalized"
+        },
+        "address_raw": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Address Raw"
+        },
+        "county": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "County"
+        },
+        "listing_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Listing Url"
+        },
+        "state": {
+          "$ref": "#/$defs/State",
+          "default": "OTHER"
+        }
+      },
+      "title": "PropertyInfo",
+      "type": "object"
+    },
+    "State": {
+      "description": "Property state; anything outside OK/CO is OTHER.  # SPEC \u00a74.5",
+      "enum": [
+        "OK",
+        "CO",
+        "OTHER"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "StatedExit": {
+      "description": "Borrower-stated exit, confirmed by the team.  # SPEC \u00a73, \u00a74.5",
+      "enum": [
+        "FLIP",
+        "HOLD",
+        "WHOLETAIL",
+        "UNKNOWN"
+      ],
+      "title": "StatedExit",
+      "type": "string"
+    },
+    "Status": {
+      "description": "Deal lifecycle status.  # SPEC \u00a74.5",
+      "enum": [
+        "NEW",
+        "NEEDS_INFO",
+        "SCREENED",
+        "IN_REVIEW",
+        "UNDERWRITING",
+        "LOI_SENT",
+        "HANDED_OFF",
+        "DECLINED",
+        "DEAD"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "TermBucket": {
+      "description": "Requested loan term in months.  # SPEC \u00a74.1",
+      "enum": [
+        "3",
+        "6",
+        "9",
+        "12",
+        "12_PLUS"
+      ],
+      "title": "TermBucket",
+      "type": "string"
+    },
+    "Tranche": {
+      "description": "Credit tranches; cutoffs live in config.  # SPEC \u00a77.1",
+      "enum": [
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5"
+      ],
+      "title": "Tranche",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Canonical intake record; one per property x borrower inquiry.  # SPEC \u00a74.5",
+  "properties": {
+    "borrower": {
+      "$ref": "#/$defs/BorrowerInfo"
+    },
+    "channel": {
+      "$ref": "#/$defs/Channel"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "deal": {
+      "$ref": "#/$defs/DealInfo"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "missing_fields": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Missing Fields",
+      "type": "array"
+    },
+    "property": {
+      "$ref": "#/$defs/PropertyInfo"
+    },
+    "raw_payload": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "title": "Raw Payload"
+    },
+    "status": {
+      "$ref": "#/$defs/Status",
+      "default": "NEW"
+    }
+  },
+  "required": [
+    "channel",
+    "raw_payload"
+  ],
+  "title": "IntakeRecord",
+  "type": "object"
+}

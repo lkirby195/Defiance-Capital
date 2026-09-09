@@ -17,3 +17,6 @@ __pycache__/
 # Local data
 *.db
 *.sqlite
+
+# Committed template for .env
+!.env.example

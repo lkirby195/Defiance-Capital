@@ -1,0 +1,16 @@
+{
+  "borrower_name": "Dana Whitfield",
+  "borrower_phone": "(918) 555-0142",
+  "borrower_email": "dana@example.com",
+  "entity_name": "Whitfield Holdings LLC",
+  "credit_range": "T2",
+  "experience_bucket": "3_5",
+  "repeat_borrower": false,
+  "address": "1412 S Cheyenne Ave, Tulsa, OK 74119",
+  "county": "Tulsa",
+  "purchase_price": "185000.00",
+  "rehab_budget": "42000.00",
+  "loan_requested": "190000.00",
+  "term_bucket": "9",
+  "stated_exit": "FLIP"
+}

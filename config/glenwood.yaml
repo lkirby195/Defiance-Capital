@@ -1,0 +1,200 @@
+# GLENWOOD tunables.  # SPEC §10
+#
+# EVERY VALUE IN THIS FILE IS A PLACEHOLDER until GLENWOOD fills it in.
+# Loaded and validated by config/config.py at startup; a missing key, an unknown key,
+# or an out-of-range value stops the service. The config hash recorded on every
+# screens/underwrites row is computed from the validated values, so comments and
+# key order do not change it.
+
+credit:                                   # SPEC §7.1
+  floor_tranche: T4                       # below this tranche the screen declines (SPEC §7.5)
+  tranche_cutoffs:                        # FICO lower bound per tranche; T5 is everything below T4
+    T1: 740
+    T2: 700
+    T3: 660
+    T4: 620
+
+screen:                                   # SPEC §7.5
+  tolerance_band: 0.05                    # leverage above cap by <= this -> Conditional; beyond -> Decline
+
+flags:                                    # SPEC §7.2
+  severities:
+    BANKRUPTCY_IN_LOOKBACK: HARD
+    ACTIVE_FORECLOSURE_AS_OWNER: HARD
+    UNSATISFIED_JUDGMENT_OVER_THRESHOLD: HARD
+    OPEN_TAX_LIEN: HARD
+    ACTIVE_CIVIL_LITIGATION_AS_DEFENDANT: SOFT
+    SATISFIED_JUDGMENT_OR_RELEASED_LIEN_IN_LOOKBACK: SOFT
+    LANDLORD_TENANT_AS_LANDLORD: INFO
+    SUBJECT_PROPERTY_LIEN_OR_LIS_PENDENS: HARD   # applies when senior and unresolved at close
+  lookbacks:
+    bankruptcy_years: 4
+    satisfied_judgment_years: 3
+  thresholds:
+    unsatisfied_judgment_usd: 10000
+    active_civil_litigation_usd: 25000
+
+experience:                               # SPEC §7.3
+  repeat_borrower_min_tier: E2            # repeat GLENWOOD borrower with clean payoff history is treated as at least this tier
+
+fees:                                     # SPEC §3, §8.1
+  origination_pct: 0.02                   # of commitment
+  origination_at_close_pct: 0.01          # at_close + at_payoff must equal origination_pct
+  origination_at_payoff_pct: 0.01
+  extension_default_pct: 0.0              # of commitment, charged if payoff month > term
+  selling_cost_pct: 0.06
+  contingency_pct: 0.10                   # applied to rehab budget (SPEC §7.4)
+  est_closing_pct_of_price: 0.02          # est_closing = purchase_price x this (SPEC §7.4)
+
+returns:                                  # SPEC §8.4, §8.5
+  target_irr: 0.175
+  coc_floor: 0.20
+  rate_grid:                              # 10.0% -> 15.0% in 50 bps = 11 columns
+    min: 0.10
+    max: 0.15
+    step: 0.005
+  month_window:                           # rows: term - before_term .. term + after_term
+    before_term: 1
+    after_term: 6
+
+draws:                                    # SPEC §8.3
+  s_curve_avg_utilization: 0.50           # average Tranche A utilization over the rehab period
+  default_rehab_months:
+    NO_DRAW: 0
+    SPLIT_DRAW: 4
+    SPLIT_PRINCIPAL: 6
+    WHOLETAIL: 1
+
+takeout:                                  # SPEC §8.6 hold exit (DSCR)
+  ltv: 0.75
+  rate: 0.075
+  amortization_years: 30
+  dscr_floor: 1.20
+  opex_defaults:                          # used when the deal does not supply the line item
+    vacancy_pct_of_rent: 0.05
+    management_pct_of_rent: 0.08
+    maintenance_pct_of_rent: 0.05
+    taxes_pct_of_value: 0.012
+    insurance_pct_of_value: 0.005
+
+downside:                                 # SPEC §8.6 REO downside
+  cap_rates:                              # by market; keyed by state until GLENWOOD defines markets
+    OK: 0.08
+    CO: 0.065
+    OTHER: 0.075
+  reo_haircut: 0.15
+  foreclosure_costs_usd: 10000
+
+states:                                   # SPEC §10
+  served: [OK, CO]
+  court_adapter:                          # court-record source per served state (SPEC §6)
+    OK: oscn
+    CO: colorado_courts
+
+leverage_caps:                            # SPEC §7.4 — product x credit tranche x experience tier
+  # PLACEHOLDER GRID: every cell carries the same dummy caps so it is obvious nothing is tuned.
+  # GLENWOOD fills this. Each cell: ltc, ltv_as_is, ltarv (fractions of 1).
+  NO_DRAW:
+    T1:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+    T2:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+    T3:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+    T4:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+    T5:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+  SPLIT_DRAW:
+    T1:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+    T2:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+    T3:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+    T4:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+    T5:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+  SPLIT_PRINCIPAL:
+    T1:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+    T2:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+    T3:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+    T4:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+    T5:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+  WHOLETAIL:
+    T1:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+    T2:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+    T3:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+    T4:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+    T5:
+      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
