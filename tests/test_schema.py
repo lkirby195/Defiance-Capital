@@ -1,0 +1,106 @@
+"""IntakeRecord and enum tests.  # SPEC §4.5"""
+
+from __future__ import annotations
+
+from datetime import UTC
+from decimal import Decimal
+
+import pytest
+from pydantic import ValidationError
+
+from schema.generate import INTAKE_JSON, render
+from schema.models import (
+    Channel,
+    DealInfo,
+    ExperienceBucket,
+    ExperienceTier,
+    IntakeRecord,
+    Product,
+    State,
+    StatedExit,
+    Status,
+    TermBucket,
+    Tranche,
+    Verdict,
+)
+
+
+def test_committed_intake_json_matches_model() -> None:
+    assert INTAKE_JSON.read_text(encoding="utf-8") == render(), (
+        "schema/intake.json is stale: run `uv run python -m schema.generate`"
+    )
+
+
+def test_enum_values_match_spec() -> None:
+    assert [m.value for m in Product] == ["NO_DRAW", "SPLIT_DRAW", "SPLIT_PRINCIPAL", "WHOLETAIL"]
+    assert [m.value for m in Tranche] == ["T1", "T2", "T3", "T4", "T5"]
+    assert [m.value for m in ExperienceBucket] == ["0", "1_2", "3_5", "6_PLUS"]
+    assert [m.value for m in ExperienceTier] == ["E0", "E1", "E2", "E3"]
+    assert [m.value for m in TermBucket] == ["3", "6", "9", "12", "12_PLUS"]
+    assert [m.value for m in Channel] == ["SMS", "LINK", "CONTRACT", "TEAM"]
+    assert [m.value for m in StatedExit] == ["FLIP", "HOLD", "WHOLETAIL", "UNKNOWN"]
+    assert [m.value for m in State] == ["OK", "CO", "OTHER"]
+    assert [m.value for m in Verdict] == ["GO", "CONDITIONAL", "DECLINE"]
+    assert [m.value for m in Status] == [
+        "NEW",
+        "NEEDS_INFO",
+        "SCREENED",
+        "IN_REVIEW",
+        "UNDERWRITING",
+        "LOI_SENT",
+        "HANDED_OFF",
+        "DECLINED",
+        "DEAD",
+    ]
+
+
+def test_defaults() -> None:
+    record = IntakeRecord(channel=Channel.SMS, raw_payload="hi")
+    assert record.status is Status.NEW
+    assert record.missing_fields == []
+    assert record.property.state is State.OTHER
+    assert record.created_at.tzinfo is UTC
+    assert record.borrower.repeat_borrower is None
+
+
+def test_json_round_trip() -> None:
+    record = IntakeRecord(
+        channel=Channel.TEAM,
+        raw_payload={"address": "1 Main St"},
+        borrower={"name": "A", "phone": "+19185550100", "credit_range": "T2"},
+        property={"address_raw": "1 Main St", "state": "OK"},
+        deal={"purchase_price": "150000.00", "rehab_budget": 0, "term_bucket": "12_PLUS"},
+        missing_fields=["deal.loan_requested"],
+    )
+    again = IntakeRecord.model_validate_json(record.model_dump_json())
+    assert again == record
+    assert again.deal.purchase_price == Decimal("150000.00")
+    assert again.deal.term_bucket is TermBucket.M12_PLUS
+    assert again.borrower.credit_range is Tranche.T2
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("purchase_price", "0"),
+        ("purchase_price", "-1"),
+        ("loan_requested", "0"),
+        ("rehab_budget", "-0.01"),
+        ("purchase_price", "100.123"),
+        ("loan_requested", "1000000000000.00"),
+    ],
+)
+def test_money_bounds_and_precision(field: str, value: str) -> None:
+    with pytest.raises(ValidationError):
+        DealInfo(**{field: Decimal(value)})
+
+
+def test_rehab_budget_zero_allowed() -> None:
+    assert DealInfo(rehab_budget=Decimal("0")).rehab_budget == 0
+
+
+def test_unknown_fields_rejected() -> None:
+    with pytest.raises(ValidationError):
+        IntakeRecord(channel=Channel.TEAM, raw_payload={}, bogus=1)
+    with pytest.raises(ValidationError):
+        IntakeRecord(channel=Channel.TEAM, raw_payload={}, borrower={"fico": 700})
