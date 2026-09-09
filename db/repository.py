@@ -67,6 +67,8 @@ def create_deal_from_intake(session: Session, record: IntakeRecord) -> Deal:
         property=find_or_create_property(session, record.property),
         channel=record.channel,
         status=record.status,
+        product=record.deal.product,
+        product_source=record.deal.product_source,
         credit_range_self_reported=record.borrower.credit_range,
         experience_bucket_self_reported=record.borrower.experience_bucket,
         repeat_borrower_self_reported=record.borrower.repeat_borrower,

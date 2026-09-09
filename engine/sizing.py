@@ -57,9 +57,10 @@ def commitment_split(
         commitment - rehab_adj (floored at zero), team can override;
         holdback = min(rehab_adj, commitment - purchase_portion).
     SPLIT_PRINCIPAL: Principal Note = purchase portion (same default and override as
-        SPLIT_DRAW); Tranche A = min(rehab_adj, loan_requested - purchase portion);
-        commitment = Principal Note + Tranche A, which equals loan_requested unless the
-        override leaves part of the request unallocated.
+        SPLIT_DRAW); Tranche A = min(rehab_adj, loan_requested - purchase portion), so it
+        is capped at the contingency-adjusted rehab budget; commitment = Principal Note +
+        Tranche A, which equals loan_requested unless the override leaves part of the
+        request unallocated (the screen reports that as COMMITMENT_BELOW_REQUEST).
     """
     if inputs.product not in SPLIT_PRODUCTS:
         return inputs.loan_requested, None
@@ -178,6 +179,7 @@ def size_deal(
         rehab_adj=rehab_adj,
         est_closing=closing,
         total_cost=cost,
+        loan_requested=inputs.loan_requested,
         commitment=commitment,
         funded_at_close=funded_at_close(inputs.product, commitment, split),
         split=split,

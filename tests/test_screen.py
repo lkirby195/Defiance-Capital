@@ -330,21 +330,49 @@ def test_lookback_years_come_from_config() -> None:
 
 
 def test_active_foreclosure_and_open_tax_lien_are_hard() -> None:
-    flags = court_flags(records(active_foreclosure_as_owner=True, open_tax_lien=True), CONFIG)
+    flags = court_flags(
+        records(active_foreclosure_as_owner=True, open_tax_liens_usd=[D("1500.00")]), CONFIG
+    )
     assert codes(flags) == ["ACTIVE_FORECLOSURE_AS_OWNER", "OPEN_TAX_LIEN"]
     assert all(f.severity is Severity.HARD for f in flags)
 
 
-def test_unsatisfied_judgment_is_tested_per_matter_against_the_threshold() -> None:
+def test_unsatisfied_judgments_aggregate_across_matters() -> None:
+    # each judgment is under the $10,000 aggregate threshold; together they exceed it
     flags = court_flags(
-        records(unsatisfied_judgments_usd=[D("10000.00"), D("10000.01"), D("50000")]), CONFIG
+        records(unsatisfied_judgments_usd=[D("6000.00"), D("4000.00"), D("0.01")]), CONFIG
     )
-    assert codes(flags) == [
-        "UNSATISFIED_JUDGMENT_OVER_THRESHOLD",
-        "UNSATISFIED_JUDGMENT_OVER_THRESHOLD",
-    ]
-    assert "$10,000.01 exceeds the $10,000.00 threshold" in flags[0].message
-    assert flags[0].severity is Severity.HARD
+    [flag] = flags
+    assert flag.code is CourtFlag.UNSATISFIED_JUDGMENT_OVER_THRESHOLD
+    assert flag.severity is Severity.HARD
+    assert "total $10,000.01 across 3 matter(s)" in flag.message
+    assert "$10,000.00 aggregate threshold" in flag.message
+
+
+def test_unsatisfied_judgments_at_or_under_the_aggregate_threshold_raise_nothing() -> None:
+    assert court_flags(records(unsatisfied_judgments_usd=[D("6000"), D("4000")]), CONFIG) == []
+    assert court_flags(records(unsatisfied_judgments_usd=[D("10000.00")]), CONFIG) == []
+
+
+def test_open_tax_liens_aggregate_against_their_own_threshold() -> None:
+    assert CONFIG.flags.thresholds.open_tax_liens_aggregate_usd == 0  # placeholder: any lien
+    [flag] = court_flags(records(open_tax_liens_usd=[D("0.01")]), CONFIG)
+    assert flag.code is CourtFlag.OPEN_TAX_LIEN and flag.severity is Severity.HARD
+    assert "total $0.01 across 1 matter(s)" in flag.message
+    assert "$0.00 aggregate threshold" in flag.message
+    assert court_flags(records(open_tax_liens_usd=[D("0")]), CONFIG) == []
+    cfg = config_with(
+        flags={
+            "thresholds": {
+                "unsatisfied_judgments_aggregate_usd": D("10000"),
+                "open_tax_liens_aggregate_usd": D("5000"),
+                "active_civil_litigation_usd": D("25000"),
+            }
+        }
+    )
+    assert court_flags(records(open_tax_liens_usd=[D("2000"), D("3000")]), cfg) == []
+    [flag] = court_flags(records(open_tax_liens_usd=[D("2000"), D("3000.01")]), cfg)
+    assert "total $5,000.01 across 2 matter(s), exceeding the $5,000.00" in flag.message
 
 
 def test_civil_litigation_is_soft_and_names_the_threshold() -> None:
@@ -392,7 +420,7 @@ def test_court_flag_severity_comes_from_config() -> None:
     severities = dict(CONFIG.flags.severities)
     severities[CourtFlag.OPEN_TAX_LIEN] = Severity.SOFT
     cfg = config_with(flags={"severities": {k.value: v.value for k, v in severities.items()}})
-    [flag] = court_flags(records(open_tax_lien=True), cfg)
+    [flag] = court_flags(records(open_tax_liens_usd=[D("100")]), cfg)
     assert flag.severity is Severity.SOFT
 
 
@@ -450,6 +478,50 @@ def test_ltv_breach_on_purchase_price_says_so() -> None:
     assert by_code[ScreenFlag.LTV_AS_IS_OVER_CAP].message.startswith(
         "LTV (on purchase price) 83.3%"
     )
+
+
+def test_split_principal_override_below_request_is_an_info_flag() -> None:
+    sizing = size_deal(
+        deal(
+            product=Product.SPLIT_PRINCIPAL,
+            purchase_price=D("150000.00"),
+            rehab_budget=D("60000.00"),
+            loan_requested=D("170000.00"),
+            as_is_value=D("230000.00"),
+            arv=D("290000.00"),
+            purchase_portion_override=D("80000.00"),
+        ),
+        Tranche.T2,
+        ExperienceTier.E2,
+        CONFIG,
+    )
+    assert sizing.commitment == D("146000.00") and sizing.loan_requested == D("170000.00")
+    [flag] = leverage_flags(sizing)
+    assert flag.code is ScreenFlag.COMMITMENT_BELOW_REQUEST and flag.severity is Severity.INFO
+    assert "commitment $146,000.00" in flag.message
+    assert "$170,000.00 requested" in flag.message
+    assert "Tranche A $66,000.00" in flag.message
+    assert "rehab budget $66,000.00" in flag.message
+
+
+def test_no_commitment_flag_when_the_request_is_fully_allocated() -> None:
+    for product in (Product.SPLIT_PRINCIPAL, Product.SPLIT_DRAW):
+        sizing = size_deal(
+            deal(
+                product=product,
+                purchase_price=D("150000.00"),
+                rehab_budget=D("60000.00"),
+                loan_requested=D("70000.00"),
+                as_is_value=D("230000.00"),
+                arv=D("290000.00"),
+                purchase_portion_override=D("10000.00"),
+            ),
+            Tranche.T2,
+            ExperienceTier.E2,
+            CONFIG,
+        )
+        assert sizing.commitment == D("70000.00")
+        assert ScreenFlag.COMMITMENT_BELOW_REQUEST not in {f.code for f in leverage_flags(sizing)}
 
 
 # --- verdict, reasons, reply (SPEC §7.5) --------------------------------------------------------

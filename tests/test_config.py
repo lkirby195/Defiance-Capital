@@ -77,6 +77,8 @@ def test_unknown_key_fails(data: dict[str, Any]) -> None:
         (("takeout", "amortization_years"), 0),
         (("takeout", "dscr_floor"), Decimal("0")),
         (("downside", "foreclosure_costs_usd"), Decimal("-5")),
+        (("flags", "thresholds", "open_tax_liens_aggregate_usd"), Decimal("-1")),
+        (("flags", "thresholds", "unsatisfied_judgments_aggregate_usd"), Decimal("-0.01")),
         (("returns", "rate_grid", "step"), Decimal("0")),
         (("draws", "default_rehab_months", "SPLIT_DRAW"), 61),
     ],
@@ -218,4 +220,27 @@ def test_metro_cap_rate_out_of_range_fails(data: dict[str, Any]) -> None:
 def test_flat_cap_rates_are_rejected(data: dict[str, Any]) -> None:
     data["downside"]["cap_rates"]["OK"] = Decimal("0.08")
     with pytest.raises(ConfigError, match="cap_rates"):
+        Config.from_dict(data)
+
+
+# --- court thresholds: aggregates for judgments and tax liens, per matter for litigation ------
+
+
+def test_threshold_keys_are_the_aggregate_ones() -> None:
+    thresholds = Config.load().flags.thresholds
+    assert thresholds.unsatisfied_judgments_aggregate_usd == Decimal("10000")
+    assert thresholds.open_tax_liens_aggregate_usd == Decimal("0")
+    assert thresholds.active_civil_litigation_usd == Decimal("25000")
+
+
+def test_old_per_matter_judgment_key_is_rejected(data: dict[str, Any]) -> None:
+    thresholds = data["flags"]["thresholds"]
+    thresholds["unsatisfied_judgment_usd"] = thresholds.pop("unsatisfied_judgments_aggregate_usd")
+    with pytest.raises(ConfigError, match="unsatisfied_judgment"):
+        Config.from_dict(data)
+
+
+def test_tax_lien_aggregate_threshold_is_required(data: dict[str, Any]) -> None:
+    del data["flags"]["thresholds"]["open_tax_liens_aggregate_usd"]
+    with pytest.raises(ConfigError, match="open_tax_liens_aggregate_usd"):
         Config.from_dict(data)

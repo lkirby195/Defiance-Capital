@@ -16,6 +16,8 @@ from schema.models import (
     BorrowerInfo,
     DealInfo,
     ExperienceBucket,
+    Product,
+    ProductSource,
     PropertyInfo,
     State,
     StatedExit,
@@ -50,6 +52,7 @@ class TeamEntryForm(BaseModel):
     term_bucket: TermBucket | None = None
     # Team-only extras (SPEC §4.2 "extra ones unlocked")
     stated_exit: StatedExit | None = None
+    product: Product | None = None  # inferred from the rehab budget when omitted (SPEC §3)
     # Actual annual taxes / insurance in USD; override the %-of-value defaults (SPEC §8.6)
     actual_annual_taxes_usd: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
@@ -84,6 +87,8 @@ def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
             loan_requested=form.loan_requested,
             term_bucket=form.term_bucket,
             stated_exit=form.stated_exit,
+            product=form.product,
+            product_source=ProductSource.ENTERED if form.product is not None else None,
             actual_annual_taxes_usd=form.actual_annual_taxes_usd,
             actual_annual_insurance_usd=form.actual_annual_insurance_usd,
         ),

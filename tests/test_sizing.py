@@ -297,3 +297,23 @@ def test_split_invariants_hold_for_any_deal(
     for check in result.metrics.values():
         assert check.actual is None or check.actual >= 0
         assert check.passed is (check.status is CapStatus.PASS)
+
+
+# --- review: loan_requested on the result; Tranche A capped at rehab_adj -----------------------
+
+
+def test_result_carries_loan_requested() -> None:
+    result = size_deal(inputs(), Tranche.T2, ExperienceTier.E2, CONFIG)
+    assert result.loan_requested == D("120000.00")
+    assert isinstance(result.loan_requested, Decimal)
+
+
+def test_split_principal_tranche_a_never_exceeds_rehab_adj() -> None:
+    # the override leaves 110,000 of room, but Tranche A stays capped at rehab_adj = 44,000
+    commitment, split = commitment_split(
+        inputs(Product.SPLIT_PRINCIPAL, purchase_portion_override=D("10000.00")), D("44000")
+    )
+    assert split is not None
+    assert split.rehab_portion == D("44000")
+    assert commitment == D("54000.00")  # below the 120,000 requested; the screen reports it
+    assert funded_at_close(Product.SPLIT_PRINCIPAL, commitment, split) == D("10000.00")

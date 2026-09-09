@@ -35,6 +35,7 @@ from schema.models import (
     Flag,
     LeverageMetric,
     LienKind,
+    Product,
     RepeatBorrowerStatus,
     ScreenComponents,
     ScreenFlag,
@@ -333,11 +334,13 @@ def _court_flag(code: CourtFlag, message: str, config: Config) -> Flag:
 
 
 def court_flags(records: CourtRecordInputs | None, config: Config) -> list[Flag]:
-    """Evaluate the SPEC §7.2 table: one flag per matching matter, severity from config.
+    """Evaluate the SPEC §7.2 table with severities from config.
 
-    Thresholds are tested per matter (an unsatisfied judgment or a litigation amount above
-    the threshold), lookbacks against ``records.as_of``. ``None`` records mean no source was
-    checked, which is reported as an INFO flag rather than treated as clean.
+    Unsatisfied judgments and open tax liens are summed across matters and tested against
+    the aggregate thresholds (one flag each). Bankruptcies, satisfied judgments, active
+    litigation and subject-property liens produce one flag per matching matter. Lookbacks
+    run against ``records.as_of``. ``None`` records mean no source was checked, which is
+    reported as an INFO flag rather than treated as clean.
     """
     if records is None:
         return [
@@ -371,21 +374,25 @@ def court_flags(records: CourtRecordInputs | None, config: Config) -> list[Flag]
                 config,
             )
         )
-    for amount in records.unsatisfied_judgments_usd:
-        if amount > thresholds.unsatisfied_judgment_usd:
-            flags.append(
-                _court_flag(
-                    CourtFlag.UNSATISFIED_JUDGMENT_OVER_THRESHOLD,
-                    f"Unsatisfied judgment of {money(amount)} exceeds the "
-                    f"{money(thresholds.unsatisfied_judgment_usd)} threshold.",
-                    config,
-                )
+    judgments_total = sum(records.unsatisfied_judgments_usd, Decimal(0))
+    if judgments_total > thresholds.unsatisfied_judgments_aggregate_usd:
+        flags.append(
+            _court_flag(
+                CourtFlag.UNSATISFIED_JUDGMENT_OVER_THRESHOLD,
+                f"Unsatisfied judgments total {money(judgments_total)} across "
+                f"{len(records.unsatisfied_judgments_usd)} matter(s), exceeding the "
+                f"{money(thresholds.unsatisfied_judgments_aggregate_usd)} aggregate threshold.",
+                config,
             )
-    if records.open_tax_lien:
+        )
+    liens_total = sum(records.open_tax_liens_usd, Decimal(0))
+    if liens_total > thresholds.open_tax_liens_aggregate_usd:
         flags.append(
             _court_flag(
                 CourtFlag.OPEN_TAX_LIEN,
-                "Open tax lien on record (any open tax lien is flagged).",
+                f"Open tax liens total {money(liens_total)} across "
+                f"{len(records.open_tax_liens_usd)} matter(s), exceeding the "
+                f"{money(thresholds.open_tax_liens_aggregate_usd)} aggregate threshold.",
                 config,
             )
         )
@@ -466,6 +473,26 @@ def leverage_flags(sizing: SizingResult) -> list[Flag]:
                 message=(
                     "As-is value unavailable; LTV computed on the purchase price instead "
                     f"(cap {pct(ltv.cap)} for {cell})."
+                ),
+            )
+        )
+    if sizing.product is Product.SPLIT_PRINCIPAL and sizing.commitment < sizing.loan_requested:
+        split = sizing.split
+        notes = (
+            f" (Principal Note {money(split.purchase_portion)} + "
+            f"Tranche A {money(split.rehab_portion)})"
+            if split is not None
+            else ""
+        )
+        flags.append(
+            Flag(
+                code=ScreenFlag.COMMITMENT_BELOW_REQUEST,
+                severity=Severity.INFO,
+                message=(
+                    f"SPLIT_PRINCIPAL commitment {money(sizing.commitment)}{notes} is below the "
+                    f"{money(sizing.loan_requested)} requested: the purchase-portion override "
+                    f"leaves Tranche A capped at the contingency-adjusted rehab budget "
+                    f"{money(sizing.rehab_adj)}."
                 ),
             )
         )

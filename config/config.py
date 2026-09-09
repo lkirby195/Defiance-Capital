@@ -82,8 +82,11 @@ class Lookbacks(_Section):
 
 
 class Thresholds(_Section):
-    unsatisfied_judgment_usd: Money
-    active_civil_litigation_usd: Money
+    """Amount thresholds; judgments and tax liens aggregate across matters.  # SPEC §7.2"""
+
+    unsatisfied_judgments_aggregate_usd: Money  # sum of unsatisfied judgments
+    open_tax_liens_aggregate_usd: Money  # sum of open tax liens; 0 = any open lien
+    active_civil_litigation_usd: Money  # per matter
 
 
 class FlagsConfig(_Section):

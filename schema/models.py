@@ -103,6 +103,13 @@ class StateSource(StrEnum):
     INFERRED = "INFERRED"
 
 
+class ProductSource(StrEnum):
+    """Whether ``deal.product`` was entered by the team or inferred by the normalizer."""
+
+    ENTERED = "ENTERED"
+    INFERRED = "INFERRED"
+
+
 class Status(StrEnum):
     """Deal lifecycle status.  # SPEC §4.5"""
 
@@ -199,6 +206,10 @@ class DealInfo(BaseModel):
     loan_requested: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     term_bucket: TermBucket | None = None
     stated_exit: StatedExit | None = None
+    # Product: entered by the team, or inferred by the normalizer (NO_DRAW when rehab_budget
+    # is 0, else SPLIT_DRAW). WHOLETAIL and SPLIT_PRINCIPAL are never inferred.  # SPEC §3
+    product: Product | None = None
+    product_source: ProductSource | None = None
     # Team-supplied actuals (annual USD) that override the %-of-value opex defaults in
     # config when present.  # SPEC §8.1, §8.6. Schema only in Phase 2a; underwrite reads them later.
     actual_annual_taxes_usd: Decimal | None = Field(
@@ -207,6 +218,12 @@ class DealInfo(BaseModel):
     actual_annual_insurance_usd: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
+
+    @model_validator(mode="after")
+    def _product_and_source_together(self) -> DealInfo:
+        if (self.product is None) != (self.product_source is None):
+            raise ValueError("product and product_source must be set together")
+        return self
 
 
 class IntakeRecord(BaseModel):
@@ -249,6 +266,7 @@ class ScreenFlag(StrEnum):
     REPEAT_BORROWER_UNVERIFIED = "REPEAT_BORROWER_UNVERIFIED"  # INFO
     REPEAT_BORROWER_PAYOFF_NOT_CLEAN = "REPEAT_BORROWER_PAYOFF_NOT_CLEAN"  # INFO
     COURT_RECORDS_NOT_CHECKED = "COURT_RECORDS_NOT_CHECKED"  # INFO
+    COMMITMENT_BELOW_REQUEST = "COMMITMENT_BELOW_REQUEST"  # INFO, SPLIT_PRINCIPAL override, §8.2
 
 
 class RepeatBorrowerStatus(StrEnum):
@@ -318,8 +336,10 @@ class SubjectPropertyLien(BaseModel):
 class CourtRecordInputs(BaseModel):
     """Typed court and filing facts from enrichment.  # SPEC §7.2
 
-    Thresholds and lookbacks are config. Amounts are per matter. Dates are compared with
-    ``as_of`` (the engine has no clock). A record with only ``as_of`` set is clean.
+    Thresholds and lookbacks are config. Amounts are per matter; unsatisfied judgments and
+    open tax liens are summed across matters before the threshold test, active litigation
+    is tested per matter. Dates are compared with ``as_of`` (the engine has no clock). A
+    record with only ``as_of`` set is clean.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -328,7 +348,7 @@ class CourtRecordInputs(BaseModel):
     bankruptcy_filing_dates: list[date] = Field(default_factory=list)
     active_foreclosure_as_owner: bool = False
     unsatisfied_judgments_usd: list[Decimal] = Field(default_factory=list)
-    open_tax_lien: bool = False
+    open_tax_liens_usd: list[Decimal] = Field(default_factory=list)
     active_civil_litigation_as_defendant_usd: list[Decimal] = Field(default_factory=list)
     satisfied_judgment_or_released_lien_dates: list[date] = Field(default_factory=list)
     landlord_tenant_matters_as_landlord: int = Field(default=0, ge=0)
@@ -434,6 +454,7 @@ class SizingResult(BaseModel):
     rehab_adj: Decimal
     est_closing: Decimal
     total_cost: Decimal
+    loan_requested: Decimal
     commitment: Decimal
     funded_at_close: Decimal
     split: CommitmentSplit | None

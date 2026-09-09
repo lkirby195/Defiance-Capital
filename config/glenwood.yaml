@@ -31,8 +31,9 @@ flags:                                    # SPEC §7.2
     bankruptcy_years: 4
     satisfied_judgment_years: 3
   thresholds:
-    unsatisfied_judgment_usd: 10000
-    active_civil_litigation_usd: 25000
+    unsatisfied_judgments_aggregate_usd: 10000   # sum of unsatisfied judgments across matters
+    open_tax_liens_aggregate_usd: 0              # sum of open tax liens across matters; 0 = any open lien
+    active_civil_litigation_usd: 25000           # per matter (amount in controversy)
 
 experience:                               # SPEC §7.3
   repeat_borrower_min_tier: E2            # repeat GLENWOOD borrower with clean payoff history is treated as at least this tier

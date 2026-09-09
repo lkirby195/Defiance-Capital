@@ -10,12 +10,22 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from api.main import app
 from db.models import Borrower, Deal, Entity, IntakeSubmission, Property
 from db.session import get_session
-from schema.models import Channel, State, StateSource, Status, TermBucket, Tranche
+from schema.models import (
+    Channel,
+    Product,
+    ProductSource,
+    State,
+    StateSource,
+    Status,
+    TermBucket,
+    Tranche,
+)
 from tests.conftest import requires_db
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/synthetic/team_entry_complete.json"
@@ -129,3 +139,31 @@ def test_inferred_state_source_is_stored(client: TestClient, db_session: Session
     assert deal is not None and deal.property is not None
     assert deal.property.state is State.CO
     assert deal.property.state_source is StateSource.INFERRED
+
+
+def test_product_inference_and_source_are_stored(client: TestClient, db_session: Session) -> None:
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))  # rehab 42,000 -> SPLIT_DRAW
+    inferred = client.post("/intake/team", json=payload)
+    assert inferred.status_code == 201, inferred.text
+    assert inferred.json()["deal"]["product"] == "SPLIT_DRAW"
+    assert inferred.json()["deal"]["product_source"] == "INFERRED"
+    deal = db_session.get(Deal, inferred.json()["id"])
+    assert deal is not None
+    assert deal.product is Product.SPLIT_DRAW
+    assert deal.product_source is ProductSource.INFERRED
+
+    entered = client.post("/intake/team", json={**payload, "product": "WHOLETAIL"})
+    assert entered.status_code == 201, entered.text
+    deal = db_session.get(Deal, entered.json()["id"])
+    assert deal is not None
+    assert deal.product is Product.WHOLETAIL
+    assert deal.product_source is ProductSource.ENTERED
+
+
+def test_product_without_source_is_rejected_by_the_database(db_session: Session) -> None:
+    db_session.add(
+        Deal(channel=Channel.TEAM, status=Status.NEW, product=Product.NO_DRAW, missing_fields=[])
+    )
+    with pytest.raises(IntegrityError, match="ck_deals_product_and_source_together"):
+        db_session.flush()
+    db_session.rollback()

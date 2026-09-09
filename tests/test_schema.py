@@ -18,6 +18,7 @@ from schema.models import (
     ExperienceTier,
     IntakeRecord,
     Product,
+    ProductSource,
     PropertyInfo,
     ScreenFlag,
     State,
@@ -144,3 +145,17 @@ def test_committed_intake_json_carries_the_new_fields() -> None:
     assert "actual_annual_taxes_usd" in schema["$defs"]["DealInfo"]["properties"]
     assert "actual_annual_insurance_usd" in schema["$defs"]["DealInfo"]["properties"]
     assert schema["$defs"]["StateSource"]["enum"] == ["ENTERED", "INFERRED"]
+
+
+def test_product_source_enum_and_pairing() -> None:
+    assert [m.value for m in ProductSource] == ["ENTERED", "INFERRED"]
+    assert DealInfo().product is None and DealInfo().product_source is None
+    deal = DealInfo(product="WHOLETAIL", product_source="ENTERED")
+    assert deal.product is Product.WHOLETAIL and deal.product_source is ProductSource.ENTERED
+    with pytest.raises(ValidationError, match="set together"):
+        DealInfo(product="NO_DRAW")
+    with pytest.raises(ValidationError, match="set together"):
+        DealInfo(product_source="INFERRED")
+    schema = json.loads(INTAKE_JSON.read_text(encoding="utf-8"))
+    assert schema["$defs"]["ProductSource"]["enum"] == ["ENTERED", "INFERRED"]
+    assert "product_source" in schema["$defs"]["DealInfo"]["properties"]

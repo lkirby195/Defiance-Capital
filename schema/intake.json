@@ -156,6 +156,28 @@
           "default": null,
           "title": "Loan Requested"
         },
+        "product": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Product"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "product_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProductSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "purchase_price": {
           "anyOf": [
             {
@@ -225,6 +247,26 @@
         "6_PLUS"
       ],
       "title": "ExperienceBucket",
+      "type": "string"
+    },
+    "Product": {
+      "description": "Loan products.  # SPEC \u00a73",
+      "enum": [
+        "NO_DRAW",
+        "SPLIT_DRAW",
+        "SPLIT_PRINCIPAL",
+        "WHOLETAIL"
+      ],
+      "title": "Product",
+      "type": "string"
+    },
+    "ProductSource": {
+      "description": "Whether ``deal.product`` was entered by the team or inferred by the normalizer.",
+      "enum": [
+        "ENTERED",
+        "INFERRED"
+      ],
+      "title": "ProductSource",
       "type": "string"
     },
     "PropertyInfo": {

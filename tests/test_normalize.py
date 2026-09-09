@@ -11,6 +11,7 @@ import pytest
 from intake.normalize import (
     MINIMUM_FIELDS,
     ParsedIntake,
+    infer_product,
     infer_state,
     normalize,
     normalize_address,
@@ -21,6 +22,8 @@ from schema.models import (
     BorrowerInfo,
     Channel,
     DealInfo,
+    Product,
+    ProductSource,
     PropertyInfo,
     State,
     StateSource,
@@ -219,3 +222,45 @@ def test_actual_opex_pass_through_the_team_form() -> None:
         normalize(parse_team_form(complete_form()), Channel.TEAM, {}).deal.actual_annual_taxes_usd
         is None
     )
+
+
+# --- product inference (review decision) -------------------------------------------------------
+
+
+def test_product_is_inferred_from_the_rehab_budget() -> None:
+    assert infer_product(Decimal("0")) is Product.NO_DRAW
+    assert infer_product(Decimal("0.00")) is Product.NO_DRAW
+    assert infer_product(Decimal("0.01")) is Product.SPLIT_DRAW
+    assert infer_product(Decimal("50000")) is Product.SPLIT_DRAW
+    assert infer_product(None) is None
+
+
+def test_wholetail_and_split_principal_are_never_inferred() -> None:
+    inferred = {infer_product(Decimal(x)) for x in ("0", "1", "42000", "999999")}
+    assert inferred == {Product.NO_DRAW, Product.SPLIT_DRAW}
+
+
+def test_inferred_product_is_recorded_as_inferred() -> None:
+    record = normalize(parse_team_form(complete_form()), Channel.TEAM, {})  # rehab 42,000
+    assert record.deal.product is Product.SPLIT_DRAW
+    assert record.deal.product_source is ProductSource.INFERRED
+    record = normalize(parse_team_form(complete_form(rehab_budget="0")), Channel.TEAM, {})
+    assert record.deal.product is Product.NO_DRAW
+    assert record.deal.product_source is ProductSource.INFERRED
+
+
+def test_entered_product_wins_and_is_recorded_as_entered() -> None:
+    record = normalize(parse_team_form(complete_form(product="WHOLETAIL")), Channel.TEAM, {})
+    assert record.deal.product is Product.WHOLETAIL
+    assert record.deal.product_source is ProductSource.ENTERED
+    form = complete_form(rehab_budget="0", product="SPLIT_PRINCIPAL")
+    record = normalize(parse_team_form(form), Channel.TEAM, {})
+    assert record.deal.product is Product.SPLIT_PRINCIPAL  # inference does not override
+
+
+def test_product_stays_unset_until_the_rehab_budget_is_known() -> None:
+    form = TeamEntryForm(address="12 Elm St, Denver, CO 80202", purchase_price=Decimal("100000"))
+    record = normalize(parse_team_form(form), Channel.TEAM, {})
+    assert record.deal.product is None
+    assert record.deal.product_source is None
+    assert "deal.rehab_budget" in record.missing_fields

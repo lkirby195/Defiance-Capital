@@ -8,7 +8,8 @@ once it is complete and ready to screen (SPEC §7 screens every complete intake)
 Normalization here is deliberately light: the phone goes to E.164 for NANP
 numbers so it works as the borrower match key (SPEC §5), the address gets
 whitespace/case cleanup, and the state is inferred from the address text unless a
-person entered it (``state_source`` records which).
+person entered it (``state_source`` records which). The product is inferred from the
+rehab budget unless the team entered it (``product_source`` records which).
 Parcel, county, and USPS-form addresses come from enrichment (SPEC §6).
 """
 
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 from schema.models import (
@@ -23,6 +25,8 @@ from schema.models import (
     Channel,
     DealInfo,
     IntakeRecord,
+    Product,
+    ProductSource,
     PropertyInfo,
     State,
     StateSource,
@@ -109,6 +113,16 @@ def infer_state(address: str | None) -> State:
     return _STATE_WORDS.get(match.group(1).upper(), State.OTHER)
 
 
+def infer_product(rehab_budget: Decimal | None) -> Product | None:
+    """NO_DRAW when there is no rehab budget, else SPLIT_DRAW; None until the budget is known.
+
+    WHOLETAIL and SPLIT_PRINCIPAL are never inferred; the team sets them.  # SPEC §3
+    """
+    if rehab_budget is None:
+        return None
+    return Product.NO_DRAW if rehab_budget == 0 else Product.SPLIT_DRAW
+
+
 def missing_fields(borrower: BorrowerInfo, prop: PropertyInfo, deal: DealInfo) -> list[str]:
     """Minimum-viable fields (SPEC §4.1) that are still absent, in asking order."""
     present = {
@@ -156,13 +170,20 @@ def normalize(
             "state_source": state_source,
         }
     )
-    missing = missing_fields(borrower, prop, parsed.deal)
+    deal = parsed.deal
+    if deal.product is None:
+        inferred = infer_product(deal.rehab_budget)
+        if inferred is not None:
+            deal = deal.model_copy(
+                update={"product": inferred, "product_source": ProductSource.INFERRED}
+            )
+    missing = missing_fields(borrower, prop, deal)
     return IntakeRecord(
         channel=channel,
         raw_payload=raw_payload,
         borrower=borrower,
         property=prop,
-        deal=parsed.deal,
+        deal=deal,
         missing_fields=missing,
         status=Status.NEEDS_INFO if missing else Status.NEW,
     )

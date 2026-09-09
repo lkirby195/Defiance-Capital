@@ -38,6 +38,7 @@ from schema.models import (
     DocumentKind,
     ExperienceBucket,
     Product,
+    ProductSource,
     State,
     StatedExit,
     StateSource,
@@ -159,7 +160,13 @@ class Deal(Base):
     """One per property x borrower inquiry; holds the current IntakeRecord state.  # SPEC §5"""
 
     __tablename__ = "deals"
-    __table_args__ = (Index("ix_deals_status", "status"),)
+    __table_args__ = (
+        Index("ix_deals_status", "status"),
+        CheckConstraint(
+            "(product IS NULL) = (product_source IS NULL)",
+            name="ck_deals_product_and_source_together",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     borrower_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -171,6 +178,9 @@ class Deal(Base):
     channel: Mapped[Channel] = mapped_column(_enum(Channel, "channel"), nullable=False)
     status: Mapped[Status] = mapped_column(_enum(Status, "deal_status"), nullable=False)
     product: Mapped[Product | None] = mapped_column(_enum(Product, "product"))
+    product_source: Mapped[ProductSource | None] = mapped_column(
+        _enum(ProductSource, "product_source")
+    )
     credit_range_self_reported: Mapped[Tranche | None] = mapped_column(
         _enum(Tranche, "credit_tranche")
     )
