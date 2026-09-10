@@ -1,0 +1,118 @@
+{
+  "name": "go_no_draw_small_tulsa",
+  "description": "Small NO_DRAW purchase in Tulsa, OK ($60,000 on an $85,000 house); T2 / 3-5 deals; every metric under cap; clean records. Go. Underwrite (verified 720 / 4 deals, term 6): r* 13.50%; DSCR takeout covers; but the fixed $10,000 foreclosure cost plus 8 months of carry pull REO recovery ($56,315) below exposure ($60,600): downside cover 0.93x, HARD flag.",
+  "inputs": {
+    "deal": {
+      "product": "NO_DRAW",
+      "purchase_price": "80000.00",
+      "rehab_budget": "0.00",
+      "loan_requested": "60000.00",
+      "as_is_value": "85000.00",
+      "arv": "95000.00"
+    },
+    "state": "OK",
+    "borrower": {
+      "credit_range_self_reported": "T2",
+      "experience_bucket_self_reported": "3_5",
+      "repeat_borrower_self_reported": false
+    },
+    "court_records": {
+      "as_of": "2026-09-09"
+    }
+  },
+  "expected": {
+    "verdict": "GO",
+    "flags": [],
+    "credit_tranche": "T2",
+    "experience_tier": "E2",
+    "repeat_borrower_override_applied": false,
+    "all_pass": true,
+    "commitment": "60000.00",
+    "funded_at_close": "60000.00",
+    "metrics": {
+      "LTC": "PASS",
+      "LTV_AS_IS": "PASS",
+      "LTARV": "PASS"
+    },
+    "reasons_contain": [],
+    "reply_contains": [
+      "fit on first pass",
+      "credit authorization"
+    ]
+  },
+  "underwrite": {
+    "inputs": {
+      "deal": {
+        "product": "NO_DRAW",
+        "purchase_price": "80000.00",
+        "rehab_budget": "0.00",
+        "loan_requested": "60000.00",
+        "as_is_value": "85000.00",
+        "arv": "95000.00"
+      },
+      "state": "OK",
+      "borrower": {
+        "credit_range_self_reported": "T2",
+        "experience_bucket_self_reported": "3_5",
+        "repeat_borrower_self_reported": false,
+        "verified_credit_score": 720,
+        "verified_deals_36mo": 4
+      },
+      "term_months": 6,
+      "market_rent_monthly": "950.00",
+      "annual_taxes_usd": "1000.00",
+      "annual_insurance_usd": "800.00",
+      "annual_utilities_usd": "600.00",
+      "stated_exit": "FLIP"
+    },
+    "expected": {
+      "rehab_months": 3,
+      "commitment": "60000.00",
+      "solved_rate": "0.135000",
+      "lender_yield_at_solve": "0.175000",
+      "interest_at_solve": "4050.00",
+      "fees_at_solve": "1200.00",
+      "avg_outstanding_at_term": "60000.00",
+      "grid": {
+        "columns": 11,
+        "rows": 7,
+        "solved_rate_inserted": false,
+        "term_row_cells_meeting_target": 4
+      },
+      "borrower": {
+        "total_project_cost": "82400.00",
+        "holding_costs": "1200.00",
+        "exit_net": "89300.00",
+        "profit": "450.00",
+        "cash_in": "28850.00",
+        "cash_on_cash": "0.015598"
+      },
+      "exit": {
+        "type": "FLIP",
+        "noi_annual": "7548.00",
+        "ltv_takeout": "71250.00",
+        "dscr_takeout": "74965.07",
+        "max_takeout": "71250.00",
+        "payoff_due": "60600.00",
+        "dscr_at_payoff": "1.484",
+        "refi_covers": true,
+        "shortfall": "0.00"
+      },
+      "downside": {
+        "recovery_basis": "85000.00",
+        "liquidation": "72250.00",
+        "foreclosure_months": 8,
+        "recovery": "56315.00",
+        "exposure": "60600.00",
+        "cover": "0.929290",
+        "passed": false
+      },
+      "flags": [
+        {
+          "code": "DOWNSIDE_COVER_BELOW_FLOOR",
+          "severity": "HARD"
+        }
+      ]
+    }
+  }
+}

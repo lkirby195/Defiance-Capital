@@ -1,6 +1,6 @@
 {
   "name": "go_no_draw",
-  "description": "NO_DRAW purchase in Tulsa, OK; T2 / 3-5 deals; every metric under cap; clean records. Go.",
+  "description": "NO_DRAW purchase in Tulsa, OK; T2 / 3-5 deals; every metric under cap; clean records. Go. Underwrite (verified 715 / 4 deals, term 9): r* 14.83%; the flip loses money at ARV (information only); DSCR takeout covers; downside cover 1.09x. No flags.",
   "inputs": {
     "deal": {
       "product": "NO_DRAW",
@@ -39,5 +39,75 @@
       "fit on first pass",
       "credit authorization"
     ]
+  },
+  "underwrite": {
+    "inputs": {
+      "deal": {
+        "product": "NO_DRAW",
+        "purchase_price": "150000.00",
+        "rehab_budget": "0.00",
+        "loan_requested": "105000.00",
+        "as_is_value": "160000.00",
+        "arv": "165000.00"
+      },
+      "state": "OK",
+      "borrower": {
+        "credit_range_self_reported": "T2",
+        "experience_bucket_self_reported": "3_5",
+        "repeat_borrower_self_reported": false,
+        "verified_credit_score": 715,
+        "verified_deals_36mo": 4
+      },
+      "term_months": 9,
+      "market_rent_monthly": "1500.00",
+      "annual_taxes_usd": "1800.00",
+      "annual_insurance_usd": "1200.00",
+      "annual_utilities_usd": "600.00",
+      "stated_exit": "FLIP"
+    },
+    "expected": {
+      "rehab_months": 6,
+      "commitment": "105000.00",
+      "solved_rate": "0.148333",
+      "lender_yield_at_solve": "0.175000",
+      "interest_at_solve": "11681.25",
+      "fees_at_solve": "2100.00",
+      "avg_outstanding_at_term": "105000.00",
+      "grid": {
+        "columns": 12,
+        "rows": 7,
+        "solved_rate_inserted": true,
+        "term_row_cells_meeting_target": 2
+      },
+      "borrower": {
+        "total_project_cost": "154500.00",
+        "holding_costs": "2700.00",
+        "exit_net": "155100.00",
+        "profit": "-15881.25",
+        "cash_in": "65981.25",
+        "cash_on_cash": "-0.240693"
+      },
+      "exit": {
+        "type": "FLIP",
+        "noi_annual": "11760.00",
+        "ltv_takeout": "123750.00",
+        "dscr_takeout": "116797.73",
+        "max_takeout": "116797.73",
+        "payoff_due": "106050.00",
+        "dscr_at_payoff": "1.322",
+        "refi_covers": true,
+        "shortfall": "0.00"
+      },
+      "downside": {
+        "recovery_basis": "160000.00",
+        "liquidation": "136000.00",
+        "foreclosure_months": 8,
+        "recovery": "115440.00",
+        "exposure": "106050.00",
+        "cover": "1.088543",
+        "passed": true
+      },
+      "flags": []
+    }
   }
 }

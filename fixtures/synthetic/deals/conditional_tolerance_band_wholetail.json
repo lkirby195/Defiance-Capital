@@ -1,6 +1,6 @@
 {
   "name": "conditional_tolerance_band_wholetail",
-  "description": "WHOLETAIL in Colorado Springs; LTV 76.0% is over the 75.0% cap but inside the 5 pt band. Conditional.",
+  "description": "WHOLETAIL in Colorado Springs; LTV 76.0% is over the 75.0% cap but inside the 5 pt band. Conditional. Underwrite (verified 705 / 3 deals, term 6, team-set retail exit $285,000): r* 13.50% lands on the grid (11 columns); the DSCR takeout falls $26,237.92 short of the payoff due (SOFT); downside cover 1.00x passes.",
   "inputs": {
     "deal": {
       "product": "WHOLETAIL",
@@ -46,5 +46,85 @@
     "reply_contains": [
       "lower loan amount"
     ]
+  },
+  "underwrite": {
+    "inputs": {
+      "deal": {
+        "product": "WHOLETAIL",
+        "purchase_price": "240000.00",
+        "rehab_budget": "5000.00",
+        "loan_requested": "190000.00",
+        "as_is_value": "250000.00",
+        "arv": "290000.00"
+      },
+      "state": "CO",
+      "borrower": {
+        "credit_range_self_reported": "T2",
+        "experience_bucket_self_reported": "3_5",
+        "repeat_borrower_self_reported": false,
+        "verified_credit_score": 705,
+        "verified_deals_36mo": 3
+      },
+      "term_months": 6,
+      "market_rent_monthly": "2000.00",
+      "annual_taxes_usd": "1900.00",
+      "annual_insurance_usd": "1100.00",
+      "annual_utilities_usd": "1200.00",
+      "exit_price": "285000.00",
+      "stated_exit": "WHOLETAIL"
+    },
+    "expected": {
+      "rehab_months": 3,
+      "commitment": "190000.00",
+      "solved_rate": "0.135000",
+      "lender_yield_at_solve": "0.175000",
+      "interest_at_solve": "12825.00",
+      "fees_at_solve": "3800.00",
+      "avg_outstanding_at_term": "190000.00",
+      "grid": {
+        "columns": 11,
+        "rows": 7,
+        "solved_rate_inserted": false,
+        "term_row_cells_meeting_target": 4
+      },
+      "borrower": {
+        "total_project_cost": "252700.00",
+        "holding_costs": "2100.00",
+        "exit_net": "267900.00",
+        "profit": "-3525.00",
+        "cash_in": "81425.00",
+        "cash_on_cash": "-0.043291"
+      },
+      "exit": {
+        "type": "WHOLETAIL",
+        "noi_annual": "16680.00",
+        "ltv_takeout": "217500.00",
+        "dscr_takeout": "165662.08",
+        "max_takeout": "165662.08",
+        "payoff_due": "191900.00",
+        "dscr_at_payoff": "1.036",
+        "refi_covers": false,
+        "shortfall": "26237.92"
+      },
+      "downside": {
+        "recovery_basis": "255500.00",
+        "liquidation": "217175.00",
+        "foreclosure_months": 4,
+        "recovery": "192744.50",
+        "exposure": "191900.00",
+        "cover": "1.004401",
+        "passed": true
+      },
+      "flags": [
+        {
+          "code": "LTV_AS_IS_OVER_CAP",
+          "severity": "SOFT"
+        },
+        {
+          "code": "REFI_SHORTFALL",
+          "severity": "SOFT"
+        }
+      ]
+    }
   }
 }

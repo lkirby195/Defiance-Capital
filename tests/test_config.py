@@ -9,8 +9,8 @@ from typing import Any
 
 import pytest
 
-from config.config import DEFAULT_PATH, Config, ConfigError, load_yaml, normalize_metro
-from schema.models import ExperienceTier, Product, State, Tranche
+from config.config import DEFAULT_PATH, Config, ConfigError, load_yaml
+from schema.models import ExperienceTier, Product, Severity, State, Tranche, UnderwriteFlag
 
 
 @pytest.fixture
@@ -23,7 +23,12 @@ def test_placeholder_yaml_loads() -> None:
     assert cfg.credit.floor_tranche is Tranche.T4
     assert cfg.fees.origination_pct == Decimal("0.02")
     assert cfg.returns.target_irr == Decimal("0.175")
-    assert cfg.draws.s_curve_avg_utilization == Decimal("0.5")
+    assert cfg.draws.draw_avg_utilization == Decimal("0.50")
+    assert cfg.draws.listing_months == 3
+    assert cfg.fees.borrower_closing_pct_of_price == Decimal("0.03")
+    assert cfg.downside.foreclosure_months == {State.OK: 8, State.CO: 4, State.OTHER: 8}
+    assert cfg.downside.cover_floor == Decimal("1.0")
+    assert cfg.returns.month_window.after_term == 6
     assert cfg.states.served == [State.OK, State.CO]
     assert cfg.leverage_caps[Product.SPLIT_PRINCIPAL][Tranche.T5][ExperienceTier.E3].ltarv <= 1
 
@@ -76,11 +81,14 @@ def test_unknown_key_fails(data: dict[str, Any]) -> None:
         (("credit", "tranche_cutoffs", "T1"), 900),
         (("takeout", "amortization_years"), 0),
         (("takeout", "dscr_floor"), Decimal("0")),
-        (("downside", "foreclosure_costs_usd"), Decimal("-5")),
-        (("flags", "thresholds", "open_tax_liens_aggregate_usd"), Decimal("-1")),
+        (("downside", "foreclosure_cost_usd"), Decimal("-5")),
+        (("downside", "foreclosure_months", "OK"), 61),
+        (("downside", "cover_floor"), Decimal("0")),
+        (("fees", "borrower_closing_pct_of_price"), Decimal("1.5")),
         (("flags", "thresholds", "unsatisfied_judgments_aggregate_usd"), Decimal("-0.01")),
         (("returns", "rate_grid", "step"), Decimal("0")),
-        (("draws", "default_rehab_months", "SPLIT_DRAW"), 61),
+        (("draws", "listing_months"), 61),
+        (("draws", "draw_avg_utilization"), Decimal("1.01")),
     ],
 )
 def test_out_of_range_fails(data: dict[str, Any], path: tuple[str, ...], value: Any) -> None:
@@ -170,56 +178,52 @@ def test_config_is_immutable() -> None:
         cfg.fees.origination_pct = Decimal("0.03")  # type: ignore[misc]
 
 
-# --- cap rates: metro first, state default as fallback (SPEC §8.6, §10) ---------------------
+# --- mechanics decisions (2026-09-10): keys added, renamed, and removed -----------------------
 
 
-def test_cap_rate_uses_metro_then_falls_back_to_state() -> None:
-    cfg = Config.load()
-    assert cfg.downside.cap_rate(State.OK, "Tulsa") == (Decimal("0.08"), "metro", "TULSA")
-    assert cfg.downside.cap_rate(State.OK, "oklahoma city").level == "metro"
-    assert cfg.downside.cap_rate(State.CO, "Boulder") == (Decimal("0.065"), "state", "CO")
-    assert cfg.downside.cap_rate(State.CO, "") == (Decimal("0.065"), "state", "CO")
-    assert cfg.downside.cap_rate(State.OTHER) == (Decimal("0.075"), "state", "OTHER")
-
-
-def test_placeholder_metro_rates_equal_their_state_default() -> None:
-    for tree in Config.load().downside.cap_rates.values():
-        assert all(rate == tree.default for rate in tree.metros.values())
-
-
-def test_normalize_metro() -> None:
-    assert normalize_metro("  colorado-springs ") == "COLORADO_SPRINGS"
-    assert normalize_metro("Oklahoma  City") == "OKLAHOMA_CITY"
-    assert normalize_metro("TULSA") == "TULSA"
-
-
-def test_metro_keys_must_be_upper_snake(data: dict[str, Any]) -> None:
-    data["downside"]["cap_rates"]["OK"]["metros"]["Tulsa Metro"] = Decimal("0.08")
-    with pytest.raises(ConfigError, match="UPPER_SNAKE"):
+def test_every_state_needs_foreclosure_months(data: dict[str, Any]) -> None:
+    del data["downside"]["foreclosure_months"]["OTHER"]
+    with pytest.raises(ConfigError, match="foreclosure_months is missing: OTHER"):
         Config.from_dict(data)
 
 
-def test_state_cap_rate_default_is_required(data: dict[str, Any]) -> None:
-    del data["downside"]["cap_rates"]["CO"]["default"]
-    with pytest.raises(ConfigError, match="default"):
+def test_underwrite_severities_required_and_complete(data: dict[str, Any]) -> None:
+    severities = Config.load().flags.underwrite_severities
+    assert severities[UnderwriteFlag.REFI_SHORTFALL] is Severity.SOFT
+    assert severities[UnderwriteFlag.DOWNSIDE_COVER_BELOW_FLOOR] is Severity.HARD
+    del data["flags"]["underwrite_severities"]["REFI_SHORTFALL"]
+    with pytest.raises(ConfigError, match="underwrite_severities is missing: REFI_SHORTFALL"):
         Config.from_dict(data)
 
 
-def test_every_state_needs_a_cap_rate_tree(data: dict[str, Any]) -> None:
-    del data["downside"]["cap_rates"]["OTHER"]
-    with pytest.raises(ConfigError, match="cap_rates is missing: OTHER"):
+@pytest.mark.parametrize(
+    "section, key, value",
+    [
+        ("returns", "coc_floor", Decimal("0.20")),
+        ("draws", "s_curve_avg_utilization", Decimal("0.50")),
+        ("draws", "default_rehab_months", {"NO_DRAW": 0}),
+        ("downside", "cap_rates", {"OK": {"default": Decimal("0.08"), "metros": {}}}),
+        ("downside", "foreclosure_costs_usd", Decimal("10000")),
+        ("flags", "underwrite_flag_floor", Decimal("1")),
+    ],
+)
+def test_removed_keys_are_rejected(
+    data: dict[str, Any], section: str, key: str, value: Any
+) -> None:
+    data[section][key] = value
+    with pytest.raises(ConfigError, match=key):
         Config.from_dict(data)
 
 
-def test_metro_cap_rate_out_of_range_fails(data: dict[str, Any]) -> None:
-    data["downside"]["cap_rates"]["CO"]["metros"]["DENVER"] = Decimal("1.5")
-    with pytest.raises(ConfigError, match="DENVER"):
+def test_month_window_before_term_is_rejected(data: dict[str, Any]) -> None:
+    data["returns"]["month_window"]["before_term"] = 1
+    with pytest.raises(ConfigError, match="before_term"):
         Config.from_dict(data)
 
 
-def test_flat_cap_rates_are_rejected(data: dict[str, Any]) -> None:
-    data["downside"]["cap_rates"]["OK"] = Decimal("0.08")
-    with pytest.raises(ConfigError, match="cap_rates"):
+def test_open_tax_lien_threshold_is_rejected(data: dict[str, Any]) -> None:
+    data["flags"]["thresholds"]["open_tax_liens_aggregate_usd"] = Decimal("0")
+    with pytest.raises(ConfigError, match="open_tax_liens_aggregate_usd"):
         Config.from_dict(data)
 
 
@@ -229,7 +233,6 @@ def test_flat_cap_rates_are_rejected(data: dict[str, Any]) -> None:
 def test_threshold_keys_are_the_aggregate_ones() -> None:
     thresholds = Config.load().flags.thresholds
     assert thresholds.unsatisfied_judgments_aggregate_usd == Decimal("10000")
-    assert thresholds.open_tax_liens_aggregate_usd == Decimal("0")
     assert thresholds.active_civil_litigation_usd == Decimal("25000")
 
 
@@ -237,10 +240,4 @@ def test_old_per_matter_judgment_key_is_rejected(data: dict[str, Any]) -> None:
     thresholds = data["flags"]["thresholds"]
     thresholds["unsatisfied_judgment_usd"] = thresholds.pop("unsatisfied_judgments_aggregate_usd")
     with pytest.raises(ConfigError, match="unsatisfied_judgment"):
-        Config.from_dict(data)
-
-
-def test_tax_lien_aggregate_threshold_is_required(data: dict[str, Any]) -> None:
-    del data["flags"]["thresholds"]["open_tax_liens_aggregate_usd"]
-    with pytest.raises(ConfigError, match="open_tax_liens_aggregate_usd"):
         Config.from_dict(data)

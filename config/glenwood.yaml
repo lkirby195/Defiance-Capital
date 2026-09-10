@@ -17,85 +17,72 @@ credit:                                   # SPEC §7.1
 screen:                                   # SPEC §7.5
   tolerance_band: 0.05                    # leverage above cap by <= this -> Conditional; beyond -> Decline
 
-flags:                                    # SPEC §7.2
+flags:                                    # SPEC §7.2, §8.6
   severities:
     BANKRUPTCY_IN_LOOKBACK: HARD
     ACTIVE_FORECLOSURE_AS_OWNER: HARD
     UNSATISFIED_JUDGMENT_OVER_THRESHOLD: HARD
-    OPEN_TAX_LIEN: HARD
+    OPEN_TAX_LIEN: HARD                          # any open tax lien, regardless of amount
     ACTIVE_CIVIL_LITIGATION_AS_DEFENDANT: SOFT
     SATISFIED_JUDGMENT_OR_RELEASED_LIEN_IN_LOOKBACK: SOFT
     LANDLORD_TENANT_AS_LANDLORD: INFO
     SUBJECT_PROPERTY_LIEN_OR_LIS_PENDENS: HARD   # applies when senior and unresolved at close
+  underwrite_severities:                  # SPEC §8.6 underwrite flags
+    REFI_SHORTFALL: SOFT                         # DSCR takeout does not cover commitment + payoff fees
+    DOWNSIDE_COVER_BELOW_FLOOR: HARD             # REO recovery / exposure below downside.cover_floor
   lookbacks:
     bankruptcy_years: 4
     satisfied_judgment_years: 3
   thresholds:
     unsatisfied_judgments_aggregate_usd: 10000   # sum of unsatisfied judgments across matters
-    open_tax_liens_aggregate_usd: 0              # sum of open tax liens across matters; 0 = any open lien
     active_civil_litigation_usd: 25000           # per matter (amount in controversy)
 
 experience:                               # SPEC §7.3
   repeat_borrower_min_tier: E2            # repeat GLENWOOD borrower with clean payoff history is treated as at least this tier
 
 fees:                                     # SPEC §3, §8.1
-  origination_pct: 0.02                   # of commitment
+  origination_pct: 0.02                   # of total commitment
   origination_at_close_pct: 0.01          # at_close + at_payoff must equal origination_pct
-  origination_at_payoff_pct: 0.01
-  extension_default_pct: 0.0              # of commitment, charged if payoff month > term
-  selling_cost_pct: 0.06
-  contingency_pct: 0.10                   # applied to rehab budget (SPEC §7.4)
-  est_closing_pct_of_price: 0.02          # est_closing = purchase_price x this (SPEC §7.4)
+  origination_at_payoff_pct: 0.01         # also the "unpaid fees" in payoff_due and REO exposure (SPEC §8.6)
+  extension_default_pct: 0.0              # of commitment, charged if payoff month > term; no rate step-up
+  selling_cost_pct: 0.06                  # on exit_price (borrower) and on REO liquidation (downside)
+  contingency_pct: 0.10                   # applied to rehab budget (SPEC §7.4); lender funds and borrower spends it
+  est_closing_pct_of_price: 0.02          # screen: est_closing = purchase_price x this, in total_cost for LTC (SPEC §7.4)
+  borrower_closing_pct_of_price: 0.03     # underwrite: buy-side closing paid in borrower cash (SPEC §8.6)
 
 returns:                                  # SPEC §8.4, §8.5
-  target_irr: 0.175
-  coc_floor: 0.20
-  rate_grid:                              # 10.0% -> 15.0% in 50 bps = 11 columns
+  target_irr: 0.175                       # lender_yield(term, r*) = target_irr solves r*
+  rate_grid:                              # 10.0% -> 15.0% in 50 bps = 11 columns; r* inserted if not on the grid
     min: 0.10
     max: 0.15
     step: 0.005
-  month_window:                           # rows: term - before_term .. term + after_term
-    before_term: 1
+  month_window:                           # rows: term .. term + after_term (no early payoff, SPEC §8.4)
     after_term: 6
 
 draws:                                    # SPEC §8.3
-  s_curve_avg_utilization: 0.50           # average Tranche A utilization over the rehab period
-  default_rehab_months:
-    NO_DRAW: 0
-    SPLIT_DRAW: 4
-    SPLIT_PRINCIPAL: 6
-    WHOLETAIL: 1
+  draw_avg_utilization: 0.50              # average Tranche A utilization over the rehab period (0.50 = straight-line)
+  listing_months: 3                       # rehab_months = term - listing_months; the last months are listing / sale
 
-takeout:                                  # SPEC §8.6 hold exit (DSCR)
-  ltv: 0.75
+takeout:                                  # SPEC §8.6 DSCR takeout, run on every deal
+  ltv: 0.75                               # of ARV
   rate: 0.075
   amortization_years: 30
   dscr_floor: 1.20
   opex_defaults:                          # used when the deal does not supply the line item
-    vacancy_pct_of_rent: 0.05
+    vacancy_pct_of_rent: 0.05             # of gross annual rent
     management_pct_of_rent: 0.08
     maintenance_pct_of_rent: 0.05
-    taxes_pct_of_value: 0.012
-    insurance_pct_of_value: 0.005
+    taxes_pct_of_value: 0.012             # of ARV, when annual taxes are not supplied
+    insurance_pct_of_value: 0.005         # of ARV, when annual insurance is not supplied
 
-downside:                                 # SPEC §8.6 REO downside
-  cap_rates:                              # by market: metro first, state default as fallback
-    # Metro keys are UPPER_SNAKE (config.normalize_metro); an unknown metro uses the state default.
-    OK:
-      default: 0.08
-      metros:
-        OKLAHOMA_CITY: 0.08
-        TULSA: 0.08
-    CO:
-      default: 0.065
-      metros:
-        DENVER: 0.065
-        COLORADO_SPRINGS: 0.065
-    OTHER:
-      default: 0.075
-      metros: {}
-  reo_haircut: 0.15
-  foreclosure_costs_usd: 10000
+downside:                                 # SPEC §8.6 REO downside; no income / cap-rate valuation
+  reo_haircut: 0.15                       # liquidation = min(as_is + rehab_adj, arv) x (1 - haircut)
+  foreclosure_cost_usd: 10000
+  foreclosure_months:                     # months of holding cost carried through foreclosure, by state
+    OK: 8
+    CO: 4
+    OTHER: 8                              # placeholder: the longer of the served states
+  cover_floor: 1.0                        # flag DOWNSIDE_COVER_BELOW_FLOOR when recovery / exposure is below this
 
 states:                                   # SPEC §10
   served: [OK, CO]

@@ -354,25 +354,18 @@ def test_unsatisfied_judgments_at_or_under_the_aggregate_threshold_raise_nothing
     assert court_flags(records(unsatisfied_judgments_usd=[D("10000.00")]), CONFIG) == []
 
 
-def test_open_tax_liens_aggregate_against_their_own_threshold() -> None:
-    assert CONFIG.flags.thresholds.open_tax_liens_aggregate_usd == 0  # placeholder: any lien
+def test_any_open_tax_lien_is_flagged_regardless_of_amount() -> None:
     [flag] = court_flags(records(open_tax_liens_usd=[D("0.01")]), CONFIG)
     assert flag.code is CourtFlag.OPEN_TAX_LIEN and flag.severity is Severity.HARD
     assert "total $0.01 across 1 matter(s)" in flag.message
-    assert "$0.00 aggregate threshold" in flag.message
-    assert court_flags(records(open_tax_liens_usd=[D("0")]), CONFIG) == []
-    cfg = config_with(
-        flags={
-            "thresholds": {
-                "unsatisfied_judgments_aggregate_usd": D("10000"),
-                "open_tax_liens_aggregate_usd": D("5000"),
-                "active_civil_litigation_usd": D("25000"),
-            }
-        }
-    )
-    assert court_flags(records(open_tax_liens_usd=[D("2000"), D("3000")]), cfg) == []
-    [flag] = court_flags(records(open_tax_liens_usd=[D("2000"), D("3000.01")]), cfg)
-    assert "total $5,000.01 across 2 matter(s), exceeding the $5,000.00" in flag.message
+    assert "regardless of amount" in flag.message
+    # an open lien of unknown / zero amount still flags
+    [flag] = court_flags(records(open_tax_liens_usd=[D("0")]), CONFIG)
+    assert flag.code is CourtFlag.OPEN_TAX_LIEN
+    [flag] = court_flags(records(open_tax_liens_usd=[D("2000"), D("3000.01")]), CONFIG)
+    assert "total $5,000.01 across 2 matter(s)" in flag.message
+    assert court_flags(records(open_tax_liens_usd=[]), CONFIG) == []
+    assert not hasattr(CONFIG.flags.thresholds, "open_tax_liens_aggregate_usd")
 
 
 def test_civil_litigation_is_soft_and_names_the_threshold() -> None:
@@ -632,6 +625,8 @@ def test_engine_modules_do_no_io() -> None:
         re.MULTILINE,
     )
     engine_dir = Path(__file__).resolve().parents[1] / "engine"
-    for source in engine_dir.glob("*.py"):
+    sources = list(engine_dir.rglob("*.py"))
+    assert len(sources) >= 12  # incl. engine/calc/
+    for source in sources:
         text = source.read_text(encoding="utf-8")
         assert forbidden.search(text) is None, f"{source.name}: {forbidden.search(text)}"

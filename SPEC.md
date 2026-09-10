@@ -1,9 +1,9 @@
-# GLENWOOD Underwriting Platform — SPEC v0.1
+# GLENWOOD Underwriting Platform — SPEC v0.2
 
-Status: draft for review. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: v0.2 — §8.3–8.6 settled in the mechanics walkthrough (2026-09-10). Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
 Companion file: `CLAUDE.md` (conventions for Claude Code).
 
-Sections marked **[v1 — revisit in mechanics walkthrough]** contain calculation assumptions that are placeholders until the model mechanics session.
+The engine math in §8 is the simple, term-level model (no monthly ledger); a monthly version is a Phase 7 decision (§12).
 
 ---
 
@@ -64,10 +64,10 @@ Stack: Python 3.12, FastAPI, Postgres, SQLAlchemy + Alembic, Pydantic, pytest. D
 Common to all products:
 
 - Interest paid current, monthly interest-only. No accrual, no deferral.
-- Minimum interest period = full loan term. Early payoff collects remaining scheduled interest as a lump at payoff.
+- Minimum interest period = full loan term. A stated loan term; v1 math models no early payoff, so it is never exercised (§8.4).
 - Origination fee 2.0% of commitment: 1.0% at close, 1.0% at payoff.
 - Extension fee: input, default 0.0% of commitment, charged if payoff month > term.
-- Draw curve for Tranche A: S-curve over the rehab period (see §8.3).
+- Draws on Tranche A: straight-line over the rehab period, fully drawn at rehab completion (see §8.3).
 
 Borrower intent and exit are inferred from term and asset type, then confirmed by the team:
 
@@ -208,7 +208,7 @@ Floor tranche is config (`config/glenwood.yaml`), placeholder T4.
 | Bankruptcy within lookback (placeholder 4 yrs) | PACER | Hard |
 | Active foreclosure as owner | OSCN / CO / Forecasa | Hard |
 | Unsatisfied judgment > threshold | OSCN / CO | Hard |
-| Tax lien, open | Forecasa / county | Hard |
+| Tax lien, open (any amount) | Forecasa / county | Hard |
 | Active civil litigation as defendant, > threshold | OSCN / CO | Soft |
 | Satisfied judgment / released lien within lookback | OSCN / Forecasa | Soft |
 | Landlord-tenant matters (as landlord) | OSCN / CO | Info |
@@ -253,20 +253,21 @@ Every verdict carries a list of `reasons[]` in plain language for the team and a
 
 Runs on Conditional/Go deals when a team member advances them. Paid pulls happen here, credit only after `credit_authorization_signed = true` on the deal.
 
-**[v1 — revisit in mechanics walkthrough]** — the whole of §8.3–8.6 is the simple, term-level model. No monthly ledger. Structured so `engine/calc/` can be swapped for a monthly version without changing inputs or outputs.
+§8.3–8.6 are the simple, term-level model settled in the mechanics walkthrough (2026-09-10). No monthly ledger. Structured so `engine/calc/` can be swapped for a monthly version without changing inputs or outputs.
 
 ### 8.1 Inputs
 
 From intake + enrichment, plus:
 
-- `as_is_value`, `arv` (RicherValues or team override)
-- `credit_score` (Credco, replaces self-reported tranche)
-- `market_rent` (RentCast/PropStream/team), used for DSCR and downside
-- `monthly_holding_cost` (taxes, insurance, utilities; team input or estimate)
-- `rehab_months` (team input; default from config by product)
-- `extension_fee_pct` (default 0)
+- `as_is_value`, `arv` (RicherValues or team override); both required to underwrite
+- `credit_score` (Credco, replaces self-reported tranche); verified deal count (deed history)
+- `market_rent` (RentCast/PropStream/team), monthly, used for the DSCR takeout
+- `annual_taxes`, `annual_insurance` (team actuals; config defaults as % of ARV when absent) and `annual_utilities` (team input) → holding costs and the REO carry
 - `term_months` (from bucket; 12+ → team sets)
-- Config: `orig_fee_pct = 0.02` (split 50/50), `selling_cost_pct = 0.06`, `contingency_pct = 0.10`, `target_irr = 0.175`, `coc_floor = 0.20`, rate grid, DSCR assumptions
+- `rehab_months` = `term_months − listing_months` (config, placeholder 3; the last months of the term are listing and sale; floored at 0). Not a team input.
+- `extension_fee_pct` (default from config, 0)
+- `exit_price` (team-set retail price for wholetail; default `arv`)
+- Config: `origination_pct = 0.02` (split 50/50), `selling_cost_pct = 0.06`, `contingency_pct = 0.10`, `borrower_closing_pct_of_price = 0.03`, `target_irr = 0.175`, rate grid, month window, DSCR and REO assumptions
 
 ### 8.2 Sizing
 
@@ -278,104 +279,114 @@ Same metrics as §7.4 with verified values. Product-specific:
 
 Output: pass/fail on each cap, with the cap and the actual.
 
-### 8.3 Average outstanding balance **[v1]**
+### 8.3 Average outstanding balance
 
 Needed because Tranche A accrues on drawn balance and the simple model has no monthly ledger.
 
-- `NO_DRAW`, `WHOLETAIL`, `SPLIT_DRAW`: `avg_outstanding = commitment` for all months
-- `SPLIT_PRINCIPAL`: Principal Note full from close. Tranche A follows an S-curve over `rehab_months`; the S-curve's average utilization over the rehab period is a config constant (placeholder 0.50 for a symmetric logistic curve), then 100% from rehab completion to payoff.
+- `rehab_months = max(0, term − listing_months)`; the last `listing_months` (config, placeholder 3) of the term are listing and sale.
+- `NO_DRAW`, `WHOLETAIL`, `SPLIT_DRAW`: `avg_outstanding(m) = commitment` for all months.
+- `SPLIT_PRINCIPAL`: Principal Note full from close. Tranche A is drawn straight-line over `rehab_months`, so its average utilization over the rehab period is `draw_avg_utilization` (config, 0.50), then it is fully drawn from rehab completion to payoff.
 
 ```
-tranche_a_avg(m) = tranche_a × [ (rehab_months × s_avg) + max(0, m − rehab_months) ] / m
+tranche_a_avg(m)   = tranche_a × [ rehab_months × u + (m − rehab_months) ] / m      # requires m ≥ rehab_months
 avg_outstanding(m) = principal_note + tranche_a_avg(m)
 ```
 
-where `m` = payoff month.
+where `m` = payoff month and `u` = `draw_avg_utilization`. Grid rows never run below `term` (§8.5), so `m ≥ rehab_months` always holds; the engine rejects a smaller `m`.
 
-### 8.4 Lender return **[v1]**
+### 8.4 Lender return
 
-Simple annualized yield on average funded capital, unlevered. Called "IRR" in outputs for continuity with GLENWOOD's language; the monthly XIRR replaces it in the ledger version.
+Annualized yield on the **full commitment**, unlevered. Called "IRR" in outputs for continuity with GLENWOOD's language; a monthly XIRR replaces it in the ledger version. No early payoff is modelled: the minimum-interest term (§3) stays in the loan documents but is not exercised in v1 math.
 
-For payoff at month `m`, rate `r`:
+Interest received is what the borrower pays. For payoff at month `m`, rate `r`:
 
 ```
-interest_actual(m)   = avg_outstanding(m) × r × m / 12
-interest_min         = avg_outstanding(term) × r × term / 12
-interest_collected   = max(interest_actual(m), interest_min)        # min interest = full term
-fees                 = commitment × orig_fee_pct
-                     + commitment × extension_fee_pct × [m > term]
-lender_yield(m, r)   = (interest_collected + fees) / avg_outstanding(m) × 12 / m
+interest(m, r)     = avg_outstanding(m) × r × m / 12
+                   = commitment × r × m / 12                                             # NO_DRAW, SPLIT_DRAW, WHOLETAIL
+                   = principal_note × r × m / 12
+                     + tranche_a × r × (rehab_months × u + (m − rehab_months)) / 12      # SPLIT_PRINCIPAL
+fees(m)            = commitment × origination_pct                                        # 1.0% at close + 1.0% at payoff, both on total commitment
+                   + commitment × extension_fee_pct × [m > term]                         # default 0%; no rate step-up in extension
+lender_yield(m, r) = (interest(m, r) + fees(m)) / commitment × 12 / m
 ```
 
-**Rate solve:** find `r*` such that `lender_yield(term, r*) = target_irr` (0.175). Linear in `r`, closed form.
+**Rate solve:** find `r*` such that `lender_yield(term, r*) = target_irr` (0.175). Linear in `r`, closed form:
 
-### 8.5 Sensitivity grids **[v1]**
+```
+r* = ( target_irr × commitment × term / 12 − fees(term) ) / ( avg_outstanding(term) × term / 12 )
+```
 
-Two grids, same axes:
+### 8.5 Sensitivity grid
 
-- Columns: rate 10.0% → 15.0% in 50 bps (11 columns), plus `r*` inserted if not on the grid
-- Rows: month `term − 1` → `term + 6`
+One grid (there is no borrower grid; borrower economics are reported at `(term, r*)` only, §8.6):
 
-Grid A: `lender_yield(m, r)`; cells ≥ target flagged.
-Grid B: `borrower_coc(m, r)` (§8.6); cells ≥ floor flagged.
+- Columns: rate 10.0% → 15.0% in 50 bps (11 columns), plus `r*` inserted in rate order if not already on the grid
+- Rows: month `term` → `term + 6`
+- Cell: `lender_yield(m, r)`; cells ≥ `target_irr` flagged
 
 Stored as JSONB on `underwrites`; rendered in the credit memo.
 
-### 8.6 Borrower economics **[v1]**
+### 8.6 Borrower economics, takeout, downside
 
-Resale exit (flip, wholetail):
-
-```
-exit_net      = exit_price × (1 − selling_cost_pct)     # exit_price = arv (flip) or team-set retail price (wholetail)
-interest_paid = interest_collected(m, r)
-fees_paid     = fees(m)
-carry         = monthly_holding_cost × m
-total_cost    = purchase_price + rehab_adj + est_closing
-profit        = exit_net − total_cost − interest_paid − fees_paid − carry
-cash_in       = total_cost + interest_paid + fees_paid + carry − commitment    # simple: ignores draw reimbursement timing
-borrower_coc  = profit / cash_in
-```
-
-Flag if `borrower_coc < coc_floor` at `(term, r*)`.
-
-Hold exit (DSCR takeout), when intent is hold or term ≥ 12:
+**Borrower economics** — information only (no floor, no flag), reported at `(term, r*)`:
 
 ```
-gross_rent   = market_rent × 12
-noi          = gross_rent × (1 − vacancy) − taxes − insurance − mgmt − maintenance   # defaults in config
-takeout_ltv  = config (placeholder 0.75)
-takeout_rate = config (placeholder 7.5%), 30-yr amort
-dscr_floor   = config (placeholder 1.20)
-max_takeout  = min( arv × takeout_ltv,  loan amount where DSCR = dscr_floor at takeout_rate )
-refi_covers  = max_takeout ≥ commitment + payoff fees
+rehab_adj           = rehab_budget × (1 + contingency_pct)       # lender funds and borrower spends the full contingency
+buy_closing         = purchase_price × borrower_closing_pct      # 3%, borrower cash
+total_project_cost  = purchase_price + rehab_adj + buy_closing
+interest_paid       = interest(m, r)
+fees_paid           = fees(m)
+holding_costs       = (annual_taxes + annual_insurance + annual_utilities) / 12 × m
+exit_price          = arv (flip), or team-set retail price (wholetail)
+exit_net            = exit_price × (1 − selling_cost_pct)
+profit              = exit_net − total_project_cost − interest_paid − fees_paid − holding_costs
+cash_in             = total_project_cost + interest_paid + fees_paid + holding_costs − commitment    # ignores draw reimbursement timing
+borrower_coc        = profit / cash_in                            # not reported when cash_in ≤ 0
 ```
 
-Flag if `refi_covers = false`; report the shortfall.
-
-REO downside (all deals):
+**DSCR takeout** — runs on every deal regardless of stated exit:
 
 ```
-income_value    = noi / cap_rate                          # cap_rate: config by market, placeholder
-liquidation     = min(as_is_value, income_value) × (1 − reo_haircut)   # placeholder 0.15
-recovery        = liquidation × (1 − selling_cost_pct) − foreclosure_costs   # placeholder
-exposure        = commitment + unpaid fees
-downside_cover  = recovery / exposure
+gross_rent    = market_rent × 12
+opex          = gross_rent × (vacancy + management + maintenance) + annual_taxes + annual_insurance
+noi           = gross_rent − opex
+takeout_ltv   = 0.75; takeout_rate = 7.5%, 30-yr amortization; dscr_floor = 1.20        # config
+dscr_loan     = loan whose annual debt service at takeout_rate equals noi / dscr_floor
+max_takeout   = min( arv × takeout_ltv, dscr_loan )
+payoff_due    = commitment + payoff fees                                                  # the origination portion due at payoff
+refi_covers   = max_takeout ≥ payoff_due
+shortfall     = max(0, payoff_due − max_takeout)
 ```
 
-Flag if `downside_cover < 1.0`.
+Report `max_takeout`, `refi_covers`, `shortfall`, and the DSCR at `payoff_due`. Flag `REFI_SHORTFALL` (severity config) when `refi_covers` is false. Taxes and insurance are team actuals when supplied, else config defaults as % of ARV.
+
+**REO downside** — every deal; no income or cap-rate valuation:
+
+```
+recovery_basis   = min( as_is_value + rehab_adj, arv )
+liquidation      = recovery_basis × (1 − reo_haircut)                                    # 0.15
+monthly_holding  = (annual_taxes + annual_insurance + annual_utilities) / 12
+recovery         = liquidation × (1 − selling_cost_pct) − foreclosure_cost_usd − foreclosure_months[state] × monthly_holding
+exposure         = commitment + unpaid fees                                              # the origination portion due at payoff
+downside_cover   = recovery / exposure
+```
+
+Flag `DOWNSIDE_COVER_BELOW_FLOOR` (severity config) when `downside_cover < cover_floor` (1.0). `foreclosure_months` is config by state (placeholders OK 8, CO 4).
 
 ### 8.7 Underwrite result
 
 ```
 UnderwriteResult
-  sizing: {LTV, LTC, LTARV, caps, pass/fail each}
-  solved_rate
-  grid_lender, grid_borrower
-  borrower_coc_at_solve, lender_yield_at_solve
-  exit: {type, dscr, max_takeout, refi_covers, shortfall}
-  downside: {liquidation, recovery, exposure, cover}
+  engine_version, config_hash
+  term_months, rehab_months
+  sizing: {LTV, LTC, LTARV, caps, pass/fail each}              # §8.2 with verified values
+  solved_rate                                                  # r*
+  lender_yield_at_solve                                        # lender_yield(term, r*) = target_irr
+  grid_lender                                                  # §8.5
+  borrower_at_solve: {profit, cash_in, coc, ...}               # §8.6, information only
+  exit: {type, noi, dscr_at_payoff, max_takeout, payoff_due, refi_covers, shortfall}
+  downside: {recovery_basis, liquidation, recovery, exposure, cover}
   flags: [ {code, severity, message} ]
-  engine_version
 ```
 
 ---
@@ -386,7 +397,7 @@ UnderwriteResult
 One page in the review queue: intake facts, enrichment hits, score components, verdict, reasons, suggested reply, missing fields.
 
 ### 9.2 Credit memo
-Generated from `UnderwriteResult` into GLENWOOD's template (to be supplied; docx). Sections: borrower, property, deal structure, sizing vs caps, pricing (solved rate + grids), exit, downside, flags with pass/fail, recommendation. Every flag shows the threshold it was tested against.
+Generated from `UnderwriteResult` into GLENWOOD's template (to be supplied; docx). Sections: borrower, property, deal structure, sizing vs caps, pricing (solved rate + grid), exit, downside, flags with pass/fail, recommendation. Every flag shows the threshold it was tested against.
 
 ### 9.3 LOI
 docx merge from GLENWOOD's LOI template (to be supplied). Fields: borrower/entity, property, product, commitment (and split for `SPLIT_PRINCIPAL`), rate, term, origination split, extension fee, min interest language, conditions from flags. Generated only on team action.
@@ -403,10 +414,12 @@ On "LOI accepted": create borrower (if not matched), property, and loan in MA vi
 - credit floor tranche; tranche cutoffs
 - leverage caps: product × tranche × experience tier (placeholder grid)
 - tolerance band, flag severities, lookbacks, thresholds
-- fees: origination, split, extension default, selling cost, contingency, est. closing
-- target IRR, CoC floor, rate grid, month window
-- S-curve average utilization, default rehab months by product
-- DSCR takeout assumptions, opex defaults, cap rates by market, REO haircut, foreclosure costs
+- fees: origination, split, extension default, selling cost, contingency, screen est. closing, borrower buy-side closing
+- target IRR, rate grid, month window (rows after term)
+- draw average utilization, listing months (rehab_months = term − listing months)
+- DSCR takeout assumptions (LTV, rate, amortization, DSCR floor), opex defaults
+- REO haircut, foreclosure cost, foreclosure months by state, downside cover floor
+- underwrite flag severities (refi shortfall, downside cover)
 - states served and court-record adapter per state
 
 Config is versioned; each `screens`/`underwrites` row records the config hash used.
@@ -447,4 +460,5 @@ Config is versioned; each `screens`/`underwrites` row records the config hash us
 - GLENWOOD leverage/pricing caps (placeholder grid to be filled)
 - LOI and credit memo templates
 - Historical deals for fixtures
-- Mechanics walkthrough: S-curve constant, cash_in definition, yield vs true IRR, minimum-interest treatment on Tranche A
+- Borrower buy-side closing (3%, §8.6) vs. the screen's est. closing (2%, §7.4): reconcile or keep both
+- Monthly ledger (true XIRR, draw timing in cash_in) if the Phase 7 back-test warrants it
