@@ -1,6 +1,6 @@
 {
   "name": "decline_hard_flag_split_draw",
-  "description": "SPLIT_DRAW flip in Denver, CO; strong borrower and leverage, but an open tax lien (HARD; the placeholder aggregate threshold is $0) and two unsatisfied judgments that only exceed the $10,000 aggregate threshold together (HARD). Also a civil suit over the per-matter threshold (SOFT), a landlord-tenant matter (INFO), and a bankruptcy outside the 4-year lookback (no flag). Decline.",
+  "description": "SPLIT_DRAW flip in Denver, CO; strong borrower and leverage, but an open tax lien (HARD; any open tax lien is flagged regardless of amount) and two unsatisfied judgments that only exceed the $10,000 aggregate threshold together (HARD). Also a civil suit over the per-matter threshold (SOFT), a landlord-tenant matter (INFO), and a bankruptcy outside the 4-year lookback (no flag). Decline.",
   "inputs": {
     "deal": {
       "product": "SPLIT_DRAW",
@@ -70,7 +70,7 @@
       "LTARV": "PASS"
     },
     "reasons_contain": [
-      "Hard: Open tax liens total $3,200.00 across 1 matter(s), exceeding the $0.00 aggregate threshold",
+      "Hard: Open tax liens total $3,200.00 across 1 matter(s) (any open tax lien is flagged, regardless of amount).",
       "Unsatisfied judgments total $11,000.00 across 2 matter(s), exceeding the $10,000.00 aggregate threshold",
       "$30,000.00 exceeds the $25,000.00 threshold"
     ],

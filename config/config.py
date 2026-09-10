@@ -14,12 +14,20 @@ import hashlib
 import json
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Annotated, Any, Literal, NamedTuple
+from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from schema.models import CourtFlag, ExperienceTier, Product, Severity, State, Tranche
+from schema.models import (
+    CourtFlag,
+    ExperienceTier,
+    Product,
+    Severity,
+    State,
+    Tranche,
+    UnderwriteFlag,
+)
 
 DEFAULT_PATH = Path(__file__).with_name("glenwood.yaml")
 
@@ -82,17 +90,20 @@ class Lookbacks(_Section):
 
 
 class Thresholds(_Section):
-    """Amount thresholds; judgments and tax liens aggregate across matters.  # SPEC §7.2"""
+    """Amount thresholds; judgments aggregate across matters.  # SPEC §7.2
+
+    Open tax liens have no threshold: any open lien is flagged regardless of amount.
+    """
 
     unsatisfied_judgments_aggregate_usd: Money  # sum of unsatisfied judgments
-    open_tax_liens_aggregate_usd: Money  # sum of open tax liens; 0 = any open lien
     active_civil_litigation_usd: Money  # per matter
 
 
 class FlagsConfig(_Section):
-    """Court and filing flag severities, lookbacks, thresholds.  # SPEC §7.2"""
+    """Court, filing, and underwrite flag severities; lookbacks; thresholds.  # SPEC §7.2, §8.6"""
 
     severities: dict[CourtFlag, Severity]
+    underwrite_severities: dict[UnderwriteFlag, Severity]
     lookbacks: Lookbacks
     thresholds: Thresholds
 
@@ -101,6 +112,9 @@ class FlagsConfig(_Section):
         missing = [f.value for f in CourtFlag if f not in self.severities]
         if missing:
             raise ValueError(f"flags.severities is missing: {', '.join(missing)}")
+        missing = [f.value for f in UnderwriteFlag if f not in self.underwrite_severities]
+        if missing:
+            raise ValueError(f"flags.underwrite_severities is missing: {', '.join(missing)}")
         return self
 
 
@@ -111,7 +125,7 @@ class ExperienceConfig(_Section):
 
 
 class FeesConfig(_Section):
-    """Fee schedule.  # SPEC §3, §8.1"""
+    """Fee schedule.  # SPEC §3, §8.1, §8.6"""
 
     origination_pct: Pct
     origination_at_close_pct: Pct
@@ -119,7 +133,8 @@ class FeesConfig(_Section):
     extension_default_pct: Pct
     selling_cost_pct: Pct
     contingency_pct: Pct
-    est_closing_pct_of_price: Pct
+    est_closing_pct_of_price: Pct  # screen estimate inside total_cost for LTC (SPEC §7.4)
+    borrower_closing_pct_of_price: Pct  # buy-side closing paid in borrower cash (SPEC §8.6)
 
     @model_validator(mode="after")
     def _origination_split_sums(self) -> FeesConfig:
@@ -131,7 +146,7 @@ class FeesConfig(_Section):
 
 
 class RateGrid(_Section):
-    """Rate axis of the sensitivity grids.  # SPEC §8.5"""
+    """Rate axis of the sensitivity grid.  # SPEC §8.5"""
 
     min: Pct
     max: Pct
@@ -147,17 +162,15 @@ class RateGrid(_Section):
 
 
 class MonthWindow(_Section):
-    """Month axis of the sensitivity grids.  # SPEC §8.5"""
+    """Month axis of the sensitivity grid: rows term .. term + after_term.  # SPEC §8.5"""
 
-    before_term: Months
     after_term: Months
 
 
 class ReturnsConfig(_Section):
-    """Lender and borrower return targets.  # SPEC §8.4, §8.5"""
+    """Lender return target and grid axes.  # SPEC §8.4, §8.5"""
 
     target_irr: Pct
-    coc_floor: Pct
     rate_grid: RateGrid
     month_window: MonthWindow
 
@@ -165,18 +178,16 @@ class ReturnsConfig(_Section):
 class DrawsConfig(_Section):
     """Draw-curve constants.  # SPEC §8.3"""
 
-    s_curve_avg_utilization: Pct
-    default_rehab_months: dict[Product, Months]
-
-    @model_validator(mode="after")
-    def _every_product_has_default(self) -> DrawsConfig:
-        missing = [p.value for p in Product if p not in self.default_rehab_months]
-        if missing:
-            raise ValueError(f"draws.default_rehab_months is missing: {', '.join(missing)}")
-        return self
+    draw_avg_utilization: Pct  # average Tranche A utilization over the rehab period
+    listing_months: Months  # rehab_months = term - listing_months
 
 
 class OpexDefaults(_Section):
+    """Opex lines used when the deal does not supply them.  # SPEC §8.6
+
+    Rent percentages apply to gross annual rent; value percentages apply to the ARV.
+    """
+
     vacancy_pct_of_rent: Pct
     management_pct_of_rent: Pct
     maintenance_pct_of_rent: Pct
@@ -185,7 +196,7 @@ class OpexDefaults(_Section):
 
 
 class TakeoutConfig(_Section):
-    """DSCR takeout assumptions for the hold exit.  # SPEC §8.6"""
+    """DSCR takeout assumptions.  # SPEC §8.6"""
 
     ltv: Pct
     rate: Pct
@@ -194,58 +205,20 @@ class TakeoutConfig(_Section):
     opex_defaults: OpexDefaults
 
 
-CapRate = Annotated[Decimal, Field(gt=0, le=1)]
-
-
-def normalize_metro(name: str) -> str:
-    """Metro key form: trimmed, upper-cased, internal whitespace and hyphens as underscores."""
-    return "_".join(name.strip().upper().replace("-", " ").split())
-
-
-class CapRateChoice(NamedTuple):
-    """Result of a cap-rate lookup: the rate and the level it came from."""
-
-    rate: Decimal
-    level: Literal["metro", "state"]
-    key: str  # the metro key matched, or the state code
-
-
-class CapRateTree(_Section):
-    """Cap rates for one state: per-metro values with the state-level ``default`` as fallback."""
-
-    default: CapRate
-    metros: dict[str, CapRate] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def _metro_keys_are_normalized(self) -> CapRateTree:
-        bad = [k for k in self.metros if not k or normalize_metro(k) != k]
-        if bad:
-            raise ValueError(f"metro keys must be UPPER_SNAKE (got {', '.join(bad)})")
-        return self
-
-
 class DownsideConfig(_Section):
     """REO downside assumptions.  # SPEC §8.6"""
 
-    cap_rates: dict[State, CapRateTree]  # keyed by metro, falling back to the state default
     reo_haircut: Pct
-    foreclosure_costs_usd: Money
+    foreclosure_cost_usd: Money
+    foreclosure_months: dict[State, Months]
+    cover_floor: Annotated[Decimal, Field(gt=0, le=5)]
 
     @model_validator(mode="after")
-    def _every_state_has_cap_rate(self) -> DownsideConfig:
-        missing = [s.value for s in State if s not in self.cap_rates]
+    def _every_state_has_foreclosure_months(self) -> DownsideConfig:
+        missing = [s.value for s in State if s not in self.foreclosure_months]
         if missing:
-            raise ValueError(f"downside.cap_rates is missing: {', '.join(missing)}")
+            raise ValueError(f"downside.foreclosure_months is missing: {', '.join(missing)}")
         return self
-
-    def cap_rate(self, state: State, metro: str | None = None) -> CapRateChoice:
-        """Metro cap rate when ``metro`` is configured for ``state``, else the state default."""
-        tree = self.cap_rates[state]
-        if metro:
-            key = normalize_metro(metro)
-            if key in tree.metros:
-                return CapRateChoice(tree.metros[key], "metro", key)
-        return CapRateChoice(tree.default, "state", state.value)
 
 
 class StatesConfig(_Section):

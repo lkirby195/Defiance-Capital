@@ -210,8 +210,8 @@ class DealInfo(BaseModel):
     # is 0, else SPLIT_DRAW). WHOLETAIL and SPLIT_PRINCIPAL are never inferred.  # SPEC §3
     product: Product | None = None
     product_source: ProductSource | None = None
-    # Team-supplied actuals (annual USD) that override the %-of-value opex defaults in
-    # config when present.  # SPEC §8.1, §8.6. Schema only in Phase 2a; underwrite reads them later.
+    # Team-supplied actuals (annual USD) that override the %-of-ARV opex defaults in config
+    # when present; the underwrite reads them via UnderwriteInputs.  # SPEC §8.1, §8.6
     actual_annual_taxes_usd: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
@@ -269,6 +269,13 @@ class ScreenFlag(StrEnum):
     COMMITMENT_BELOW_REQUEST = "COMMITMENT_BELOW_REQUEST"  # INFO, SPLIT_PRINCIPAL override, §8.2
 
 
+class UnderwriteFlag(StrEnum):
+    """Stable codes for flags the underwrite raises; severity is config.  # SPEC §8.6"""
+
+    REFI_SHORTFALL = "REFI_SHORTFALL"  # DSCR takeout does not cover commitment + payoff fees
+    DOWNSIDE_COVER_BELOW_FLOOR = "DOWNSIDE_COVER_BELOW_FLOOR"  # REO recovery / exposure
+
+
 class RepeatBorrowerStatus(StrEnum):
     """Mortgage Automator borrower-match outcome.  # SPEC §6, §7.3"""
 
@@ -313,7 +320,7 @@ class Flag(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    code: CourtFlag | ScreenFlag
+    code: CourtFlag | ScreenFlag | UnderwriteFlag
     severity: Severity
     message: str
 
@@ -491,3 +498,200 @@ class ScreenResult(BaseModel):
     suggested_reply: str
     components: ScreenComponents
     sizing: SizingResult
+
+
+# --- Underwrite inputs and outputs (SPEC §8.1, §8.3-8.7) ---------------------------------------
+
+
+class UnderwriteInputs(BaseModel):
+    """Everything the underwrite needs; the caller assembles it from deal + enrichment.  # SPEC §8.1
+
+    ``deal`` carries the verified ``as_is_value`` and ``arv`` (both required here, unlike the
+    screen). ``borrower`` carries the verified credit score and deal count when known; the
+    underwrite derives the caps cell from them exactly as the screen does. Annual taxes and
+    insurance are team actuals; ``None`` falls back to the config defaults as a percentage of
+    the ARV. ``exit_price`` defaults to the ARV (flip); the team sets a retail price for
+    wholetail. ``extension_fee_pct`` defaults to the config default.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    deal: SizingInputs
+    state: State
+    borrower: BorrowerInputs
+    term_months: int = Field(ge=1, le=60)
+    market_rent_monthly: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    annual_taxes_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    annual_insurance_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    annual_utilities_usd: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    extension_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
+    exit_price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    stated_exit: StatedExit = StatedExit.UNKNOWN
+
+    @model_validator(mode="after")
+    def _valuation_is_complete(self) -> UnderwriteInputs:
+        if self.deal.as_is_value is None or self.deal.arv is None:
+            raise ValueError("underwrite requires both as_is_value and arv on the deal")
+        return self
+
+    @property
+    def as_is_value(self) -> Decimal:
+        """The verified as-is value (validated present)."""
+        if self.deal.as_is_value is None:  # pragma: no cover - guarded by the validator
+            raise ValueError("as_is_value is required")
+        return self.deal.as_is_value
+
+    @property
+    def arv(self) -> Decimal:
+        """The verified ARV (validated present)."""
+        if self.deal.arv is None:  # pragma: no cover - guarded by the validator
+            raise ValueError("arv is required")
+        return self.deal.arv
+
+
+class OpexSource(StrEnum):
+    """Where an annual taxes / insurance figure came from.  # SPEC §8.6"""
+
+    ACTUAL = "ACTUAL"  # team-supplied
+    DEFAULT = "DEFAULT"  # config percentage of the ARV
+
+
+class FeeSchedule(BaseModel):
+    """Lender fees for a payoff at one month, all on the total commitment.  # SPEC §3, §8.4"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    origination_at_close: Decimal
+    origination_at_payoff: Decimal
+    extension: Decimal  # zero unless the payoff month is past the term
+    total: Decimal
+
+
+class LenderReturn(BaseModel):
+    """Lender economics for a payoff at ``month`` and note rate ``rate``.  # SPEC §8.4"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    month: int
+    rate: Decimal
+    avg_outstanding: Decimal
+    interest: Decimal
+    fees: FeeSchedule
+    annualized_yield: Decimal  # (interest + fees) / commitment x 12 / month
+
+
+class GridCell(BaseModel):
+    """One cell of the lender yield grid.  # SPEC §8.5"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    month: int
+    rate: Decimal
+    annualized_yield: Decimal
+    meets_target: bool  # annualized_yield >= target_irr
+    is_solved_rate: bool  # this column is r*
+
+
+class GridRow(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    month: int
+    cells: list[GridCell]
+
+
+class YieldGrid(BaseModel):
+    """lender_yield(m, r) over the rate grid (plus r*) and the month window.  # SPEC §8.5"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    target: Decimal
+    solved_rate: Decimal
+    solved_rate_inserted: bool  # False when r* already sat on the configured grid
+    rates: list[Decimal]  # columns, ascending
+    months: list[int]  # rows, term .. term + after_term
+    rows: list[GridRow]
+
+
+class BorrowerEconomics(BaseModel):
+    """Borrower profit and cash-on-cash at one (month, rate); information only.  # SPEC §8.6"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    month: int
+    rate: Decimal
+    purchase_price: Decimal
+    rehab_adj: Decimal
+    buy_closing: Decimal
+    total_project_cost: Decimal
+    interest_paid: Decimal
+    fees_paid: Decimal
+    holding_costs: Decimal
+    exit_price: Decimal
+    exit_net: Decimal
+    profit: Decimal
+    cash_in: Decimal
+    cash_on_cash: Decimal | None  # None when cash_in <= 0
+
+
+class ExitResult(BaseModel):
+    """DSCR takeout, run on every deal.  # SPEC §8.6"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: StatedExit  # as stated / confirmed by the team; informational
+    gross_rent_annual: Decimal
+    annual_taxes: Decimal
+    annual_taxes_source: OpexSource
+    annual_insurance: Decimal
+    annual_insurance_source: OpexSource
+    opex_annual: Decimal
+    noi_annual: Decimal
+    ltv_takeout: Decimal  # arv x takeout ltv
+    dscr_takeout: Decimal  # loan whose debt service = noi / dscr_floor (0 when noi <= 0)
+    max_takeout: Decimal  # min of the two
+    payoff_due: Decimal  # commitment + payoff fees
+    dscr_at_payoff: Decimal | None  # noi / debt service on payoff_due
+    refi_covers: bool
+    shortfall: Decimal  # max(0, payoff_due - max_takeout)
+
+
+class DownsideResult(BaseModel):
+    """REO downside, run on every deal.  # SPEC §8.6"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    recovery_basis: Decimal  # min(as_is_value + rehab_adj, arv)
+    liquidation: Decimal  # recovery_basis x (1 - reo_haircut)
+    selling_costs: Decimal
+    foreclosure_cost: Decimal
+    foreclosure_months: int
+    monthly_holding_cost: Decimal
+    holding_through_foreclosure: Decimal
+    recovery: Decimal
+    unpaid_fees: Decimal
+    exposure: Decimal  # commitment + unpaid fees
+    cover: Decimal  # recovery / exposure
+    cover_floor: Decimal
+    passed: bool  # cover >= cover_floor
+
+
+class UnderwriteResult(BaseModel):
+    """Full underwrite output; stored on ``underwrites`` with the grid as JSONB.  # SPEC §8.7"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    engine_version: str
+    config_hash: str
+    term_months: int
+    rehab_months: int
+    sizing: SizingResult
+    solved_rate: Decimal
+    lender_yield_at_solve: Decimal
+    lender_at_solve: LenderReturn
+    grid_lender: YieldGrid
+    borrower_at_solve: BorrowerEconomics
+    exit: ExitResult
+    downside: DownsideResult
+    flags: list[Flag]

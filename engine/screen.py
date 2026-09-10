@@ -336,9 +336,10 @@ def _court_flag(code: CourtFlag, message: str, config: Config) -> Flag:
 def court_flags(records: CourtRecordInputs | None, config: Config) -> list[Flag]:
     """Evaluate the SPEC §7.2 table with severities from config.
 
-    Unsatisfied judgments and open tax liens are summed across matters and tested against
-    the aggregate thresholds (one flag each). Bankruptcies, satisfied judgments, active
-    litigation and subject-property liens produce one flag per matching matter. Lookbacks
+    Unsatisfied judgments are summed across matters and tested against the aggregate
+    threshold (one flag). Any open tax lien is flagged regardless of amount (one flag naming
+    the total). Bankruptcies, satisfied judgments, active litigation and subject-property
+    liens produce one flag per matching matter. Lookbacks
     run against ``records.as_of``. ``None`` records mean no source was checked, which is
     reported as an INFO flag rather than treated as clean.
     """
@@ -385,14 +386,14 @@ def court_flags(records: CourtRecordInputs | None, config: Config) -> list[Flag]
                 config,
             )
         )
-    liens_total = sum(records.open_tax_liens_usd, Decimal(0))
-    if liens_total > thresholds.open_tax_liens_aggregate_usd:
+    if records.open_tax_liens_usd:
+        liens_total = sum(records.open_tax_liens_usd, Decimal(0))
         flags.append(
             _court_flag(
                 CourtFlag.OPEN_TAX_LIEN,
                 f"Open tax liens total {money(liens_total)} across "
-                f"{len(records.open_tax_liens_usd)} matter(s), exceeding the "
-                f"{money(thresholds.open_tax_liens_aggregate_usd)} aggregate threshold.",
+                f"{len(records.open_tax_liens_usd)} matter(s) (any open tax lien is flagged, "
+                "regardless of amount).",
                 config,
             )
         )
@@ -568,8 +569,10 @@ def suggested_reply(verdict: Verdict, flags: list[Flag], config: Config) -> str:
             continue
         if isinstance(flag.code, CourtFlag):
             ask = _ASK_COURT
-        else:
+        elif isinstance(flag.code, ScreenFlag):
             ask = _ASK_BY_FLAG.get(flag.code, _ASK_DEFAULT).format(served=served)
+        else:
+            ask = _ASK_DEFAULT
         if ask not in asks:
             asks.append(ask)
     return (
