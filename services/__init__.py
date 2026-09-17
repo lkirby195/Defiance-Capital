@@ -6,7 +6,20 @@ loads a deal, assembles typed inputs, runs the math, and records the result live
 
 from __future__ import annotations
 
-from services.errors import DealNotFound, DealNotReady, ServiceError
+from services.enrichment import NO_ADAPTER_VALUES, AdapterValues, adapter_values
+from services.errors import (
+    DealNotFound,
+    DealNotReady,
+    DealNotUnderwritable,
+    ServiceError,
+)
+from services.lifecycle import (
+    advance_after_screen,
+    advance_for_underwrite,
+    check_underwritable,
+    status_after_screen,
+    status_after_underwrite,
+)
 from services.persistence import (
     latest_screen,
     latest_underwrite,
@@ -19,10 +32,17 @@ from services.requests import UnderwriteRequest
 from services.runner import load_deal, run_screen, run_underwrite
 
 __all__ = [
+    "NO_ADAPTER_VALUES",
+    "AdapterValues",
     "DealNotFound",
     "DealNotReady",
+    "DealNotUnderwritable",
     "ServiceError",
     "UnderwriteRequest",
+    "adapter_values",
+    "advance_after_screen",
+    "advance_for_underwrite",
+    "check_underwritable",
     "latest_screen",
     "latest_underwrite",
     "load_deal",
@@ -31,5 +51,7 @@ __all__ = [
     "run_screen",
     "run_underwrite",
     "screen_result",
+    "status_after_screen",
+    "status_after_underwrite",
     "underwrite_result",
 ]

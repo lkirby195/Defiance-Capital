@@ -1,13 +1,18 @@
 """Deal endpoints: run the screen, run the underwrite, read the deal back.  # SPEC §7, §8
 
-Both POSTs append a row (SPEC §5) and return the engine result as it was recorded. The GET
-returns the deal with the latest of each, rebuilt from those rows rather than recomputed, so
-what the team reads is exactly what was stored - engine version, config hash and all.
+Both POSTs append a row (SPEC §5), move the deal one step along the lifecycle (SPEC §4.5)
+and return the engine result as it was recorded. The GET returns the deal with the latest of
+each, rebuilt from those rows rather than recomputed, so what the team reads is exactly what
+was stored - engine version, config hash and all.
+
+Three failures are distinguished, because the fix for each is different: 404 the deal does
+not exist, 422 it exists but is missing values the engine needs (named, so the queue can
+chase them), 409 the inputs are fine but its status rules the run out.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
@@ -21,6 +26,7 @@ from db.session import get_session
 from schema.models import (
     AssetType,
     Channel,
+    CourtRecordsStatus,
     ExperienceBucket,
     Product,
     ProductSource,
@@ -28,6 +34,7 @@ from schema.models import (
     State,
     StatedExit,
     Status,
+    TeamCourtRecord,
     TermBucket,
     Tranche,
     UnderwriteResult,
@@ -35,6 +42,7 @@ from schema.models import (
 from services import (
     DealNotFound,
     DealNotReady,
+    DealNotUnderwritable,
     UnderwriteRequest,
     latest_screen,
     latest_underwrite,
@@ -116,6 +124,11 @@ class DealView(BaseModel):
     repeat_borrower_self_reported: bool | None
     actual_annual_taxes_usd: Decimal | None
     actual_annual_insurance_usd: Decimal | None
+    as_is_value_team: Decimal | None
+    arv_team: Decimal | None
+    court_records_status: CourtRecordsStatus | None
+    court_records_as_of: date | None
+    court_records_team: list[TeamCourtRecord]
     borrower: BorrowerView | None
     property: PropertyView | None
     screen: ScreenRecord | None
@@ -131,6 +144,14 @@ def _not_ready(exc: DealNotReady) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         detail={"message": str(exc), "missing": exc.missing},
+    )
+
+
+def _not_underwritable(exc: DealNotUnderwritable) -> HTTPException:
+    """409: the deal exists and the inputs are fine, its status is what refuses.  # SPEC §4.5"""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"message": str(exc), "status": exc.status.value},
     )
 
 
@@ -160,6 +181,8 @@ def underwrite_deal(
         result = run_underwrite(session, deal_id, request)
     except DealNotFound as exc:
         raise _not_found(exc) from exc
+    except DealNotUnderwritable as exc:
+        raise _not_underwritable(exc) from exc
     except DealNotReady as exc:
         raise _not_ready(exc) from exc
     session.commit()
@@ -214,6 +237,13 @@ def deal_view(deal: Deal, session: Session) -> DealView:
         repeat_borrower_self_reported=deal.repeat_borrower_self_reported,
         actual_annual_taxes_usd=deal.actual_annual_taxes_usd,
         actual_annual_insurance_usd=deal.actual_annual_insurance_usd,
+        as_is_value_team=deal.as_is_value_team,
+        arv_team=deal.arv_team,
+        court_records_status=deal.court_records_status,
+        court_records_as_of=deal.court_records_as_of,
+        court_records_team=[
+            TeamCourtRecord.model_validate(matter) for matter in deal.court_records_team
+        ],
         borrower=_borrower_view(deal),
         property=_property_view(deal),
         screen=(

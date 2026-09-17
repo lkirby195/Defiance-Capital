@@ -15,6 +15,7 @@ from api.main import app
 from db.models import Deal, Screen, Underwrite
 from db.session import get_session
 from engine.version import ENGINE_VERSION
+from schema.models import Status
 from tests.conftest import requires_db
 
 pytestmark = requires_db
@@ -106,41 +107,54 @@ def test_underwrite_route_requires_a_valuation(client: TestClient, stored_deal: 
 
 
 def test_read_deal_returns_the_deal_with_its_latest_screen_and_underwrite(
-    client: TestClient, stored_deal: Deal
+    client: TestClient, deal_with_overrides: Deal
 ) -> None:
-    before = client.get(f"/deals/{stored_deal.id}")
+    deal_id = deal_with_overrides.id
+    before = client.get(f"/deals/{deal_id}")
     assert before.status_code == 200, before.text
     body = before.json()
     assert body["screen"] is None and body["underwrite"] is None
+    assert body["status"] == "NEW"
     assert body["asset_type"] == "SFR"
-    assert body["stated_exit"] == "FLIP"
+    assert body["stated_exit"] is None  # the exit is inferred, not stated (SPEC §3)
     assert body["term_bucket"] == "9"
     assert body["product"] == "SPLIT_DRAW" and body["product_source"] == "INFERRED"
-    assert body["borrower"]["phone"] == "+19185550142"
-    assert body["borrower"]["entities"] == ["Whitfield Holdings LLC"]
+    assert body["borrower"]["phone"] == "+19185550188"
+    assert body["borrower"]["entities"] == ["Ellery Property Group LLC"]
     assert body["property"]["state"] == "OK"
     assert body["missing_fields"] == []
+    # the team's own entries are on the read model, so the queue can show what a Go rests on
+    assert D(body["as_is_value_team"]) == D("250000.00")
+    assert D(body["arv_team"]) == D("295000.00")
+    assert body["court_records_status"] == "CLEAN"
+    assert body["court_records_as_of"] == "2026-09-16"
+    assert body["court_records_team"] == []
 
-    screened = client.post(f"/deals/{stored_deal.id}/screen").json()
-    underwritten = client.post(f"/deals/{stored_deal.id}/underwrite", json=UNDERWRITE_BODY).json()
+    screened = client.post(f"/deals/{deal_id}/screen").json()
+    assert screened["verdict"] == "GO"
+    underwritten = client.post(f"/deals/{deal_id}/underwrite", json=UNDERWRITE_BODY).json()
 
-    after = client.get(f"/deals/{stored_deal.id}").json()
+    after = client.get(f"/deals/{deal_id}").json()
     assert after["screen"]["result"] == screened
     assert after["underwrite"]["result"] == underwritten
     assert after["screen"]["created_at"] and after["underwrite"]["created_at"]
+    assert after["status"] == "UNDERWRITING"
 
 
-def test_read_deal_shows_the_latest_of_each_run(client: TestClient, stored_deal: Deal) -> None:
-    client.post(f"/deals/{stored_deal.id}/screen")
+def test_read_deal_shows_the_latest_of_each_run(
+    client: TestClient, deal_with_overrides: Deal
+) -> None:
+    deal_id = deal_with_overrides.id
+    client.post(f"/deals/{deal_id}/screen")
     second = client.post(
-        f"/deals/{stored_deal.id}/underwrite", json={**UNDERWRITE_BODY, "term_months": 6}
+        f"/deals/{deal_id}/underwrite", json={**UNDERWRITE_BODY, "term_months": 6}
     ).json()
     third = client.post(
-        f"/deals/{stored_deal.id}/underwrite", json={**UNDERWRITE_BODY, "term_months": 15}
+        f"/deals/{deal_id}/underwrite", json={**UNDERWRITE_BODY, "term_months": 15}
     ).json()
     assert second["term_months"] == 6 and third["term_months"] == 15
 
-    body = client.get(f"/deals/{stored_deal.id}").json()
+    body = client.get(f"/deals/{deal_id}").json()
     assert body["underwrite"]["result"]["term_months"] == 15
     assert body["underwrite"]["result"] == third
 
@@ -160,3 +174,52 @@ def test_an_incomplete_deal_is_422_naming_what_is_missing(
     response = client.post(f"/deals/{stored_deal.id}/screen")
     assert response.status_code == 422
     assert response.json()["detail"]["missing"] == ["deal.purchase_price"]
+
+
+def test_a_screen_moves_the_deal_along_the_lifecycle(
+    client: TestClient, deal_with_overrides: Deal
+) -> None:
+    assert client.get(f"/deals/{deal_with_overrides.id}").json()["status"] == "NEW"
+    assert client.post(f"/deals/{deal_with_overrides.id}/screen").json()["verdict"] == "GO"
+    assert client.get(f"/deals/{deal_with_overrides.id}").json()["status"] == "SCREENED"
+
+
+def test_a_declined_screen_closes_the_deal(client: TestClient, stored_deal: Deal) -> None:
+    """No valuation behind it, so it declines and the deal closes with it."""
+    assert client.post(f"/deals/{stored_deal.id}/screen").json()["verdict"] == "DECLINE"
+    assert client.get(f"/deals/{stored_deal.id}").json()["status"] == "DECLINED"
+
+
+def test_underwriting_a_closed_deal_is_409_not_422(
+    client: TestClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """The inputs are fine; the status is what refuses, so it is a conflict, not a 422."""
+    deal_with_overrides.status = Status.DEAD
+    db_session.flush()
+    response = client.post(f"/deals/{deal_with_overrides.id}/underwrite", json=UNDERWRITE_BODY)
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["status"] == "DEAD"
+    assert "re-opens it" in detail["message"]
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(Underwrite)
+            .where(Underwrite.deal_id == deal_with_overrides.id)
+        )
+        == 0
+    )
+
+
+def test_the_underwrite_route_falls_back_to_the_teams_valuation(
+    client: TestClient, deal_with_overrides: Deal
+) -> None:
+    """A request with no as-is value and no ARV still underwrites off the deal's own."""
+    body = {
+        key: value for key, value in UNDERWRITE_BODY.items() if key not in {"as_is_value", "arv"}
+    }
+    response = client.post(f"/deals/{deal_with_overrides.id}/underwrite", json=body)
+    assert response.status_code == 201, response.text
+    sizing = response.json()["sizing"]
+    assert D(sizing["metrics"]["LTV_AS_IS"]["actual"]) == D("185000.00") / D("250000.00")
+    assert sizing["as_is_value_source"] == "TEAM" and sizing["arv_source"] == "TEAM"
