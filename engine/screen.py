@@ -46,6 +46,7 @@ from schema.models import (
     State,
     Tranche,
     ValueBasis,
+    ValueSource,
     Verdict,
 )
 
@@ -533,6 +534,45 @@ def leverage_flags(sizing: SizingResult) -> list[Flag]:
     return flags
 
 
+# --- provenance (SPEC §6.1) ---------------------------------------------------------------------
+
+
+def team_sourced_flags(sizing: SizingResult, court_records: CourtRecordInputs | None) -> list[Flag]:
+    """TEAM_SOURCED_VALUES when a value the engine ran on was entered by hand.  # SPEC §6.1
+
+    Fixed INFO, and it never moves a verdict: a hand-entered value is a real input, not a
+    defect. But a Go resting on the team's own valuation and the team's own court search is
+    a different thing from a Go resting on a pull, and neither the verdict nor the numbers
+    say which it is. The message names which values it was, so the reason survives into the
+    credit memo (SPEC §9.2) where a reader is deciding how much weight to put on it.
+
+    The underwrite passes ``None`` for the court records: it takes no court inputs (SPEC §8),
+    so only the two halves of the valuation can be team-sourced there.
+    """
+    entered = [
+        label
+        for label, source in (
+            ("as-is value", sizing.as_is_value_source),
+            ("ARV", sizing.arv_source),
+            ("court records", court_records.source if court_records is not None else None),
+        )
+        if source is ValueSource.TEAM
+    ]
+    if not entered:
+        return []
+    named = _join(entered)
+    return [
+        Flag(
+            code=ScreenFlag.TEAM_SOURCED_VALUES,
+            severity=Severity.INFO,
+            message=(
+                f"{named[0].upper()}{named[1:]} came from the team, entered by hand rather "
+                "than pulled from an adapter; an adapter value would take precedence."
+            ),
+        )
+    ]
+
+
 # --- verdict, reasons, reply (SPEC §7.5) --------------------------------------------------------
 
 
@@ -595,6 +635,7 @@ def screen(inputs: ScreenInputs, config: Config) -> ScreenResult:
         + court_flags(inputs.court_records, config)
         + state_flags(inputs.state, config)
         + leverage_flags(sizing)
+        + team_sourced_flags(sizing, inputs.court_records)
     )
     verdict = verdict_from_flags(flags)
     return ScreenResult(

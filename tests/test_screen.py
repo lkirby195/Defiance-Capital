@@ -23,6 +23,7 @@ from engine.screen import (
     screen,
     state_flags,
     suggested_reply,
+    team_sourced_flags,
     tier_from_bucket,
     tier_from_verified_deals,
     tranche_from_score,
@@ -48,9 +49,11 @@ from schema.models import (
     ScreenResult,
     Severity,
     SizingInputs,
+    SizingResult,
     State,
     SubjectPropertyLien,
     Tranche,
+    ValueSource,
     Verdict,
 )
 
@@ -630,3 +633,76 @@ def test_engine_modules_do_no_io() -> None:
     for source in sources:
         text = source.read_text(encoding="utf-8")
         assert forbidden.search(text) is None, f"{source.name}: {forbidden.search(text)}"
+
+
+# --- TEAM_SOURCED_VALUES (SPEC §6.1) -------------------------------------------------------------
+
+
+def sized_with(as_is: ValueSource | None, arv: ValueSource | None) -> SizingResult:
+    """A sizing result whose valuation halves carry the sources asked for."""
+    return size_deal(
+        deal().model_copy(update={"as_is_value_source": as_is, "arv_source": arv}),
+        Tranche.T2,
+        ExperienceTier.E2,
+        CONFIG,
+    )
+
+
+def searched(source: ValueSource) -> CourtRecordInputs:
+    return CourtRecordInputs(as_of=date(2026, 9, 17), source=source)
+
+
+def test_no_flag_when_every_value_was_pulled() -> None:
+    both_pulled = sized_with(ValueSource.ADAPTER, ValueSource.ADAPTER)
+    assert team_sourced_flags(both_pulled, searched(ValueSource.ADAPTER)) == []
+    assert team_sourced_flags(both_pulled, None) == []
+
+
+def test_the_flag_names_which_values_the_team_entered() -> None:
+    all_three = team_sourced_flags(
+        sized_with(ValueSource.TEAM, ValueSource.TEAM), searched(ValueSource.TEAM)
+    )
+    assert len(all_three) == 1
+    flag = all_three[0]
+    assert flag.code is ScreenFlag.TEAM_SOURCED_VALUES
+    assert flag.severity is Severity.INFO
+    assert flag.message.startswith("As-is value, ARV, and court records came from the team")
+
+    only_arv = team_sourced_flags(
+        sized_with(ValueSource.ADAPTER, ValueSource.TEAM), searched(ValueSource.ADAPTER)
+    )
+    assert only_arv[0].message.startswith("ARV came from the team")
+
+    two_of_them = team_sourced_flags(
+        sized_with(ValueSource.TEAM, ValueSource.ADAPTER), searched(ValueSource.TEAM)
+    )
+    assert two_of_them[0].message.startswith("As-is value and court records came from the team")
+
+    court_only = team_sourced_flags(
+        sized_with(ValueSource.ADAPTER, ValueSource.ADAPTER), searched(ValueSource.TEAM)
+    )
+    assert court_only[0].message.startswith("Court records came from the team")
+
+
+def test_an_unavailable_value_is_not_a_team_value() -> None:
+    """A missing valuation has its own flags; it is not also reported as hand-entered."""
+    nothing = size_deal(deal(as_is_value=None, arv=None), Tranche.T2, ExperienceTier.E2, CONFIG)
+    assert nothing.as_is_value_source is None and nothing.arv_source is None
+    assert team_sourced_flags(nothing, None) == []
+    # the screen still says the values are missing, through their own flags
+    assert codes(leverage_flags(nothing)) == ["AS_IS_VALUE_MISSING", "ARV_MISSING"]
+
+
+def test_the_flag_is_information_and_never_moves_a_verdict() -> None:
+    inputs = ScreenInputs(
+        deal=deal().model_copy(
+            update={"as_is_value_source": ValueSource.TEAM, "arv_source": ValueSource.TEAM}
+        ),
+        state=State.OK,
+        borrower=borrower(),
+        court_records=searched(ValueSource.TEAM),
+    )
+    result = screen(inputs, CONFIG)
+    assert result.verdict is Verdict.GO
+    assert [f.code.value for f in result.flags] == ["TEAM_SOURCED_VALUES"]
+    assert result.reasons == [f"Info: {result.flags[0].message}"]

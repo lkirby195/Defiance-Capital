@@ -27,6 +27,7 @@ from engine.screen import (
     money,
     order_flags,
     pct,
+    team_sourced_flags,
 )
 from engine.sizing import size_deal
 from engine.solve import solve_rate
@@ -146,6 +147,9 @@ def underwrite(inputs: UnderwriteInputs, config: Config) -> UnderwriteResult:
         credit.flags
         + experience.flags
         + leverage_flags(sizing)
+        # The underwrite takes no court inputs (SPEC §8), so only the valuation can be
+        # team-sourced here; the screen's own flag covers the court search.
+        + team_sourced_flags(sizing, None)
         + structure_flags(loan, config)
         + solve_flags(solved_rate, config)
         + exit_flags(exit_result, config)

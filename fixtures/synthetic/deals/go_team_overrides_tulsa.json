@@ -1,6 +1,6 @@
 {
   "name": "go_team_overrides_tulsa",
-  "description": "Team-entered SPLIT_DRAW in Tulsa, screened through the same assembly the API uses. The enrichment adapters are Phase 3, so everything behind the screen is the team's own work: a hand-entered as-is value and ARV (source TEAM) and a court search recorded CLEAN as of 2026-09-16. With them the deal reaches Go on the first pass -- LTC 78.1%, LTV 74.0%, LTARV 62.7%, no court flag, nothing missing. Without them the same deal would be Conditional at best: no valuation and no court record. The underwrite request names no valuation at all, so it falls back to the same two team numbers; taxes and insurance default off the as-is value (3,000 / 1,250), and a 9-month term on an SFR with no stated exit infers FLIP. Only one cell on the term row is flagged as meeting the target, not two: lender_yield(9, r*) lands 1e-28 below 0.175 at this commitment because r* is a repeating decimal, so the r* column itself just misses the >= test. The same deal at a 200,000 commitment rounds the other way. Reported, not papered over.",
+  "description": "Team-entered SPLIT_DRAW in Tulsa, screened through the same assembly the API uses. The enrichment adapters are Phase 3, so everything behind the screen is the team's own work: a hand-entered as-is value and ARV (source TEAM) and a court search recorded CLEAN as of 2026-09-16. With them the deal reaches Go on the first pass -- LTC 78.1%, LTV 74.0%, LTARV 62.7%, no court flag, nothing missing. Without them the same deal would be Conditional at best: no valuation and no court record. The underwrite request names no valuation at all, so it falls back to the same two team numbers; taxes and insurance default off the as-is value (3,000 / 1,250), and a 9-month term on an SFR with no stated exit infers FLIP. Both the screen and the underwrite carry TEAM_SOURCED_VALUES, naming what was entered by hand; it is INFO, so the verdict is still Go.",
   "team_entry": {
     "borrower_name": "Marcus Ellery",
     "borrower_phone": "(918) 555-0188",
@@ -23,7 +23,9 @@
   },
   "expected": {
     "verdict": "GO",
-    "flags": [],
+    "flags": [
+      {"code": "TEAM_SOURCED_VALUES", "severity": "INFO"}
+    ],
     "credit_tranche": "T2",
     "experience_tier": "E2",
     "repeat_borrower_override_applied": false,
@@ -45,7 +47,9 @@
       "court_records": "TEAM"
     },
     "status_after_screen": "SCREENED",
-    "reasons_contain": [],
+    "reasons_contain": [
+      "As-is value, ARV, and court records came from the team"
+    ],
     "reply_contains": [
       "fit on first pass",
       "credit authorization"
@@ -76,7 +80,7 @@
         "columns": 12,
         "rows": 7,
         "solved_rate_inserted": true,
-        "term_row_cells_meeting_target": 1
+        "term_row_cells_meeting_target": 2
       },
       "borrower": {
         "total_project_cost": "236750.00",
@@ -107,7 +111,9 @@
         "cover": "1.189787",
         "passed": true
       },
-      "flags": [],
+      "flags": [
+        {"code": "TEAM_SOURCED_VALUES", "severity": "INFO"}
+      ],
       "status_after_underwrite": "UNDERWRITING"
     }
   }
