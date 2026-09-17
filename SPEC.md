@@ -164,13 +164,26 @@ queue.
 
 | Trigger | From | To |
 |---|---|---|
-| Screen (§7) | `NEW` | `SCREENED`, or `DECLINED` on a Decline verdict |
+| Screen (§7), any verdict but Decline | `NEW` | `SCREENED` |
+| Screen (§7), Decline verdict | `NEW`, `SCREENED`, `IN_REVIEW` | `DECLINED` |
+| Screen (§7), Decline verdict | `UNDERWRITING` and later | unchanged; the Hard flags are recorded on the `screens` row |
 | Underwrite (§8) | `SCREENED`, `IN_REVIEW` | `UNDERWRITING` |
 
-A deal outside those starting states keeps the status it has: re-screening a deal the team
-has already moved on does not drag it backwards, and re-underwriting one already in
-`UNDERWRITING` is a no-op. **A `DECLINED` or `DEAD` deal cannot be underwritten** — the run is
-refused and nothing is recorded, until a person re-opens it.
+A Decline closes a deal nobody has started pricing, wherever in those three states it sits:
+a re-screen that turns up a Hard flag on a deal sitting in review is exactly the case worth
+acting on. From `UNDERWRITING` onwards it does not — the deal is being worked, a person owns
+it, and the flags are recorded for them to read rather than yanked out from under them.
+
+Everything else keeps the status it has: a non-Decline re-screen never drags a deal
+backwards, and re-underwriting one already in `UNDERWRITING` is a no-op. **A `DECLINED` or
+`DEAD` deal cannot be underwritten** — the run is refused and nothing is priced, until a
+person re-opens it.
+
+**An unscreened deal is screened on the way in.** The underwrite is Stage 2: it runs on
+deals that cleared Stage 1, so `run_underwrite` on a `NEW` deal runs the screen first and
+proceeds only if that verdict is not a Decline. The screen it runs is a real one — its row
+is recorded and it moves the status like any other — so a Decline there stops the underwrite
+with the deal left `DECLINED` and the screen kept.
 
 ---
 
@@ -239,6 +252,13 @@ alone does not say which it is.
 
 `NOT_CHECKED` is not `CLEAN`: the first is reported as an INFO flag, the second is a clean
 record dated the day the team searched.
+
+Both the screen and the underwrite raise `TEAM_SOURCED_VALUES` (Info, fixed in code) when
+any value they ran on carries source `TEAM`, and the message names which — as-is value, ARV,
+court records, or some combination. It never moves a verdict; it is there so the reason
+survives into the credit memo (§9.2), where a reader is deciding how much weight to put on
+a Go. The underwrite takes no court inputs (§8), so only the two halves of the valuation can
+be named there.
 
 ---
 
@@ -382,7 +402,7 @@ One grid (there is no borrower grid; borrower economics are reported at `(term, 
 
 - Columns: rate 10.0% → 15.0% in 50 bps (11 columns), plus `r*` inserted in rate order if not already on the grid
 - Rows: month `term` → `term + 6`
-- Cell: `lender_yield(m, r)`; cells ≥ `target_irr` flagged
+- Cell: `lender_yield(m, r)`; cells ≥ `target_irr` flagged, within a 1e-9 tolerance. The tolerance is arithmetic, not policy: `lender_yield(term, r*)` is the target by construction, but `r*` rarely terminates as a decimal, so an exact comparison flags the solved column on some commitments and not others
 
 Stored as JSONB on `underwrites`; rendered in the credit memo.
 

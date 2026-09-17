@@ -39,10 +39,10 @@ class DealNotUnderwritable(ServiceError):
     would put an underwrite on a deal nobody is working.
     """
 
-    def __init__(self, deal_id: UUID, status: Status) -> None:
+    def __init__(self, deal_id: UUID, status: Status, detail: str | None = None) -> None:
         super().__init__(
             f"deal {deal_id} is {status.value} and cannot be underwritten; "
-            "a team member re-opens it first"
+            + (detail or "a team member re-opens it first")
         )
         self.deal_id = deal_id
         self.status = status

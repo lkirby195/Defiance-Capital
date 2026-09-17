@@ -113,13 +113,13 @@ def test_screen_without_a_valuation_flags_rather_than_guesses(
 
 
 def test_run_underwrite_appends_a_row_and_round_trips(
-    db_session: Session, stored_deal: Deal
+    db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    result = run_underwrite(db_session, stored_deal.id, request(), CONFIG)
+    result = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
     db_session.commit()
     db_session.expire_all()
 
-    row = latest_underwrite(db_session, stored_deal.id)
+    row = latest_underwrite(db_session, deal_with_overrides.id)
     assert row is not None
     assert row.engine_version == ENGINE_VERSION
     assert row.config_hash == CONFIG.config_hash
@@ -134,11 +134,11 @@ def test_run_underwrite_appends_a_row_and_round_trips(
 
 
 def test_underwrite_row_drops_nothing_the_result_carried(
-    db_session: Session, stored_deal: Deal
+    db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    result = run_underwrite(db_session, stored_deal.id, request(), CONFIG)
+    result = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
     db_session.commit()
-    row = latest_underwrite(db_session, stored_deal.id)
+    row = latest_underwrite(db_session, deal_with_overrides.id)
     assert row is not None
     rebuilt = underwrite_result(row)
     assert rebuilt.borrower_at_solve == result.borrower_at_solve
@@ -150,21 +150,21 @@ def test_underwrite_row_drops_nothing_the_result_carried(
 
 
 def test_underwrite_takes_the_term_from_the_bucket_unless_told_otherwise(
-    db_session: Session, stored_deal: Deal
+    db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    from_bucket = run_underwrite(db_session, stored_deal.id, request(), CONFIG)
+    from_bucket = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
     assert from_bucket.term_months == 9  # the deal's term_bucket is "9"
-    stated = run_underwrite(db_session, stored_deal.id, request(term_months=18), CONFIG)
+    stated = run_underwrite(db_session, deal_with_overrides.id, request(term_months=18), CONFIG)
     assert stated.term_months == 18
     db_session.commit()
 
 
 def test_underwrite_falls_back_to_the_deals_own_opex_actuals(
-    db_session: Session, stored_deal: Deal
+    db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    stored_deal.actual_annual_taxes_usd = D("2650.00")
+    deal_with_overrides.actual_annual_taxes_usd = D("2650.00")
     db_session.flush()
-    result = run_underwrite(db_session, stored_deal.id, request(), CONFIG)
+    result = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
     assert result.exit.annual_taxes == D("2650.00")
     assert result.exit.annual_taxes_source.value == "ACTUAL"
     # nothing supplied for insurance, so the config default on the as-is value stands
@@ -174,18 +174,23 @@ def test_underwrite_falls_back_to_the_deals_own_opex_actuals(
 
 
 def test_underwrite_uses_the_deals_asset_type_and_stated_exit(
-    db_session: Session, stored_deal: Deal
+    db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    assert stored_deal.asset_type is AssetType.SFR
-    stated = run_underwrite(db_session, stored_deal.id, request(), CONFIG)
-    assert stated.exit.type is StatedExit.FLIP  # the team stated it at intake
-    assert stated.exit.exit_source is ExitSource.STATED
-
-    stored_deal.stated_exit = None
-    db_session.flush()
-    inferred = run_underwrite(db_session, stored_deal.id, request(term_months=12), CONFIG)
-    assert inferred.exit.type is StatedExit.HOLD  # 12 months infers a hold (SPEC §3)
+    assert deal_with_overrides.asset_type is AssetType.SFR
+    assert deal_with_overrides.stated_exit is None
+    inferred = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    assert inferred.exit.type is StatedExit.FLIP  # 9 months on an SFR resells (SPEC §3)
     assert inferred.exit.exit_source is ExitSource.INFERRED
+
+    longer = run_underwrite(db_session, deal_with_overrides.id, request(term_months=12), CONFIG)
+    assert longer.exit.type is StatedExit.HOLD  # 12 months infers a hold instead
+    assert longer.exit.exit_source is ExitSource.INFERRED
+
+    deal_with_overrides.stated_exit = StatedExit.HOLD
+    db_session.flush()
+    stated = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    assert stated.exit.type is StatedExit.HOLD  # a stated exit wins over the term
+    assert stated.exit.exit_source is ExitSource.STATED
     db_session.commit()
 
 
@@ -204,9 +209,9 @@ def test_missing_deal_and_incomplete_deal_are_named_not_guessed(
 
 
 def test_a_deal_with_no_term_bucket_cannot_be_underwritten_silently(
-    db_session: Session, stored_deal: Deal
+    db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    stored_deal.term_bucket = None
+    deal_with_overrides.term_bucket = None
     db_session.flush()
     with pytest.raises(DealNotReady, match="term_months"):
-        run_underwrite(db_session, stored_deal.id, request(), CONFIG)
+        run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)

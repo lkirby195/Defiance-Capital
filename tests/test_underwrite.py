@@ -25,6 +25,7 @@ from schema.models import (
     UnderwriteFlag,
     UnderwriteInputs,
     UnderwriteResult,
+    ValueSource,
 )
 
 CONFIG = Config.load()
@@ -370,3 +371,28 @@ def test_informational_flags_never_change_a_verdict_input() -> None:
     for flag in result.flags:
         if flag.code in informational:
             assert flag.severity is Severity.INFO
+
+
+# --- TEAM_SOURCED_VALUES on the underwrite (SPEC §6.1) -------------------------------------------
+
+
+def test_the_underwrite_flags_a_hand_entered_valuation() -> None:
+    team_valued = inputs(
+        deal=deal().model_copy(
+            update={
+                "as_is_value_source": ValueSource.TEAM,
+                "arv_source": ValueSource.TEAM,
+            }
+        )
+    )
+    result = underwrite(team_valued, CONFIG)
+    flag = next(f for f in result.flags if f.code is ScreenFlag.TEAM_SOURCED_VALUES)
+    assert flag.severity is Severity.INFO
+    assert flag.message.startswith("As-is value and ARV came from the team")
+    # court records are named only by the screen: the underwrite takes none (SPEC §8)
+    assert "court records" not in flag.message
+
+
+def test_the_underwrite_is_silent_when_the_valuation_was_pulled() -> None:
+    result = underwrite(inputs(), CONFIG)
+    assert ScreenFlag.TEAM_SOURCED_VALUES not in [f.code for f in result.flags]

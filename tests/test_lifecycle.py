@@ -7,25 +7,28 @@ are in two halves: the pure rules, and the same rules seen through ``run_screen`
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from typing import Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from config.config import Config
-from db.models import Deal, Underwrite
-from schema.models import Status, Verdict
+from db.models import Deal, Screen, Underwrite
+from schema.models import Severity, Status, Verdict
 from services import (
     DealNotUnderwritable,
     UnderwriteRequest,
+    latest_screen,
     run_screen,
     run_underwrite,
+    screen_result,
     status_after_screen,
     status_after_underwrite,
 )
-from tests.conftest import requires_db
+from tests.conftest import TEAM_ENTRY_WITH_OVERRIDES, requires_db
 
 CONFIG = Config.load()
 D = Decimal
@@ -43,10 +46,9 @@ def request(**overrides: Any) -> UnderwriteRequest:
 # --- the rules themselves ------------------------------------------------------------------------
 
 
-def test_a_screen_moves_a_new_deal_and_nothing_else() -> None:
+def test_a_clean_screen_moves_a_new_deal_and_nothing_else() -> None:
     assert status_after_screen(Status.NEW, Verdict.GO) is Status.SCREENED
     assert status_after_screen(Status.NEW, Verdict.CONDITIONAL) is Status.SCREENED
-    assert status_after_screen(Status.NEW, Verdict.DECLINE) is Status.DECLINED
 
 
 @pytest.mark.parametrize(
@@ -54,10 +56,30 @@ def test_a_screen_moves_a_new_deal_and_nothing_else() -> None:
     [s for s in Status if s is not Status.NEW],
     ids=[s.value for s in Status if s is not Status.NEW],
 )
-def test_a_rescreen_never_drags_a_deal_backwards(current: Status) -> None:
-    """Re-screening a deal the team has moved on leaves its status alone.  # SPEC §4.5"""
-    for verdict in Verdict:
+def test_a_clean_rescreen_never_drags_a_deal_backwards(current: Status) -> None:
+    """Re-screening a deal the team has moved on leaves its status alone.  # SPEC §4.6"""
+    for verdict in (Verdict.GO, Verdict.CONDITIONAL):
         assert status_after_screen(current, verdict) is current
+
+
+@pytest.mark.parametrize(
+    "current",
+    [Status.NEW, Status.SCREENED, Status.IN_REVIEW],
+    ids=["new", "screened", "in_review"],
+)
+def test_a_decline_closes_a_deal_nobody_is_pricing_yet(current: Status) -> None:
+    """A re-screen that turns up a Hard flag on a deal in review is worth acting on."""
+    assert status_after_screen(current, Verdict.DECLINE) is Status.DECLINED
+
+
+@pytest.mark.parametrize(
+    "current",
+    [Status.UNDERWRITING, Status.LOI_SENT, Status.HANDED_OFF, Status.DECLINED, Status.DEAD],
+    ids=["underwriting", "loi_sent", "handed_off", "declined", "dead"],
+)
+def test_a_decline_leaves_a_deal_someone_is_working_alone(current: Status) -> None:
+    """From UNDERWRITING on, the Hard flags are recorded and a person decides.  # SPEC §4.6"""
+    assert status_after_screen(current, Verdict.DECLINE) is current
 
 
 def test_an_underwrite_moves_a_screened_or_in_review_deal() -> None:
@@ -158,3 +180,124 @@ def test_the_status_change_rides_the_caller_s_transaction(
     reloaded = db_session.get(Deal, deal_with_overrides.id)
     assert reloaded is not None
     assert reloaded.status is Status.NEW
+
+
+# --- a Decline on a deal already in flight (SPEC §4.6) -------------------------------------------
+
+
+@requires_db
+@pytest.mark.parametrize(
+    "current", [Status.SCREENED, Status.IN_REVIEW], ids=["screened", "in_review"]
+)
+def test_a_rescreen_that_declines_closes_a_deal_in_review(
+    db_session: Session, stored_deal: Deal, current: Status
+) -> None:
+    stored_deal.status = current
+    db_session.flush()
+    result = run_screen(db_session, stored_deal.id, CONFIG)
+    db_session.commit()
+    assert result.verdict is Verdict.DECLINE
+    assert stored_deal.status is Status.DECLINED
+
+
+@requires_db
+@pytest.mark.parametrize(
+    "current",
+    [Status.UNDERWRITING, Status.LOI_SENT, Status.HANDED_OFF],
+    ids=["underwriting", "loi_sent", "handed_off"],
+)
+def test_a_decline_on_a_deal_being_worked_records_the_flags_and_leaves_the_status(
+    db_session: Session, stored_deal: Deal, current: Status
+) -> None:
+    """A person owns the deal from here on; the Hard flags are theirs to read and act on."""
+    stored_deal.status = current
+    db_session.flush()
+    result = run_screen(db_session, stored_deal.id, CONFIG)
+    db_session.commit()
+
+    assert result.verdict is Verdict.DECLINE
+    assert stored_deal.status is current
+    hard = [f for f in result.flags if f.severity is Severity.HARD]
+    assert hard, "the decline had no hard flag to record"
+    # recorded, not just returned: the row carries the same flags and verdict
+    row = latest_screen(db_session, stored_deal.id)
+    assert row is not None
+    assert row.verdict is Verdict.DECLINE
+    stored = screen_result(row)
+    assert [f.code for f in stored.flags if f.severity is Severity.HARD] == [f.code for f in hard]
+
+
+# --- the underwrite screens an unscreened deal first (SPEC §8) -----------------------------------
+
+
+@requires_db
+def test_an_underwrite_on_a_new_deal_screens_it_first_and_proceeds(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    assert deal_with_overrides.status is Status.NEW
+    result = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    db_session.commit()
+
+    # the screen really ran: its row is there, with its own verdict
+    row = latest_screen(db_session, deal_with_overrides.id)
+    assert row is not None and row.verdict is Verdict.GO
+    assert result.term_months == 9
+    assert deal_with_overrides.status is Status.UNDERWRITING
+
+
+@requires_db
+def test_an_underwrite_on_a_new_deal_stops_when_that_screen_declines(
+    db_session: Session, stored_deal: Deal
+) -> None:
+    assert stored_deal.status is Status.NEW
+    with pytest.raises(DealNotUnderwritable) as caught:
+        run_underwrite(
+            db_session,
+            stored_deal.id,
+            request(as_is_value=D("250000.00"), arv=D("295000.00")),
+            CONFIG,
+        )
+    assert "the screen it just ran declined it" in str(caught.value)
+    assert caught.value.status is Status.DECLINED
+
+    # the screen that declined it is recorded, and nothing was priced
+    assert stored_deal.status is Status.DECLINED
+    row = latest_screen(db_session, stored_deal.id)
+    assert row is not None and row.verdict is Verdict.DECLINE
+    assert (
+        db_session.scalars(select(Underwrite).where(Underwrite.deal_id == stored_deal.id)).all()
+        == []
+    )
+
+
+@requires_db
+def test_an_underwrite_on_a_screened_deal_does_not_screen_it_again(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    run_screen(db_session, deal_with_overrides.id, CONFIG)
+    before = db_session.scalar(
+        select(func.count()).select_from(Screen).where(Screen.deal_id == deal_with_overrides.id)
+    )
+    run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    db_session.commit()
+    after = db_session.scalar(
+        select(func.count()).select_from(Screen).where(Screen.deal_id == deal_with_overrides.id)
+    )
+    assert before == after == 1
+    assert deal_with_overrides.status is Status.UNDERWRITING
+
+
+@requires_db
+def test_the_fixture_states_the_statuses_its_deal_ends_in(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """The Go fixture names both statuses; this is what keeps that data honest."""
+    fixture = json.loads(TEAM_ENTRY_WITH_OVERRIDES.read_text(encoding="utf-8"))
+
+    run_screen(db_session, deal_with_overrides.id, CONFIG)
+    assert deal_with_overrides.status.value == fixture["expected"]["status_after_screen"]
+
+    run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    db_session.commit()
+    expected = fixture["underwrite"]["expected"]["status_after_underwrite"]
+    assert deal_with_overrides.status.value == expected

@@ -1,15 +1,21 @@
 """Deal status transitions the engine runs drive.  # SPEC §4.5
 
-Only two moves are automatic. Everything else on the lifecycle - advancing to IN_REVIEW,
+Only these moves are automatic. Everything else on the lifecycle - advancing to IN_REVIEW,
 sending an LOI, handing off, marking a deal dead - is a team action in the review queue.
 
-    run_screen       NEW -> SCREENED, or NEW -> DECLINED on a Decline verdict
+    run_screen       NEW -> SCREENED
+                     NEW, SCREENED or IN_REVIEW -> DECLINED on a Decline verdict
     run_underwrite   SCREENED or IN_REVIEW -> UNDERWRITING
 
-A deal outside those starting states keeps the status it has: re-screening a deal the team
-has already moved on does not drag it backwards, and re-underwriting one already in
-UNDERWRITING is a no-op. A DECLINED or DEAD deal is refused outright rather than quietly
-priced.
+A Decline closes a deal the team has not started pricing, wherever in those three states it
+sits: a re-screen that turns up a Hard flag on a deal sitting in review is exactly the case
+worth acting on. From UNDERWRITING onwards it does not: the deal is being worked, a person
+owns it, and the Hard flags are recorded on the screens row for them to read rather than
+yanked out from under them.
+
+Everything else keeps the status it has: a non-Decline re-screen never drags a deal
+backwards, and re-underwriting one already in UNDERWRITING is a no-op. A DECLINED or DEAD
+deal is refused outright rather than quietly priced.
 """
 
 from __future__ import annotations
@@ -18,8 +24,10 @@ from db.models import Deal
 from schema.models import Status, Verdict
 from services.errors import DealNotUnderwritable
 
-# The screen only moves a deal that has never been screened.
+# A clean screen only moves a deal that has never been screened.
 SCREEN_ADVANCES_FROM: frozenset[Status] = frozenset({Status.NEW})
+# A Decline closes a deal anywhere up to the point where a person is pricing it.
+DECLINE_CLOSES_FROM: frozenset[Status] = frozenset({Status.NEW, Status.SCREENED, Status.IN_REVIEW})
 # The underwrite moves a deal the team has screened or pulled into review.
 UNDERWRITE_ADVANCES_FROM: frozenset[Status] = frozenset({Status.SCREENED, Status.IN_REVIEW})
 # A dead or declined deal is not priced until a person re-opens it.
@@ -27,10 +35,10 @@ UNDERWRITE_REFUSED_FROM: frozenset[Status] = frozenset({Status.DECLINED, Status.
 
 
 def status_after_screen(current: Status, verdict: Verdict) -> Status:
-    """Where a screen leaves the deal.  # SPEC §4.5, §7.5"""
-    if current not in SCREEN_ADVANCES_FROM:
-        return current
-    return Status.DECLINED if verdict is Verdict.DECLINE else Status.SCREENED
+    """Where a screen leaves the deal.  # SPEC §4.6, §7.5"""
+    if verdict is Verdict.DECLINE:
+        return Status.DECLINED if current in DECLINE_CLOSES_FROM else current
+    return Status.SCREENED if current in SCREEN_ADVANCES_FROM else current
 
 
 def status_after_underwrite(current: Status) -> Status:

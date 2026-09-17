@@ -21,10 +21,10 @@ from config.config import Config, get_config
 from db.models import Deal
 from engine.screen import screen
 from engine.underwrite import underwrite
-from schema.models import ScreenResult, UnderwriteResult
+from schema.models import ScreenResult, Status, UnderwriteResult, Verdict
 from services.assemble import screen_inputs, underwrite_inputs
 from services.enrichment import AdapterValues, adapter_values
-from services.errors import DealNotFound
+from services.errors import DealNotFound, DealNotUnderwritable
 from services.lifecycle import (
     advance_after_screen,
     advance_for_underwrite,
@@ -71,13 +71,24 @@ def run_underwrite(
 ) -> UnderwriteResult:
     """Underwrite a stored deal, append the ``underwrites`` row, advance the status.  # SPEC §8
 
-    The status is checked before any work is done: a declined or dead deal raises
+    An unscreened deal is screened first. The underwrite is Stage 2 (SPEC §8): it runs on
+    deals that cleared Stage 1, and pricing one nobody has screened would skip the gate
+    rather than pass it. The screen it runs is a real one - its row is recorded and it moves
+    the status like any other - and a Decline stops the underwrite there.
+
+    The status is otherwise checked before any work is done: a declined or dead deal raises
     ``DealNotUnderwritable`` and nothing is written.
     """
     cfg = config or get_config()
     deal = load_deal(session, deal_id)
+    resolved = adapters or adapter_values(session, deal)
+    if deal.status is Status.NEW:
+        if run_screen(session, deal_id, cfg, resolved).verdict is Verdict.DECLINE:
+            raise DealNotUnderwritable(
+                deal.id, deal.status, detail="the screen it just ran declined it"
+            )
     check_underwritable(deal)
-    inputs = underwrite_inputs(deal, request, adapters or adapter_values(session, deal))
+    inputs = underwrite_inputs(deal, request, resolved)
     result = underwrite(inputs, cfg)
     record_underwrite(session, deal.id, inputs, result)
     advance_for_underwrite(deal)

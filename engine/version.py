@@ -15,8 +15,15 @@ What changed is the shape of the result - ``SizingResult`` now carries where eac
 the valuation came from and ``ScreenComponents`` where the court record came from (SPEC
 §6.1). The version still moves, because ``screens.engine_version`` is what tells a later
 reader which shape a stored row is in, and two different shapes must not both claim 0.4.0.
+
+Phase 2e (0.6.0) is a real change of math semantics: a grid cell now meets the target within
+``engine.grids.TARGET_TOLERANCE`` (1e-9) rather than exactly, so the r* column always meets
+the target it was solved for instead of missing it by a unit in the last place on some
+commitments. Every fixture's grid flag counts were recomputed against it. The screen and the
+underwrite also raise TEAM_SOURCED_VALUES (INFO) when a value they ran on was entered by
+hand (SPEC §6.1).
 """
 
 from __future__ import annotations
 
-ENGINE_VERSION = "0.5.0"
+ENGINE_VERSION = "0.6.0"
