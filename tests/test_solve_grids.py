@@ -13,7 +13,14 @@ from hypothesis import strategies as st
 from config.config import DEFAULT_PATH, Config, load_yaml
 from engine.calc.lender import fee_schedule, interest, lender_return
 from engine.calc.outstanding import LoanTerms, dollar_months, loan_terms
-from engine.grids import grid_cell, month_axis, rate_axis, yield_grid
+from engine.grids import (
+    TARGET_TOLERANCE,
+    grid_cell,
+    meets_target,
+    month_axis,
+    rate_axis,
+    yield_grid,
+)
 from engine.sizing import size_deal
 from engine.solve import required_interest, solve_rate, target_income
 from schema.models import ExperienceTier, Product, SizingInputs, Tranche, YieldGrid
@@ -210,7 +217,8 @@ def test_yield_grid_shape_and_flagging() -> None:
         # yields rise with rate along a row
         yields = [c.annualized_yield for c in row.cells]
         assert yields == sorted(yields)
-        assert all(c.meets_target is (c.annualized_yield >= grid.target) for c in row.cells)
+        for cell in row.cells:
+            assert cell.meets_target is meets_target(cell.annualized_yield, grid.target)
     # term row: r* and 15.0% meet the target; 14.5% and below do not
     term_row = grid.rows[0]
     assert [c.meets_target for c in term_row.cells] == [False] * 10 + [True, True]
@@ -235,3 +243,60 @@ def test_yield_grid_round_trips_as_json() -> None:
     again = YieldGrid.model_validate_json(grid.model_dump_json())
     assert again == grid
     assert isinstance(again.rows[0].cells[0].annualized_yield, Decimal)
+
+
+# --- the target tolerance (SPEC §8.5) ------------------------------------------------------------
+
+
+def test_meets_target_allows_a_hair_below_and_nothing_a_lender_would_notice() -> None:
+    target = D("0.175")
+    assert meets_target(target, target) is True
+    assert meets_target(target - TARGET_TOLERANCE, target) is True
+    assert meets_target(target - TARGET_TOLERANCE * 2, target) is False
+    # a tenth of a basis point short is still short: the tolerance is arithmetic, not slack
+    assert meets_target(D("0.17499"), target) is False
+    assert TARGET_TOLERANCE < D("0.000001")
+
+
+def test_the_solved_column_meets_the_target_whatever_the_commitment() -> None:
+    """r* is a division that rarely terminates, so an exact >= flagged some deals and not
+    others. The tolerance makes the column that was solved for the target meet it.
+    """
+    for commitment_deal in (
+        deal(purchase_price=D("185000.00"), loan_requested=D("185000.00")),
+        deal(purchase_price=D("200000.00"), loan_requested=D("200000.00")),
+        deal(purchase_price=D("123456.00"), loan_requested=D("99999.00")),
+    ):
+        for term in (6, 9, 12, 18):
+            terms = loan_terms(
+                size_deal(commitment_deal, Tranche.T2, ExperienceTier.E2, CONFIG),
+                term,
+                None,
+                CONFIG,
+            )
+            r_star = solve_rate(terms, CONFIG)
+            cell = grid_cell(terms, term, r_star, r_star, CONFIG)
+            assert cell.is_solved_rate is True
+            assert cell.meets_target is True, (commitment_deal.loan_requested, term)
+            assert cell.annualized_yield.quantize(D("0.000000001")) == CONFIG.returns.target_irr
+
+
+def test_the_solved_column_is_flagged_in_the_grid_itself() -> None:
+    """The 185,000 commitment is the one the exact comparison used to miss."""
+    terms = loan_terms(
+        size_deal(
+            deal(purchase_price=D("185000.00"), loan_requested=D("185000.00")),
+            Tranche.T2,
+            ExperienceTier.E2,
+            CONFIG,
+        ),
+        9,
+        None,
+        CONFIG,
+    )
+    r_star = solve_rate(terms, CONFIG)
+    term_row = yield_grid(terms, r_star, CONFIG).rows[0]
+    solved = next(c for c in term_row.cells if c.is_solved_rate)
+    assert solved.meets_target is True
+    assert solved.annualized_yield < CONFIG.returns.target_irr  # by a unit in the last place
+    assert CONFIG.returns.target_irr - solved.annualized_yield < TARGET_TOLERANCE
