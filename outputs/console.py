@@ -15,10 +15,12 @@ from config.config import Config
 from schema.models import (
     LeverageMetric,
     Product,
+    ScreenComponents,
     ScreenResult,
     SizingResult,
     UnderwriteResult,
     ValueBasis,
+    ValueSource,
     YieldGrid,
 )
 
@@ -112,6 +114,33 @@ def render_sizing(sizing: SizingResult, config: Config, title: str = "SIZING") -
     return lines
 
 
+def source_label(source: ValueSource | None, missing: str = "none") -> str:
+    """How a value reached the engine: an adapter, the team by hand, or not at all."""
+    if source is None:
+        return missing
+    return "team" if source is ValueSource.TEAM else "adapter"
+
+
+def render_provenance(sizing: SizingResult, components: ScreenComponents) -> list[str]:
+    """Where the valuation and the court record came from.  # SPEC §6
+
+    Worth its own two lines: a Go that rests on a hand-entered value and a hand-done court
+    search is a different thing from a Go that rests on a pull, and the verdict alone does
+    not say which it is.
+    """
+    return [
+        row(
+            "As-is value / ARV from",
+            f"{source_label(sizing.as_is_value_source)} / {source_label(sizing.arv_source)}",
+            "team = entered by hand; an adapter value wins",
+        ),
+        row(
+            "Court records from",
+            source_label(components.court_records_source, missing="not checked"),
+        ),
+    ]
+
+
 def render_screen(result: ScreenResult, config: Config) -> list[str]:
     """Verdict, the credit and experience cell it was scored in, and every reason."""
     components = result.components
@@ -137,6 +166,7 @@ def render_screen(result: ScreenResult, config: Config) -> list[str]:
             ),
         ),
     ]
+    lines += render_provenance(result.sizing, components)
     lines += ["", "  Reasons"]
     lines += [f"    - {reason}" for reason in result.reasons] or ["    (none)"]
     lines += render_sizing(result.sizing, config, title="SIZING (screen)")

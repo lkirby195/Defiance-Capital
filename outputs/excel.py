@@ -32,6 +32,7 @@ from schema.models import (
     UnderwriteInputs,
     UnderwriteResult,
     ValueBasis,
+    ValueSource,
 )
 
 MONEY = '"$"#,##0.00'
@@ -45,6 +46,13 @@ TITLE = Font(bold=True, size=13)
 
 # (label, value, number format, note); a value of None writes an empty cell.
 Row = tuple[str, Any, str | None, str]
+
+
+def _source(source: ValueSource | None) -> str:
+    """The provenance note that sits beside a valuation cell.  # SPEC §6"""
+    if source is None:
+        return "no value available"
+    return "team, by hand" if source is ValueSource.TEAM else "adapter / paid pull"
 
 
 def _title(sheet: Worksheet, text: str) -> None:
@@ -95,8 +103,13 @@ def _sheet_inputs(
         ("Purchase price", deal.purchase_price, MONEY, ""),
         ("Rehab budget", deal.rehab_budget, MONEY, "before contingency"),
         ("Loan requested", deal.loan_requested, MONEY, ""),
-        ("As-is value", deal.as_is_value, MONEY, "verified"),
-        ("ARV", deal.arv, MONEY, "verified"),
+        (
+            "As-is value",
+            deal.as_is_value,
+            MONEY,
+            _source(deal.as_is_value_source),
+        ),
+        ("ARV", deal.arv, MONEY, _source(deal.arv_source)),
         ("Purchase portion override", deal.purchase_portion_override, MONEY, "team override"),
         ("Term (months)", underwrite_inputs.term_months, INTEGER, ""),
         ("Market rent (monthly)", underwrite_inputs.market_rent_monthly, MONEY, ""),
@@ -122,8 +135,19 @@ def _sheet_inputs(
         ("Experience (self-reported)", borrower.experience_bucket_self_reported.value, None, ""),
         ("Deals in 36 mo (verified)", borrower.verified_deals_36mo, INTEGER, ""),
         ("Repeat borrower (self)", borrower.repeat_borrower_self_reported, None, ""),
-        ("Screen: as-is value", screen_inputs.deal.as_is_value, MONEY, "blank until enrichment"),
-        ("Screen: ARV", screen_inputs.deal.arv, MONEY, "blank until enrichment"),
+        (
+            "Screen: as-is value",
+            screen_inputs.deal.as_is_value,
+            MONEY,
+            _source(screen_inputs.deal.as_is_value_source),
+        ),
+        ("Screen: ARV", screen_inputs.deal.arv, MONEY, _source(screen_inputs.deal.arv_source)),
+        (
+            "Screen: court records",
+            screen_inputs.court_records.source.value if screen_inputs.court_records else None,
+            None,
+            "blank when no source was checked",
+        ),
         ("", None, None, ""),
         ("Config: target IRR", config.returns.target_irr, PCT1, ""),
         ("Config: origination", config.fees.origination_pct, PCT1, "half at close, half at payoff"),

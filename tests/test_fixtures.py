@@ -1,10 +1,12 @@
 """Synthetic deals screen, and where they carry a block underwrite, as expected.  # SPEC §7, §8
 
-Each fixture holds ``inputs`` (a ``ScreenInputs`` document) and ``expected`` (verdict,
-flag codes with severities, components, sizing numbers, substrings the reasons and the
-suggested reply must contain). Fixtures that also carry an ``underwrite`` block (an
-``UnderwriteInputs`` document with the verified values plus ``expected`` outputs) run the
-underwrite too; at least one per product does. Adding a fixture adds a test case.
+Each fixture holds ``expected`` (verdict, flag codes with severities, components, sizing
+numbers, substrings the reasons and the suggested reply must contain) beside either an
+``inputs`` block handed straight to the engine or a ``team_entry`` block assembled the way
+the API assembles a stored deal (``cli/fixtures.py``). Both go through the same loader the
+CLI uses, so a fixture cannot pass here and behave differently under ``glenwood run``.
+Fixtures that also carry an ``underwrite`` block run the underwrite too; at least one per
+product does. Adding a fixture adds a test case.
 """
 
 from __future__ import annotations
@@ -17,18 +19,16 @@ from typing import Any
 
 import pytest
 
+from cli.fixtures import run_fixture
 from config.config import Config
-from engine.screen import screen
-from engine.underwrite import underwrite
 from engine.version import ENGINE_VERSION
 from schema.models import (
     CapStatus,
     LeverageMetric,
     Product,
-    ScreenInputs,
     ScreenResult,
-    UnderwriteInputs,
     UnderwriteResult,
+    ValueSource,
     Verdict,
 )
 
@@ -55,16 +55,30 @@ def rate(value: Decimal) -> Decimal:
 
 
 def run(path: Path) -> tuple[dict[str, Any], ScreenResult]:
-    fixture = load(path)
-    return fixture, screen(ScreenInputs.model_validate(fixture["inputs"]), CONFIG)
+    return load(path), run_fixture(path, CONFIG, with_underwrite=False).screen_result
 
 
 def test_fixture_set_covers_every_product_and_verdict() -> None:
     assert len(FIXTURE_FILES) >= 6
-    products = {load(p)["inputs"]["deal"]["product"] for p in FIXTURE_FILES}
+    products = {run(p)[1].sizing.product for p in FIXTURE_FILES}
     verdicts = {load(p)["expected"]["verdict"] for p in FIXTURE_FILES}
-    assert products == {p.value for p in Product}
+    assert products == set(Product)
     assert verdicts == {v.value for v in Verdict}
+
+
+def test_every_fixture_states_where_its_valuation_came_from() -> None:
+    """A fixture that names sources is asserted on; one that does not stands in for a pull."""
+    for path in FIXTURE_FILES:
+        fixture, result = run(path)
+        want = fixture["expected"].get("sources")
+        sizing = result.sizing
+        if want is None:
+            for source in (sizing.as_is_value_source, sizing.arv_source):
+                assert source in (None, ValueSource.ADAPTER), path.stem
+            continue
+        assert sizing.as_is_value_source == ValueSource(want["as_is_value"]), path.stem
+        assert sizing.arv_source == ValueSource(want["arv"]), path.stem
+        assert result.components.court_records_source == ValueSource(want["court_records"])
 
 
 @pytest.mark.parametrize("path", FIXTURE_FILES, ids=[p.stem for p in FIXTURE_FILES])
@@ -125,14 +139,15 @@ def test_fixture_result_is_recorded_and_serializable(path: Path) -> None:
 # --- underwrite blocks (SPEC §8) -----------------------------------------------------------------
 
 
-def test_underwrite_fixtures_cover_every_product() -> None:
-    products = {load(p)["underwrite"]["inputs"]["deal"]["product"] for p in UNDERWRITE_FILES}
-    assert products == {p.value for p in Product}
-
-
 def run_underwrite(path: Path) -> tuple[dict[str, Any], UnderwriteResult]:
-    block = load(path)["underwrite"]
-    return block["expected"], underwrite(UnderwriteInputs.model_validate(block["inputs"]), CONFIG)
+    run = run_fixture(path, CONFIG, with_underwrite=True)
+    assert run.underwrite_result is not None
+    return load(path)["underwrite"]["expected"], run.underwrite_result
+
+
+def test_underwrite_fixtures_cover_every_product() -> None:
+    products = {run_underwrite(p)[1].sizing.product for p in UNDERWRITE_FILES}
+    assert products == set(Product)
 
 
 @pytest.mark.parametrize("path", UNDERWRITE_FILES, ids=[p.stem for p in UNDERWRITE_FILES])
