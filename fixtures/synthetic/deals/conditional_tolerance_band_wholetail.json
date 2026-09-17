@@ -97,6 +97,7 @@
       },
       "exit": {
         "type": "WHOLETAIL",
+        "exit_source": "STATED",
         "noi_annual": "16680.00",
         "ltv_takeout": "217500.00",
         "dscr_takeout": "165662.08",

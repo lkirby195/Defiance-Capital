@@ -5,7 +5,7 @@ contingency (``rehab_adj`` is the rehab cost); buy-side closing is borrower cash
 costs are the annual taxes, insurance, and utilities pro-rated to the payoff month.
 
     rehab_adj           = rehab_budget x (1 + contingency_pct)
-    buy_closing         = purchase_price x borrower_closing_pct_of_price
+    buy_closing         = sizing.buy_closing    # the screen's number, unchanged (engine.sizing)
     total_project_cost  = purchase_price + rehab_adj + buy_closing
     holding_costs       = (annual_taxes + annual_insurance + annual_utilities) / 12 x m
     exit_net            = exit_price x (1 - selling_cost_pct)
@@ -15,7 +15,11 @@ costs are the annual taxes, insurance, and utilities pro-rated to the payoff mon
     cash_on_cash        = profit / cash_in                     # None when cash_in <= 0
 
 Annual taxes and insurance are team actuals; when absent they default to the config
-percentages of the ARV (``takeout.opex_defaults``). Utilities are always a team input.
+percentages of the **as-is** value (``takeout.opex_defaults``): the property is taxed and
+insured as it stands, not at its repaired value. Utilities are always a team input. These
+two figures are resolved once here and reused by the DSCR takeout (``engine.calc.exit``)
+and the REO carry (``engine.calc.downside``), so a deal carries one tax number and one
+insurance number everywhere.
 """
 
 from __future__ import annotations
@@ -32,19 +36,21 @@ ONE = Decimal(1)
 
 
 def resolve_annual_taxes(inputs: UnderwriteInputs, config: Config) -> tuple[Decimal, OpexSource]:
-    """Team actual when supplied, else ARV x takeout.opex_defaults.taxes_pct_of_value."""
+    """Team actual when supplied, else as_is_value x opex_defaults.taxes_pct_of_as_is_value."""
     if inputs.annual_taxes_usd is not None:
         return inputs.annual_taxes_usd, OpexSource.ACTUAL
-    return inputs.arv * config.takeout.opex_defaults.taxes_pct_of_value, OpexSource.DEFAULT
+    default = inputs.as_is_value * config.takeout.opex_defaults.taxes_pct_of_as_is_value
+    return default, OpexSource.DEFAULT
 
 
 def resolve_annual_insurance(
     inputs: UnderwriteInputs, config: Config
 ) -> tuple[Decimal, OpexSource]:
-    """Team actual when supplied, else ARV x takeout.opex_defaults.insurance_pct_of_value."""
+    """Team actual when supplied, else as_is x opex_defaults.insurance_pct_of_as_is_value."""
     if inputs.annual_insurance_usd is not None:
         return inputs.annual_insurance_usd, OpexSource.ACTUAL
-    return inputs.arv * config.takeout.opex_defaults.insurance_pct_of_value, OpexSource.DEFAULT
+    default = inputs.as_is_value * config.takeout.opex_defaults.insurance_pct_of_as_is_value
+    return default, OpexSource.DEFAULT
 
 
 def monthly_holding_cost(inputs: UnderwriteInputs, config: Config) -> Decimal:
@@ -52,11 +58,6 @@ def monthly_holding_cost(inputs: UnderwriteInputs, config: Config) -> Decimal:
     taxes, _ = resolve_annual_taxes(inputs, config)
     insurance, _ = resolve_annual_insurance(inputs, config)
     return (taxes + insurance + inputs.annual_utilities_usd) / TWELVE
-
-
-def buy_closing(purchase_price: Decimal, config: Config) -> Decimal:
-    """buy_closing = purchase_price x fees.borrower_closing_pct_of_price (borrower cash)."""
-    return purchase_price * config.fees.borrower_closing_pct_of_price
 
 
 def exit_net(exit_price: Decimal, config: Config) -> Decimal:
@@ -75,7 +76,7 @@ def borrower_economics(
     """Profit and cash-on-cash for a payoff at ``month`` at note rate ``rate``.  # SPEC §8.6"""
     price = inputs.deal.purchase_price
     rehab_adj = loan.sizing.rehab_adj
-    closing = buy_closing(price, config)
+    closing = loan.sizing.buy_closing
     total_project_cost = price + rehab_adj + closing
     interest_paid = interest(loan, month, rate, config)
     fees_paid = fee_schedule(loan, month, config).total

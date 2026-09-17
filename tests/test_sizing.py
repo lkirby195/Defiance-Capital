@@ -11,13 +11,13 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
-from config.config import DEFAULT_PATH, Config, load_yaml
+from config.config import DEFAULT_PATH, Config, ConfigError, load_yaml
 from engine.sizing import (
+    buy_closing,
     cap_status,
     caps_for,
     check_metric,
     commitment_split,
-    estimated_closing,
     funded_at_close,
     ratio,
     rehab_adjusted,
@@ -60,22 +60,31 @@ def test_rehab_adjusted_applies_contingency() -> None:
     assert rehab_adjusted(D("0"), CONFIG) == 0
 
 
-def test_estimated_closing_is_pct_of_price() -> None:
-    assert CONFIG.fees.est_closing_pct_of_price == D("0.02")
-    assert estimated_closing(D("100000.00"), CONFIG) == D("2000.0000")
+def test_buy_closing_is_pct_of_price() -> None:
+    # SPEC §7.4, §8.6: one buy-side closing number, 3% of price, for screen and underwrite
+    assert CONFIG.fees.borrower_closing_pct_of_price == D("0.03")
+    assert buy_closing(D("100000.00"), CONFIG) == D("3000.0000")
 
 
 def test_total_cost_is_price_plus_rehab_adj_plus_closing() -> None:
-    assert total_cost(D("100000.00"), D("40000.00"), CONFIG) == D("146000.0000")
+    assert total_cost(D("100000.00"), D("40000.00"), CONFIG) == D("147000.0000")
 
 
 def test_thresholds_come_from_config_not_code() -> None:
     data = copy.deepcopy(load_yaml(DEFAULT_PATH.read_text(encoding="utf-8")))
     data["fees"]["contingency_pct"] = D("0.20")
-    data["fees"]["est_closing_pct_of_price"] = D("0.03")
+    data["fees"]["borrower_closing_pct_of_price"] = D("0.05")
     cfg = Config.from_dict(data)
     assert rehab_adjusted(D("1000"), cfg) == D("1200.00")
-    assert estimated_closing(D("1000"), cfg) == D("30.00")
+    assert buy_closing(D("1000"), cfg) == D("50.00")
+
+
+def test_config_rejects_the_retired_screen_closing_key() -> None:
+    """The 2% screen estimate is gone; one 3% buy-side number does both jobs (SPEC §7.4)."""
+    data = copy.deepcopy(load_yaml(DEFAULT_PATH.read_text(encoding="utf-8")))
+    data["fees"]["est_closing_pct_of_price"] = D("0.02")
+    with pytest.raises(ConfigError, match="est_closing_pct_of_price"):
+        Config.from_dict(data)
 
 
 def test_ratio_is_exact_decimal_and_rejects_nonpositive_denominator() -> None:
@@ -211,16 +220,16 @@ def test_size_deal_metrics_caps_and_pass() -> None:
     assert result.product is Product.SPLIT_DRAW
     assert result.credit_tranche is Tranche.T2 and result.experience_tier is ExperienceTier.E2
     assert result.rehab_adj == D("44000.0000")
-    assert result.est_closing == D("2000.0000")
-    assert result.total_cost == D("146000.0000")
+    assert result.buy_closing == D("3000.0000")  # 3% of 100,000
+    assert result.total_cost == D("147000.0000")
     assert result.commitment == D("120000.00")
     assert result.ltv_basis is ValueBasis.AS_IS_VALUE
 
     ltc = result.metrics[LeverageMetric.LTC]
     ltv = result.metrics[LeverageMetric.LTV_AS_IS]
     ltarv = result.metrics[LeverageMetric.LTARV]
-    assert ltc.actual == D("120000.00") / D("146000.0000")
-    assert ltc.status is CapStatus.WITHIN_TOLERANCE  # 82.19% is over 80% but under 85%
+    assert ltc.actual == D("120000.00") / D("147000.0000")
+    assert ltc.status is CapStatus.WITHIN_TOLERANCE  # 81.63% is over 80% but under 85%
     assert ltv.actual == D("0.8") and ltv.basis is ValueBasis.AS_IS_VALUE
     assert ltarv.actual == D("0.6")
     assert ltc.cap == D("0.80") and ltv.cap == D("0.75") and ltarv.cap == D("0.70")
@@ -228,7 +237,7 @@ def test_size_deal_metrics_caps_and_pass() -> None:
 
 
 def test_size_deal_status_per_metric() -> None:
-    # LTC 120000/146000 = 82.19% -> within band; LTV 80% -> within band; LTARV 60% -> pass
+    # LTC 120000/147000 = 81.63% -> within band; LTV 80% -> within band; LTARV 60% -> pass
     result = size_deal(inputs(Product.SPLIT_DRAW), Tranche.T2, ExperienceTier.E2, CONFIG)
     assert result.metrics[LeverageMetric.LTC].status is CapStatus.WITHIN_TOLERANCE
     assert result.metrics[LeverageMetric.LTV_AS_IS].status is CapStatus.WITHIN_TOLERANCE
@@ -266,7 +275,7 @@ def test_split_principal_override_changes_the_leverage_numerator() -> None:
 
 def test_every_number_in_the_result_is_decimal() -> None:
     result = size_deal(inputs(), Tranche.T2, ExperienceTier.E2, CONFIG)
-    for name in ("rehab_adj", "est_closing", "total_cost", "commitment", "funded_at_close"):
+    for name in ("rehab_adj", "buy_closing", "total_cost", "commitment", "funded_at_close"):
         assert isinstance(getattr(result, name), Decimal), name
     assert result.split is not None
     assert isinstance(result.split.purchase_portion, Decimal)

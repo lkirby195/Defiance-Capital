@@ -1,5 +1,16 @@
 {
   "$defs": {
+    "AssetType": {
+      "description": "Subject-property asset type; drives the exit inference with the term.  # SPEC \u00a73",
+      "enum": [
+        "SFR",
+        "UNITS_2_4",
+        "UNITS_5_PLUS",
+        "OTHER"
+      ],
+      "title": "AssetType",
+      "type": "string"
+    },
     "BorrowerInfo": {
       "additionalProperties": false,
       "description": "Who the borrower is; credit and experience are self-reported here.  # SPEC \u00a74.5",
@@ -138,6 +149,17 @@
           ],
           "default": null,
           "title": "Actual Annual Taxes Usd"
+        },
+        "asset_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AssetType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "loan_requested": {
           "anyOf": [

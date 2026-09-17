@@ -33,17 +33,20 @@ def rehab_adjusted(rehab_budget: Decimal, config: Config) -> Decimal:
     return rehab_budget * (ONE + config.fees.contingency_pct)
 
 
-def estimated_closing(purchase_price: Decimal, config: Config) -> Decimal:
-    """est_closing = purchase_price x est_closing_pct_of_price.  # SPEC §7.4"""
-    return purchase_price * config.fees.est_closing_pct_of_price
+def buy_closing(purchase_price: Decimal, config: Config) -> Decimal:
+    """buy_closing = purchase_price x borrower_closing_pct_of_price.  # SPEC §7.4, §8.6
+
+    One number for both stages: it sits inside ``total_cost`` for the screen's LTC and is
+    the borrower's cash at close in the underwrite (``engine.calc.borrower``). The lender
+    does not fund it.
+    """
+    return purchase_price * config.fees.borrower_closing_pct_of_price
 
 
 def total_cost(purchase_price: Decimal, rehab_budget: Decimal, config: Config) -> Decimal:
-    """total_cost = purchase_price + rehab_adj + est_closing.  # SPEC §7.4"""
+    """total_cost = purchase_price + rehab_adj + buy_closing.  # SPEC §7.4"""
     return (
-        purchase_price
-        + rehab_adjusted(rehab_budget, config)
-        + estimated_closing(purchase_price, config)
+        purchase_price + rehab_adjusted(rehab_budget, config) + buy_closing(purchase_price, config)
     )
 
 
@@ -147,7 +150,7 @@ def size_deal(
     turns the fallback and the missing ARV into flags (SPEC §7.4, §7.5).
     """
     rehab_adj = rehab_adjusted(inputs.rehab_budget, config)
-    closing = estimated_closing(inputs.purchase_price, config)
+    closing = buy_closing(inputs.purchase_price, config)
     cost = inputs.purchase_price + rehab_adj + closing
     commitment, split = commitment_split(inputs, rehab_adj)
     caps = caps_for(config, inputs.product, tranche, tier)
@@ -177,7 +180,7 @@ def size_deal(
         credit_tranche=tranche,
         experience_tier=tier,
         rehab_adj=rehab_adj,
-        est_closing=closing,
+        buy_closing=closing,
         total_cost=cost,
         loan_requested=inputs.loan_requested,
         commitment=commitment,

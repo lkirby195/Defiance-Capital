@@ -76,6 +76,7 @@ def create_deal_from_intake(session: Session, record: IntakeRecord) -> Deal:
         rehab_budget=record.deal.rehab_budget,
         loan_requested=record.deal.loan_requested,
         term_bucket=record.deal.term_bucket,
+        asset_type=record.deal.asset_type,
         stated_exit=record.deal.stated_exit,
         actual_annual_taxes_usd=record.deal.actual_annual_taxes_usd,
         actual_annual_insurance_usd=record.deal.actual_annual_insurance_usd,

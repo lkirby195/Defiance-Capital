@@ -12,5 +12,6 @@
   "rehab_budget": "42000.00",
   "loan_requested": "190000.00",
   "term_bucket": "9",
+  "asset_type": "SFR",
   "stated_exit": "FLIP"
 }

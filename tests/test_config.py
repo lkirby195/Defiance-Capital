@@ -241,3 +241,60 @@ def test_old_per_matter_judgment_key_is_rejected(data: dict[str, Any]) -> None:
     thresholds["unsatisfied_judgment_usd"] = thresholds.pop("unsatisfied_judgments_aggregate_usd")
     with pytest.raises(ConfigError, match="unsatisfied_judgment"):
         Config.from_dict(data)
+
+
+# --- Phase 2b review decisions (SPEC §7.4, §8.6, §8.7) ------------------------------------------
+
+
+def test_retired_screen_closing_key_is_rejected(data: dict[str, Any]) -> None:
+    """One buy-side closing number now does both jobs; the 2% screen estimate is gone."""
+    assert "est_closing_pct_of_price" not in data["fees"]
+    data["fees"]["est_closing_pct_of_price"] = Decimal("0.02")
+    with pytest.raises(ConfigError, match="est_closing_pct_of_price"):
+        Config.from_dict(data)
+
+
+def test_opex_defaults_are_named_for_the_as_is_value(data: dict[str, Any]) -> None:
+    """Renamed with the basis change so a stale yaml fails loudly rather than silently."""
+    cfg = Config.from_dict(data)
+    assert cfg.takeout.opex_defaults.taxes_pct_of_as_is_value == Decimal("0.012")
+    assert cfg.takeout.opex_defaults.insurance_pct_of_as_is_value == Decimal("0.005")
+    stale = copy.deepcopy(data)
+    stale["takeout"]["opex_defaults"]["taxes_pct_of_value"] = stale["takeout"]["opex_defaults"].pop(
+        "taxes_pct_of_as_is_value"
+    )
+    with pytest.raises(ConfigError, match="taxes_pct_of_value"):
+        Config.from_dict(stale)
+
+
+def test_underwrite_severities_cover_the_graded_codes_only(data: dict[str, Any]) -> None:
+    graded = {UnderwriteFlag.REFI_SHORTFALL, UnderwriteFlag.DOWNSIDE_COVER_BELOW_FLOOR}
+    assert set(Config.from_dict(data).flags.underwrite_severities) == graded
+
+
+def test_config_cannot_grade_an_informational_underwrite_flag(data: dict[str, Any]) -> None:
+    """NO_REHAB_PERIOD and SOLVED_RATE_BELOW_GRID are fixed Info in code (SPEC §8.7)."""
+    data["flags"]["underwrite_severities"]["NO_REHAB_PERIOD"] = "HARD"
+    with pytest.raises(ConfigError, match="NO_REHAB_PERIOD"):
+        Config.from_dict(data)
+
+
+def test_missing_graded_severity_still_fails(data: dict[str, Any]) -> None:
+    del data["flags"]["underwrite_severities"]["REFI_SHORTFALL"]
+    with pytest.raises(ConfigError, match="REFI_SHORTFALL"):
+        Config.from_dict(data)
+
+
+def test_exit_boundaries_load_and_must_not_overlap(data: dict[str, Any]) -> None:
+    cfg = Config.from_dict(data)
+    assert cfg.exit.resale_max_term_months == 9
+    assert cfg.exit.hold_min_term_months == 12
+    data["exit"]["hold_min_term_months"] = 9
+    with pytest.raises(ConfigError, match="below exit.hold_min_term_months"):
+        Config.from_dict(data)
+
+
+def test_exit_section_is_required(data: dict[str, Any]) -> None:
+    del data["exit"]
+    with pytest.raises(ConfigError, match="exit"):
+        Config.from_dict(data)

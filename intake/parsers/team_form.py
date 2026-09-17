@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from intake.normalize import ParsedIntake
 from schema.models import (
+    AssetType,
     BorrowerInfo,
     DealInfo,
     ExperienceBucket,
@@ -51,6 +52,7 @@ class TeamEntryForm(BaseModel):
     loan_requested: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     term_bucket: TermBucket | None = None
     # Team-only extras (SPEC §4.2 "extra ones unlocked")
+    asset_type: AssetType | None = None  # with the term, drives the exit inference (SPEC §3)
     stated_exit: StatedExit | None = None
     product: Product | None = None  # inferred from the rehab budget when omitted (SPEC §3)
     # Actual annual taxes / insurance in USD; override the %-of-value defaults (SPEC §8.6)
@@ -86,6 +88,7 @@ def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
             rehab_budget=form.rehab_budget,
             loan_requested=form.loan_requested,
             term_bucket=form.term_bucket,
+            asset_type=form.asset_type,
             stated_exit=form.stated_exit,
             product=form.product,
             product_source=ProductSource.ENTERED if form.product is not None else None,

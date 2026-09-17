@@ -101,6 +101,7 @@
       },
       "exit": {
         "type": "FLIP",
+        "exit_source": "STATED",
         "noi_annual": "19616.00",
         "ltv_takeout": "217500.00",
         "dscr_takeout": "194821.79",

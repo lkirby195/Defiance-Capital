@@ -47,8 +47,7 @@ fees:                                     # SPEC §3, §8.1
   extension_default_pct: 0.0              # of commitment, charged if payoff month > term; no rate step-up
   selling_cost_pct: 0.06                  # on exit_price (borrower) and on REO liquidation (downside)
   contingency_pct: 0.10                   # applied to rehab budget (SPEC §7.4); lender funds and borrower spends it
-  est_closing_pct_of_price: 0.02          # screen: est_closing = purchase_price x this, in total_cost for LTC (SPEC §7.4)
-  borrower_closing_pct_of_price: 0.03     # underwrite: buy-side closing paid in borrower cash (SPEC §8.6)
+  borrower_closing_pct_of_price: 0.03     # buy-side closing, borrower cash: in total_cost for LTC (SPEC §7.4) and in the borrower's project cost (SPEC §8.6)
 
 returns:                                  # SPEC §8.4, §8.5
   target_irr: 0.175                       # lender_yield(term, r*) = target_irr solves r*
@@ -58,6 +57,11 @@ returns:                                  # SPEC §8.4, §8.5
     step: 0.005
   month_window:                           # rows: term .. term + after_term (no early payoff, SPEC §8.4)
     after_term: 6
+
+exit:                                     # SPEC §3 exit inference; a team-stated exit always wins
+  resale_max_term_months: 9               # term <= this on an SFR / 2-4 infers a resale (flip, or wholetail on that product)
+  hold_min_term_months: 12                # term >= this infers a hold; the gap between the two infers nothing
+                                          #   (UNKNOWN), and every deal runs DSCR and REO regardless (SPEC §8.6)
 
 draws:                                    # SPEC §8.3
   draw_avg_utilization: 0.50              # average Tranche A utilization over the rehab period (0.50 = straight-line)
@@ -72,8 +76,8 @@ takeout:                                  # SPEC §8.6 DSCR takeout, run on ever
     vacancy_pct_of_rent: 0.05             # of gross annual rent
     management_pct_of_rent: 0.08
     maintenance_pct_of_rent: 0.05
-    taxes_pct_of_value: 0.012             # of ARV, when annual taxes are not supplied
-    insurance_pct_of_value: 0.005         # of ARV, when annual insurance is not supplied
+    taxes_pct_of_as_is_value: 0.012       # of the as-is value, when annual taxes are not supplied
+    insurance_pct_of_as_is_value: 0.005   # of the as-is value, when annual insurance is not supplied
 
 downside:                                 # SPEC §8.6 REO downside; no income / cap-rate valuation
   reo_haircut: 0.15                       # liquidation = min(as_is + rehab_adj, arv) x (1 - haircut)

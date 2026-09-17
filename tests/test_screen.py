@@ -447,7 +447,7 @@ def test_leverage_flags_name_cap_actual_band_and_cell() -> None:
     by_code = {f.code: f for f in flags}
     ltc = by_code[ScreenFlag.LTC_OVER_CAP]
     assert ltc.severity is Severity.HARD
-    assert re.search(r"LTC 92\.5% exceeds the 80\.0% cap for SPLIT_PRINCIPAL/T3/E1", ltc.message)
+    assert re.search(r"LTC 91\.8% exceeds the 80\.0% cap for SPLIT_PRINCIPAL/T3/E1", ltc.message)
     assert "5.0 pt tolerance band (limit 85.0%)" in ltc.message
     ltarv = by_code[ScreenFlag.LTARV_OVER_CAP]
     assert ltarv.severity is Severity.SOFT
