@@ -11,12 +11,14 @@ profit and cash-on-cash are information only: no floor, no flag.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from config.config import Config
 from engine.calc.borrower import borrower_economics
 from engine.calc.downside import reo_downside
 from engine.calc.exit import dscr_takeout
 from engine.calc.lender import lender_return
-from engine.calc.outstanding import loan_terms
+from engine.calc.outstanding import LoanTerms, loan_terms
 from engine.grids import yield_grid
 from engine.screen import (
     credit_check,
@@ -33,10 +35,63 @@ from schema.models import (
     DownsideResult,
     ExitResult,
     Flag,
+    Product,
+    Severity,
     UnderwriteFlag,
     UnderwriteInputs,
     UnderwriteResult,
 )
+
+
+def structure_flags(loan: LoanTerms, config: Config) -> list[Flag]:
+    """NO_REHAB_PERIOD when a SPLIT_PRINCIPAL term leaves no rehab period.  # SPEC §8.3, §8.7
+
+    Fixed INFO: the deal is still sized and priced normally, but Tranche A is fully drawn
+    from close, so the draw curve buys the borrower nothing and the two-note structure is
+    worth a second look. The message names the listing-months threshold it was tested
+    against.
+    """
+    if loan.product is not Product.SPLIT_PRINCIPAL or loan.rehab_months > 0:
+        return []
+    return [
+        Flag(
+            code=UnderwriteFlag.NO_REHAB_PERIOD,
+            severity=Severity.INFO,
+            message=(
+                f"SPLIT_PRINCIPAL term of {loan.term_months} month(s) is at or below the "
+                f"{config.draws.listing_months}-month listing period, so there is no rehab "
+                f"period: Tranche A is fully drawn from close and its average utilization "
+                f"({pct(config.draws.draw_avg_utilization)}) never applies."
+            ),
+        )
+    ]
+
+
+def solve_flags(solved_rate: Decimal, config: Config) -> list[Flag]:
+    """SOLVED_RATE_BELOW_GRID when r* lands under the configured grid.  # SPEC §8.4, §8.7
+
+    Fixed INFO: r* is reported as computed and inserted into the grid in rate order, below
+    the first configured column. On a short enough term the fees alone clear the target
+    income and r* comes out negative; the message says so.
+    """
+    floor = config.returns.rate_grid.min
+    if solved_rate >= floor:
+        return []
+    negative = (
+        " Fees alone exceed the target income at this term, so the solved rate is negative."
+        if solved_rate < 0
+        else ""
+    )
+    return [
+        Flag(
+            code=UnderwriteFlag.SOLVED_RATE_BELOW_GRID,
+            severity=Severity.INFO,
+            message=(
+                f"Solved rate {pct(solved_rate)} is below the {pct(floor)} rate-grid minimum; "
+                f"it is reported as computed and inserted as the first grid column.{negative}"
+            ),
+        )
+    ]
 
 
 def exit_flags(exit_result: ExitResult, config: Config) -> list[Flag]:
@@ -91,6 +146,8 @@ def underwrite(inputs: UnderwriteInputs, config: Config) -> UnderwriteResult:
         credit.flags
         + experience.flags
         + leverage_flags(sizing)
+        + structure_flags(loan, config)
+        + solve_flags(solved_rate, config)
         + exit_flags(exit_result, config)
         + downside_flags(downside, config)
     )

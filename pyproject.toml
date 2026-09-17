@@ -16,7 +16,11 @@ dependencies = [
     "python-dotenv>=1.0",
     "httpx>=0.27",
     "python-docx>=1.1",
+    "openpyxl>=3.1",
 ]
+
+[project.scripts]
+glenwood = "cli.main:main"
 
 [dependency-groups]
 dev = [
@@ -28,8 +32,27 @@ dev = [
     "pgserver>=0.1.4",
 ]
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Flat layout: the project is installed so `uv run glenwood` finds the entry point above.
+[tool.hatch.build.targets.wheel]
+packages = [
+    "adapters",
+    "api",
+    "cli",
+    "config",
+    "db",
+    "engine",
+    "intake",
+    "outputs",
+    "schema",
+    "services",
+]
+
 [tool.uv]
-package = false
+package = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

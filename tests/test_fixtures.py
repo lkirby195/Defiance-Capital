@@ -181,6 +181,7 @@ def test_fixture_underwrite_borrower_exit_downside(path: Path) -> None:
 
     exit_result, want = result.exit, expected["exit"]
     assert exit_result.type.value == want["type"]
+    assert exit_result.exit_source.value == want["exit_source"]
     assert cents(exit_result.noi_annual) == D(want["noi_annual"])
     assert cents(exit_result.ltv_takeout) == D(want["ltv_takeout"])
     assert cents(exit_result.dscr_takeout) == D(want["dscr_takeout"])
@@ -199,6 +200,20 @@ def test_fixture_underwrite_borrower_exit_downside(path: Path) -> None:
     assert cents(downside.exposure) == D(want["exposure"])
     assert rate(downside.cover) == D(want["cover"])
     assert downside.passed is want["passed"]
+
+
+@pytest.mark.parametrize("path", UNDERWRITE_FILES, ids=[p.stem for p in UNDERWRITE_FILES])
+def test_fixture_underwrite_opex_sources(path: Path) -> None:
+    """Where a fixture names the opex defaults, they come off the as-is value.  # SPEC §8.6"""
+    expected, result = run_underwrite(path)
+    want = expected.get("opex_defaults")
+    if want is None:
+        return
+    exit_result = result.exit
+    assert cents(exit_result.annual_taxes) == D(want["annual_taxes"])
+    assert exit_result.annual_taxes_source.value == want["annual_taxes_source"]
+    assert cents(exit_result.annual_insurance) == D(want["annual_insurance"])
+    assert exit_result.annual_insurance_source.value == want["annual_insurance_source"]
 
 
 @pytest.mark.parametrize("path", UNDERWRITE_FILES, ids=[p.stem for p in UNDERWRITE_FILES])

@@ -1,0 +1,121 @@
+{
+  "name": "go_split_principal_no_rehab_period_okc",
+  "description": "SPLIT_PRINCIPAL duplex in Oklahoma City on a 3-month term; T1 / 6+ deals; LTC 72.1%, LTV 60.0%, LTARV 53.8% all under cap; clean records. Go. Underwrite (verified 760 / 7 deals, term 3): the term equals the 3-month listing period, so rehab_months is 0, Tranche A is fully drawn from close and the draw curve never applies (NO_REHAB_PERIOD). Fees of 2% over three months carry most of the target, so r* solves to 9.50% — below the 10.0% grid floor (SOLVED_RATE_BELOW_GRID) and inserted as the first column. No stated exit: a 3-month term on a 2-4 infers a resale, so the exit is FLIP / INFERRED (SPEC §3).",
+  "inputs": {
+    "deal": {
+      "product": "SPLIT_PRINCIPAL",
+      "purchase_price": "120000.00",
+      "rehab_budget": "20000.00",
+      "loan_requested": "105000.00",
+      "as_is_value": "175000.00",
+      "arv": "195000.00"
+    },
+    "state": "OK",
+    "borrower": {
+      "credit_range_self_reported": "T1",
+      "experience_bucket_self_reported": "6_PLUS",
+      "repeat_borrower_self_reported": false
+    },
+    "court_records": {
+      "as_of": "2026-09-16"
+    }
+  },
+  "expected": {
+    "verdict": "GO",
+    "flags": [],
+    "credit_tranche": "T1",
+    "experience_tier": "E3",
+    "repeat_borrower_override_applied": false,
+    "all_pass": true,
+    "commitment": "105000.00",
+    "funded_at_close": "83000.00",
+    "split": {
+      "purchase_portion": "83000.00",
+      "rehab_portion": "22000.00"
+    },
+    "metrics": {
+      "LTC": "PASS",
+      "LTV_AS_IS": "PASS",
+      "LTARV": "PASS"
+    },
+    "reasons_contain": [],
+    "reply_contains": [
+      "fit on first pass",
+      "credit authorization"
+    ]
+  },
+  "underwrite": {
+    "inputs": {
+      "deal": {
+        "product": "SPLIT_PRINCIPAL",
+        "purchase_price": "120000.00",
+        "rehab_budget": "20000.00",
+        "loan_requested": "105000.00",
+        "as_is_value": "175000.00",
+        "arv": "195000.00"
+      },
+      "state": "OK",
+      "borrower": {
+        "credit_range_self_reported": "T1",
+        "experience_bucket_self_reported": "6_PLUS",
+        "repeat_borrower_self_reported": false,
+        "verified_credit_score": 760,
+        "verified_deals_36mo": 7
+      },
+      "term_months": 3,
+      "market_rent_monthly": "1500.00",
+      "annual_taxes_usd": "2000.00",
+      "annual_insurance_usd": "1100.00",
+      "annual_utilities_usd": "600.00",
+      "asset_type": "UNITS_2_4"
+    },
+    "expected": {
+      "rehab_months": 0,
+      "commitment": "105000.00",
+      "solved_rate": "0.095000",
+      "lender_yield_at_solve": "0.175000",
+      "interest_at_solve": "2493.75",
+      "fees_at_solve": "2100.00",
+      "avg_outstanding_at_term": "105000.00",
+      "grid": {
+        "columns": 12,
+        "rows": 7,
+        "solved_rate_inserted": true,
+        "term_row_cells_meeting_target": 12
+      },
+      "borrower": {
+        "total_project_cost": "145600.00",
+        "holding_costs": "925.00",
+        "exit_net": "183300.00",
+        "profit": "32181.25",
+        "cash_in": "46118.75",
+        "cash_on_cash": "0.697791"
+      },
+      "exit": {
+        "type": "FLIP",
+        "exit_source": "INFERRED",
+        "noi_annual": "11660.00",
+        "ltv_takeout": "146250.00",
+        "dscr_takeout": "115804.55",
+        "max_takeout": "115804.55",
+        "payoff_due": "106050.00",
+        "dscr_at_payoff": "1.310",
+        "refi_covers": true,
+        "shortfall": "0.00"
+      },
+      "downside": {
+        "recovery_basis": "195000.00",
+        "liquidation": "165750.00",
+        "foreclosure_months": 8,
+        "recovery": "143338.33",
+        "exposure": "106050.00",
+        "cover": "1.351611",
+        "passed": true
+      },
+      "flags": [
+        {"code": "NO_REHAB_PERIOD", "severity": "INFO"},
+        {"code": "SOLVED_RATE_BELOW_GRID", "severity": "INFO"}
+      ]
+    }
+  }
+}

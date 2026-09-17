@@ -1,6 +1,6 @@
-# GLENWOOD Underwriting Platform — SPEC v0.2
+# GLENWOOD Underwriting Platform — SPEC v0.3
 
-Status: v0.2 — §8.3–8.6 settled in the mechanics walkthrough (2026-09-10). Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: v0.3 — §8.3–8.6 settled in the mechanics walkthrough (2026-09-10); the Phase 2b review decisions (one buy-side closing number, opex defaults on the as-is value, §3 exit inference, the two informational underwrite flags) folded in 2026-09-16. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
 Companion file: `CLAUDE.md` (conventions for Claude Code).
 
 The engine math in §8 is the simple, term-level model (no monthly ledger); a monthly version is a Phase 7 decision (§12).
@@ -69,11 +69,20 @@ Common to all products:
 - Extension fee: input, default 0.0% of commitment, charged if payoff month > term.
 - Draws on Tranche A: straight-line over the rehab period, fully drawn at rehab completion (see §8.3).
 
-Borrower intent and exit are inferred from term and asset type, then confirmed by the team:
+Borrower intent and exit are inferred from term and asset type, then confirmed by the team.
+`asset_type` is `SFR | UNITS_2_4 | UNITS_5_PLUS | OTHER`, captured at intake. The engine
+applies these rules in order and records `exit_source`:
 
-- Term ≤ 9 months + SFR/small multi → flip or wholetail (resale exit)
-- Term ≥ 12 months, or borrower states hold → hold (refi/DSCR exit); run DSCR
-- Every deal also gets the REO downside (§8.6) regardless of stated exit
+| # | Rule | Exit | `exit_source` |
+|---|---|---|---|
+| 1 | Team states an exit (anything but `UNKNOWN`) | as stated | `STATED` |
+| 2 | Term ≤ 9 months and asset type is `SFR` or `UNITS_2_4` | resale: `WHOLETAIL` for the `WHOLETAIL` product, else `FLIP` | `INFERRED` |
+| 3 | Term ≥ 12 months | `HOLD` | `INFERRED` |
+| 4 | Neither fires (e.g. a 10-month term, or a ≤ 9-month term on `UNITS_5_PLUS`) | `UNKNOWN` | `INFERRED` |
+
+A team-stated exit always wins, including a stated `HOLD` on a short term. The exit type is
+informational: the DSCR takeout and the REO downside (§8.6) both run on every deal
+regardless of it.
 
 ---
 
@@ -137,6 +146,7 @@ IntakeRecord
   deal:
     purchase_price, rehab_budget, loan_requested
     term_bucket: 3 | 6 | 9 | 12 | 12_PLUS
+    asset_type?: SFR | UNITS_2_4 | UNITS_5_PLUS | OTHER   # drives the §3 exit inference
     stated_exit?: FLIP | HOLD | WHOLETAIL | UNKNOWN
   missing_fields: [..]           # what the team still needs to ask for
   status: NEW | NEEDS_INFO | SCREENED | IN_REVIEW | UNDERWRITING | LOI_SENT | HANDED_OFF | DECLINED | DEAD
@@ -155,12 +165,20 @@ Tables (one-line intent each; full DDL via Alembic migrations):
 - `properties` — normalized address, parcel, county, state; reused across deals
 - `enrichment_runs` — one row per adapter call: source, timestamp, status, raw response ref, parsed result
 - `screens` — screen inputs, score components, verdict, reasons; one per run (re-screen creates a new row)
-- `underwrites` — full underwrite inputs, outputs, sensitivity grids (JSONB), version of engine used
+- `underwrites` — full underwrite inputs, outputs, sensitivity grid (JSONB), version of engine used
 - `documents` — credit reports, valuations, contracts, generated memos/LOIs; file storage ref + hash
 - `ma_sync` — handoff log to Mortgage Automator: payload, MA ids, status
 - `audit_log` — who changed what; required because credit and court data are in here
 
 Money stored as `NUMERIC(14,2)`. Rates as `NUMERIC(7,5)`. All enrichment raw responses retained.
+
+`screens` and `underwrites` are append-only: a re-run writes a new row and nothing is
+updated in place. Each row records `engine_version` and `config_hash` (§10), so a result can
+always be traced to the code and the tunables that produced it. The engine result is stored
+whole in JSONB — `screens.score_components` holds components, sizing, and flags;
+`underwrites.outputs` holds everything but the grid, which has its own column — so a stored
+row rebuilds the exact `ScreenResult` / `UnderwriteResult`. `underwrites.solved_rate` is a
+`NUMERIC(7,5)` copy of `r*` for querying; the JSONB carries full precision.
 
 ---
 
@@ -231,7 +249,8 @@ Repeat GLENWOOD borrower with clean payoff history is a positive override (confi
 
 ```
 rehab_adj    = rehab_budget × (1 + contingency)          # contingency default 10%
-total_cost   = purchase_price + rehab_adj + est_closing   # est_closing: config, placeholder 2% of price
+buy_closing  = purchase_price × borrower_closing_pct      # 3%, borrower cash (§8.6); one number, screen and underwrite
+total_cost   = purchase_price + rehab_adj + buy_closing
 LTC          = loan_requested / total_cost
 LTV_as_is    = loan_requested / as_is_value               # as_is from enrichment; if unavailable, purchase_price with a flag
 LTARV        = loan_requested / arv                       # arv from enrichment/estimate; if unavailable, flagged and screen goes Conditional
@@ -262,7 +281,8 @@ From intake + enrichment, plus:
 - `as_is_value`, `arv` (RicherValues or team override); both required to underwrite
 - `credit_score` (Credco, replaces self-reported tranche); verified deal count (deed history)
 - `market_rent` (RentCast/PropStream/team), monthly, used for the DSCR takeout
-- `annual_taxes`, `annual_insurance` (team actuals; config defaults as % of ARV when absent) and `annual_utilities` (team input) → holding costs and the REO carry
+- `annual_taxes`, `annual_insurance` (team actuals; config defaults as % of **as-is value** when absent) and `annual_utilities` (team input) → holding costs and the REO carry
+- `asset_type` (from intake) and the team-stated exit → the §3 exit inference
 - `term_months` (from bucket; 12+ → team sets)
 - `rehab_months` = `term_months − listing_months` (config, placeholder 3; the last months of the term are listing and sale; floored at 0). Not a team input.
 - `extension_fee_pct` (default from config, 0)
@@ -332,7 +352,7 @@ Stored as JSONB on `underwrites`; rendered in the credit memo.
 
 ```
 rehab_adj           = rehab_budget × (1 + contingency_pct)       # lender funds and borrower spends the full contingency
-buy_closing         = purchase_price × borrower_closing_pct      # 3%, borrower cash
+buy_closing         = purchase_price × borrower_closing_pct      # 3%, borrower cash; the same number the screen puts in total_cost (§7.4)
 total_project_cost  = purchase_price + rehab_adj + buy_closing
 interest_paid       = interest(m, r)
 fees_paid           = fees(m)
@@ -358,7 +378,7 @@ refi_covers   = max_takeout ≥ payoff_due
 shortfall     = max(0, payoff_due − max_takeout)
 ```
 
-Report `max_takeout`, `refi_covers`, `shortfall`, and the DSCR at `payoff_due`. Flag `REFI_SHORTFALL` (severity config) when `refi_covers` is false. Taxes and insurance are team actuals when supplied, else config defaults as % of ARV.
+Report `max_takeout`, `refi_covers`, `shortfall`, and the DSCR at `payoff_due`. Flag `REFI_SHORTFALL` (severity config) when `refi_covers` is false. Taxes and insurance are team actuals when supplied, else config defaults as % of the **as-is value** — the property is taxed and insured as it stands, not at its repaired value. The same two figures feed the holding costs above and the REO carry below, so a deal uses one tax number and one insurance number everywhere.
 
 **REO downside** — every deal; no income or cap-rate valuation:
 
@@ -384,10 +404,20 @@ UnderwriteResult
   lender_yield_at_solve                                        # lender_yield(term, r*) = target_irr
   grid_lender                                                  # §8.5
   borrower_at_solve: {profit, cash_in, coc, ...}               # §8.6, information only
-  exit: {type, noi, dscr_at_payoff, max_takeout, payoff_due, refi_covers, shortfall}
+  exit: {type, exit_source, noi, dscr_at_payoff, max_takeout, payoff_due, refi_covers, shortfall}
   downside: {recovery_basis, liquidation, recovery, exposure, cover}
   flags: [ {code, severity, message} ]
 ```
+
+Underwrite flag codes. `REFI_SHORTFALL` and `DOWNSIDE_COVER_BELOW_FLOOR` take their severity
+from config; the two informational codes are fixed `Info` in code and config must not grade them:
+
+| Code | Severity | Raised when |
+|---|---|---|
+| `REFI_SHORTFALL` | config | §8.6, `refi_covers` is false |
+| `DOWNSIDE_COVER_BELOW_FLOOR` | config | §8.6, `downside_cover < cover_floor` |
+| `NO_REHAB_PERIOD` | Info (fixed) | `SPLIT_PRINCIPAL` with `term ≤ listing_months`, so `rehab_months = 0` and Tranche A is fully drawn from close (§8.3) |
+| `SOLVED_RATE_BELOW_GRID` | Info (fixed) | `r*` lands below `rate_grid.min`, including a negative `r*` where the fees alone exceed the target income at that term (§8.4). `r*` is reported as computed and inserted into the grid in rate order |
 
 ---
 
@@ -405,6 +435,16 @@ docx merge from GLENWOOD's LOI template (to be supplied). Fields: borrower/entit
 ### 9.4 Mortgage Automator handoff
 On "LOI accepted": create borrower (if not matched), property, and loan in MA via API with the structured data; attach memo and LOI; record `ma_sync` row. MA is not written to before this point.
 
+### 9.5 Verification tools (internal, not client deliverables)
+
+`uv run glenwood run <fixture.json> [--underwrite]` prints a run — verdict, reasons, sizing
+against caps, `r*`, the yield grid, borrower economics, the DSCR takeout and the downside
+cover — and `uv run glenwood export <fixture.json> <out.xlsx>` writes the same run as a
+workbook (sheets `Inputs`, `Sizing`, `Lender`, `Grid`, `Borrower`, `Exit`, `Downside`,
+`Flags`) with every figure as a number under a currency or percent format. Both read a
+fixture off disk and call the pure engine: no database, no network. They exist so the math
+can be checked by hand against a spreadsheet; neither is shown to a borrower.
+
 ---
 
 ## 10. Configuration
@@ -414,10 +454,11 @@ On "LOI accepted": create borrower (if not matched), property, and loan in MA vi
 - credit floor tranche; tranche cutoffs
 - leverage caps: product × tranche × experience tier (placeholder grid)
 - tolerance band, flag severities, lookbacks, thresholds
-- fees: origination, split, extension default, selling cost, contingency, screen est. closing, borrower buy-side closing
+- fees: origination, split, extension default, selling cost, contingency, borrower buy-side closing (one number: screen LTC and underwrite, §7.4, §8.6)
 - target IRR, rate grid, month window (rows after term)
 - draw average utilization, listing months (rehab_months = term − listing months)
-- DSCR takeout assumptions (LTV, rate, amortization, DSCR floor), opex defaults
+- exit inference term boundaries (resale max term, hold min term, §3)
+- DSCR takeout assumptions (LTV, rate, amortization, DSCR floor), opex defaults (rent percentages on gross rent; taxes and insurance as percentages of the as-is value)
 - REO haircut, foreclosure cost, foreclosure months by state, downside cover floor
 - underwrite flag severities (refi shortfall, downside cover)
 - states served and court-record adapter per state
@@ -460,5 +501,4 @@ Config is versioned; each `screens`/`underwrites` row records the config hash us
 - GLENWOOD leverage/pricing caps (placeholder grid to be filled)
 - LOI and credit memo templates
 - Historical deals for fixtures
-- Borrower buy-side closing (3%, §8.6) vs. the screen's est. closing (2%, §7.4): reconcile or keep both
 - Monthly ledger (true XIRR, draw timing in cash_in) if the Phase 7 back-test warrants it

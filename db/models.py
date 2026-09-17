@@ -34,6 +34,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from schema.models import (
+    AssetType,
     Channel,
     DocumentKind,
     ExperienceBucket,
@@ -75,6 +76,17 @@ def _created_at() -> Mapped[datetime]:
 
 def _updated_at() -> Mapped[datetime]:
     return mapped_column(server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+def _event_at() -> Mapped[datetime]:
+    """Insert time of an append-only run row, from ``clock_timestamp()``.
+
+    Not ``now()``: that is the transaction start time and is identical for every row
+    written in one transaction, which would leave two runs of the same screen with no
+    order between them. ``clock_timestamp()`` reads the wall clock per row, so
+    "the latest screen" is always a real answer.
+    """
+    return mapped_column(server_default=func.clock_timestamp(), nullable=False)
 
 
 borrower_entities = Table(
@@ -192,6 +204,8 @@ class Deal(Base):
     rehab_budget: Mapped[Decimal | None] = mapped_column(MONEY)
     loan_requested: Mapped[Decimal | None] = mapped_column(MONEY)
     term_bucket: Mapped[TermBucket | None] = mapped_column(_enum(TermBucket, "term_bucket"))
+    # Asset type from intake; with the term it drives the exit inference (SPEC §3).
+    asset_type: Mapped[AssetType | None] = mapped_column(_enum(AssetType, "asset_type"))
     stated_exit: Mapped[StatedExit | None] = mapped_column(_enum(StatedExit, "stated_exit"))
     # Team-supplied actuals overriding the %-of-value opex defaults (SPEC §8.6); annual USD.
     actual_annual_taxes_usd: Mapped[Decimal | None] = mapped_column(MONEY)
@@ -229,7 +243,12 @@ class EnrichmentRun(Base):
 
 
 class Screen(Base):
-    """Screen inputs, score components, verdict, reasons; one row per run.  # SPEC §5, §7"""
+    """Screen inputs, score components, verdict, reasons; one row per run.  # SPEC §5, §7
+
+    ``score_components`` is the whole ``ScreenResult`` less the columns broken out beside it
+    (verdict, reasons, suggested_reply, engine_version, config_hash): components, sizing,
+    and flags. A stored row therefore rebuilds the exact result.
+    """
 
     __tablename__ = "screens"
 
@@ -244,11 +263,17 @@ class Screen(Base):
     verdict: Mapped[Verdict] = mapped_column(_enum(Verdict, "verdict"), nullable=False)
     reasons: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     suggested_reply: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = _created_at()
+    created_at: Mapped[datetime] = _event_at()
 
 
 class Underwrite(Base):
-    """Full underwrite inputs, outputs, and sensitivity grids.  # SPEC §5, §8"""
+    """Full underwrite inputs, outputs, and the sensitivity grid.  # SPEC §5, §8
+
+    ``outputs`` is the whole ``UnderwriteResult`` less ``grid_lender``, which has its own
+    column; together they rebuild the result exactly. ``solved_rate`` is a NUMERIC(7,5) copy
+    of r* for querying - the JSONB keeps full precision. There is one grid (SPEC §8.5): the
+    borrower grid was removed in Phase 2b and its column dropped in migration 0004.
+    """
 
     __tablename__ = "underwrites"
 
@@ -261,9 +286,8 @@ class Underwrite(Base):
     inputs: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     outputs: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     grid_lender: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    grid_borrower: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     solved_rate: Mapped[Decimal | None] = mapped_column(RATE)
-    created_at: Mapped[datetime] = _created_at()
+    created_at: Mapped[datetime] = _event_at()
 
 
 class Document(Base):

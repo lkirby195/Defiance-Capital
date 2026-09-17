@@ -253,3 +253,120 @@ def test_split_principal_underwrite_uses_tranche_a_draws() -> None:
     assert result.lender_at_solve.avg_outstanding == D("145250")
     assert result.solved_rate.quantize(D("0.000001")) == D("0.181411")
     assert result.lender_yield_at_solve.quantize(TIGHT) == CONFIG.returns.target_irr
+
+
+# --- Phase 2b review decisions: the two informational flags (SPEC §8.3, §8.4, §8.7) -------------
+
+
+def test_no_rehab_period_flag_when_a_split_principal_term_leaves_no_rehab() -> None:
+    """A SPLIT_PRINCIPAL term at or under listing_months draws Tranche A in full at close."""
+    short = inputs(
+        deal=deal(
+            product=Product.SPLIT_PRINCIPAL,
+            purchase_price=D("120000.00"),
+            rehab_budget=D("20000.00"),
+            loan_requested=D("105000.00"),
+            as_is_value=D("175000.00"),
+            arv=D("195000.00"),
+        ),
+        term_months=3,
+    )
+    result = underwrite(short, CONFIG)
+    assert result.rehab_months == 0
+    flag = next(f for f in result.flags if f.code is UnderwriteFlag.NO_REHAB_PERIOD)
+    assert flag.severity is Severity.INFO
+    assert "3-month listing period" in flag.message
+    # the draw curve is inert: the whole commitment is outstanding for the whole term
+    assert result.lender_at_solve.avg_outstanding == result.sizing.commitment
+
+
+def test_no_rehab_period_flag_is_silent_with_a_rehab_period_or_another_product() -> None:
+    with_rehab = inputs(
+        deal=deal(
+            product=Product.SPLIT_PRINCIPAL,
+            rehab_budget=D("60000.00"),
+            loan_requested=D("170000.00"),
+            as_is_value=D("230000.00"),
+            arv=D("290000.00"),
+        ),
+        term_months=12,
+        market_rent_monthly=D("2400.00"),
+    )
+    long_enough = underwrite(with_rehab, CONFIG)
+    assert UnderwriteFlag.NO_REHAB_PERIOD not in [f.code for f in long_enough.flags]
+    # a single-note product on the same short term has no Tranche A to flag
+    single = underwrite(inputs(term_months=3), CONFIG)
+    assert UnderwriteFlag.NO_REHAB_PERIOD not in [f.code for f in single.flags]
+
+
+def test_no_rehab_period_threshold_follows_the_configured_listing_months() -> None:
+    cfg = config_with(draws={"listing_months": 6})
+    short = inputs(
+        deal=deal(
+            product=Product.SPLIT_PRINCIPAL,
+            rehab_budget=D("60000.00"),
+            loan_requested=D("170000.00"),
+            as_is_value=D("230000.00"),
+            arv=D("290000.00"),
+        ),
+        term_months=6,
+        market_rent_monthly=D("2400.00"),
+    )
+    codes_at_6 = [f.code for f in underwrite(short, cfg).flags]
+    assert UnderwriteFlag.NO_REHAB_PERIOD in codes_at_6
+    assert UnderwriteFlag.NO_REHAB_PERIOD not in [f.code for f in underwrite(short, CONFIG).flags]
+
+
+def test_solved_rate_below_grid_is_reported_as_computed_and_flagged() -> None:
+    """r* = target - origination x 12 / term: 9.5% at three months, under the 10% grid floor."""
+    result = underwrite(inputs(term_months=3), CONFIG)
+    assert result.solved_rate.quantize(D("0.000001")) == D("0.095000")
+    assert result.solved_rate < CONFIG.returns.rate_grid.min
+    flag = next(f for f in result.flags if f.code is UnderwriteFlag.SOLVED_RATE_BELOW_GRID)
+    assert flag.severity is Severity.INFO
+    assert "10.0%" in flag.message  # names the threshold it was tested against
+    assert "negative" not in flag.message
+    # reported as computed: the grid carries the solved rate as its first column
+    grid = result.grid_lender
+    assert grid.solved_rate == result.solved_rate
+    assert grid.solved_rate_inserted is True
+    assert grid.rates[0] == result.solved_rate
+    assert result.lender_yield_at_solve.quantize(TIGHT) == CONFIG.returns.target_irr
+
+
+def test_solved_rate_below_grid_says_so_when_r_star_is_negative() -> None:
+    """One month of interest cannot carry 2% of fees: r* = 0.175 - 0.24 = -6.5%."""
+    result = underwrite(inputs(term_months=1), CONFIG)
+    assert result.solved_rate.quantize(D("0.000001")) == D("-0.065000")
+    flag = next(f for f in result.flags if f.code is UnderwriteFlag.SOLVED_RATE_BELOW_GRID)
+    assert "negative" in flag.message
+    assert result.lender_yield_at_solve.quantize(TIGHT) == CONFIG.returns.target_irr
+
+
+def test_solved_rate_flag_is_silent_on_and_above_the_grid() -> None:
+    on_grid = underwrite(inputs(term_months=9), CONFIG)  # r* 14.83%
+    assert UnderwriteFlag.SOLVED_RATE_BELOW_GRID not in [f.code for f in on_grid.flags]
+    above = underwrite(
+        inputs(
+            deal=deal(
+                product=Product.SPLIT_PRINCIPAL,
+                rehab_budget=D("60000.00"),
+                loan_requested=D("170000.00"),
+                as_is_value=D("230000.00"),
+                arv=D("290000.00"),
+            ),
+            term_months=12,
+            market_rent_monthly=D("2400.00"),
+        ),
+        CONFIG,
+    )  # r* 18.14%, above the grid top
+    assert UnderwriteFlag.SOLVED_RATE_BELOW_GRID not in [f.code for f in above.flags]
+
+
+def test_informational_flags_never_change_a_verdict_input() -> None:
+    """Both new codes are INFO, so nothing about them is a config severity decision."""
+    result = underwrite(inputs(term_months=3), CONFIG)
+    informational = {UnderwriteFlag.NO_REHAB_PERIOD, UnderwriteFlag.SOLVED_RATE_BELOW_GRID}
+    for flag in result.flags:
+        if flag.code in informational:
+            assert flag.severity is Severity.INFO

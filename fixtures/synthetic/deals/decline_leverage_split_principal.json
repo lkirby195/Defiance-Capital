@@ -52,7 +52,7 @@
       "LTARV": "WITHIN_TOLERANCE"
     },
     "reasons_contain": [
-      "LTC 92.5% exceeds the 80.0% cap",
+      "LTC 91.8% exceeds the 80.0% cap",
       "5.0 pt tolerance band (limit 85.0%)",
       "LTARV 75.0% is over the 70.0% cap"
     ],

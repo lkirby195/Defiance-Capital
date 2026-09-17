@@ -14,7 +14,7 @@ Intake → enrichment → screen → underwrite → outputs pipeline for a hard 
 - Pydantic v2 for all schemas and config
 - pytest; `hypothesis` allowed for engine property tests
 - `python-docx` for memo/LOI generation
-- `ruff` for lint/format, `mypy --strict` on `engine/` and `schema/`
+- `ruff` for lint/format, `mypy --strict` on `engine/`, `schema/`, `config/`, `intake/` and `services/`
 
 ## Layout
 
@@ -54,10 +54,20 @@ glenwood-uw/
     normalize.py           # → IntakeRecord, missing_fields
   db/
     models.py              # SQLAlchemy
+    repository.py          # intake -> rows
     migrations/            # Alembic
+  services/                # the seam: load a deal, run the pure engine, persist, return
+    assemble.py            # deals row -> ScreenInputs / UnderwriteInputs
+    persistence.py         # append screens / underwrites rows; rebuild results from them
+    requests.py            # UnderwriteRequest: the SPEC 8.1 inputs supplied at underwrite time
+    runner.py              # run_screen, run_underwrite
   api/
     main.py, routes/       # webhooks, queue, actions (advance, decline, generate LOI, handoff)
+  cli/
+    main.py, fixtures.py   # `glenwood run` / `glenwood export` on a fixture, no database
   outputs/
+    console.py             # text report for the CLI
+    excel.py               # .xlsx workbook for checking the math by hand
     screen_summary.py, credit_memo.py, loi.py, ma_handoff.py
   templates/               # client-supplied docx templates go here (gitignored until provided)
   fixtures/
@@ -69,6 +79,8 @@ glenwood-uw/
 ## Rules
 
 **Engine is pure.** Nothing under `engine/` does I/O, touches the database, reads env vars, or calls the network. Functions take typed inputs and a `Config` object and return typed outputs. Every function in `engine/` has a unit test.
+
+**Services own the I/O.** `services/` is the only place that loads a deal, runs the engine on it, and writes the result. `api/` calls services, never the engine directly; services never commit (the caller owns the transaction). `cli/` is the other caller: it reads a fixture off disk and runs the same pure functions with no database at all.
 
 **No hardcoded thresholds.** Any number a lender might want to change (caps, floors, fees, lookbacks, defaults) lives in `config/glenwood.yaml` and is read through `Config`. If you find yourself typing `0.75` or `620` in `engine/`, stop and move it to config.
 
@@ -105,8 +117,12 @@ uv sync
 uv run alembic upgrade head
 uv run pytest
 uv run ruff check . && uv run ruff format .
-uv run mypy engine schema
+uv run mypy engine schema config intake services
 uv run uvicorn api.main:app --reload
+
+# run the engine on a fixture deal, no database:
+uv run glenwood run fixtures/synthetic/deals/go_split_draw_denver.json --underwrite
+uv run glenwood export fixtures/synthetic/deals/go_split_draw_denver.json denver.xlsx
 ```
 
 ## When unsure

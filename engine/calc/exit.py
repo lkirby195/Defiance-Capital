@@ -1,4 +1,13 @@
-"""DSCR takeout, run on every deal regardless of stated exit.  # SPEC §8.6
+"""Exit inference and the DSCR takeout, run on every deal regardless of exit.  # SPEC §3, §8.6
+
+The exit type is informational; it never gates the takeout or the downside. It is what the
+team stated, else what the term and the asset type imply (SPEC §3):
+
+    stated exit (anything but UNKNOWN)          -> as stated, STATED
+    term <= resale_max_term and SFR / 2-4       -> WHOLETAIL product: WHOLETAIL, else FLIP, INFERRED
+    term >= hold_min_term                       -> HOLD, INFERRED
+    neither (a 10-month term, 5+ units, ...)    -> UNKNOWN, INFERRED
+
 
     gross_rent   = market_rent x 12
     opex         = gross_rent x (vacancy + management + maintenance)
@@ -23,10 +32,45 @@ from config.config import Config
 from engine.calc.borrower import resolve_annual_insurance, resolve_annual_taxes
 from engine.calc.lender import TWELVE, payoff_fees
 from engine.calc.outstanding import LoanTerms
-from schema.models import ExitResult, UnderwriteInputs
+from schema.models import (
+    AssetType,
+    ExitResult,
+    ExitSource,
+    Product,
+    StatedExit,
+    UnderwriteInputs,
+)
 
 ZERO = Decimal(0)
 ONE = Decimal(1)
+
+# Asset types that resell as a flip or a wholetail on a short term.  # SPEC §3
+RESALE_ASSET_TYPES = frozenset({AssetType.SFR, AssetType.UNITS_2_4})
+
+
+def infer_exit(
+    stated: StatedExit,
+    asset_type: AssetType | None,
+    term_months: int,
+    product: Product,
+    config: Config,
+) -> tuple[StatedExit, ExitSource]:
+    """The exit in force and where it came from.  # SPEC §3
+
+    A team-stated exit always wins, including a stated HOLD on a short term. Otherwise the
+    term and the asset type decide: a short term on a house or a 2-4 resells (as a
+    WHOLETAIL when that is the product, else a FLIP), a long term is a hold, and anything
+    the two rules do not reach stays UNKNOWN. Term boundaries are config
+    (``exit.resale_max_term_months`` / ``exit.hold_min_term_months``).
+    """
+    if stated is not StatedExit.UNKNOWN:
+        return stated, ExitSource.STATED
+    if term_months <= config.exit.resale_max_term_months and asset_type in RESALE_ASSET_TYPES:
+        resale = StatedExit.WHOLETAIL if product is Product.WHOLETAIL else StatedExit.FLIP
+        return resale, ExitSource.INFERRED
+    if term_months >= config.exit.hold_min_term_months:
+        return StatedExit.HOLD, ExitSource.INFERRED
+    return StatedExit.UNKNOWN, ExitSource.INFERRED
 
 
 def _periodic(annual_rate: Decimal, years: int) -> tuple[Decimal, int]:
@@ -90,6 +134,9 @@ def dscr_at(loan_amount: Decimal, noi_annual: Decimal, config: Config) -> Decima
 
 def dscr_takeout(inputs: UnderwriteInputs, loan: LoanTerms, config: Config) -> ExitResult:
     """Max takeout loan, whether it covers the payoff, and the shortfall.  # SPEC §8.6"""
+    exit_type, exit_source = infer_exit(
+        inputs.stated_exit, inputs.asset_type, loan.term_months, loan.product, config
+    )
     gross_rent = inputs.market_rent_monthly * TWELVE
     taxes, taxes_source = resolve_annual_taxes(inputs, config)
     insurance, insurance_source = resolve_annual_insurance(inputs, config)
@@ -100,7 +147,8 @@ def dscr_takeout(inputs: UnderwriteInputs, loan: LoanTerms, config: Config) -> E
     max_takeout = min(ltv_takeout, by_dscr)
     due = payoff_due(loan, config)
     return ExitResult(
-        type=inputs.stated_exit,
+        type=exit_type,
+        exit_source=exit_source,
         gross_rent_annual=gross_rent,
         annual_taxes=taxes,
         annual_taxes_source=taxes_source,

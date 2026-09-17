@@ -16,7 +16,6 @@ from pydantic import ValidationError
 from config.config import DEFAULT_PATH, Config, load_yaml
 from engine.calc.borrower import (
     borrower_economics,
-    buy_closing,
     exit_net,
     monthly_holding_cost,
     resolve_annual_insurance,
@@ -29,6 +28,7 @@ from engine.calc.exit import (
     dscr_at,
     dscr_loan,
     dscr_takeout,
+    infer_exit,
     loan_for_payment,
     monthly_payment,
     payoff_due,
@@ -48,9 +48,11 @@ from engine.calc.outstanding import (
     rehab_months,
     tranche_a_dollar_months,
 )
-from engine.sizing import size_deal
+from engine.sizing import buy_closing, size_deal
 from schema.models import (
+    AssetType,
     BorrowerInputs,
+    ExitSource,
     ExperienceBucket,
     ExperienceTier,
     OpexSource,
@@ -262,14 +264,29 @@ def test_lender_yield_falls_as_payoff_slides_without_extension_fee() -> None:
 # --- §8.6 borrower -------------------------------------------------------------------------------
 
 
-def test_taxes_and_insurance_actual_or_default_pct_of_arv() -> None:
+def test_taxes_and_insurance_actual_or_default_pct_of_as_is_value() -> None:
     actual = inputs()
     assert resolve_annual_taxes(actual, CONFIG) == (D("1800.00"), OpexSource.ACTUAL)
     assert resolve_annual_insurance(actual, CONFIG) == (D("1200.00"), OpexSource.ACTUAL)
     defaulted = inputs(annual_taxes_usd=None, annual_insurance_usd=None)
-    # ARV 165,000 x 1.2% = 1,980; x 0.5% = 825
-    assert resolve_annual_taxes(defaulted, CONFIG) == (D("1980.000"), OpexSource.DEFAULT)
-    assert resolve_annual_insurance(defaulted, CONFIG) == (D("825.000"), OpexSource.DEFAULT)
+    # SPEC §8.6: the defaults are a percentage of the as-is value, not the ARV.
+    # as-is 160,000 x 1.2% = 1,920; x 0.5% = 800 (the ARV 165,000 would give 1,980 / 825)
+    assert resolve_annual_taxes(defaulted, CONFIG) == (D("1920.000"), OpexSource.DEFAULT)
+    assert resolve_annual_insurance(defaulted, CONFIG) == (D("800.000"), OpexSource.DEFAULT)
+
+
+def test_opex_defaults_track_the_as_is_value_not_the_arv() -> None:
+    """Moving the ARV alone leaves the defaults alone; moving the as-is value moves them."""
+    base = inputs(annual_taxes_usd=None, annual_insurance_usd=None)
+    richer_arv = base.model_copy(
+        update={"deal": base.deal.model_copy(update={"arv": D("400000.00")})}
+    )
+    assert resolve_annual_taxes(richer_arv, CONFIG) == resolve_annual_taxes(base, CONFIG)
+    richer_as_is = base.model_copy(
+        update={"deal": base.deal.model_copy(update={"as_is_value": D("320000.00")})}
+    )
+    # 320,000 x 1.2% = 3,840, exactly double the 160,000 case
+    assert resolve_annual_taxes(richer_as_is, CONFIG)[0] == D("3840.000")
 
 
 def test_monthly_holding_cost() -> None:
@@ -488,3 +505,77 @@ def test_underwrite_inputs_bounds() -> None:
         inputs(extension_fee_pct=D("1.5"))
     assert inputs().stated_exit is StatedExit.UNKNOWN
     assert inputs().arv == D("165000.00") and inputs().as_is_value == D("160000.00")
+
+
+# --- §3 exit inference ---------------------------------------------------------------------------
+
+
+def infer(
+    stated: StatedExit = StatedExit.UNKNOWN,
+    asset_type: AssetType | None = AssetType.SFR,
+    term: int = 6,
+    product: Product = Product.NO_DRAW,
+    config: Config = CONFIG,
+) -> tuple[StatedExit, ExitSource]:
+    return infer_exit(stated, asset_type, term, product, config)
+
+
+def test_a_team_stated_exit_always_wins() -> None:
+    # a stated FLIP survives a 24-month term that would otherwise infer a hold
+    assert infer(stated=StatedExit.FLIP, term=24) == (StatedExit.FLIP, ExitSource.STATED)
+    # and a stated HOLD survives a 3-month term on a house
+    assert infer(stated=StatedExit.HOLD, term=3) == (StatedExit.HOLD, ExitSource.STATED)
+    assert infer(stated=StatedExit.WHOLETAIL, term=12) == (
+        StatedExit.WHOLETAIL,
+        ExitSource.STATED,
+    )
+
+
+def test_short_term_on_a_house_or_a_two_to_four_infers_a_resale() -> None:
+    assert infer(term=9, asset_type=AssetType.SFR) == (StatedExit.FLIP, ExitSource.INFERRED)
+    assert infer(term=3, asset_type=AssetType.UNITS_2_4) == (StatedExit.FLIP, ExitSource.INFERRED)
+    # the resale is a wholetail when that is the product (SPEC §3)
+    assert infer(term=6, product=Product.WHOLETAIL) == (
+        StatedExit.WHOLETAIL,
+        ExitSource.INFERRED,
+    )
+
+
+def test_long_term_infers_a_hold_whatever_the_asset_type() -> None:
+    for asset in (AssetType.SFR, AssetType.UNITS_2_4, AssetType.UNITS_5_PLUS, AssetType.OTHER):
+        assert infer(term=12, asset_type=asset) == (StatedExit.HOLD, ExitSource.INFERRED)
+    assert infer(term=24, asset_type=None) == (StatedExit.HOLD, ExitSource.INFERRED)
+
+
+def test_nothing_is_inferred_between_the_two_boundaries_or_on_larger_assets() -> None:
+    # 10 and 11 months are past the resale rule and short of the hold rule
+    for term in (10, 11):
+        assert infer(term=term) == (StatedExit.UNKNOWN, ExitSource.INFERRED)
+    # a short term on 5+ units or an unknown asset type reaches neither rule
+    assert infer(term=9, asset_type=AssetType.UNITS_5_PLUS) == (
+        StatedExit.UNKNOWN,
+        ExitSource.INFERRED,
+    )
+    assert infer(term=9, asset_type=AssetType.OTHER) == (StatedExit.UNKNOWN, ExitSource.INFERRED)
+    assert infer(term=9, asset_type=None) == (StatedExit.UNKNOWN, ExitSource.INFERRED)
+
+
+def test_the_term_boundaries_come_from_config_not_code() -> None:
+    assert CONFIG.exit.resale_max_term_months == 9
+    assert CONFIG.exit.hold_min_term_months == 12
+    cfg = config_with(exit={"resale_max_term_months": 6, "hold_min_term_months": 9})
+    assert infer(term=9) == (StatedExit.FLIP, ExitSource.INFERRED)  # resale on the defaults
+    assert infer(term=9, config=cfg) == (StatedExit.HOLD, ExitSource.INFERRED)
+    assert infer(term=6, config=cfg) == (StatedExit.FLIP, ExitSource.INFERRED)
+
+
+def test_dscr_takeout_carries_the_inference_onto_the_result() -> None:
+    stated = dscr_takeout(inputs(stated_exit=StatedExit.FLIP), loan(), CONFIG)
+    assert (stated.type, stated.exit_source) == (StatedExit.FLIP, ExitSource.STATED)
+    inferred = dscr_takeout(
+        inputs(stated_exit=StatedExit.UNKNOWN, asset_type=AssetType.SFR), loan(), CONFIG
+    )
+    assert (inferred.type, inferred.exit_source) == (StatedExit.FLIP, ExitSource.INFERRED)
+    # the takeout numbers do not move with the exit type: it runs on every deal (SPEC §8.6)
+    assert inferred.max_takeout == stated.max_takeout
+    assert inferred.payoff_due == stated.payoff_due

@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -20,6 +21,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from schema.models import (
+    GRADED_UNDERWRITE_FLAGS,
     CourtFlag,
     ExperienceTier,
     Product,
@@ -100,7 +102,12 @@ class Thresholds(_Section):
 
 
 class FlagsConfig(_Section):
-    """Court, filing, and underwrite flag severities; lookbacks; thresholds.  # SPEC §7.2, §8.6"""
+    """Court, filing, and underwrite flag severities; lookbacks; thresholds.  # SPEC §7.2, §8.6
+
+    Only the graded underwrite codes (``GRADED_UNDERWRITE_FLAGS``) are severity decisions.
+    The informational ones are fixed ``Info`` in code (SPEC §8.7), so grading them in the
+    yaml would be a lie about what the engine does and is rejected.
+    """
 
     severities: dict[CourtFlag, Severity]
     underwrite_severities: dict[UnderwriteFlag, Severity]
@@ -112,9 +119,19 @@ class FlagsConfig(_Section):
         missing = [f.value for f in CourtFlag if f not in self.severities]
         if missing:
             raise ValueError(f"flags.severities is missing: {', '.join(missing)}")
-        missing = [f.value for f in UnderwriteFlag if f not in self.underwrite_severities]
+        missing = [f.value for f in GRADED_UNDERWRITE_FLAGS if f not in self.underwrite_severities]
         if missing:
-            raise ValueError(f"flags.underwrite_severities is missing: {', '.join(missing)}")
+            raise ValueError(
+                f"flags.underwrite_severities is missing: {', '.join(sorted(missing))}"
+            )
+        ungradable = [
+            f.value for f in self.underwrite_severities if f not in GRADED_UNDERWRITE_FLAGS
+        ]
+        if ungradable:
+            raise ValueError(
+                "flags.underwrite_severities cannot grade the informational codes "
+                f"(fixed Info in code, SPEC §8.7): {', '.join(sorted(ungradable))}"
+            )
         return self
 
 
@@ -133,8 +150,9 @@ class FeesConfig(_Section):
     extension_default_pct: Pct
     selling_cost_pct: Pct
     contingency_pct: Pct
-    est_closing_pct_of_price: Pct  # screen estimate inside total_cost for LTC (SPEC §7.4)
-    borrower_closing_pct_of_price: Pct  # buy-side closing paid in borrower cash (SPEC §8.6)
+    # One buy-side closing number: borrower cash, inside total_cost for the screen's LTC
+    # (SPEC §7.4) and inside the borrower's project cost (SPEC §8.6).
+    borrower_closing_pct_of_price: Pct
 
     @model_validator(mode="after")
     def _origination_split_sums(self) -> FeesConfig:
@@ -175,6 +193,25 @@ class ReturnsConfig(_Section):
     month_window: MonthWindow
 
 
+class ExitConfig(_Section):
+    """Term boundaries of the exit inference.  # SPEC §3
+
+    A term at or below ``resale_max_term_months`` on an SFR or a 2-4 infers a resale; a
+    term at or above ``hold_min_term_months`` infers a hold. The gap between them (10-11
+    months on the placeholders) infers nothing and stays UNKNOWN, which is the point of
+    having two numbers rather than one cut point.
+    """
+
+    resale_max_term_months: Months
+    hold_min_term_months: Months
+
+    @model_validator(mode="after")
+    def _boundaries_do_not_overlap(self) -> ExitConfig:
+        if self.resale_max_term_months >= self.hold_min_term_months:
+            raise ValueError("exit.resale_max_term_months must be below exit.hold_min_term_months")
+        return self
+
+
 class DrawsConfig(_Section):
     """Draw-curve constants.  # SPEC §8.3"""
 
@@ -185,14 +222,16 @@ class DrawsConfig(_Section):
 class OpexDefaults(_Section):
     """Opex lines used when the deal does not supply them.  # SPEC §8.6
 
-    Rent percentages apply to gross annual rent; value percentages apply to the ARV.
+    Rent percentages apply to gross annual rent; taxes and insurance default to a
+    percentage of the **as-is** value, not the ARV: the property is taxed and insured as
+    it stands.
     """
 
     vacancy_pct_of_rent: Pct
     management_pct_of_rent: Pct
     maintenance_pct_of_rent: Pct
-    taxes_pct_of_value: Pct
-    insurance_pct_of_value: Pct
+    taxes_pct_of_as_is_value: Pct
+    insurance_pct_of_as_is_value: Pct
 
 
 class TakeoutConfig(_Section):
@@ -251,6 +290,7 @@ class Config(_Section):
     experience: ExperienceConfig
     fees: FeesConfig
     returns: ReturnsConfig
+    exit: ExitConfig
     draws: DrawsConfig
     takeout: TakeoutConfig
     downside: DownsideConfig
@@ -297,6 +337,16 @@ class Config(_Section):
         if not isinstance(data, dict):
             raise ConfigError(f"config {path} must be a mapping at the top level")
         return cls.from_dict(data)
+
+
+@lru_cache(maxsize=1)
+def get_config() -> Config:
+    """The validated config from the default path, loaded and hashed once per process.
+
+    For callers outside ``engine/`` - services, the API, the CLI - that all want the same
+    tunables. The engine itself never reaches for this: it is handed a ``Config``.
+    """
+    return Config.load()
 
 
 class _DecimalLoader(yaml.SafeLoader):

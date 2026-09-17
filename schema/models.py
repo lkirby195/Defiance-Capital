@@ -88,6 +88,22 @@ class StatedExit(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class AssetType(StrEnum):
+    """Subject-property asset type; drives the exit inference with the term.  # SPEC §3"""
+
+    SFR = "SFR"
+    UNITS_2_4 = "UNITS_2_4"
+    UNITS_5_PLUS = "UNITS_5_PLUS"
+    OTHER = "OTHER"
+
+
+class ExitSource(StrEnum):
+    """Whether the exit was stated by the team or inferred from term x asset type.  # SPEC §3"""
+
+    STATED = "STATED"
+    INFERRED = "INFERRED"
+
+
 class State(StrEnum):
     """Property state; anything outside OK/CO is OTHER.  # SPEC §4.5"""
 
@@ -205,13 +221,16 @@ class DealInfo(BaseModel):
     rehab_budget: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     loan_requested: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     term_bucket: TermBucket | None = None
+    # Asset type from intake; with the term it drives the exit inference (SPEC §3). None
+    # means unknown, which only ever leaves the exit UNKNOWN - it never forces one.
+    asset_type: AssetType | None = None
     stated_exit: StatedExit | None = None
     # Product: entered by the team, or inferred by the normalizer (NO_DRAW when rehab_budget
     # is 0, else SPLIT_DRAW). WHOLETAIL and SPLIT_PRINCIPAL are never inferred.  # SPEC §3
     product: Product | None = None
     product_source: ProductSource | None = None
-    # Team-supplied actuals (annual USD) that override the %-of-ARV opex defaults in config
-    # when present; the underwrite reads them via UnderwriteInputs.  # SPEC §8.1, §8.6
+    # Team-supplied actuals (annual USD) that override the %-of-as-is-value opex defaults
+    # in config when present; the underwrite reads them via UnderwriteInputs.  # SPEC §8.1, §8.6
     actual_annual_taxes_usd: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
@@ -270,10 +289,23 @@ class ScreenFlag(StrEnum):
 
 
 class UnderwriteFlag(StrEnum):
-    """Stable codes for flags the underwrite raises; severity is config.  # SPEC §8.6"""
+    """Stable codes for flags the underwrite raises.  # SPEC §8.6, §8.7
+
+    The two credit codes take their severity from ``flags.underwrite_severities``; the two
+    informational codes are fixed INFO in code and config must not grade them.
+    """
 
     REFI_SHORTFALL = "REFI_SHORTFALL"  # DSCR takeout does not cover commitment + payoff fees
     DOWNSIDE_COVER_BELOW_FLOOR = "DOWNSIDE_COVER_BELOW_FLOOR"  # REO recovery / exposure
+    NO_REHAB_PERIOD = "NO_REHAB_PERIOD"  # INFO, SPEC §8.3: SPLIT_PRINCIPAL, term <= listing_months
+    SOLVED_RATE_BELOW_GRID = "SOLVED_RATE_BELOW_GRID"  # INFO, SPEC §8.4: r* under rate_grid.min
+
+
+# Underwrite codes whose severity is a config decision; every other code is fixed INFO
+# in code (SPEC §8.7) and ``flags.underwrite_severities`` rejects it.
+GRADED_UNDERWRITE_FLAGS: frozenset[UnderwriteFlag] = frozenset(
+    {UnderwriteFlag.REFI_SHORTFALL, UnderwriteFlag.DOWNSIDE_COVER_BELOW_FLOOR}
+)
 
 
 class RepeatBorrowerStatus(StrEnum):
@@ -459,7 +491,7 @@ class SizingResult(BaseModel):
     credit_tranche: Tranche
     experience_tier: ExperienceTier
     rehab_adj: Decimal
-    est_closing: Decimal
+    buy_closing: Decimal  # purchase_price x borrower_closing_pct_of_price, borrower cash
     total_cost: Decimal
     loan_requested: Decimal
     commitment: Decimal
@@ -510,8 +542,9 @@ class UnderwriteInputs(BaseModel):
     screen). ``borrower`` carries the verified credit score and deal count when known; the
     underwrite derives the caps cell from them exactly as the screen does. Annual taxes and
     insurance are team actuals; ``None`` falls back to the config defaults as a percentage of
-    the ARV. ``exit_price`` defaults to the ARV (flip); the team sets a retail price for
-    wholetail. ``extension_fee_pct`` defaults to the config default.
+    the as-is value. ``exit_price`` defaults to the ARV (flip); the team sets a retail price
+    for wholetail. ``extension_fee_pct`` defaults to the config default. ``asset_type`` and
+    ``stated_exit`` drive the SPEC §3 exit inference.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -528,6 +561,7 @@ class UnderwriteInputs(BaseModel):
     annual_utilities_usd: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
     extension_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
     exit_price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    asset_type: AssetType | None = None
     stated_exit: StatedExit = StatedExit.UNKNOWN
 
     @model_validator(mode="after")
@@ -555,7 +589,7 @@ class OpexSource(StrEnum):
     """Where an annual taxes / insurance figure came from.  # SPEC §8.6"""
 
     ACTUAL = "ACTUAL"  # team-supplied
-    DEFAULT = "DEFAULT"  # config percentage of the ARV
+    DEFAULT = "DEFAULT"  # config percentage of the as-is value
 
 
 class FeeSchedule(BaseModel):
@@ -640,7 +674,8 @@ class ExitResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    type: StatedExit  # as stated / confirmed by the team; informational
+    type: StatedExit  # stated by the team, else inferred from term x asset type (SPEC §3)
+    exit_source: ExitSource  # STATED when the team set it, INFERRED when the engine did
     gross_rent_annual: Decimal
     annual_taxes: Decimal
     annual_taxes_source: OpexSource
