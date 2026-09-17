@@ -171,6 +171,37 @@ class CourtFlag(StrEnum):
     SUBJECT_PROPERTY_LIEN_OR_LIS_PENDENS = "SUBJECT_PROPERTY_LIEN_OR_LIS_PENDENS"
 
 
+class LienKind(StrEnum):
+    """Subject-property encumbrance types.  # SPEC §7.2"""
+
+    LIEN = "LIEN"
+    LIS_PENDENS = "LIS_PENDENS"
+
+
+class ValueSource(StrEnum):
+    """Where a value the engine ran on came from.  # SPEC §6, §8.1
+
+    An adapter value always wins over a team value; the team value stays on the deal either
+    way, so a later reader can see what was entered by hand and what superseded it.
+    """
+
+    ADAPTER = "ADAPTER"  # an enrichment adapter or a paid pull (SPEC §6)
+    TEAM = "TEAM"  # entered by hand in the review queue
+
+
+class CourtRecordsStatus(StrEnum):
+    """What the team found when they searched the courts by hand.  # SPEC §6, §7.2
+
+    The court-record adapters are Phase 3; until then a person searches OSCN, PACER or the
+    county and records the outcome here. NOT_CHECKED is not the same as CLEAN: the screen
+    flags the first as unknown (INFO) and treats the second as a clean record.
+    """
+
+    NOT_CHECKED = "NOT_CHECKED"
+    CLEAN = "CLEAN"
+    FLAGS = "FLAGS"
+
+
 class DocumentKind(StrEnum):
     """Document types stored on ``documents``.  # SPEC §5"""
 
@@ -179,6 +210,96 @@ class DocumentKind(StrEnum):
     CONTRACT = "CONTRACT"
     CREDIT_MEMO = "CREDIT_MEMO"
     LOI = "LOI"
+
+
+# What the screen tests each court code on (SPEC §7.2), so a team-entered matter can be
+# rejected at the door when it does not carry it.
+DATED_COURT_FLAGS: frozenset[CourtFlag] = frozenset(
+    {
+        CourtFlag.BANKRUPTCY_IN_LOOKBACK,
+        CourtFlag.SATISFIED_JUDGMENT_OR_RELEASED_LIEN_IN_LOOKBACK,
+    }
+)
+AMOUNT_COURT_FLAGS: frozenset[CourtFlag] = frozenset(
+    {
+        CourtFlag.UNSATISFIED_JUDGMENT_OVER_THRESHOLD,
+        CourtFlag.OPEN_TAX_LIEN,
+        CourtFlag.ACTIVE_CIVIL_LITIGATION_AS_DEFENDANT,
+    }
+)
+LIEN_COURT_FLAGS: frozenset[CourtFlag] = frozenset({CourtFlag.SUBJECT_PROPERTY_LIEN_OR_LIS_PENDENS})
+
+
+class TeamCourtRecord(BaseModel):
+    """One court or filing matter the team found by hand, typed by the flag it feeds.
+
+    The team is the court-record source until the Phase 3 adapters land (SPEC §6). Each
+    entry carries the facts the screen's own test for that code needs (SPEC §7.2) - the date
+    for the two lookback codes, the amount for the three threshold codes, the lien facts for
+    a subject-property encumbrance - so the config thresholds still decide the outcome
+    rather than the team asserting a verdict. One matter per entry; a code with no matter is
+    simply absent.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: CourtFlag
+    occurred_on: date | None = None  # filing date, or the date a judgment was satisfied
+    amount_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    lien_kind: LienKind | None = None
+    senior: bool | None = None
+    resolved_at_close: bool | None = None
+    description: str | None = None
+
+    @model_validator(mode="after")
+    def _carries_what_its_code_is_tested_on(self) -> TeamCourtRecord:
+        code = self.code
+        if code in DATED_COURT_FLAGS and self.occurred_on is None:
+            raise ValueError(f"{code.value} is tested against a lookback and needs occurred_on")
+        if code in AMOUNT_COURT_FLAGS and self.amount_usd is None:
+            raise ValueError(f"{code.value} is tested against a threshold and needs amount_usd")
+        lien_fields = (self.lien_kind, self.senior, self.resolved_at_close)
+        if code in LIEN_COURT_FLAGS:
+            if any(field is None for field in lien_fields):
+                raise ValueError(
+                    f"{code.value} needs lien_kind, senior and resolved_at_close: it is "
+                    "flagged only when senior and unresolved at close"
+                )
+        elif any(field is not None for field in lien_fields):
+            raise ValueError(
+                f"lien_kind, senior and resolved_at_close apply only to "
+                f"{CourtFlag.SUBJECT_PROPERTY_LIEN_OR_LIS_PENDENS.value}, not {code.value}"
+            )
+        return self
+
+
+def validate_court_records(
+    status: CourtRecordsStatus | None,
+    as_of: date | None,
+    records: list[TeamCourtRecord],
+) -> None:
+    """A team court search says what it found and when, or says it was not done.
+
+    Shared by ``DealInfo`` and the team-entry form so an incoherent block is refused at the
+    door with a 422 rather than part-way through assembly. The date is not optional on a
+    real search: the engine has no clock, so every SPEC §7.2 lookback is measured from it.
+    """
+    if status is None or status is CourtRecordsStatus.NOT_CHECKED:
+        if records or as_of is not None:
+            raise ValueError(
+                "court findings need court_records_status CLEAN or FLAGS; "
+                "NOT_CHECKED and unset carry neither a date nor a matter"
+            )
+        return
+    if as_of is None:
+        raise ValueError(
+            f"court_records_status {status.value} needs court_records_as_of: the engine "
+            "has no clock and the lookbacks are measured from the search date"
+        )
+    if status is CourtRecordsStatus.CLEAN and records:
+        raise ValueError("court_records_status CLEAN cannot carry a matter")
+    if status is CourtRecordsStatus.FLAGS and not records:
+        raise ValueError("court_records_status FLAGS needs at least one matter")
 
 
 def _now_utc() -> datetime:
@@ -237,11 +358,27 @@ class DealInfo(BaseModel):
     actual_annual_insurance_usd: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
+    # Team-supplied valuation, used when no adapter has produced one (SPEC §6). An adapter
+    # value always wins; these stay on the deal either way, for audit.
+    as_is_value_team: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    arv_team: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    # Team court search (SPEC §7.2): the outcome, the date it was searched (the engine has
+    # no clock, so the lookbacks are measured from it), and one typed entry per matter.
+    court_records_status: CourtRecordsStatus | None = None
+    court_records_as_of: date | None = None
+    court_records_team: list[TeamCourtRecord] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _product_and_source_together(self) -> DealInfo:
         if (self.product is None) != (self.product_source is None):
             raise ValueError("product and product_source must be set together")
+        return self
+
+    @model_validator(mode="after")
+    def _court_records_are_coherent(self) -> DealInfo:
+        validate_court_records(
+            self.court_records_status, self.court_records_as_of, self.court_records_team
+        )
         return self
 
 
@@ -340,13 +477,6 @@ class ValueBasis(StrEnum):
     PURCHASE_PRICE = "PURCHASE_PRICE"  # fallback when the as-is value is unavailable
 
 
-class LienKind(StrEnum):
-    """Subject-property encumbrance types.  # SPEC §7.2"""
-
-    LIEN = "LIEN"
-    LIS_PENDENS = "LIS_PENDENS"
-
-
 class Flag(BaseModel):
     """One flag: stable code, severity, message naming the threshold tested.  # SPEC §8.7"""
 
@@ -384,6 +514,7 @@ class CourtRecordInputs(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     as_of: date
+    source: ValueSource = ValueSource.ADAPTER
     bankruptcy_filing_dates: list[date] = Field(default_factory=list)
     active_foreclosure_as_owner: bool = False
     unsatisfied_judgments_usd: list[Decimal] = Field(default_factory=list)
@@ -410,9 +541,32 @@ class SizingInputs(BaseModel):
     loan_requested: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
     as_is_value: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     arv: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    as_is_value_source: ValueSource | None = None
+    arv_source: ValueSource | None = None
     purchase_portion_override: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _unstated_source_is_an_adapter(cls, data: Any) -> Any:
+        """A valuation with no stated source came from enrichment; the team names itself."""
+        if not isinstance(data, dict):
+            return data
+        for value, source in (("as_is_value", "as_is_value_source"), ("arv", "arv_source")):
+            if data.get(value) is not None and data.get(source) is None:
+                data = {**data, source: ValueSource.ADAPTER}
+        return data
+
+    @model_validator(mode="after")
+    def _source_needs_a_value(self) -> SizingInputs:
+        for value, source in (
+            (self.as_is_value, self.as_is_value_source),
+            (self.arv, self.arv_source),
+        ):
+            if source is not None and value is None:
+                raise ValueError("a valuation source cannot be recorded without its value")
+        return self
 
     @model_validator(mode="after")
     def _override_only_for_split_products(self) -> SizingInputs:
@@ -498,6 +652,8 @@ class SizingResult(BaseModel):
     funded_at_close: Decimal
     split: CommitmentSplit | None
     ltv_basis: ValueBasis
+    as_is_value_source: ValueSource | None  # None when no as-is value was available
+    arv_source: ValueSource | None
     metrics: dict[LeverageMetric, MetricCheck]
     all_pass: bool
 
@@ -515,6 +671,7 @@ class ScreenComponents(BaseModel):
     experience_tier_verified: ExperienceTier | None
     repeat_borrower_override_applied: bool
     experience_tier: ExperienceTier  # tier used for the caps lookup
+    court_records_source: ValueSource | None  # None when no source was checked
 
 
 class ScreenResult(BaseModel):

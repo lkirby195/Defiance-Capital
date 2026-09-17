@@ -10,7 +10,7 @@ database matches ``schema/intake.json``. Rows on ``intake_submissions``,
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any
@@ -19,6 +19,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -36,6 +37,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from schema.models import (
     AssetType,
     Channel,
+    CourtRecordsStatus,
     DocumentKind,
     ExperienceBucket,
     Product,
@@ -62,6 +64,7 @@ class Base(DeclarativeBase):
     type_annotation_map = {
         dict[str, Any]: JSONB,
         list[str]: JSONB,
+        list[dict[str, Any]]: JSONB,
         datetime: DateTime(timezone=True),
     }
 
@@ -178,6 +181,14 @@ class Deal(Base):
             "(product IS NULL) = (product_source IS NULL)",
             name="ck_deals_product_and_source_together",
         ),
+        # A searched record is dated: the engine has no clock and the SPEC §7.2 lookbacks
+        # are measured from the day the team searched.
+        CheckConstraint(
+            "court_records_status IS NULL "
+            "OR court_records_status = 'NOT_CHECKED' "
+            "OR court_records_as_of IS NOT NULL",
+            name="ck_deals_court_records_dated_when_searched",
+        ),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -210,6 +221,19 @@ class Deal(Base):
     # Team-supplied actuals overriding the %-of-value opex defaults (SPEC §8.6); annual USD.
     actual_annual_taxes_usd: Mapped[Decimal | None] = mapped_column(MONEY)
     actual_annual_insurance_usd: Mapped[Decimal | None] = mapped_column(MONEY)
+    # Team-supplied valuation and court search, used until the Phase 3 adapters land
+    # (SPEC §6). An adapter value always wins; these are never overwritten, so a later
+    # reader can see what was entered by hand and what superseded it.
+    as_is_value_team: Mapped[Decimal | None] = mapped_column(MONEY)
+    arv_team: Mapped[Decimal | None] = mapped_column(MONEY)
+    court_records_status: Mapped[CourtRecordsStatus | None] = mapped_column(
+        _enum(CourtRecordsStatus, "court_records_status")
+    )
+    court_records_as_of: Mapped[date | None] = mapped_column(Date)
+    # One TeamCourtRecord per matter (SPEC §7.2), validated by the schema on the way in.
+    court_records_team: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
     missing_fields: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     credit_authorization_signed: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"

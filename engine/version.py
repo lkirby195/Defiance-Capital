@@ -9,8 +9,14 @@ buy-side closing number (3% of price) in the screen's total_cost and the borrowe
 project cost, opex defaults as a percentage of the as-is value rather than the ARV, the
 SPEC §3 exit inference with ``exit_source``, and the NO_REHAB_PERIOD and
 SOLVED_RATE_BELOW_GRID informational flags.
+
+Phase 2d (0.5.0) changed no math: every input produces the number it produced at 0.4.0.
+What changed is the shape of the result - ``SizingResult`` now carries where each half of
+the valuation came from and ``ScreenComponents`` where the court record came from (SPEC
+§6.1). The version still moves, because ``screens.engine_version`` is what tells a later
+reader which shape a stored row is in, and two different shapes must not both claim 0.4.0.
 """
 
 from __future__ import annotations
 
-ENGINE_VERSION = "0.4.0"
+ENGINE_VERSION = "0.5.0"

@@ -1,6 +1,6 @@
-# GLENWOOD Underwriting Platform — SPEC v0.3
+# GLENWOOD Underwriting Platform — SPEC v0.4
 
-Status: v0.3 — §8.3–8.6 settled in the mechanics walkthrough (2026-09-10); the Phase 2b review decisions (one buy-side closing number, opex defaults on the as-is value, §3 exit inference, the two informational underwrite flags) folded in 2026-09-16. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: v0.4 — §8.3–8.6 settled in the mechanics walkthrough (2026-09-10); the Phase 2b review decisions (one buy-side closing number, opex defaults on the as-is value, §3 exit inference, the two informational underwrite flags) folded in 2026-09-16; team overrides (§6.1) and the automatic status transitions (§4.6) added the same day. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
 Companion file: `CLAUDE.md` (conventions for Claude Code).
 
 The engine math in §8 is the simple, term-level model (no monthly ledger); a monthly version is a Phase 7 decision (§12).
@@ -148,9 +148,29 @@ IntakeRecord
     term_bucket: 3 | 6 | 9 | 12 | 12_PLUS
     asset_type?: SFR | UNITS_2_4 | UNITS_5_PLUS | OTHER   # drives the §3 exit inference
     stated_exit?: FLIP | HOLD | WHOLETAIL | UNKNOWN
+  team overrides (§6):           # stand-ins for enrichment, entered by hand
+    as_is_value_team?, arv_team?
+    court_records_status?: NOT_CHECKED | CLEAN | FLAGS
+    court_records_as_of?         # the day the team searched; required for CLEAN and FLAGS
+    court_records_team: [..]     # one typed matter per entry, §7.2
   missing_fields: [..]           # what the team still needs to ask for
   status: NEW | NEEDS_INFO | SCREENED | IN_REVIEW | UNDERWRITING | LOI_SENT | HANDED_OFF | DECLINED | DEAD
 ```
+
+### 4.6 Status transitions
+
+Two moves are automatic; every other move on the lifecycle is a team action in the review
+queue.
+
+| Trigger | From | To |
+|---|---|---|
+| Screen (§7) | `NEW` | `SCREENED`, or `DECLINED` on a Decline verdict |
+| Underwrite (§8) | `SCREENED`, `IN_REVIEW` | `UNDERWRITING` |
+
+A deal outside those starting states keeps the status it has: re-screening a deal the team
+has already moved on does not drag it backwards, and re-underwriting one already in
+`UNDERWRITING` is a no-op. **A `DECLINED` or `DEAD` deal cannot be underwritten** — the run is
+refused and nothing is recorded, until a person re-opens it.
 
 ---
 
@@ -201,6 +221,25 @@ Each adapter implements a common `Protocol` (see `CLAUDE.md`), returns typed res
 
 Experience verification: count buy→sell pairs in the last 36 months across the borrower's known entities from deed history. Self-reported bucket is displayed next to the verified count; mismatch is a flag, not a fail.
 
+### 6.1 Team overrides (the interim source)
+
+Until an adapter exists for a value, the team is the source. The intake form takes a
+hand-entered `as_is_value_team` and `arv_team`, and a `court_records_status` of
+`NOT_CHECKED` / `CLEAN` / `FLAGS` with one typed matter per entry (each carrying the facts
+§7.2 tests that code on: the date for a lookback code, the amount for a threshold code, the
+lien facts for a subject-property encumbrance — so the config thresholds, not the team,
+decide the outcome).
+
+Precedence is fixed: **an adapter value always wins over a team value**, and the team value
+stays on the deal either way so a later reader can see what was entered by hand and what
+superseded it. Every value the engine ran on records its source, `ADAPTER` or `TEAM`, on the
+stored screen and underwrite (§5) — a Go that rests on a hand-entered valuation and a
+hand-done court search is a different thing from a Go that rests on a pull, and the verdict
+alone does not say which it is.
+
+`NOT_CHECKED` is not `CLEAN`: the first is reported as an INFO flag, the second is a clean
+record dated the day the team searched.
+
 ---
 
 ## 7. Screen (Stage 1)
@@ -232,7 +271,8 @@ Floor tranche is config (`config/glenwood.yaml`), placeholder T4.
 | Landlord-tenant matters (as landlord) | OSCN / CO | Info |
 | Subject property: existing liens, lis pendens | Forecasa / PropStream | Hard if senior and unresolved at close |
 
-Thresholds and lookbacks are config, not code.
+Thresholds and lookbacks are config, not code. Where no adapter covers a state yet, the team
+records what it found by hand (§6.1); the same thresholds then apply to it unchanged.
 
 ### 7.3 Experience tiers
 

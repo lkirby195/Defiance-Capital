@@ -112,6 +112,31 @@
       "title": "Channel",
       "type": "string"
     },
+    "CourtFlag": {
+      "description": "Stable codes for the court and filing flags; severity is config.  # SPEC \u00a77.2",
+      "enum": [
+        "BANKRUPTCY_IN_LOOKBACK",
+        "ACTIVE_FORECLOSURE_AS_OWNER",
+        "UNSATISFIED_JUDGMENT_OVER_THRESHOLD",
+        "OPEN_TAX_LIEN",
+        "ACTIVE_CIVIL_LITIGATION_AS_DEFENDANT",
+        "SATISFIED_JUDGMENT_OR_RELEASED_LIEN_IN_LOOKBACK",
+        "LANDLORD_TENANT_AS_LANDLORD",
+        "SUBJECT_PROPERTY_LIEN_OR_LIS_PENDENS"
+      ],
+      "title": "CourtFlag",
+      "type": "string"
+    },
+    "CourtRecordsStatus": {
+      "description": "What the team found when they searched the courts by hand.  # SPEC \u00a76, \u00a77.2\n\nThe court-record adapters are Phase 3; until then a person searches OSCN, PACER or the\ncounty and records the outcome here. NOT_CHECKED is not the same as CLEAN: the screen\nflags the first as unknown (INFO) and treats the second as a clean record.",
+      "enum": [
+        "NOT_CHECKED",
+        "CLEAN",
+        "FLAGS"
+      ],
+      "title": "CourtRecordsStatus",
+      "type": "string"
+    },
     "DealInfo": {
       "additionalProperties": false,
       "description": "Deal terms as requested by the borrower.  # SPEC \u00a74.5",
@@ -150,6 +175,40 @@
           "default": null,
           "title": "Actual Annual Taxes Usd"
         },
+        "arv_team": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Arv Team"
+        },
+        "as_is_value_team": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "As Is Value Team"
+        },
         "asset_type": {
           "anyOf": [
             {
@@ -160,6 +219,37 @@
             }
           ],
           "default": null
+        },
+        "court_records_as_of": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Court Records As Of"
+        },
+        "court_records_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CourtRecordsStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "court_records_team": {
+          "items": {
+            "$ref": "#/$defs/TeamCourtRecord"
+          },
+          "title": "Court Records Team",
+          "type": "array"
         },
         "loan_requested": {
           "anyOf": [
@@ -269,6 +359,15 @@
         "6_PLUS"
       ],
       "title": "ExperienceBucket",
+      "type": "string"
+    },
+    "LienKind": {
+      "description": "Subject-property encumbrance types.  # SPEC \u00a77.2",
+      "enum": [
+        "LIEN",
+        "LIS_PENDENS"
+      ],
+      "title": "LienKind",
       "type": "string"
     },
     "Product": {
@@ -400,6 +499,97 @@
       ],
       "title": "Status",
       "type": "string"
+    },
+    "TeamCourtRecord": {
+      "additionalProperties": false,
+      "description": "One court or filing matter the team found by hand, typed by the flag it feeds.\n\nThe team is the court-record source until the Phase 3 adapters land (SPEC \u00a76). Each\nentry carries the facts the screen's own test for that code needs (SPEC \u00a77.2) - the date\nfor the two lookback codes, the amount for the three threshold codes, the lien facts for\na subject-property encumbrance - so the config thresholds still decide the outcome\nrather than the team asserting a verdict. One matter per entry; a code with no matter is\nsimply absent.",
+      "properties": {
+        "amount_usd": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Amount Usd"
+        },
+        "code": {
+          "$ref": "#/$defs/CourtFlag"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "lien_kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LienKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "occurred_on": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Occurred On"
+        },
+        "resolved_at_close": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolved At Close"
+        },
+        "senior": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Senior"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "title": "TeamCourtRecord",
+      "type": "object"
     },
     "TermBucket": {
       "description": "Requested loan term in months.  # SPEC \u00a74.1",

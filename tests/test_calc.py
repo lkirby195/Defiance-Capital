@@ -62,6 +62,7 @@ from schema.models import (
     StatedExit,
     Tranche,
     UnderwriteInputs,
+    ValueSource,
 )
 
 CONFIG = Config.load()
@@ -490,10 +491,35 @@ def test_downside_assumptions_come_from_config() -> None:
 
 
 def test_underwrite_inputs_require_valuation() -> None:
+    without = {**NO_DRAW_DEAL.model_dump(), "arv": None, "arv_source": None}
     with pytest.raises(ValidationError, match="as_is_value and arv"):
-        inputs(SizingInputs(**{**NO_DRAW_DEAL.model_dump(), "arv": None}))
+        inputs(SizingInputs(**without))
+    without = {**NO_DRAW_DEAL.model_dump(), "as_is_value": None, "as_is_value_source": None}
     with pytest.raises(ValidationError, match="as_is_value and arv"):
-        inputs(SizingInputs(**{**NO_DRAW_DEAL.model_dump(), "as_is_value": None}))
+        inputs(SizingInputs(**without))
+
+
+def test_a_valuation_source_cannot_stand_without_its_value() -> None:
+    """A source with no value would claim provenance for a number that is not there."""
+    with pytest.raises(ValidationError, match="source cannot be recorded without its value"):
+        SizingInputs(**{**NO_DRAW_DEAL.model_dump(), "arv": None})
+
+
+def test_an_unstated_valuation_source_reads_as_an_adapter_value() -> None:
+    """Fixtures predate the team overrides; their valuations stand in for enrichment."""
+    assert NO_DRAW_DEAL.as_is_value_source is ValueSource.ADAPTER
+    assert NO_DRAW_DEAL.arv_source is ValueSource.ADAPTER
+    team = SizingInputs(
+        **{
+            **NO_DRAW_DEAL.model_dump(),
+            "as_is_value_source": ValueSource.TEAM,
+            "arv_source": ValueSource.TEAM,
+        }
+    )
+    assert team.as_is_value_source is ValueSource.TEAM
+    sized = size_deal(team, Tranche.T2, ExperienceTier.E2, CONFIG)
+    assert sized.as_is_value_source is ValueSource.TEAM
+    assert sized.arv_source is ValueSource.TEAM
 
 
 def test_underwrite_inputs_bounds() -> None:
