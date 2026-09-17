@@ -1,10 +1,16 @@
 """The extra inputs an underwrite needs beyond what the deal already carries.  # SPEC §8.1
 
 Everything here comes from paid pulls, the valuation, or the team at the moment they
-advance a deal: it is not intake, so it is not on ``deals``. Taxes and insurance are
-resolved in three steps - this request, then the team actuals stored on the deal
-(``actual_annual_taxes_usd`` / ``actual_annual_insurance_usd``), then the config default as
-a percentage of the as-is value (SPEC §8.6).
+advance a deal: it is not intake, so most of it is not on ``deals``. Each optional value
+resolves the same way - this request, then what intake already stored on the deal, then the
+engine default:
+
+    as_is_value / arv     request -> deal.as_is_value_team / arv_team -> not ready (SPEC §8.1)
+    annual taxes          request -> deal.actual_annual_taxes_usd -> % of as-is (SPEC §8.6)
+    annual insurance      request -> deal.actual_annual_insurance_usd -> % of as-is
+    asset type, exit      request -> deal -> unknown (SPEC §3)
+
+An adapter value, when one exists, wins over every step of that (``services/enrichment.py``).
 """
 
 from __future__ import annotations
@@ -21,9 +27,11 @@ class UnderwriteRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # Valuation (RicherValues or team override); both required to underwrite.
-    as_is_value: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
-    arv: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    # Valuation (RicherValues or team override). Optional here because the team may
+    # already have entered one on the deal; the underwrite still needs both halves from
+    # somewhere (SPEC §8.1) and says so by name when it has neither.
+    as_is_value: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    arv: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     # Verified borrower facts; they replace the self-reported tranche and bucket.
     verified_credit_score: int | None = Field(default=None, ge=300, le=850)
     verified_deals_36mo: int | None = Field(default=None, ge=0)

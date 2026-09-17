@@ -25,7 +25,10 @@ from intake.normalize import normalize
 from intake.parsers.team_form import TeamEntryForm, parse_team_form
 from schema.models import Channel
 
-TEAM_ENTRY = Path(__file__).resolve().parents[1] / "fixtures/synthetic/team_entry_complete.json"
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/synthetic"
+TEAM_ENTRY = FIXTURES / "team_entry_complete.json"
+# The Go fixture's own team-entry payload, so the API tests and the CLI run the same deal.
+TEAM_ENTRY_WITH_OVERRIDES = FIXTURES / "deals/go_team_overrides_tulsa.json"
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "").strip()
 PGSERVER_AVAILABLE = importlib.util.find_spec("pgserver") is not None
@@ -90,5 +93,24 @@ def store_deal(session: Session, payload: dict[str, Any]) -> Deal:
 
 @pytest.fixture
 def stored_deal(db_session: Session, team_entry: dict[str, Any]) -> Deal:
-    """One complete deal in the database, ready to screen."""
+    """One complete deal in the database, ready to screen.
+
+    No team overrides: with no valuation behind it, this deal screens to a Decline (its
+    LTV is computed on the purchase price and lands over the cap), which is the honest
+    state of a deal today and the reason the overrides exist.
+    """
     return store_deal(db_session, team_entry)
+
+
+@pytest.fixture
+def team_entry_with_overrides() -> dict[str, Any]:
+    """The team-entry payload out of the Go fixture: a valuation and a court search by hand."""
+    fixture = json.loads(TEAM_ENTRY_WITH_OVERRIDES.read_text(encoding="utf-8"))
+    payload: dict[str, Any] = fixture["team_entry"]
+    return payload
+
+
+@pytest.fixture
+def deal_with_overrides(db_session: Session, team_entry_with_overrides: dict[str, Any]) -> Deal:
+    """A deal the team has valued and searched by hand; it screens Go."""
+    return store_deal(db_session, team_entry_with_overrides)

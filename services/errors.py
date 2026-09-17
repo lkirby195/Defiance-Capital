@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from schema.models import Status
+
 
 class ServiceError(Exception):
     """Base for everything in this package."""
@@ -28,3 +30,19 @@ class DealNotReady(ServiceError):
         super().__init__(f"deal {deal_id} is missing: {', '.join(missing)}")
         self.deal_id = deal_id
         self.missing = missing
+
+
+class DealNotUnderwritable(ServiceError):
+    """The deal's status rules out an underwrite.  # SPEC §4.5
+
+    A declined or dead deal is not priced until a person re-opens it; doing it silently
+    would put an underwrite on a deal nobody is working.
+    """
+
+    def __init__(self, deal_id: UUID, status: Status) -> None:
+        super().__init__(
+            f"deal {deal_id} is {status.value} and cannot be underwritten; "
+            "a team member re-opens it first"
+        )
+        self.deal_id = deal_id
+        self.status = status

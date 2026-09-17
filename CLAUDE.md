@@ -57,7 +57,9 @@ glenwood-uw/
     repository.py          # intake -> rows
     migrations/            # Alembic
   services/                # the seam: load a deal, run the pure engine, persist, return
-    assemble.py            # deals row -> ScreenInputs / UnderwriteInputs
+    assemble.py            # deals row -> ScreenInputs / UnderwriteInputs; adapter-over-team
+    enrichment.py          # what the adapters produced (Phase 3); the precedence rule
+    lifecycle.py           # the two automatic status transitions (SPEC 4.6)
     persistence.py         # append screens / underwrites rows; rebuild results from them
     requests.py            # UnderwriteRequest: the SPEC 8.1 inputs supplied at underwrite time
     runner.py              # run_screen, run_underwrite
@@ -80,7 +82,9 @@ glenwood-uw/
 
 **Engine is pure.** Nothing under `engine/` does I/O, touches the database, reads env vars, or calls the network. Functions take typed inputs and a `Config` object and return typed outputs. Every function in `engine/` has a unit test.
 
-**Services own the I/O.** `services/` is the only place that loads a deal, runs the engine on it, and writes the result. `api/` calls services, never the engine directly; services never commit (the caller owns the transaction). `cli/` is the other caller: it reads a fixture off disk and runs the same pure functions with no database at all.
+**Services own the I/O.** `services/` is the only place that loads a deal, runs the engine on it, and writes the result. `api/` calls services, never the engine directly; services never commit (the caller owns the transaction). `cli/` is the other caller: it reads a fixture off disk and runs the same pure functions with no database at all — a fixture with a `team_entry` block goes through `services/assemble.py` too, so the CLI and the API cannot diverge.
+
+**An adapter value always beats a team value.** Anything the team enters by hand (SPEC §6.1) is a stand-in for a source that does not exist yet. The team's entry is never overwritten, and every value the engine ran on records whether it came from an `ADAPTER` or the `TEAM`.
 
 **No hardcoded thresholds.** Any number a lender might want to change (caps, floors, fees, lookbacks, defaults) lives in `config/glenwood.yaml` and is read through `Config`. If you find yourself typing `0.75` or `620` in `engine/`, stop and move it to config.
 

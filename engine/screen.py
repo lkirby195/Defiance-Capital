@@ -613,6 +613,9 @@ def screen(inputs: ScreenInputs, config: Config) -> ScreenResult:
             experience_tier_verified=experience.tier_verified,
             repeat_borrower_override_applied=experience.override_applied,
             experience_tier=experience.tier,
+            court_records_source=(
+                inputs.court_records.source if inputs.court_records is not None else None
+            ),
         ),
         sizing=sizing,
     )

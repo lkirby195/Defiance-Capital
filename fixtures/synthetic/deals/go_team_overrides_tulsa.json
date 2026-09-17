@@ -1,0 +1,114 @@
+{
+  "name": "go_team_overrides_tulsa",
+  "description": "Team-entered SPLIT_DRAW in Tulsa, screened through the same assembly the API uses. The enrichment adapters are Phase 3, so everything behind the screen is the team's own work: a hand-entered as-is value and ARV (source TEAM) and a court search recorded CLEAN as of 2026-09-16. With them the deal reaches Go on the first pass -- LTC 78.1%, LTV 74.0%, LTARV 62.7%, no court flag, nothing missing. Without them the same deal would be Conditional at best: no valuation and no court record. The underwrite request names no valuation at all, so it falls back to the same two team numbers; taxes and insurance default off the as-is value (3,000 / 1,250), and a 9-month term on an SFR with no stated exit infers FLIP. Only one cell on the term row is flagged as meeting the target, not two: lender_yield(9, r*) lands 1e-28 below 0.175 at this commitment because r* is a repeating decimal, so the r* column itself just misses the >= test. The same deal at a 200,000 commitment rounds the other way. Reported, not papered over.",
+  "team_entry": {
+    "borrower_name": "Marcus Ellery",
+    "borrower_phone": "(918) 555-0188",
+    "borrower_email": "marcus@example.com",
+    "entity_name": "Ellery Property Group LLC",
+    "credit_range": "T2",
+    "experience_bucket": "3_5",
+    "repeat_borrower": false,
+    "address": "2210 E 15th St, Tulsa, OK 74104",
+    "county": "Tulsa",
+    "purchase_price": "185000.00",
+    "rehab_budget": "42000.00",
+    "loan_requested": "185000.00",
+    "term_bucket": "9",
+    "asset_type": "SFR",
+    "as_is_value_team": "250000.00",
+    "arv_team": "295000.00",
+    "court_records_status": "CLEAN",
+    "court_records_as_of": "2026-09-16"
+  },
+  "expected": {
+    "verdict": "GO",
+    "flags": [],
+    "credit_tranche": "T2",
+    "experience_tier": "E2",
+    "repeat_borrower_override_applied": false,
+    "all_pass": true,
+    "commitment": "185000.00",
+    "funded_at_close": "138800.00",
+    "split": {
+      "purchase_portion": "138800.00",
+      "rehab_portion": "46200.00"
+    },
+    "metrics": {
+      "LTC": "PASS",
+      "LTV_AS_IS": "PASS",
+      "LTARV": "PASS"
+    },
+    "sources": {
+      "as_is_value": "TEAM",
+      "arv": "TEAM",
+      "court_records": "TEAM"
+    },
+    "status_after_screen": "SCREENED",
+    "reasons_contain": [],
+    "reply_contains": [
+      "fit on first pass",
+      "credit authorization"
+    ]
+  },
+  "underwrite": {
+    "request": {
+      "verified_credit_score": 705,
+      "verified_deals_36mo": 4,
+      "market_rent_monthly": "2400.00",
+      "annual_utilities_usd": "840.00"
+    },
+    "expected": {
+      "rehab_months": 6,
+      "commitment": "185000.00",
+      "solved_rate": "0.148333",
+      "lender_yield_at_solve": "0.175000",
+      "interest_at_solve": "20581.25",
+      "fees_at_solve": "3700.00",
+      "avg_outstanding_at_term": "185000.00",
+      "opex_defaults": {
+        "annual_taxes": "3000.00",
+        "annual_taxes_source": "DEFAULT",
+        "annual_insurance": "1250.00",
+        "annual_insurance_source": "DEFAULT"
+      },
+      "grid": {
+        "columns": 12,
+        "rows": 7,
+        "solved_rate_inserted": true,
+        "term_row_cells_meeting_target": 1
+      },
+      "borrower": {
+        "total_project_cost": "236750.00",
+        "holding_costs": "3817.50",
+        "exit_net": "277300.00",
+        "profit": "12451.25",
+        "cash_in": "79848.75",
+        "cash_on_cash": "0.155935"
+      },
+      "exit": {
+        "type": "FLIP",
+        "exit_source": "INFERRED",
+        "noi_annual": "19366.00",
+        "ltv_takeout": "221250.00",
+        "dscr_takeout": "192338.85",
+        "max_takeout": "192338.85",
+        "payoff_due": "186850.00",
+        "dscr_at_payoff": "1.235",
+        "refi_covers": true,
+        "shortfall": "0.00"
+      },
+      "downside": {
+        "recovery_basis": "295000.00",
+        "liquidation": "250750.00",
+        "foreclosure_months": 8,
+        "recovery": "222311.67",
+        "exposure": "186850.00",
+        "cover": "1.189787",
+        "passed": true
+      },
+      "flags": [],
+      "status_after_underwrite": "UNDERWRITING"
+    }
+  }
+}

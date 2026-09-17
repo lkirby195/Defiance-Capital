@@ -3,18 +3,25 @@
 The TEAM channel is "Direct": nothing to extract, the form maps straight onto
 ``ParsedIntake``. Any field may be omitted so a team member can capture a partial
 inquiry from a call; the normalizer reports what is still missing.
+
+The team-only block also carries the stand-ins for enrichment (SPEC §6): a valuation and a
+court search the team did by hand. They are used only where no adapter has produced the
+same value, and the form validates them the same way the engine would - a court search with
+findings has to say what it found and when.
 """
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from intake.normalize import ParsedIntake
 from schema.models import (
     AssetType,
     BorrowerInfo,
+    CourtRecordsStatus,
     DealInfo,
     ExperienceBucket,
     Product,
@@ -23,8 +30,10 @@ from schema.models import (
     State,
     StatedExit,
     StateSource,
+    TeamCourtRecord,
     TermBucket,
     Tranche,
+    validate_court_records,
 )
 
 
@@ -62,6 +71,21 @@ class TeamEntryForm(BaseModel):
     actual_annual_insurance_usd: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
+    # Team-supplied valuation and court search, used until the Phase 3 adapters land
+    # (SPEC §6). An adapter value always wins over either of these.
+    as_is_value_team: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    arv_team: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    court_records_status: CourtRecordsStatus | None = None
+    court_records_as_of: date | None = None  # the day the team searched; lookbacks run from it
+    court_records_team: list[TeamCourtRecord] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _court_records_are_coherent(self) -> TeamEntryForm:
+        """The same check ``DealInfo`` makes, so the endpoint answers 422 rather than 500."""
+        validate_court_records(
+            self.court_records_status, self.court_records_as_of, self.court_records_team
+        )
+        return self
 
 
 def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
@@ -94,5 +118,10 @@ def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
             product_source=ProductSource.ENTERED if form.product is not None else None,
             actual_annual_taxes_usd=form.actual_annual_taxes_usd,
             actual_annual_insurance_usd=form.actual_annual_insurance_usd,
+            as_is_value_team=form.as_is_value_team,
+            arv_team=form.arv_team,
+            court_records_status=form.court_records_status,
+            court_records_as_of=form.court_records_as_of,
+            court_records_team=list(form.court_records_team),
         ),
     )

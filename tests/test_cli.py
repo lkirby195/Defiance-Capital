@@ -120,3 +120,65 @@ def test_run_fixture_refuses_an_underwrite_it_was_not_given(tmp_path: Path) -> N
         run_fixture(screen_only, CONFIG, with_underwrite=True)
     run = run_fixture(screen_only, CONFIG, with_underwrite=False)
     assert run.underwrite_result is None
+
+
+# --- team-entry fixtures run through the service assembly (SPEC §6) ------------------------------
+
+TEAM_FIXTURES = [p for p in FIXTURE_FILES if "team_entry" in load(p)]
+TEAM_IDS = [p.stem for p in TEAM_FIXTURES]
+
+
+def test_at_least_one_fixture_goes_through_the_team_entry_path() -> None:
+    assert TEAM_FIXTURES, "no fixture exercises services.assemble"
+
+
+@pytest.mark.parametrize("path", TEAM_FIXTURES, ids=TEAM_IDS)
+def test_a_team_entry_fixture_is_assembled_not_handed_straight_in(path: Path) -> None:
+    """It goes through normalize -> a deals row -> services.assemble, as the API does."""
+    run = run_fixture(path, CONFIG, with_underwrite=False)
+    assert run.deal is not None
+    assert run.deal.product is not None  # inferred by the normalizer, not stated in the fixture
+    assert run.screen_inputs.deal.purchase_price == run.deal.purchase_price
+    assert run.screen_inputs.state is run.deal.property.state
+
+
+@pytest.mark.parametrize("path", TEAM_FIXTURES, ids=TEAM_IDS)
+def test_a_team_entry_fixture_reaches_its_expected_verdict(path: Path) -> None:
+    fixture = load(path)
+    run = run_fixture(path, CONFIG, with_underwrite=False)
+    assert run.screen_result.verdict.value == fixture["expected"]["verdict"]
+    sources = fixture["expected"]["sources"]
+    assert run.screen_result.sizing.as_is_value_source is not None
+    assert run.screen_result.sizing.as_is_value_source.value == sources["as_is_value"]
+    assert run.screen_result.components.court_records_source is not None
+    assert run.screen_result.components.court_records_source.value == sources["court_records"]
+
+
+def test_the_team_override_fixture_screens_go_and_says_where_its_numbers_came_from(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    team = FIXTURE_DIR / "go_team_overrides_tulsa.json"
+    assert main(["run", str(team), "--underwrite"]) == 0
+    out = capsys.readouterr().out
+    assert "verdict: GO" in out
+    assert "As-is value / ARV from" in out and "team / team" in out
+    assert "Court records from" in out
+    # the underwrite request names no valuation, so the deal's own team numbers carry it
+    assert "250,000" not in out  # the as-is value is not printed, but its effect is
+    assert "Recovery basis" in out and "295,000.00" in out
+
+
+def test_a_team_entry_fixture_needs_a_request_not_an_inputs_block(tmp_path: Path) -> None:
+    team = json.loads((FIXTURE_DIR / "go_team_overrides_tulsa.json").read_text(encoding="utf-8"))
+    team["underwrite"] = {"inputs": {}}
+    broken = tmp_path / "wrong_block.json"
+    broken.write_text(json.dumps(team), encoding="utf-8")
+    with pytest.raises(FixtureError, match="needs a 'request'"):
+        run_fixture(broken, CONFIG, with_underwrite=True)
+
+
+def test_a_file_with_neither_block_is_not_a_fixture(tmp_path: Path) -> None:
+    neither = tmp_path / "neither.json"
+    neither.write_text('{"name": "x"}', encoding="utf-8")
+    with pytest.raises(FixtureError, match="no 'inputs' or 'team_entry' block"):
+        run_fixture(neither, CONFIG, with_underwrite=False)

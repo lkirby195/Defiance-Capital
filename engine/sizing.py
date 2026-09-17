@@ -145,6 +145,10 @@ def size_deal(
              as-is value is unavailable
     LTARV  = commitment / arv, or NOT_AVAILABLE when the ARV is unavailable
 
+    Where each valuation came from (``as_is_value_source`` / ``arv_source``) travels through
+    onto the result, so a stored screen says whether the numbers it sized on were pulled or
+    entered by hand.
+
     ``commitment`` equals ``loan_requested`` for every product unless a SPLIT_PRINCIPAL
     override leaves part of the request unallocated (see ``commitment_split``). The screen
     turns the fallback and the missing ARV into flags (SPEC §7.4, §7.5).
@@ -187,6 +191,8 @@ def size_deal(
         funded_at_close=funded_at_close(inputs.product, commitment, split),
         split=split,
         ltv_basis=ltv_basis,
+        as_is_value_source=inputs.as_is_value_source,
+        arv_source=inputs.arv_source,
         metrics=metrics,
         all_pass=all(check.passed for check in metrics.values()),
     )
