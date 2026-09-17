@@ -7,7 +7,8 @@ was stored - engine version, config hash and all.
 
 Three failures are distinguished, because the fix for each is different: 404 the deal does
 not exist, 422 it exists but is missing values the engine needs (named, so the queue can
-chase them), 409 the inputs are fine but its status rules the run out.
+chase them), 409 the inputs are fine but its status rules the run out - including the case
+where the underwrite screened an unscreened deal first and that screen declined it.
 """
 
 from __future__ import annotations
@@ -182,6 +183,11 @@ def underwrite_deal(
     except DealNotFound as exc:
         raise _not_found(exc) from exc
     except DealNotUnderwritable as exc:
+        # An unscreened deal is screened first (SPEC §8), so a refusal here can arrive with
+        # a real screen behind it: committed, because it ran and its verdict is why the
+        # underwrite stopped. Rolling it back would leave the deal looking unscreened and
+        # let the next request screen it again. When nothing ran, this commits nothing.
+        session.commit()
         raise _not_underwritable(exc) from exc
     except DealNotReady as exc:
         raise _not_ready(exc) from exc

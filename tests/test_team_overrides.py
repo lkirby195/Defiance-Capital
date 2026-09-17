@@ -35,6 +35,7 @@ from schema.models import (
     CourtRecordsStatus,
     LienKind,
     Severity,
+    Status,
     TeamCourtRecord,
     ValueSource,
     Verdict,
@@ -291,7 +292,9 @@ def test_the_same_deal_is_declined_without_the_overrides_and_go_with_them() -> N
 
     with_overrides = screen(screen_inputs(deal_from()), CONFIG)
     assert with_overrides.verdict is Verdict.GO
-    assert with_overrides.flags == []
+    # the only flag left says where the numbers came from, and INFO never moves a verdict
+    assert [f.code.value for f in with_overrides.flags] == ["TEAM_SOURCED_VALUES"]
+    assert with_overrides.flags[0].severity is Severity.INFO
     assert with_overrides.sizing.as_is_value_source is ValueSource.TEAM
     assert with_overrides.sizing.arv_source is ValueSource.TEAM
     assert with_overrides.components.court_records_source is ValueSource.TEAM
@@ -381,6 +384,9 @@ def test_an_underwrite_falls_back_to_the_team_valuation_on_the_deal(
 def test_an_underwrite_with_no_valuation_anywhere_is_named_not_guessed(
     db_session: Session, stored_deal: Deal
 ) -> None:
+    """Past the screen gate, a deal with no valuation from any source is named, not guessed."""
+    stored_deal.status = Status.SCREENED  # the screen gate is a separate test
+    db_session.flush()
     with pytest.raises(DealNotReady) as caught:
         run_underwrite(
             db_session,

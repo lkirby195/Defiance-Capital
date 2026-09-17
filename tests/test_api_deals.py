@@ -74,15 +74,17 @@ def test_screen_route_is_append_only(
 
 
 def test_underwrite_route_takes_the_spec_8_1_inputs(
-    client: TestClient, db_session: Session, stored_deal: Deal
+    client: TestClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
+    stored_deal = deal_with_overrides
     response = client.post(f"/deals/{stored_deal.id}/underwrite", json=UNDERWRITE_BODY)
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["term_months"] == 9  # from the deal's term bucket
     assert body["rehab_months"] == 6
     assert body["engine_version"] == ENGINE_VERSION
-    assert body["exit"]["type"] == "FLIP" and body["exit"]["exit_source"] == "STATED"
+    # no stated exit on this deal: 9 months on an SFR infers a resale (SPEC §3)
+    assert body["exit"]["type"] == "FLIP" and body["exit"]["exit_source"] == "INFERRED"
     assert body["grid_lender"]["rows"]
     assert D(body["lender_yield_at_solve"]).quantize(D("0.000001")) == D("0.175000")
 
@@ -101,9 +103,18 @@ def test_underwrite_route_rejects_a_body_it_does_not_recognise(
     assert response.status_code == 422
 
 
-def test_underwrite_route_requires_a_valuation(client: TestClient, stored_deal: Deal) -> None:
+def test_underwrite_route_requires_a_valuation(
+    client: TestClient, db_session: Session, stored_deal: Deal
+) -> None:
+    """Past the screen gate, a deal with no ARV anywhere is a 422 naming it."""
+    stored_deal.status = Status.SCREENED
+    db_session.flush()
     body = {key: value for key, value in UNDERWRITE_BODY.items() if key != "arv"}
-    assert client.post(f"/deals/{stored_deal.id}/underwrite", json=body).status_code == 422
+    response = client.post(f"/deals/{stored_deal.id}/underwrite", json=body)
+    assert response.status_code == 422
+    assert response.json()["detail"]["missing"] == [
+        "arv (no adapter value, none on the request, none on the deal)"
+    ]
 
 
 def test_read_deal_returns_the_deal_with_its_latest_screen_and_underwrite(
@@ -223,3 +234,30 @@ def test_the_underwrite_route_falls_back_to_the_teams_valuation(
     sizing = response.json()["sizing"]
     assert D(sizing["metrics"]["LTV_AS_IS"]["actual"]) == D("185000.00") / D("250000.00")
     assert sizing["as_is_value_source"] == "TEAM" and sizing["arv_source"] == "TEAM"
+
+
+def test_the_underwrite_route_screens_an_unscreened_deal_first(
+    client: TestClient, deal_with_overrides: Deal
+) -> None:
+    deal_id = deal_with_overrides.id
+    assert client.get(f"/deals/{deal_id}").json()["screen"] is None
+    assert client.post(f"/deals/{deal_id}/underwrite", json=UNDERWRITE_BODY).status_code == 201
+    body = client.get(f"/deals/{deal_id}").json()
+    assert body["screen"]["result"]["verdict"] == "GO"  # run on the way in, and recorded
+    assert body["status"] == "UNDERWRITING"
+
+
+def test_an_underwrite_that_screens_a_decline_is_409_and_keeps_the_screen(
+    client: TestClient, stored_deal: Deal
+) -> None:
+    """No valuation behind it: the screen it runs on the way in declines, and that is kept."""
+    response = client.post(f"/deals/{stored_deal.id}/underwrite", json=UNDERWRITE_BODY)
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["status"] == "DECLINED"
+    assert "the screen it just ran declined it" in detail["message"]
+
+    after = client.get(f"/deals/{stored_deal.id}").json()
+    assert after["status"] == "DECLINED"
+    assert after["screen"]["result"]["verdict"] == "DECLINE"
+    assert after["underwrite"] is None
