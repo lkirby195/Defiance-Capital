@@ -9,14 +9,23 @@ available. Either way the tables are dropped and recreated around every test.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
 
 import pytest
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session
 
-from db.models import Base
+from db.models import Base, Deal
+from db.repository import create_deal_from_intake
+from intake.normalize import normalize
+from intake.parsers.team_form import TeamEntryForm, parse_team_form
+from schema.models import Channel
+
+TEAM_ENTRY = Path(__file__).resolve().parents[1] / "fixtures/synthetic/team_entry_complete.json"
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "").strip()
 PGSERVER_AVAILABLE = importlib.util.find_spec("pgserver") is not None
@@ -62,3 +71,24 @@ def db_session(test_engine: Engine) -> Iterator[Session]:
     with Session(test_engine) as session:
         yield session
     Base.metadata.drop_all(test_engine)
+
+
+@pytest.fixture
+def team_entry() -> dict[str, Any]:
+    """The complete team-entry payload; a test may edit its copy before storing it."""
+    payload: dict[str, Any] = json.loads(TEAM_ENTRY.read_text(encoding="utf-8"))
+    return payload
+
+
+def store_deal(session: Session, payload: dict[str, Any]) -> Deal:
+    """Normalize a team-entry payload and store it, as ``POST /intake/team`` does."""
+    record = normalize(parse_team_form(TeamEntryForm(**payload)), Channel.TEAM, raw_payload=payload)
+    deal = create_deal_from_intake(session, record)
+    session.commit()
+    return deal
+
+
+@pytest.fixture
+def stored_deal(db_session: Session, team_entry: dict[str, Any]) -> Deal:
+    """One complete deal in the database, ready to screen."""
+    return store_deal(db_session, team_entry)
