@@ -13,17 +13,22 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from config.config import Config
-from db.models import Deal
-from schema.models import AuditAction, Severity, Status
+from db.models import AuditLog, Deal, IntakeSubmission, Screen, Underwrite
+from schema.models import AuditAction, Channel, Severity, Status
 from services import (
     DEALS,
     TeamOverrides,
+    add_note,
+    advance_to_review,
+    last_activity,
     latest_screen,
     queue_view,
     record_audit,
@@ -32,6 +37,7 @@ from services import (
     save_overrides,
     screen_result,
 )
+from services.queue import RunSummary
 from services.requests import UnderwriteRequest
 from tests.conftest import ACTOR, requires_db, store_deal
 
@@ -46,6 +52,15 @@ def a_deal(session: Session, **overrides: Any) -> Deal:
     """One complete deal, with whatever the caller wants different about it."""
     payload = json.loads(TEAM_ENTRY.read_text(encoding="utf-8"))
     payload.update(overrides)
+    return store_deal(session, payload)
+
+
+def deal_that_screens_go(session: Session) -> Deal:
+    """A deal with the team's valuation and court search on it, so every run succeeds."""
+    fixture = json.loads((FIXTURE_DIR / "go_team_overrides_tulsa.json").read_text(encoding="utf-8"))
+    payload = dict(fixture["team_entry"])
+    payload["address"] = "7 Cedar St, Tulsa, OK 74104"
+    payload["borrower_phone"] = "(918) 555-0199"
     return store_deal(session, payload)
 
 
@@ -74,15 +89,115 @@ def test_deals_are_grouped_by_status_in_lifecycle_order(db_session: Session) -> 
     assert Status.LOI_SENT.value not in statuses(view)
 
 
-def test_within_a_group_the_newest_deal_is_first(db_session: Session) -> None:
-    deals = [a_deal(db_session, address=f"{n} Elm St, Tulsa OK") for n in range(3)]
-    for offset, deal in enumerate(deals):
-        deal.created_at = datetime.now(UTC) - timedelta(days=offset)
+def quiet_since(session: Session, deal: Deal, when: datetime) -> Deal:
+    """Backdate everything that has ever happened to the deal to one moment.
+
+    Every activity source at once - the deal row, its submissions, its runs and its audit
+    rows - so ``last_activity`` is exactly ``when`` and a test can then apply one later event
+    and know that event is the only thing the order can be reading.
+    """
+    deal.created_at = when
+    session.execute(
+        update(IntakeSubmission).where(IntakeSubmission.deal_id == deal.id).values(received_at=when)
+    )
+    session.execute(update(Screen).where(Screen.deal_id == deal.id).values(created_at=when))
+    session.execute(update(Underwrite).where(Underwrite.deal_id == deal.id).values(created_at=when))
+    session.execute(
+        update(AuditLog)
+        .where(AuditLog.table_name == DEALS, AuditLog.row_id == str(deal.id))
+        .values(created_at=when)
+    )
+    session.commit()
+    return deal
+
+
+def order_of(session: Session) -> list[Any]:
+    view = queue_view(session)
+    assert len(view.groups) == 1, statuses(view)
+    return [entry.deal.id for entry in view.groups[0].entries]
+
+
+def test_a_group_is_ordered_by_last_activity_not_by_arrival(db_session: Session) -> None:
+    """The deal somebody is in the middle of is the deal worth seeing first."""
+    now = datetime.now(UTC)
+    oldest, middle, newest = (
+        quiet_since(db_session, a_deal(db_session, address=f"{n} Elm St, Tulsa OK"), now - gap)
+        for n, gap in enumerate((timedelta(days=3), timedelta(days=2), timedelta(days=1)))
+    )
+    assert order_of(db_session) == [newest.id, middle.id, oldest.id]
+
+    # a note on the deal nobody had touched in three days puts it at the top
+    add_note(db_session, oldest.id, actor=ACTOR, note="Borrower called back")
+    db_session.commit()
+    assert order_of(db_session) == [oldest.id, newest.id, middle.id]
+
+
+@pytest.mark.parametrize("event", ["note", "action", "screen", "underwrite", "submission"])
+def test_every_kind_of_activity_moves_a_deal_up(db_session: Session, event: str) -> None:
+    """Intake, a screen, an underwrite, a team action and a note all count as a touch."""
+    now = datetime.now(UTC)
+    stale = quiet_since(db_session, deal_that_screens_go(db_session), now - timedelta(days=5))
+    fresh = quiet_since(
+        db_session, a_deal(db_session, address="9 Ash St, Tulsa OK"), now - timedelta(hours=1)
+    )
+    assert order_of(db_session) == [fresh.id, stale.id]
+
+    if event == "note":
+        add_note(db_session, stale.id, actor=ACTOR, note="left a voicemail")
+    elif event == "action":
+        at(db_session, stale, Status.SCREENED)
+        advance_to_review(db_session, stale.id, actor=ACTOR)
+    elif event == "screen":
+        run_screen(db_session, stale.id, CONFIG, actor=ACTOR)
+    elif event == "underwrite":
+        run_underwrite(db_session, stale.id, UnderwriteRequest(), CONFIG, actor=ACTOR)
+    else:
+        db_session.add(
+            IntakeSubmission(deal_id=stale.id, channel=Channel.TEAM, raw_payload={"note": "reply"})
+        )
     db_session.commit()
 
     view = queue_view(db_session)
-    assert len(view.groups) == 1
-    assert [entry.deal.id for entry in view.groups[0].entries] == [deal.id for deal in deals]
+    touched = [
+        entry for group in view.groups for entry in group.entries if entry.deal.id == stale.id
+    ]
+    assert len(touched) == 1
+    assert touched[0].last_activity > now - timedelta(hours=1)
+    # and it now leads its group, whichever group the event left it in
+    group = next(g for g in view.groups if any(e.deal.id == stale.id for e in g.entries))
+    assert group.entries[0].deal.id == stale.id
+
+
+def test_last_activity_is_the_latest_of_its_sources(db_session: Session) -> None:
+    """The rule itself, with nothing else in the way."""
+    now = datetime.now(UTC)
+    deal = quiet_since(db_session, a_deal(db_session), now - timedelta(days=9))
+    screen = RunSummary(uuid4(), now - timedelta(days=4), [])
+    underwrite = RunSummary(uuid4(), now - timedelta(days=6), [])
+
+    assert last_activity(deal, None, None, None, None) == deal.created_at
+    assert last_activity(deal, screen, underwrite, None, None) == screen.created_at
+    assert last_activity(
+        deal, screen, underwrite, now - timedelta(days=1), None
+    ) == now - timedelta(days=1)
+    assert last_activity(
+        deal, screen, underwrite, now - timedelta(days=1), now - timedelta(hours=2)
+    ) == now - timedelta(hours=2)
+    # nothing later than the deal itself still sorts, rather than raising
+    fresh = quiet_since(db_session, a_deal(db_session, address="3 Fir St, Tulsa OK"), now)
+    assert last_activity(fresh, None, None, None, None) == now
+
+
+def test_a_tie_is_broken_by_id_so_the_order_does_not_wobble(db_session: Session) -> None:
+    """Two deals touched in the same transaction must not swap between page loads."""
+    now = datetime.now(UTC)
+    deals = [
+        quiet_since(db_session, a_deal(db_session, address=f"{n} Yew St, Tulsa OK"), now)
+        for n in range(3)
+    ]
+    expected = sorted((deal.id for deal in deals), reverse=True)
+    assert order_of(db_session) == expected
+    assert order_of(db_session) == expected
 
 
 def test_the_view_counts_everything_it_holds(db_session: Session) -> None:
@@ -235,6 +350,27 @@ def test_an_underwrite_hard_flag_pins_as_readily_as_a_screen_one(
     assert "underwrite" in (view.pinned[0].pin_reason or "")
 
 
+def test_the_pinned_list_is_ordered_by_last_activity_too(db_session: Session) -> None:
+    """One sort, applied before the split, so the top of the page reads the same way."""
+    now = datetime.now(UTC)
+    pinned_deals = []
+    for n in range(2):
+        deal = a_deal(db_session, address=f"{n} Birch St, Tulsa OK")
+        at(db_session, deal, Status.LOI_SENT)
+        hard_flagged(db_session, deal)
+        pinned_deals.append(deal)
+    stale, fresh = pinned_deals
+    quiet_since(db_session, stale, now - timedelta(days=4))
+    quiet_since(db_session, fresh, now - timedelta(hours=3))
+
+    view = queue_view(db_session)
+    assert [entry.deal.id for entry in view.pinned] == [fresh.id, stale.id]
+
+    add_note(db_session, stale.id, actor=ACTOR, note="lender asked about the lien")
+    db_session.commit()
+    assert [entry.deal.id for entry in queue_view(db_session).pinned] == [stale.id, fresh.id]
+
+
 # --- the pages ------------------------------------------------------------------------------------
 
 
@@ -247,6 +383,9 @@ def test_the_queue_page_lists_a_deal_and_its_status(
     assert str(deal_with_overrides.id) in response.text
     assert "SCREENED" in response.text
     assert "Review queue" in response.text
+    # the column the order is by is the column the page shows
+    assert "Last activity" in response.text
+    assert "most recently touched first" in response.text
 
 
 def test_the_queue_page_shows_the_pin_banner(

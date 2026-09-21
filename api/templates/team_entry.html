@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_csrf.html" as csrf %}
 {% block title %}New deal — GLENWOOD{% endblock %}
 
 {% macro option_list(name, options, chosen, blank="—") %}
@@ -27,6 +28,7 @@
 </p>
 
 <form class="stack" method="post" action="/intake/team">
+      {{ csrf.field(csrf_token) }}
   <section class="panel">
     <h2>Borrower</h2>
     <div class="grid3">

@@ -27,7 +27,7 @@
         <span class="tag HARD">{{ entry.hard_flags | length }} Hard</span>
       {% else %}<span class="muted">—</span>{% endif %}
     </td>
-    <td class="small muted">{{ deal.created_at | when }}</td>
+    <td class="small muted">{{ entry.last_activity | when }}</td>
   </tr>
 {% endmacro %}
 
@@ -40,7 +40,7 @@
           <th class="num">Loan requested</th>
           <th>Last screen</th>
           <th>Hard flags</th>
-          <th>Created</th>
+          <th>Last activity</th>
         </tr>
       </thead>
       <tbody>
@@ -53,7 +53,8 @@
 {% block content %}
 <h1>Review queue</h1>
 <p class="lede">
-  {{ view.total }} deal(s), newest first within each status.
+  {{ view.total }} deal(s), most recently touched first within each status — the latest of
+  intake, a screen, an underwrite, a team action or a note.
 </p>
 
 {% if view.pinned %}

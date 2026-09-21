@@ -26,7 +26,7 @@ from starlette.responses import HTMLResponse, RedirectResponse
 
 from api.forms import FormDep, fields, problems, rows
 from api.render import page, redirect
-from api.security import PageUser
+from api.security import PageUser, require_csrf
 from db.models import Deal
 from db.session import get_session
 from schema.models import (
@@ -70,7 +70,9 @@ from services import (
     underwrite_result,
 )
 
-router = APIRouter(tags=["queue"])
+# Every state-changing request through this router carries a CSRF token, by living here
+# rather than by each route remembering to ask (``api/security.py``).
+router = APIRouter(tags=["queue"], dependencies=[Depends(require_csrf)])
 
 SessionDep = Annotated[Session, Depends(get_session)]
 

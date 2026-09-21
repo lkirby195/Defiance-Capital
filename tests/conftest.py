@@ -10,6 +10,12 @@ Everything the app serves is behind a session cookie (SPEC §11), so there are t
 ``client`` has signed ``queue_user`` in through the real ``POST /login``. Signing in for real
 rather than forging a cookie means the sign-in path is exercised by every test that needs a
 session, and a change that breaks it cannot pass unnoticed.
+
+A signed-in client also carries the CSRF token on a form post, the way a page does: it reads
+one off a rendered page and puts it in the body. That keeps every test about the thing it is
+named for rather than about tokens - and it is safe to do only because
+``tests/test_csrf.py`` posts to every guarded route *without* one and asserts the refusal, so
+a route that quietly lost its guard fails there rather than passing everywhere.
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -30,6 +37,7 @@ from sqlalchemy.orm import Session
 os.environ.setdefault("SESSION_SECRET", "test-session-secret-not-a-real-one")
 
 from api.main import app  # noqa: E402
+from api.security import COOKIE_NAME  # noqa: E402
 from db.models import Base, Deal, User  # noqa: E402
 from db.repository import create_deal_from_intake  # noqa: E402
 from db.session import get_session  # noqa: E402
@@ -153,15 +161,56 @@ def queue_user(db_session: Session) -> User:
     return user
 
 
+CSRF_INPUT = re.compile(r'name="_csrf" value="([^"]+)"')
+
+
+class QueueClient(TestClient):
+    """A TestClient that posts forms the way the review queue's own pages do.
+
+    With a session cookie in hand it reads a CSRF token off a rendered page and puts it in
+    the body, exactly as a browser submitting that page would. Without one it changes
+    nothing, so ``anon_client`` still posts bare and still gets turned away at the door.
+
+    A test can opt out by passing its own ``_csrf`` - including ``_csrf: ""`` for the
+    tokenless case.
+    """
+
+    _token: str | None = None
+
+    def csrf_token(self) -> str:
+        """A token off a real page, cached: any token this app minted stays valid."""
+        if self._token is None:
+            response = super().get("/queue")
+            assert response.status_code == 200, response.status_code
+            match = CSRF_INPUT.search(response.text)
+            assert match is not None, "no CSRF field on the queue page"
+            self._token = match.group(1)
+        return self._token
+
+    def forget_csrf(self) -> None:
+        """Drop the cached token, for a test that changes who is signed in."""
+        self._token = None
+
+    def post(self, url: str, **kwargs: Any) -> Any:  # type: ignore[override]
+        signed_in_here = COOKIE_NAME in self.cookies
+        body_is_json = kwargs.get("json") is not None or kwargs.get("content") is not None
+        if signed_in_here and not body_is_json:
+            data = kwargs.get("data")
+            data = dict(data) if isinstance(data, dict) else {}
+            data.setdefault("_csrf", self.csrf_token())
+            kwargs["data"] = data
+        return super().post(url, **kwargs)
+
+
 @pytest.fixture
-def anon_client(db_session: Session) -> Iterator[TestClient]:
+def anon_client(db_session: Session) -> Iterator[QueueClient]:
     """A client with no session; every protected route should turn it away."""
 
     def override() -> Iterator[Session]:
         yield db_session
 
     app.dependency_overrides[get_session] = override
-    with TestClient(app) as test_client:
+    with QueueClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
 
@@ -173,7 +222,8 @@ def sign_in(test_client: TestClient, email: str, password: str) -> None:
 
 
 @pytest.fixture
-def client(anon_client: TestClient, queue_user: User) -> TestClient:
+def client(anon_client: QueueClient, queue_user: User) -> QueueClient:
     """A client signed in as ``queue_user``."""
     sign_in(anon_client, queue_user.email, USER_PASSWORD)
+    anon_client.forget_csrf()
     return anon_client

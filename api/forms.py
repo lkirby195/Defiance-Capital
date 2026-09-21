@@ -32,6 +32,9 @@ from fastapi import Depends, Request
 from pydantic import ValidationError
 from starlette.datastructures import FormData
 
+# The hidden field every form post in the queue carries (``api/security.py``).
+CSRF_FIELD = "_csrf"
+
 
 def fields(form: FormData, *, skip: tuple[str, ...] = ()) -> dict[str, str]:
     """Every single-valued, non-blank field, stripped.
@@ -40,12 +43,16 @@ def fields(form: FormData, *, skip: tuple[str, ...] = ()) -> dict[str, str]:
     and a repeated name would otherwise arrive here as its first value alone and be rejected
     by a model that forbids extras.
 
+    The CSRF field is always dropped, without being asked. It is on every form and it is
+    never data; leaving that to each caller to remember would mean every model with
+    ``extra="forbid"`` rejecting a perfectly good submission the first time somebody forgot.
+
     Non-string parts are ignored: v1 takes no upload (contract OCR waits on the LinkedPhone
     recon), and a stray file part must not reach a model as the string "<UploadFile>".
     """
     out: dict[str, str] = {}
     for key in form.keys():
-        if any(key.startswith(prefix) for prefix in skip):
+        if key == CSRF_FIELD or any(key.startswith(prefix) for prefix in skip):
             continue
         value = form.get(key)
         if not isinstance(value, str):
@@ -117,6 +124,22 @@ def safe_next(target: str | None, fallback: str) -> str:
 
 
 FORM_CONTENT_TYPE = "application/x-www-form-urlencoded"
+JSON_CONTENT_TYPE = "application/json"
+
+
+def content_type(request: Request) -> str:
+    """The request's media type, without its parameters."""
+    return request.headers.get("content-type", "").split(";")[0].strip().lower()
+
+
+def is_json_post(request: Request) -> bool:
+    """True when the body is JSON.
+
+    Worth its own predicate because it is the one body an HTML form cannot produce: a form's
+    ``enctype`` is urlencoded, multipart or text/plain and nothing else, and a cross-origin
+    ``fetch`` that sets ``application/json`` earns a preflight this app answers for nobody.
+    """
+    return content_type(request) == JSON_CONTENT_TYPE
 
 
 def is_form_post(request: Request) -> bool:
@@ -126,4 +149,4 @@ def is_form_post(request: Request) -> bool:
     a dependency can branch on it without consuming anything. Deciding on ``Accept`` instead
     would work for a browser and be a coin toss for every other client.
     """
-    return request.headers.get("content-type", "").split(";")[0].strip() == FORM_CONTENT_TYPE
+    return content_type(request) == FORM_CONTENT_TYPE

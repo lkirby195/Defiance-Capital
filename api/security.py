@@ -11,12 +11,27 @@ loaded and its ``active`` flag checked on every single request, so deactivating 
 expiry. For a two-person internal queue that is the right shape; a stolen cookie is a
 deactivation away from useless.
 
-``SameSite=Lax`` is what stops another site posting a form at this one as the signed-in user:
-Lax withholds the cookie from cross-site POSTs, which is every state-changing route here.
-``HttpOnly`` keeps it away from page scripts, of which there is one, and it does not touch
-cookies. ``Secure`` is set whenever the request arrived over HTTPS, so a deployment behind
-TLS marks the cookie correctly without a setting to forget and a local ``uvicorn`` over
-plain HTTP still works.
+``SameSite=Lax`` withholds the cookie from cross-site POSTs, which is every state-changing
+route here. ``HttpOnly`` keeps it away from page scripts, of which there is one, and it does
+not touch cookies. ``Secure`` is set whenever the request arrived over HTTPS, so a deployment
+behind TLS marks the cookie correctly without a setting to forget and a local ``uvicorn``
+over plain HTTP still works.
+
+On top of Lax, every form post carries a CSRF token. Lax is a browser default and not a
+guarantee: it is relaxed for top-level GET navigations, it has been shipped differently by
+different browsers, and a same-site subdomain is not cross-site at all. The token is the
+thing that actually holds, and it costs one hidden field.
+
+It is a synchronizer token with no server state to keep: the same HMAC that signs the session,
+over the user id and an expiry. A token is therefore only good for the user it was minted for,
+which is what stops the other half of the attack - an attacker with a valid token of their own
+posting it as somebody else. It expires with the session, so a page left open all day still
+posts and one left open all week does not.
+
+``/login`` is deliberately not guarded. There is no session to bind a token to before
+sign-in, and login CSRF - logging a victim into the attacker's account - buys nothing against
+a queue whose accounts are created by hand and whose every write is recorded against the
+account that made it.
 """
 
 from __future__ import annotations
@@ -35,7 +50,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
-from api.forms import is_form_post
+from api.forms import CSRF_FIELD, is_form_post, is_json_post
 from db.models import User
 from db.session import DOTENV_PATH, get_session
 from services import get_user
@@ -44,6 +59,9 @@ COOKIE_NAME = "glenwood_session"
 # Long enough for a working day in the queue, short enough that a forgotten laptop expires.
 SESSION_HOURS = 12
 SIGN_IN_PATH = "/login"
+# Methods that change something. GET and HEAD are not guarded, because a route that changes
+# something on a GET is the bug, not the missing token.
+UNSAFE_METHODS: frozenset[str] = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
 class NotSignedIn(Exception):
@@ -52,6 +70,14 @@ class NotSignedIn(Exception):
     def __init__(self, next_url: str | None = None) -> None:
         super().__init__("not signed in")
         self.next_url = next_url
+
+
+class CsrfRejected(Exception):
+    """A state-changing post arrived without a token this session could have minted."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
 
 
 def session_secret() -> str:
@@ -207,3 +233,66 @@ def posted_user(request: Request, session: Annotated[Session, Depends(get_sessio
 
 
 PostedUser = Annotated[User, Depends(posted_user)]
+
+
+# --- CSRF -----------------------------------------------------------------------------------------
+
+
+def issue_csrf(user: User, now: datetime | None = None) -> str:
+    """A token good for this user until their session would have expired anyway."""
+    expires = (now or datetime.now(UTC)) + timedelta(hours=SESSION_HOURS)
+    stamp = str(int(expires.timestamp()))
+    return f"{stamp}.{_sign(f'csrf:{user.id}.{stamp}')}"
+
+
+def check_csrf(user: User, token: str | None, now: datetime | None = None) -> bool:
+    """True when ``token`` is one this app minted for ``user`` and has not expired.
+
+    Bound to the user, not only to the secret: a signed-in attacker's own valid token must
+    not work when posted as somebody else.
+    """
+    if not token:
+        return False
+    stamp, _, signature = token.partition(".")
+    if not signature:
+        return False
+    if not hmac.compare_digest(_sign(f"csrf:{user.id}.{stamp}"), signature):
+        return False
+    try:
+        expires_at = datetime.fromtimestamp(int(stamp), UTC)
+    except (ValueError, OverflowError, OSError):
+        return False
+    return expires_at > (now or datetime.now(UTC))
+
+
+async def require_csrf(request: Request, session: Annotated[Session, Depends(get_session)]) -> None:
+    """Guard every state-changing request on the routers it is attached to.
+
+    A router-level dependency rather than a line in each route: a new form added next year
+    is guarded because of where it lives, not because somebody remembered. It runs ahead of
+    the route's own user dependency, so it returns quietly when nobody is signed in and lets
+    that dependency answer - a stranger should be told to sign in, not told their token is
+    wrong.
+
+    A JSON body is exempt, and only a JSON body. It is the one thing a cross-site HTML form
+    cannot produce - a form's ``enctype`` is urlencoded, multipart or text/plain - and a
+    ``fetch`` that sets ``application/json`` across origins earns a preflight this app
+    answers for nobody. Everything else is guarded, text/plain included, because "the browser
+    would not do that" is not a thing to rest on twice.
+
+    Reading the body here is safe: Starlette caches the parsed form on the request, and
+    FastAPI hands dependencies and the endpoint the same request, so the route's own
+    ``FormDep`` gets the cached copy rather than an exhausted stream.
+    """
+    if request.method not in UNSAFE_METHODS or is_json_post(request):
+        return
+    user = signed_in(request, session)
+    if user is None:
+        return
+    form = await request.form()
+    token = form.get(CSRF_FIELD)
+    if not isinstance(token, str) or not check_csrf(user, token):
+        raise CsrfRejected(
+            "This form was rejected because it did not carry a valid one-time token. "
+            "Open the page again and re-submit; nothing was changed."
+        )

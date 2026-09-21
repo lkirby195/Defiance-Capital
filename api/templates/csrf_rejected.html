@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Form rejected — GLENWOOD{% endblock %}
+{% block content %}
+<section class="panel" style="max-width: 560px; margin: 40px auto;">
+  <h1>That form was not accepted</h1>
+  <p class="problem">{{ detail }}</p>
+  <p class="lede small">
+    This usually means the page had been open since before your last sign-in, or it was
+    submitted from somewhere other than this site. Nothing on the deal was changed.
+  </p>
+  <div class="actions">
+    <a href="/queue"><button type="button">Back to the queue</button></a>
+  </div>
+</section>
+{% endblock %}

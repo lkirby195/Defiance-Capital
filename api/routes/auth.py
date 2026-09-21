@@ -24,7 +24,7 @@ from starlette.responses import HTMLResponse, RedirectResponse
 
 from api.forms import FormDep, fields, safe_next
 from api.render import page, redirect
-from api.security import MaybeUser, attach, clear, over_https, signed_in
+from api.security import MaybeUser, attach, clear, over_https, require_csrf, signed_in
 from db.session import get_session
 from schema.models import AuditAction
 from services import USERS, authenticate, record_audit
@@ -82,7 +82,9 @@ def sign_in(
     return response
 
 
-@router.post("/logout", response_model=None)
+# Signing somebody out from another site is a nuisance attack rather than a theft, but it
+# is still a state change on a session, so it carries a token like everything else.
+@router.post("/logout", response_model=None, dependencies=[Depends(require_csrf)])
 def sign_out(request: Request, session: SessionDep) -> RedirectResponse:
     """Drop the cookie. Signing out of a session nobody is in is a no-op, not an error."""
     user = signed_in(request, session)

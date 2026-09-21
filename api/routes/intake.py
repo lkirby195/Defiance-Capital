@@ -28,7 +28,7 @@ from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 from api.forms import fields, is_form_post, problems, rows
 from api.render import page, redirect
 from api.routes.queue import MATTER_FIELDS, TEAM_ENTRY_FIELDS, enum_values, redisplay
-from api.security import PostedUser
+from api.security import PostedUser, require_csrf
 from db.models import User
 from db.session import get_session
 from intake.normalize import normalize
@@ -36,7 +36,9 @@ from intake.parsers.team_form import TeamEntryForm, parse_team_form
 from schema.models import Channel, IntakeRecord
 from services import create_deal
 
-router = APIRouter(prefix="/intake", tags=["intake"])
+# The form half of this route is a browser post like any other, so it is guarded like
+# one. A JSON caller signs in the same way and carries the same token.
+router = APIRouter(prefix="/intake", tags=["intake"], dependencies=[Depends(require_csrf)])
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
