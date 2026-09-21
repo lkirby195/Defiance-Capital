@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}New deal — GLENWOOD{% endblock %}
+
+{% macro option_list(name, options, chosen, blank="—") %}
+  <select id="{{ name }}" name="{{ name }}">
+    <option value="">{{ blank }}</option>
+    {% for option in options %}
+      <option value="{{ option }}" {% if chosen == option %}selected{% endif %}>{{ option }}</option>
+    {% endfor %}
+  </select>
+{% endmacro %}
+
+{% macro yes_no_select(name, chosen) %}
+  <select id="{{ name }}" name="{{ name }}">
+    <option value="">—</option>
+    <option value="true" {% if chosen == "true" %}selected{% endif %}>Yes</option>
+    <option value="false" {% if chosen == "false" %}selected{% endif %}>No</option>
+  </select>
+{% endmacro %}
+
+{% block content %}
+<h1>New deal</h1>
+<p class="lede">
+  The team-entry channel (SPEC §4.2). Any field may be left out — a partial inquiry off a
+  phone call is a real thing to capture, and the deal sits in NEEDS_INFO listing what is
+  still to ask for. This form posts to the same route the API takes.
+</p>
+
+<form class="stack" method="post" action="/intake/team">
+  <section class="panel">
+    <h2>Borrower</h2>
+    <div class="grid3">
+      <div>
+        <label for="borrower_name">Name</label>
+        <input id="borrower_name" name="borrower_name" value="{{ form.borrower_name }}">
+      </div>
+      <div>
+        <label for="borrower_phone">Phone — the borrower match key</label>
+        <input id="borrower_phone" name="borrower_phone" inputmode="tel"
+               value="{{ form.borrower_phone }}">
+      </div>
+      <div>
+        <label for="borrower_email">Email</label>
+        <input id="borrower_email" name="borrower_email" type="email"
+               value="{{ form.borrower_email }}">
+      </div>
+      <div>
+        <label for="entity_name">Entity</label>
+        <input id="entity_name" name="entity_name" value="{{ form.entity_name }}">
+      </div>
+      <div>
+        <label for="credit_range">Credit range (self-reported)</label>
+        {{ option_list("credit_range", enums.tranche, form.credit_range) }}
+      </div>
+      <div>
+        <label for="experience_bucket">Deals in the last 36 months</label>
+        {{ option_list("experience_bucket", enums.experience_bucket, form.experience_bucket) }}
+      </div>
+      <div>
+        <label for="repeat_borrower">Repeat GLENWOOD borrower</label>
+        {{ yes_no_select("repeat_borrower", form.repeat_borrower) }}
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Property</h2>
+    <div class="grid3">
+      <div>
+        <label for="address">Address</label>
+        <input id="address" name="address" value="{{ form.address }}">
+      </div>
+      <div>
+        <label for="listing_url">Listing or auction link — the address is read off the URL</label>
+        <input id="listing_url" name="listing_url" value="{{ form.listing_url }}">
+      </div>
+      <div>
+        <label for="county">County</label>
+        <input id="county" name="county" value="{{ form.county }}">
+      </div>
+      <div>
+        <label for="state">State — blank is inferred from the address</label>
+        {{ option_list("state", enums.state, form.state) }}
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Deal</h2>
+    <div class="grid3">
+      <div>
+        <label for="purchase_price">Purchase price</label>
+        <input id="purchase_price" name="purchase_price" inputmode="decimal"
+               value="{{ form.purchase_price }}">
+      </div>
+      <div>
+        <label for="rehab_budget">Rehab budget — 0 is a NO_DRAW</label>
+        <input id="rehab_budget" name="rehab_budget" inputmode="decimal"
+               value="{{ form.rehab_budget }}">
+      </div>
+      <div>
+        <label for="loan_requested">Loan requested</label>
+        <input id="loan_requested" name="loan_requested" inputmode="decimal"
+               value="{{ form.loan_requested }}">
+      </div>
+      <div>
+        <label for="term_bucket">Term</label>
+        {{ option_list("term_bucket", enums.term_bucket, form.term_bucket) }}
+      </div>
+      <div>
+        <label for="product">Product — blank is inferred from the rehab budget</label>
+        {{ option_list("product", enums.product, form.product) }}
+      </div>
+      <div>
+        <label for="asset_type">Asset type</label>
+        {{ option_list("asset_type", enums.asset_type, form.asset_type) }}
+      </div>
+      <div>
+        <label for="stated_exit">Stated exit</label>
+        {{ option_list("stated_exit", enums.stated_exit, form.stated_exit) }}
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Team entry <span class="muted small">(SPEC §6.1 — until the adapters land)</span></h2>
+    <div class="grid3">
+      <div>
+        <label for="as_is_value_team">As-is value</label>
+        <input id="as_is_value_team" name="as_is_value_team" inputmode="decimal"
+               value="{{ form.as_is_value_team }}">
+      </div>
+      <div>
+        <label for="arv_team">ARV</label>
+        <input id="arv_team" name="arv_team" inputmode="decimal" value="{{ form.arv_team }}">
+      </div>
+      <div>
+        <label for="actual_annual_taxes_usd">Annual taxes</label>
+        <input id="actual_annual_taxes_usd" name="actual_annual_taxes_usd" inputmode="decimal"
+               value="{{ form.actual_annual_taxes_usd }}">
+      </div>
+      <div>
+        <label for="actual_annual_insurance_usd">Annual insurance</label>
+        <input id="actual_annual_insurance_usd" name="actual_annual_insurance_usd"
+               inputmode="decimal" value="{{ form.actual_annual_insurance_usd }}">
+      </div>
+      <div>
+        <label for="actual_annual_utilities_usd">Annual utilities</label>
+        <input id="actual_annual_utilities_usd" name="actual_annual_utilities_usd"
+               inputmode="decimal" value="{{ form.actual_annual_utilities_usd }}">
+      </div>
+      <div>
+        <label for="market_rent_monthly">Market rent (monthly)</label>
+        <input id="market_rent_monthly" name="market_rent_monthly" inputmode="decimal"
+               value="{{ form.market_rent_monthly }}">
+      </div>
+      <div>
+        <label for="court_records_status">Court search — NOT_CHECKED is not CLEAN</label>
+        {{ option_list("court_records_status", enums.court_records_status,
+                       form.court_records_status) }}
+      </div>
+      <div>
+        <label for="court_records_as_of">Searched on</label>
+        <input id="court_records_as_of" name="court_records_as_of" type="date"
+               value="{{ form.court_records_as_of }}">
+      </div>
+    </div>
+
+    <h3>Matters found</h3>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Code</th><th>Occurred on</th><th class="num">Amount</th>
+            <th>Lien kind</th><th>Senior</th><th>Resolved at close</th><th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for matter in matters %}
+            <tr>
+              <td>{{ option_list("matter_code", enums.court_flag, matter.code) }}</td>
+              <td><input name="matter_occurred_on" type="date" value="{{ matter.occurred_on }}"></td>
+              <td><input name="matter_amount_usd" inputmode="decimal" value="{{ matter.amount_usd }}"></td>
+              <td>{{ option_list("matter_lien_kind", enums.lien_kind, matter.lien_kind) }}</td>
+              <td>{{ yes_no_select("matter_senior", matter.senior) }}</td>
+              <td>{{ yes_no_select("matter_resolved_at_close", matter.resolved_at_close) }}</td>
+              <td><input name="matter_description" maxlength="500" value="{{ matter.description }}"></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="actions"><button type="submit">Create deal</button></div>
+</form>
+{% endblock %}

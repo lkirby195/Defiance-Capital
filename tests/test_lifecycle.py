@@ -31,6 +31,7 @@ from services import (
 )
 from tests.conftest import TEAM_ENTRY_WITH_OVERRIDES, requires_db, store_deal
 
+ACTOR = "tester@glenwood.example"
 CONFIG = Config.load()
 D = Decimal
 
@@ -98,7 +99,7 @@ def test_an_underwrite_moves_a_screened_or_in_review_deal() -> None:
 @requires_db
 def test_screen_moves_the_deal_to_screened(db_session: Session, deal_with_overrides: Deal) -> None:
     assert deal_with_overrides.status is Status.NEW
-    result = run_screen(db_session, deal_with_overrides.id, CONFIG)
+    result = run_screen(db_session, deal_with_overrides.id, CONFIG, actor=ACTOR)
     db_session.commit()
     assert result.verdict is Verdict.GO
     assert deal_with_overrides.status is Status.SCREENED
@@ -109,7 +110,7 @@ def test_screen_declines_the_deal_when_the_verdict_does(
     db_session: Session, stored_deal: Deal
 ) -> None:
     """No valuation behind it, so its LTV is on the purchase price and lands over the cap."""
-    result = run_screen(db_session, stored_deal.id, CONFIG)
+    result = run_screen(db_session, stored_deal.id, CONFIG, actor=ACTOR)
     db_session.commit()
     assert result.verdict is Verdict.DECLINE
     assert stored_deal.status is Status.DECLINED
@@ -119,9 +120,9 @@ def test_screen_declines_the_deal_when_the_verdict_does(
 def test_underwrite_moves_a_screened_deal_to_underwriting(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    run_screen(db_session, deal_with_overrides.id, CONFIG)
+    run_screen(db_session, deal_with_overrides.id, CONFIG, actor=ACTOR)
     assert deal_with_overrides.status is Status.SCREENED
-    run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
     db_session.commit()
     assert deal_with_overrides.status is Status.UNDERWRITING
 
@@ -132,7 +133,7 @@ def test_underwrite_moves_an_in_review_deal_to_underwriting(
 ) -> None:
     deal_with_overrides.status = Status.IN_REVIEW
     db_session.flush()
-    run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
     db_session.commit()
     assert deal_with_overrides.status is Status.UNDERWRITING
 
@@ -145,7 +146,7 @@ def test_a_closed_deal_is_refused_and_nothing_is_written(
     deal_with_overrides.status = closed
     db_session.flush()
     with pytest.raises(DealNotUnderwritable) as caught:
-        run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+        run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
     assert caught.value.status is closed
     assert closed.value in str(caught.value)
     assert "re-opens it" in str(caught.value)
@@ -162,11 +163,15 @@ def test_a_declined_screen_then_blocks_the_underwrite(
     db_session: Session, stored_deal: Deal
 ) -> None:
     """The two rules meet: a Decline closes the deal, and a closed deal is not priced."""
-    run_screen(db_session, stored_deal.id, CONFIG)
+    run_screen(db_session, stored_deal.id, CONFIG, actor=ACTOR)
     assert stored_deal.status is Status.DECLINED
     with pytest.raises(DealNotUnderwritable):
         run_underwrite(
-            db_session, stored_deal.id, request(as_is_value=D("250000"), arv=D("295000")), CONFIG
+            db_session,
+            stored_deal.id,
+            request(as_is_value=D("250000"), arv=D("295000")),
+            CONFIG,
+            actor=ACTOR,
         )
 
 
@@ -175,7 +180,7 @@ def test_the_status_change_rides_the_caller_s_transaction(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
     """Services never commit: a rollback takes the status back with the row."""
-    run_screen(db_session, deal_with_overrides.id, CONFIG)
+    run_screen(db_session, deal_with_overrides.id, CONFIG, actor=ACTOR)
     assert deal_with_overrides.status is Status.SCREENED
     db_session.rollback()
     reloaded = db_session.get(Deal, deal_with_overrides.id)
@@ -195,7 +200,7 @@ def test_a_rescreen_that_declines_closes_a_deal_in_review(
 ) -> None:
     stored_deal.status = current
     db_session.flush()
-    result = run_screen(db_session, stored_deal.id, CONFIG)
+    result = run_screen(db_session, stored_deal.id, CONFIG, actor=ACTOR)
     db_session.commit()
     assert result.verdict is Verdict.DECLINE
     assert stored_deal.status is Status.DECLINED
@@ -213,7 +218,7 @@ def test_a_decline_on_a_deal_being_worked_records_the_flags_and_leaves_the_statu
     """A person owns the deal from here on; the Hard flags are theirs to read and act on."""
     stored_deal.status = current
     db_session.flush()
-    result = run_screen(db_session, stored_deal.id, CONFIG)
+    result = run_screen(db_session, stored_deal.id, CONFIG, actor=ACTOR)
     db_session.commit()
 
     assert result.verdict is Verdict.DECLINE
@@ -236,7 +241,7 @@ def test_an_underwrite_on_a_new_deal_screens_it_first_and_proceeds(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
     assert deal_with_overrides.status is Status.NEW
-    result = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    result = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
     db_session.commit()
 
     # the screen really ran: its row is there, with its own verdict
@@ -257,6 +262,7 @@ def test_an_underwrite_on_a_new_deal_stops_when_that_screen_declines(
             stored_deal.id,
             request(as_is_value=D("250000.00"), arv=D("295000.00")),
             CONFIG,
+            actor=ACTOR,
         )
     assert "the screen it just ran declined it" in str(caught.value)
     assert caught.value.status is Status.DECLINED
@@ -275,11 +281,11 @@ def test_an_underwrite_on_a_new_deal_stops_when_that_screen_declines(
 def test_an_underwrite_on_a_screened_deal_does_not_screen_it_again(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    run_screen(db_session, deal_with_overrides.id, CONFIG)
+    run_screen(db_session, deal_with_overrides.id, CONFIG, actor=ACTOR)
     before = db_session.scalar(
         select(func.count()).select_from(Screen).where(Screen.deal_id == deal_with_overrides.id)
     )
-    run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
     db_session.commit()
     after = db_session.scalar(
         select(func.count()).select_from(Screen).where(Screen.deal_id == deal_with_overrides.id)
@@ -295,10 +301,10 @@ def test_the_fixture_states_the_statuses_its_deal_ends_in(
     """The Go fixture names both statuses; this is what keeps that data honest."""
     fixture = json.loads(TEAM_ENTRY_WITH_OVERRIDES.read_text(encoding="utf-8"))
 
-    run_screen(db_session, deal_with_overrides.id, CONFIG)
+    run_screen(db_session, deal_with_overrides.id, CONFIG, actor=ACTOR)
     assert deal_with_overrides.status.value == fixture["expected"]["status_after_screen"]
 
-    run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
     db_session.commit()
     expected = fixture["underwrite"]["expected"]["status_after_underwrite"]
     assert deal_with_overrides.status.value == expected
@@ -324,7 +330,7 @@ def test_an_incomplete_intake_is_not_priced_and_names_what_is_missing(
     assert deal.missing_fields == ["borrower.phone"]
 
     with pytest.raises(DealNotReady) as caught:
-        run_underwrite(db_session, deal.id, request(), CONFIG)
+        run_underwrite(db_session, deal.id, request(), CONFIG, actor=ACTOR)
     assert caught.value.missing == ["borrower.phone"]
     assert "borrower.phone" in str(caught.value)
 
@@ -338,5 +344,5 @@ def test_completing_the_intake_lets_the_same_deal_be_priced(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
     """The refusal is about the status, not the deal: complete, it prices."""
-    run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
     assert deal_with_overrides.status is Status.UNDERWRITING

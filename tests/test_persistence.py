@@ -34,6 +34,7 @@ from tests.conftest import requires_db
 
 pytestmark = requires_db
 
+ACTOR = "tester@glenwood.example"
 CONFIG = Config.load()
 D = Decimal
 MISSING_UUID = UUID("00000000-0000-0000-0000-000000000000")
@@ -55,7 +56,7 @@ def request(**overrides: Any) -> UnderwriteRequest:
 def test_run_screen_appends_a_row_and_returns_the_result(
     db_session: Session, stored_deal: Deal
 ) -> None:
-    result = run_screen(db_session, stored_deal.id, CONFIG)
+    result = run_screen(db_session, stored_deal.id, CONFIG, actor=ACTOR)
     db_session.commit()
 
     row = db_session.scalar(select(Screen).where(Screen.deal_id == stored_deal.id))
@@ -69,7 +70,7 @@ def test_run_screen_appends_a_row_and_returns_the_result(
 
 
 def test_screen_row_rebuilds_the_exact_result(db_session: Session, stored_deal: Deal) -> None:
-    result = run_screen(db_session, stored_deal.id, CONFIG)
+    result = run_screen(db_session, stored_deal.id, CONFIG, actor=ACTOR)
     db_session.commit()
     db_session.expire_all()
 
@@ -82,8 +83,8 @@ def test_screen_row_rebuilds_the_exact_result(db_session: Session, stored_deal: 
 
 
 def test_screens_are_append_only_and_ordered(db_session: Session, stored_deal: Deal) -> None:
-    first = run_screen(db_session, stored_deal.id, CONFIG)
-    second = run_screen(db_session, stored_deal.id, CONFIG)
+    first = run_screen(db_session, stored_deal.id, CONFIG, actor=ACTOR)
+    second = run_screen(db_session, stored_deal.id, CONFIG, actor=ACTOR)
     db_session.commit()
 
     count = db_session.scalar(
@@ -106,7 +107,7 @@ def test_screen_without_a_valuation_flags_rather_than_guesses(
     db_session: Session, stored_deal: Deal
 ) -> None:
     """Enrichment is Phase 3, so a screen today runs with no as-is value and no ARV."""
-    result = run_screen(db_session, stored_deal.id, CONFIG)
+    result = run_screen(db_session, stored_deal.id, CONFIG, actor=ACTOR)
     codes = {flag.code.value for flag in result.flags}
     assert {"AS_IS_VALUE_MISSING", "ARV_MISSING", "COURT_RECORDS_NOT_CHECKED"} <= codes
     assert result.verdict is not Verdict.GO
@@ -115,7 +116,7 @@ def test_screen_without_a_valuation_flags_rather_than_guesses(
 def test_run_underwrite_appends_a_row_and_round_trips(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    result = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    result = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
     db_session.commit()
     db_session.expire_all()
 
@@ -136,7 +137,7 @@ def test_run_underwrite_appends_a_row_and_round_trips(
 def test_underwrite_row_drops_nothing_the_result_carried(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    result = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    result = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
     db_session.commit()
     row = latest_underwrite(db_session, deal_with_overrides.id)
     assert row is not None
@@ -152,9 +153,11 @@ def test_underwrite_row_drops_nothing_the_result_carried(
 def test_underwrite_takes_the_term_from_the_bucket_unless_told_otherwise(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    from_bucket = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    from_bucket = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
     assert from_bucket.term_months == 9  # the deal's term_bucket is "9"
-    stated = run_underwrite(db_session, deal_with_overrides.id, request(term_months=18), CONFIG)
+    stated = run_underwrite(
+        db_session, deal_with_overrides.id, request(term_months=18), CONFIG, actor=ACTOR
+    )
     assert stated.term_months == 18
     db_session.commit()
 
@@ -164,7 +167,7 @@ def test_underwrite_falls_back_to_the_deals_own_opex_actuals(
 ) -> None:
     deal_with_overrides.actual_annual_taxes_usd = D("2650.00")
     db_session.flush()
-    result = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    result = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
     assert result.exit.annual_taxes == D("2650.00")
     assert result.exit.annual_taxes_source.value == "ACTUAL"
     # nothing supplied for insurance, so the config default on the as-is value stands
@@ -178,17 +181,19 @@ def test_underwrite_uses_the_deals_asset_type_and_stated_exit(
 ) -> None:
     assert deal_with_overrides.asset_type is AssetType.SFR
     assert deal_with_overrides.stated_exit is None
-    inferred = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    inferred = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
     assert inferred.exit.type is StatedExit.FLIP  # 9 months on an SFR resells (SPEC §3)
     assert inferred.exit.exit_source is ExitSource.INFERRED
 
-    longer = run_underwrite(db_session, deal_with_overrides.id, request(term_months=12), CONFIG)
+    longer = run_underwrite(
+        db_session, deal_with_overrides.id, request(term_months=12), CONFIG, actor=ACTOR
+    )
     assert longer.exit.type is StatedExit.HOLD  # 12 months infers a hold instead
     assert longer.exit.exit_source is ExitSource.INFERRED
 
     deal_with_overrides.stated_exit = StatedExit.HOLD
     db_session.flush()
-    stated = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    stated = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
     assert stated.exit.type is StatedExit.HOLD  # a stated exit wins over the term
     assert stated.exit.exit_source is ExitSource.STATED
     db_session.commit()
@@ -198,13 +203,13 @@ def test_missing_deal_and_incomplete_deal_are_named_not_guessed(
     db_session: Session, stored_deal: Deal
 ) -> None:
     with pytest.raises(DealNotFound):
-        run_screen(db_session, MISSING_UUID, CONFIG)
+        run_screen(db_session, MISSING_UUID, CONFIG, actor=ACTOR)
 
     stored_deal.loan_requested = None
     stored_deal.credit_range_self_reported = None
     db_session.flush()
     with pytest.raises(DealNotReady) as caught:
-        run_screen(db_session, stored_deal.id, CONFIG)
+        run_screen(db_session, stored_deal.id, CONFIG, actor=ACTOR)
     assert caught.value.missing == ["deal.loan_requested", "borrower.credit_range"]
 
 
@@ -214,4 +219,4 @@ def test_a_deal_with_no_term_bucket_cannot_be_underwritten_silently(
     deal_with_overrides.term_bucket = None
     db_session.flush()
     with pytest.raises(DealNotReady, match="term_months"):
-        run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+        run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)

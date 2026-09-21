@@ -201,6 +201,7 @@ Tables (one-line intent each; full DDL via Alembic migrations):
 - `underwrites` — full underwrite inputs, outputs, sensitivity grid (JSONB), version of engine used
 - `documents` — credit reports, valuations, contracts, generated memos/LOIs; file storage ref + hash
 - `ma_sync` — handoff log to Mortgage Automator: payload, MA ids, status
+- `users` — the people who sign in to the review queue; what `audit_log.actor` resolves to
 - `audit_log` — who changed what; required because credit and court data are in here
 
 Money stored as `NUMERIC(14,2)`. Rates as `NUMERIC(7,5)`. All enrichment raw responses retained.
@@ -542,6 +543,12 @@ Config is versioned; each `screens`/`underwrites` row records the config hash us
 - **Listing sites:** address extraction from URLs only; no page scraping.
 - **Business-purpose lending:** intake and LOI language reflect business-purpose loans; no consumer-purpose features.
 - **Court/lien data:** used for underwriting decisions on business-purpose loans; retained with source and timestamp.
+- **Access:** the review queue is behind a session cookie and nothing it serves is public. No
+  self-signup and no password reset in v1 — a user is created and deactivated from the command
+  line, so the list of people who can read credit and court findings is maintained on purpose.
+  Deactivating ends every live session at once, because the user row is read on each request.
+  Every service write takes an actor and records an `audit_log` row, sign-in and sign-out
+  included.
 
 ---
 
@@ -557,6 +564,17 @@ Config is versioned; each `screens`/`underwrites` row records the config hash us
 | 5 | Credco + RicherValues adapters; credit memo + LOI generation from templates | 2, templates |
 | 6 | MA handoff | 5 |
 | 7 | Back-test on 8–10 historical deals; calibrate config; mechanics walkthrough → monthly ledger if warranted | 2, fixtures |
+
+Phase 4's review queue is built: sign-in and `users`, the queue list, the deal page, the team
+actions, and the team-entry form. Its SMS ingestion and contract OCR wait on the LinkedPhone
+recon (§13) — there is nothing to parse until the webhook shape is known, and a parser written
+against a guess is a parser rewritten.
+
+The queue list pins one thing above the status groups: a deal that picked up a Hard flag
+**after** it reached `LOI_SENT` or `HANDED_OFF`. Past that point a Decline no longer closes a
+deal (§4.6) — a person owns it and the flags are recorded for them to read — so nothing else
+surfaces a Hard flag raised that late. "After" is measured against the `audit_log` row that
+recorded the move into that status.
 
 ---
 

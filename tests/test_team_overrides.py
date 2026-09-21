@@ -9,7 +9,6 @@ valued and searched reaches Go where the same deal without those entries does no
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -20,11 +19,9 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from api.main import app
 from config.config import Config
 from db.models import Deal
 from db.repository import transient_deal
-from db.session import get_session
 from engine.screen import screen
 from engine.underwrite import underwrite
 from intake.normalize import normalize
@@ -58,6 +55,7 @@ from services.assemble import (
 from services.enrichment import AdapterValues
 from tests.conftest import requires_db, store_deal
 
+ACTOR = "tester@glenwood.example"
 CONFIG = Config.load()
 D = Decimal
 FIXTURE = (
@@ -357,7 +355,7 @@ def test_the_overrides_survive_a_round_trip_through_the_deals_row(
 def test_a_stored_screen_records_that_the_numbers_were_the_team_s(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    run_screen(db_session, deal_with_overrides.id, CONFIG)
+    run_screen(db_session, deal_with_overrides.id, CONFIG, actor=ACTOR)
     db_session.commit()
     row = latest_screen(db_session, deal_with_overrides.id)
     assert row is not None
@@ -379,6 +377,7 @@ def test_an_underwrite_falls_back_to_the_team_valuation_on_the_deal(
         deal_with_overrides.id,
         UnderwriteRequest(market_rent_monthly=D("2400.00"), annual_utilities_usd=D("840.00")),
         CONFIG,
+        actor=ACTOR,
     )
     db_session.commit()
     assert result.sizing.as_is_value_source is ValueSource.TEAM
@@ -399,6 +398,7 @@ def test_an_underwrite_with_no_valuation_anywhere_is_named_not_guessed(
             stored_deal.id,
             UnderwriteRequest(market_rent_monthly=D("1500.00"), annual_utilities_usd=D("600.00")),
             CONFIG,
+            actor=ACTOR,
         )
     assert caught.value.missing == [
         "as_is_value (no adapter value, none on the request, none on the deal)",
@@ -408,20 +408,13 @@ def test_an_underwrite_with_no_valuation_anywhere_is_named_not_guessed(
 
 @requires_db
 def test_the_intake_endpoint_refuses_an_incoherent_court_block(
-    db_session: Session, team_entry_with_overrides: dict[str, Any]
+    client: TestClient, team_entry_with_overrides: dict[str, Any]
 ) -> None:
     """A 422 from the form, not a 500 from half-way through assembly."""
-
-    def override() -> Iterator[Session]:
-        yield db_session
-
-    app.dependency_overrides[get_session] = override
-    with TestClient(app) as client:
-        response = client.post(
-            "/intake/team",
-            json={**team_entry_with_overrides, "court_records_status": "FLAGS"},
-        )
-    app.dependency_overrides.clear()
+    response = client.post(
+        "/intake/team",
+        json={**team_entry_with_overrides, "court_records_status": "FLAGS"},
+    )
     assert response.status_code == 422
     assert "FLAGS needs at least one matter" in response.text
 

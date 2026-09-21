@@ -71,6 +71,11 @@ class TeamEntryForm(BaseModel):
     actual_annual_insurance_usd: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
+    # The other two SPEC §8.1 team inputs; no config default, no adapter (SPEC §6).
+    actual_annual_utilities_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    market_rent_monthly: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     # Team-supplied valuation and court search, used until the Phase 3 adapters land
     # (SPEC §6). An adapter value always wins over either of these.
     as_is_value_team: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
@@ -118,6 +123,8 @@ def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
             product_source=ProductSource.ENTERED if form.product is not None else None,
             actual_annual_taxes_usd=form.actual_annual_taxes_usd,
             actual_annual_insurance_usd=form.actual_annual_insurance_usd,
+            actual_annual_utilities_usd=form.actual_annual_utilities_usd,
+            market_rent_monthly=form.market_rent_monthly,
             as_is_value_team=form.as_is_value_team,
             arv_team=form.arv_team,
             court_records_status=form.court_records_status,

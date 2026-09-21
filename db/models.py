@@ -221,6 +221,11 @@ class Deal(Base):
     # Team-supplied actuals overriding the %-of-value opex defaults (SPEC §8.6); annual USD.
     actual_annual_taxes_usd: Mapped[Decimal | None] = mapped_column(MONEY)
     actual_annual_insurance_usd: Mapped[Decimal | None] = mapped_column(MONEY)
+    # The two remaining SPEC §8.1 team inputs. They have no config default and no adapter
+    # behind them, so the queue collects them once on the deal rather than asking for them
+    # again on every run; an UnderwriteRequest still outranks what is stored here.
+    actual_annual_utilities_usd: Mapped[Decimal | None] = mapped_column(MONEY)
+    market_rent_monthly: Mapped[Decimal | None] = mapped_column(MONEY)
     # Team-supplied valuation and court search, used until the Phase 3 adapters land
     # (SPEC §6). An adapter value always wins; these are never overwritten, so a later
     # reader can see what was entered by hand and what superseded it.
@@ -348,11 +353,47 @@ class MASync(Base):
     created_at: Mapped[datetime] = _created_at()
 
 
+class User(Base):
+    """A GLENWOOD team member who can sign in to the review queue.  # SPEC §5, §11
+
+    Not in the SPEC §5 table because SPEC §5 is the deal pipeline; this is the other half of
+    ``audit_log``, which records *who* changed what and is required because credit and court
+    data are in here (SPEC §11). There is no self-signup and no password reset in v1: a user
+    is created from the command line and deactivated the same way.
+
+    ``email`` is the sign-in name and is stored lower-cased (``services/users.py`` normalizes
+    it), so the unique index is the uniqueness rule a person would expect. ``password_hash``
+    carries its own algorithm and parameters (``services/passwords.py``); the password itself
+    is never stored, logged, or put in an ``audit_log`` row.
+
+    Deactivating is not deleting: ``audit_log.actor`` names people who may have left, and a
+    row whose actor no longer resolves to anyone would be worse than useless. ``active`` is
+    checked on every request, so a deactivated user's live session stops working at once.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    email: Mapped[str] = mapped_column(String(254), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
 class AuditLog(Base):
     """Who changed what; credit and court data live here.  # SPEC §5, §11"""
 
     __tablename__ = "audit_log"
-    __table_args__ = (Index("ix_audit_log_table_row", "table_name", "row_id"),)
+    __table_args__ = (
+        Index("ix_audit_log_table_row", "table_name", "row_id"),
+        # The deal page reads one row's trail newest-first, and the queue asks when a deal
+        # last entered a status (SPEC §12 pinning), so time is part of the lookup.
+        Index("ix_audit_log_table_row_created", "table_name", "row_id", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     actor: Mapped[str] = mapped_column(String(200), nullable=False)

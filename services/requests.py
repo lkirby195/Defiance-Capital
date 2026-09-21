@@ -1,4 +1,7 @@
-"""The extra inputs an underwrite needs beyond what the deal already carries.  # SPEC §8.1
+"""What the team supplies by hand, in the two shapes the queue collects it.  # SPEC §6.1, §8.1
+
+``UnderwriteRequest`` is the SPEC §8.1 inputs at the moment of a run; ``TeamOverrides`` is
+the standing block on the deal that the review queue edits.
 
 Everything here comes from paid pulls, the valuation, or the team at the moment they
 advance a deal: it is not intake, so most of it is not on ``deals``. Each optional value
@@ -8,18 +11,34 @@ engine default:
     as_is_value / arv     request -> deal.as_is_value_team / arv_team -> not ready (SPEC §8.1)
     annual taxes          request -> deal.actual_annual_taxes_usd -> % of as-is (SPEC §8.6)
     annual insurance      request -> deal.actual_annual_insurance_usd -> % of as-is
+    annual utilities      request -> deal.actual_annual_utilities_usd -> not ready
+    market rent           request -> deal.market_rent_monthly -> not ready
     asset type, exit      request -> deal -> unknown (SPEC §3)
+
+Utilities and market rent have no config default and no adapter behind them, so there is no
+third step to fall to: a deal carrying neither is named as not ready rather than priced on a
+zero. A zero would not be neutral - it would understate the holding costs and fabricate a
+DSCR shortfall - so it is not a defensible stand-in for a number nobody has entered.
 
 An adapter value, when one exists, wins over every step of that (``services/enrichment.py``).
 """
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from schema.models import AssetType, RepeatBorrowerStatus, StatedExit
+from schema.models import (
+    AssetType,
+    CourtRecordsStatus,
+    Product,
+    RepeatBorrowerStatus,
+    StatedExit,
+    TeamCourtRecord,
+    validate_court_records,
+)
 
 
 class UnderwriteRequest(BaseModel):
@@ -38,13 +57,16 @@ class UnderwriteRequest(BaseModel):
     repeat_borrower_verified: RepeatBorrowerStatus | None = None
     # Term: from the bucket when the bucket names a number; the team sets it for 12_PLUS.
     term_months: int | None = Field(default=None, ge=1, le=60)
-    # Holding costs and the DSCR takeout.
-    market_rent_monthly: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    # Holding costs and the DSCR takeout. Optional here because the team may already have
+    # entered them on the deal; the underwrite still needs both from somewhere.
+    market_rent_monthly: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     annual_taxes_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     annual_insurance_usd: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
-    annual_utilities_usd: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    annual_utilities_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
     # Pricing and exit.
     extension_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
     exit_price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
@@ -54,3 +76,56 @@ class UnderwriteRequest(BaseModel):
     purchase_portion_override: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
+
+
+class TeamOverrides(BaseModel):
+    """What the review queue lets a team member enter by hand on a deal.  # SPEC §6.1, §8.1
+
+    The interim source. Until the Phase 3 adapters land the team is where the valuation and
+    the court search come from, and utilities and market rent have no adapter planned at all;
+    the queue's override block is where all of it is typed.
+
+    A submission replaces the whole block rather than patching it: the form is rendered with
+    the deal's current values in it, so what comes back is the state the team means the deal
+    to be in, and a field left blank means the deal should not carry that value. The audit row
+    records the before and after of every field that actually moved.
+
+    ``product`` is the exception. It can be inferred (SPEC §3), and ``product_source`` records
+    which - so a product equal to the one already on the deal leaves both columns untouched
+    rather than relabelling an inferred product as entered, and a blank leaves the inferred
+    product in place. The form cannot un-set a product; nothing about a deal makes one stop
+    being known.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # Valuation (SPEC §6.1); an adapter value still wins over either of these.
+    as_is_value_team: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    arv_team: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    # Opex and the DSCR takeout (SPEC §8.1, §8.6), all annual USD but the rent.
+    actual_annual_taxes_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    actual_annual_insurance_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    actual_annual_utilities_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    market_rent_monthly: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    # Structure (SPEC §3): asset type and the stated exit drive the exit inference.
+    asset_type: AssetType | None = None
+    stated_exit: StatedExit | None = None
+    product: Product | None = None
+    # The team's own court search (SPEC §7.2), one typed matter per entry.
+    court_records_status: CourtRecordsStatus | None = None
+    court_records_as_of: date | None = None
+    court_records_team: list[TeamCourtRecord] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _court_records_are_coherent(self) -> TeamOverrides:
+        """The same check ``DealInfo`` makes, so the queue answers with a message, not a 500."""
+        validate_court_records(
+            self.court_records_status, self.court_records_as_of, self.court_records_team
+        )
+        return self

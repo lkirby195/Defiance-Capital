@@ -53,3 +53,49 @@ class DealNotUnderwritable(ServiceError):
         )
         self.deal_id = deal_id
         self.status = status
+
+
+class UserExists(ServiceError):
+    """A user already signs in with that email."""
+
+    def __init__(self, email: str) -> None:
+        super().__init__(f"a user already exists with email {email}")
+        self.email = email
+
+
+class UserNotFound(ServiceError):
+    """No ``users`` row with that email."""
+
+    def __init__(self, email: str) -> None:
+        super().__init__(f"no user with email {email}")
+        self.email = email
+
+
+class ActionNotAllowed(ServiceError):
+    """The deal's status rules the team action out.  # SPEC §4.6
+
+    The review-queue actions each apply from a defined set of statuses: a deal already dead
+    is not declined, a deal that was never declined is not re-opened. ``allowed_from`` names
+    the states the action does run from, so the queue can say why the button did nothing.
+    """
+
+    def __init__(
+        self, deal_id: UUID, status: Status, action: str, allowed_from: set[Status]
+    ) -> None:
+        names = ", ".join(sorted(s.value for s in allowed_from)) or "no status"
+        super().__init__(
+            f"deal {deal_id} is {status.value}, so it cannot be {action}; "
+            f"that action applies from {names}"
+        )
+        self.deal_id = deal_id
+        self.status = status
+        self.action = action
+        self.allowed_from = allowed_from
+
+
+class ReasonRequired(ServiceError):
+    """The action records a reason and none was given."""
+
+    def __init__(self, action: str) -> None:
+        super().__init__(f"{action} records a reason; enter one and try again")
+        self.action = action

@@ -175,6 +175,23 @@
           "default": null,
           "title": "Actual Annual Taxes Usd"
         },
+        "actual_annual_utilities_usd": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Actual Annual Utilities Usd"
+        },
         "arv_team": {
           "anyOf": [
             {
@@ -267,6 +284,23 @@
           ],
           "default": null,
           "title": "Loan Requested"
+        },
+        "market_rent_monthly": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Market Rent Monthly"
         },
         "product": {
           "anyOf": [

@@ -4,6 +4,12 @@ Database-backed tests run against ``TEST_DATABASE_URL`` (a throwaway Postgres) w
 is set; otherwise against an embedded PostgreSQL started by the ``pgserver`` dev
 dependency in a per-session temp directory. They are skipped only when neither is
 available. Either way the tables are dropped and recreated around every test.
+
+Everything the app serves is behind a session cookie (SPEC §11), so there are two clients:
+``anon_client`` has no session and is what the "this route is protected" tests use, and
+``client`` has signed ``queue_user`` in through the real ``POST /login``. Signing in for real
+rather than forging a cookie means the sign-in path is exercised by every test that needs a
+session, and a change that breaks it cannot pass unnoticed.
 """
 
 from __future__ import annotations
@@ -16,14 +22,21 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session
 
-from db.models import Base, Deal
-from db.repository import create_deal_from_intake
-from intake.normalize import normalize
-from intake.parsers.team_form import TeamEntryForm, parse_team_form
-from schema.models import Channel
+# Set before anything imports api.security, which reads it when a cookie is signed.
+os.environ.setdefault("SESSION_SECRET", "test-session-secret-not-a-real-one")
+
+from api.main import app  # noqa: E402
+from db.models import Base, Deal, User  # noqa: E402
+from db.repository import create_deal_from_intake  # noqa: E402
+from db.session import get_session  # noqa: E402
+from intake.normalize import normalize  # noqa: E402
+from intake.parsers.team_form import TeamEntryForm, parse_team_form  # noqa: E402
+from schema.models import Channel  # noqa: E402
+from services import create_user  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/synthetic"
 TEAM_ENTRY = FIXTURES / "team_entry_complete.json"
@@ -114,3 +127,53 @@ def team_entry_with_overrides() -> dict[str, Any]:
 def deal_with_overrides(db_session: Session, team_entry_with_overrides: dict[str, Any]) -> Deal:
     """A deal the team has valued and searched by hand; it screens Go."""
     return store_deal(db_session, team_entry_with_overrides)
+
+
+# --- who is signed in (SPEC §11) -----------------------------------------------------------------
+
+USER_NAME = "Sam Reed"
+USER_EMAIL = "sam@glenwood.example"
+USER_PASSWORD = "correct-horse-battery-staple"
+# The actor every service-level test records its writes as; the API tests get the user's own
+# email instead, because that is what the route passes.
+ACTOR = "tester@glenwood.example"
+
+
+@pytest.fixture
+def queue_user(db_session: Session) -> User:
+    """One active user, created exactly as ``glenwood users create`` creates one."""
+    user = create_user(
+        db_session,
+        name=USER_NAME,
+        email=USER_EMAIL,
+        password=USER_PASSWORD,
+        actor="conftest",
+    )
+    db_session.commit()
+    return user
+
+
+@pytest.fixture
+def anon_client(db_session: Session) -> Iterator[TestClient]:
+    """A client with no session; every protected route should turn it away."""
+
+    def override() -> Iterator[Session]:
+        yield db_session
+
+    app.dependency_overrides[get_session] = override
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+def sign_in(test_client: TestClient, email: str, password: str) -> None:
+    """Sign a client in through the real form post, so the cookie is a real one."""
+    response = test_client.post("/login", data={"email": email, "password": password})
+    assert response.status_code == 200, response.text
+
+
+@pytest.fixture
+def client(anon_client: TestClient, queue_user: User) -> TestClient:
+    """A client signed in as ``queue_user``."""
+    sign_in(anon_client, queue_user.email, USER_PASSWORD)
+    return anon_client

@@ -18,13 +18,18 @@
     "asset_type": "SFR",
     "as_is_value_team": "250000.00",
     "arv_team": "295000.00",
+    "actual_annual_utilities_usd": "840.00",
+    "market_rent_monthly": "2400.00",
     "court_records_status": "CLEAN",
     "court_records_as_of": "2026-09-16"
   },
   "expected": {
     "verdict": "GO",
     "flags": [
-      {"code": "TEAM_SOURCED_VALUES", "severity": "INFO"}
+      {
+        "code": "TEAM_SOURCED_VALUES",
+        "severity": "INFO"
+      }
     ],
     "credit_tranche": "T2",
     "experience_tier": "E2",
@@ -112,7 +117,10 @@
         "passed": true
       },
       "flags": [
-        {"code": "TEAM_SOURCED_VALUES", "severity": "INFO"}
+        {
+          "code": "TEAM_SOURCED_VALUES",
+          "severity": "INFO"
+        }
       ],
       "status_after_underwrite": "UNDERWRITING"
     }

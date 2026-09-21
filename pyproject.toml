@@ -12,6 +12,9 @@ dependencies = [
     "alembic>=1.13",
     "psycopg[binary]>=3.2",
     "pydantic>=2.8",
+    # Starlette's form parser requires it before it will read a body at all, urlencoded
+    # included, and the review queue posts every write as a plain HTML form.
+    "python-multipart>=0.0.9",
     "pyyaml>=6.0",
     "python-dotenv>=1.0",
     "httpx>=0.27",

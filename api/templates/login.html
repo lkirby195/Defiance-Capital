@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Sign in — GLENWOOD{% endblock %}
+{% block content %}
+<section class="panel" style="max-width: 420px; margin: 40px auto;">
+  <h1>Sign in</h1>
+  <p class="lede small">
+    Accounts are created from the command line. There is no self-signup and no password
+    reset in v1 — ask whoever runs the server.
+  </p>
+  <form class="stack" method="post" action="/login">
+    <input type="hidden" name="next" value="{{ next_url }}">
+    <div>
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="username" required
+             value="{{ email }}">
+    </div>
+    <div>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password"
+             required>
+    </div>
+    <div class="actions">
+      <button type="submit">Sign in</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

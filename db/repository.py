@@ -85,6 +85,8 @@ def build_deal(record: IntakeRecord, borrower: Borrower | None, prop: Property |
         stated_exit=record.deal.stated_exit,
         actual_annual_taxes_usd=record.deal.actual_annual_taxes_usd,
         actual_annual_insurance_usd=record.deal.actual_annual_insurance_usd,
+        actual_annual_utilities_usd=record.deal.actual_annual_utilities_usd,
+        market_rent_monthly=record.deal.market_rent_monthly,
         as_is_value_team=record.deal.as_is_value_team,
         arv_team=record.deal.arv_team,
         court_records_status=record.deal.court_records_status,

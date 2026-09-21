@@ -1,31 +1,102 @@
-"""Intake endpoints. Phase 1: team entry only.  # SPEC §4.2"""
+"""Intake endpoints. Phase 1: team entry only.  # SPEC §4.2
+
+One route, two content types. ``POST /intake/team`` takes the JSON body it always took, and
+the same body as an HTML form from the queue's New deal page. It is deliberately not two
+routes: the normalizer decides what is missing and what the initial status is (SPEC §4.1),
+and a second path into that would be a second place for the rule to drift.
+
+What differs between the two is only what the caller gets back. JSON gets the
+``IntakeRecord``, which is what a client wants; the form gets a redirect to the deal it just
+created, which is what a person wants. A rejected form is re-rendered with the values still
+in it and one line per problem, rather than Pydantic's own error document.
+
+The write takes an actor and records an ``audit_log`` row like every other service write, so
+a deal in the queue can be traced to whoever typed it in.
+"""
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
+from starlette.datastructures import FormData
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from db.repository import create_deal_from_intake
+from api.forms import fields, is_form_post, problems, rows
+from api.render import page, redirect
+from api.routes.queue import MATTER_FIELDS, TEAM_ENTRY_FIELDS, enum_values, redisplay
+from api.security import PostedUser
+from db.models import User
 from db.session import get_session
 from intake.normalize import normalize
 from intake.parsers.team_form import TeamEntryForm, parse_team_form
 from schema.models import Channel, IntakeRecord
+from services import create_deal
 
 router = APIRouter(prefix="/intake", tags=["intake"])
 
+SessionDep = Annotated[Session, Depends(get_session)]
 
-@router.post("/team", response_model=IntakeRecord, status_code=status.HTTP_201_CREATED)
-def submit_team_entry(
-    form: TeamEntryForm, session: Annotated[Session, Depends(get_session)]
-) -> IntakeRecord:
-    """Accept a team-entered deal, store it, return the IntakeRecord with ``missing_fields``."""
-    record = normalize(
-        parse_team_form(form),
-        Channel.TEAM,
-        raw_payload=form.model_dump(mode="json", exclude_none=True),
-    )
-    create_deal_from_intake(session, record)
+
+def store(session: Session, form: TeamEntryForm, actor: str) -> IntakeRecord:
+    """Normalize, persist, audit, commit. The same path for both content types.
+
+    The raw payload kept on the immutable ``intake_submissions`` row is the validated form
+    rather than the bytes that arrived, so a JSON post and a form post of the same deal are
+    stored identically and neither carries a stray control field.
+    """
+    payload = form.model_dump(mode="json", exclude_none=True)
+    record = normalize(parse_team_form(form), Channel.TEAM, raw_payload=payload)
+    create_deal(session, record, actor=actor)
     session.commit()
     return record
+
+
+@router.post(
+    "/team",
+    status_code=status.HTTP_201_CREATED,
+    response_model=IntakeRecord,
+    responses={303: {"description": "Form post: a redirect to the deal that was created"}},
+)
+async def submit_team_entry(request: Request, session: SessionDep, user: PostedUser) -> Any:
+    """Accept a team-entered deal, store it, return the ``IntakeRecord`` or the deal page."""
+    if is_form_post(request):
+        return _from_form(request, session, user, await request.form())
+    try:
+        form = TeamEntryForm.model_validate(await request.json())
+    except ValidationError as exc:
+        # The body is validated here rather than by a declared parameter, because the route
+        # also takes a form. Re-raising as FastAPI's own error keeps the 422 document a JSON
+        # client already expects, rather than a 500 or a shape of our own invention.
+        raise RequestValidationError(exc.errors()) from exc
+    record = store(session, form, user.email)
+    return JSONResponse(record.model_dump(mode="json"), status_code=status.HTTP_201_CREATED)
+
+
+def _from_form(
+    request: Request, session: Session, user: User, posted: FormData
+) -> HTMLResponse | RedirectResponse:
+    """The browser half: validate, and on a rejection put the page back with the values on it."""
+    submitted = fields(posted, skip=("matter_",))
+    matters = rows(posted, "matter", MATTER_FIELDS)
+    try:
+        form = TeamEntryForm.model_validate({**submitted, "court_records_team": matters})
+    except ValidationError as exc:
+        return page(
+            request,
+            "team_entry.html",
+            {
+                "enums": enum_values(),
+                # Every name the template renders, so a dropped blank is still a blank box.
+                "form": {**dict.fromkeys(TEAM_ENTRY_FIELDS, ""), **submitted},
+                "matters": redisplay(matters),
+                "problems": problems(exc),
+            },
+            user=user,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    record = store(session, form, user.email)
+    return redirect(f"/queue/deals/{record.id}", "Deal created.")

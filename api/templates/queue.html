@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Review queue — GLENWOOD{% endblock %}
+
+{% macro deal_row(entry) %}
+  {% set deal = entry.deal %}
+  <tr>
+    <td>
+      <a href="/queue/deals/{{ deal.id }}">
+        {% if deal.property and deal.property.address_raw %}{{ deal.property.address_raw }}
+        {% elif deal.property and deal.property.listing_url %}{{ deal.property.listing_url }}
+        {% else %}(no address yet){% endif %}
+      </a>
+      <div class="small muted">
+        {{ deal.borrower.name if deal.borrower and deal.borrower.name else "(no borrower name)" }}
+        · {{ deal.product | plain }}
+        · {{ deal.property.state | plain if deal.property else "—" }}
+      </div>
+    </td>
+    <td class="num">{{ deal.loan_requested | money }}</td>
+    <td>
+      {% if entry.screen %}
+        <span class="small muted">{{ entry.screen.created_at | when }}</span>
+      {% else %}<span class="muted">not screened</span>{% endif %}
+    </td>
+    <td>
+      {% if entry.hard_flags %}
+        <span class="tag HARD">{{ entry.hard_flags | length }} Hard</span>
+      {% else %}<span class="muted">—</span>{% endif %}
+    </td>
+    <td class="small muted">{{ deal.created_at | when }}</td>
+  </tr>
+{% endmacro %}
+
+{% macro deal_table(entries) %}
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Deal</th>
+          <th class="num">Loan requested</th>
+          <th>Last screen</th>
+          <th>Hard flags</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in entries %}{{ deal_row(entry) }}{% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endmacro %}
+
+{% block content %}
+<h1>Review queue</h1>
+<p class="lede">
+  {{ view.total }} deal(s), newest first within each status.
+</p>
+
+{% if view.pinned %}
+  <section class="panel">
+    <div class="banner">
+      <strong>Hard flags after LOI or handoff</strong>
+      A Decline stops closing deals at UNDERWRITING (SPEC §4.6), so nothing else surfaces a
+      Hard flag raised this late. These are here to be read.
+    </div>
+    {% for entry in view.pinned %}
+      <p class="small"><strong>
+        <a href="/queue/deals/{{ entry.deal.id }}">
+          {{ entry.deal.property.address_raw if entry.deal.property and entry.deal.property.address_raw else entry.deal.id }}
+        </a></strong>
+        <span class="tag status">{{ entry.deal.status | plain }}</span><br>
+        <span class="muted">{{ entry.pin_reason }}</span>
+      </p>
+      <ul class="plain small">
+        {% for flag in entry.hard_flags %}
+          <li><span class="tag HARD">{{ flag.code | plain }}</span> {{ flag.message }}</li>
+        {% endfor %}
+      </ul>
+    {% endfor %}
+  </section>
+{% endif %}
+
+{% for group in view.groups %}
+  <section class="panel">
+    <h2><span class="tag status">{{ group.status | plain }}</span>
+      <span class="muted small">{{ group.entries | length }}</span></h2>
+    {{ deal_table(group.entries) }}
+  </section>
+{% endfor %}
+
+{% if not view.groups and not view.pinned %}
+  <section class="panel">
+    <p class="lede">Nothing in the queue yet. <a href="/queue/new">Enter a deal</a>.</p>
+  </section>
+{% endif %}
+{% endblock %}

@@ -8,7 +8,9 @@ was stored - engine version, config hash and all.
 Three failures are distinguished, because the fix for each is different: 404 the deal does
 not exist, 422 it exists but is missing values the engine needs (named, so the queue can
 chase them), 409 the inputs are fine but its status rules the run out - including the case
-where the underwrite screened an unscreened deal first and that screen declined it.
+where the underwrite screened an unscreened deal first and that screen declined it. A fourth
+sits in front of all of them: 401 when there is no session cookie, because every run is
+recorded against the person who asked for it (SPEC §11).
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
+from api.security import ApiUser
 from db.models import Deal
 from db.session import get_session
 from schema.models import (
@@ -125,6 +128,8 @@ class DealView(BaseModel):
     repeat_borrower_self_reported: bool | None
     actual_annual_taxes_usd: Decimal | None
     actual_annual_insurance_usd: Decimal | None
+    actual_annual_utilities_usd: Decimal | None
+    market_rent_monthly: Decimal | None
     as_is_value_team: Decimal | None
     arv_team: Decimal | None
     court_records_status: CourtRecordsStatus | None
@@ -157,10 +162,10 @@ def _not_underwritable(exc: DealNotUnderwritable) -> HTTPException:
 
 
 @router.post("/{deal_id}/screen", response_model=ScreenResult, status_code=status.HTTP_201_CREATED)
-def screen_deal(deal_id: UUID, session: SessionDep) -> ScreenResult:
+def screen_deal(deal_id: UUID, session: SessionDep, user: ApiUser) -> ScreenResult:
     """Screen the deal, append a ``screens`` row, return the verdict.  # SPEC §7"""
     try:
-        result = run_screen(session, deal_id)
+        result = run_screen(session, deal_id, actor=user.email)
     except DealNotFound as exc:
         raise _not_found(exc) from exc
     except DealNotReady as exc:
@@ -175,11 +180,11 @@ def screen_deal(deal_id: UUID, session: SessionDep) -> ScreenResult:
     status_code=status.HTTP_201_CREATED,
 )
 def underwrite_deal(
-    deal_id: UUID, request: UnderwriteRequest, session: SessionDep
+    deal_id: UUID, request: UnderwriteRequest, session: SessionDep, user: ApiUser
 ) -> UnderwriteResult:
     """Underwrite the deal on the §8.1 inputs, append an ``underwrites`` row.  # SPEC §8"""
     try:
-        result = run_underwrite(session, deal_id, request)
+        result = run_underwrite(session, deal_id, request, actor=user.email)
     except DealNotFound as exc:
         raise _not_found(exc) from exc
     except DealNotUnderwritable as exc:
@@ -243,6 +248,8 @@ def deal_view(deal: Deal, session: Session) -> DealView:
         repeat_borrower_self_reported=deal.repeat_borrower_self_reported,
         actual_annual_taxes_usd=deal.actual_annual_taxes_usd,
         actual_annual_insurance_usd=deal.actual_annual_insurance_usd,
+        actual_annual_utilities_usd=deal.actual_annual_utilities_usd,
+        market_rent_monthly=deal.market_rent_monthly,
         as_is_value_team=deal.as_is_value_team,
         arv_team=deal.arv_team,
         court_records_status=deal.court_records_status,
@@ -274,8 +281,9 @@ def deal_view(deal: Deal, session: Session) -> DealView:
 
 
 @router.get("/{deal_id}", response_model=DealView)
-def read_deal(deal_id: UUID, session: SessionDep) -> DealView:
+def read_deal(deal_id: UUID, session: SessionDep, user: ApiUser) -> DealView:
     """The deal with its latest screen and underwrite.  # SPEC §9.1"""
+    del user  # the dependency is the access check; the read itself needs no actor
     try:
         deal = load_deal(session, deal_id)
     except DealNotFound as exc:

@@ -1,0 +1,67 @@
+{# One flag list. Every flag names the threshold it was tested against (CLAUDE.md, Style),
+   so the message is the whole explanation and the table needs no second column for it. #}
+{% macro flag_list(flags) %}
+  {% if flags %}
+    <ul class="plain small">
+      {% for flag in flags %}
+        <li>
+          <span class="tag {{ flag.severity | plain }}">{{ flag.severity | plain }}</span>
+          <strong>{{ flag.code | plain }}</strong> — {{ flag.message }}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="small muted">No flags.</p>
+  {% endif %}
+{% endmacro %}
+
+{% macro sizing_table(sizing) %}
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th class="num">Actual</th>
+          <th class="num">Cap</th>
+          <th class="num">Tolerance</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for metric, check in sizing.metrics.items() %}
+          <tr>
+            <td>{{ metric | plain }}{% if check.basis %}
+              <span class="small muted">on {{ check.basis | plain }}</span>{% endif %}</td>
+            <td class="num">{{ check.actual | pct }}</td>
+            <td class="num">{{ check.cap | pct }}</td>
+            <td class="num">{{ check.tolerance_band | points }}</td>
+            <td>
+              <span class="tag {{ 'GO' if check.passed else ('SOFT' if check.status | plain == 'WITHIN_TOLERANCE' else 'HARD') }}">
+                {{ check.status | plain }}
+              </span>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <dl class="facts small" style="margin-top:10px">
+    <dt>Product</dt><dd>{{ sizing.product | plain }}</dd>
+    <dt>Caps cell</dt><dd>{{ sizing.credit_tranche | plain }} × {{ sizing.experience_tier | plain }}</dd>
+    <dt>Rehab + contingency</dt><dd>{{ sizing.rehab_adj | money }}</dd>
+    <dt>Buy-side closing (borrower cash)</dt><dd>{{ sizing.buy_closing | money }}</dd>
+    <dt>Total cost</dt><dd>{{ sizing.total_cost | money }}</dd>
+    <dt>Loan requested</dt><dd>{{ sizing.loan_requested | money }}</dd>
+    <dt>Commitment</dt><dd>{{ sizing.commitment | money }}</dd>
+    <dt>Funded at close</dt><dd>{{ sizing.funded_at_close | money }}</dd>
+    {% if sizing.split %}
+      <dt>Purchase portion</dt>
+      <dd>{{ sizing.split.purchase_portion | money }}
+        {% if sizing.split.purchase_portion_overridden %}
+          <span class="small muted">(team override)</span>{% endif %}</dd>
+      <dt>Rehab portion</dt><dd>{{ sizing.split.rehab_portion | money }}</dd>
+    {% endif %}
+    <dt>As-is value from</dt><dd>{{ sizing.as_is_value_source | plain }}</dd>
+    <dt>ARV from</dt><dd>{{ sizing.arv_source | plain }}</dd>
+  </dl>
+{% endmacro %}
