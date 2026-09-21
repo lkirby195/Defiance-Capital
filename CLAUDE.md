@@ -118,6 +118,7 @@ glenwood-uw/
 - **No dependency on any other repo.** See top of file.
 - **No self-signup and no password reset.** Users are created and deactivated from the command line. Do not add a registration page, an invite link, or a reset-by-email flow to v1.
 - **No client-side JS in the queue beyond the copy button.** Server-rendered Jinja, plain form posts, POST-redirect-GET. If a page seems to need script, it needs a different page.
+- **Every form post carries a CSRF token.** The guard is a router-level dependency (`api/security.py`), so a new route is covered by where it lives rather than by somebody remembering; every `<form method="post">` renders `{{ csrf.field(csrf_token) }}`. `tests/test_csrf.py` posts to every guarded route without one and asserts the refusal — do not add a route that needs an exemption without saying why there.
 
 ## Style
 
@@ -141,6 +142,7 @@ uv run uvicorn api.main:app --reload     # the review queue at http://127.0.0.1:
 uv run glenwood users create --name "Sam Reed" --email sam@glenwood.example
 uv run glenwood users deactivate --email sam@glenwood.example
 uv run glenwood users list
+
 
 # run the engine on a fixture deal, no database:
 uv run glenwood run fixtures/synthetic/deals/go_split_draw_denver.json --underwrite

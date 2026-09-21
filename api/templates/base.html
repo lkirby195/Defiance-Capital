@@ -1,6 +1,7 @@
 {# Shared shell. One stylesheet, inline, because the queue is one small internal app and a
    second request for 4kB of CSS buys nothing. No client-side JS lives here: the only script
    in the whole queue is the copy button on the suggested reply (deal.html). #}
+{% import "_csrf.html" as csrf %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -135,6 +136,7 @@
       <span class="who">
         {{ user.name }} &lt;{{ user.email }}&gt;
         <form method="post" action="/logout">
+          {{ csrf.field(csrf_token) }}
           <button class="quiet" type="submit">Sign out</button>
         </form>
       </span>

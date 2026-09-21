@@ -1,0 +1,9 @@
+{# The hidden field every form post in the queue carries (api/security.py).
+
+   A macro rather than a literal input in ten places, so the field name and the reason for
+   it live once. The token is passed in rather than read from the context, because a macro
+   imported without context cannot see it and an import that silently sees nothing is the
+   failure this is meant to prevent. #}
+{% macro field(token) -%}
+<input type="hidden" name="_csrf" value="{{ token }}">
+{%- endmacro %}

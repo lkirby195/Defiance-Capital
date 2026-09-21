@@ -547,8 +547,9 @@ Config is versioned; each `screens`/`underwrites` row records the config hash us
   self-signup and no password reset in v1 — a user is created and deactivated from the command
   line, so the list of people who can read credit and court findings is maintained on purpose.
   Deactivating ends every live session at once, because the user row is read on each request.
-  Every service write takes an actor and records an `audit_log` row, sign-in and sign-out
-  included.
+  Every form post carries a CSRF token bound to the signed-in user and expiring with their
+  session; a post without one is refused and writes nothing. Every service write takes an
+  actor and records an `audit_log` row, sign-in and sign-out included.
 
 ---
 

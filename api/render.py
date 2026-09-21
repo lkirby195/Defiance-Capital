@@ -10,8 +10,9 @@ The filters here are the whole of the presentation logic. Money, rates and ratio
 gets a filter here; it never does arithmetic of its own.
 
 ``page()`` is the one way a response is built, so every page carries the signed-in user, the
-notice a redirect brought with it, and the problems a rejected form produced, without each
-route remembering to pass them.
+notice a redirect brought with it, the problems a rejected form produced, and the CSRF token
+its forms post back - without each route remembering to pass them. A page rendered for nobody
+gets an empty token, because a page with no session has no form worth posting.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from fastapi import Request, status
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, RedirectResponse
 
+from api.security import issue_csrf
 from db.models import User
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -113,6 +115,7 @@ def page(
         "user": user,
         "notice": request.query_params.get("notice"),
         "problems": context.pop("problems", []),
+        "csrf_token": issue_csrf(user) if user is not None else "",
     }
     return templates.TemplateResponse(request, name, {**shared, **context}, status_code=status_code)
 
