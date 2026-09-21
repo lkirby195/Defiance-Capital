@@ -53,7 +53,14 @@ from services.persistence import (
     screen_result,
     underwrite_result,
 )
-from services.queue import QueueEntry, QueueGroup, QueueView, pin_state, queue_view
+from services.queue import (
+    QueueEntry,
+    QueueGroup,
+    QueueView,
+    last_activity,
+    pin_state,
+    queue_view,
+)
 from services.requests import TeamOverrides, UnderwriteRequest
 from services.runner import load_deal, run_screen, run_underwrite
 from services.users import (
@@ -105,6 +112,7 @@ __all__ = [
     "get_user",
     "hash_password",
     "last_action_at",
+    "last_activity",
     "latest_screen",
     "latest_underwrite",
     "list_users",
