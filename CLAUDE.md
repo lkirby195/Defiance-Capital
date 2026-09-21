@@ -22,6 +22,8 @@ Intake → enrichment → screen → underwrite → outputs pipeline for a hard 
 glenwood-uw/
   CLAUDE.md
   SPEC.md
+  README.md                # operations: run it, deploy it, make the first user, rotate the secret
+  render.yaml              # Render blueprint: build with uv, migrate, then serve
   pyproject.toml
   config/
     glenwood.yaml          # all tunables; placeholder values until the client fills them

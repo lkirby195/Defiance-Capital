@@ -1,0 +1,64 @@
+# Render blueprint for the review queue.  # SPEC §2, §11
+#
+# `render.yaml` is read when the repository is connected as a Blueprint; pushing a change to
+# it updates the service. Everything here is checked in except the two secrets, which are set
+# once in the dashboard and never in git (see README.md, "Deploying").
+#
+# Three things happen on a deploy, in this order:
+#   buildCommand      install uv, then the locked dependency set
+#   preDeployCommand  alembic upgrade head, against the live database, before the new code
+#                     serves anything - so a release can never run on a schema behind it
+#   startCommand      uvicorn, bound to the port Render hands the process
+#
+# preDeployCommand needs a paid instance type. On a free one, move `alembic upgrade head` to
+# the front of startCommand instead and accept that it runs on every boot - it is idempotent,
+# but it also means two instances can race it, so it is a stopgap and not the shape to keep.
+
+services:
+  - type: web
+    name: glenwood-uw
+    runtime: python
+    # Starter or above: preDeployCommand and the Shell tab (which is how the first user gets
+    # created, README.md) are both paid features.
+    plan: starter
+    region: oregon
+    branch: main
+    # Only a change under one of these redeploys the service; a SPEC edit does not.
+    buildFilter:
+      paths:
+        - adapters/**
+        - api/**
+        - cli/**
+        - config/**
+        - db/**
+        - engine/**
+        - intake/**
+        - outputs/**
+        - schema/**
+        - services/**
+        - alembic.ini
+        - pyproject.toml
+        - uv.lock
+        - render.yaml
+        - .python-version
+    # `uv sync --frozen` fails rather than re-resolving if uv.lock is behind pyproject.toml,
+    # so what runs in production is the dependency set the tests ran against.
+    buildCommand: pip install uv && uv sync --frozen --no-dev
+    preDeployCommand: uv run alembic upgrade head
+    startCommand: uv run uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    # /login is the one route that answers 200 without a session. / redirects to /queue and
+    # /queue redirects to /login, so neither is a health check, only a chain of them.
+    healthCheckPath: /login
+    envVars:
+      # Matches .python-version, so the build and a developer's machine agree.
+      - key: PYTHON_VERSION
+        value: "3.12"
+      # Set in the dashboard, or wired to a Render Postgres with fromDatabase (README.md).
+      # `postgres://` and `postgresql://` are both accepted: db/session.py names the psycopg
+      # driver itself rather than leaving SQLAlchemy to guess at one that is not installed.
+      - key: DATABASE_URL
+        sync: false
+      # Generated once by Render and never seen by anyone, which is what a signing key wants.
+      # Changing it signs everyone out; that is the rotation procedure, not a side effect.
+      - key: SESSION_SECRET
+        generateValue: true
