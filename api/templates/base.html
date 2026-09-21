@@ -1,0 +1,149 @@
+{# Shared shell. One stylesheet, inline, because the queue is one small internal app and a
+   second request for 4kB of CSS buys nothing. No client-side JS lives here: the only script
+   in the whole queue is the copy button on the suggested reply (deal.html). #}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}GLENWOOD{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #14181f;
+      --muted: #5c6673;
+      --line: #dde1e7;
+      --accent: #1f4f8f;
+      --hard: #8f1f24;
+      --hard-bg: #fbeced;
+      --soft: #8a5a08;
+      --soft-bg: #fdf3e2;
+      --info: #2c5566;
+      --info-bg: #e9f2f6;
+      --go: #1d6236;
+      --go-bg: #e7f3ec;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #14171c;
+        --panel: #1c2027;
+        --ink: #e8eaee;
+        --muted: #9aa4b1;
+        --line: #2c323b;
+        --accent: #7fb0ea;
+        --hard: #f2a3a7; --hard-bg: #3a2124;
+        --soft: #e8c184; --soft-bg: #3a3020;
+        --info: #9fc8d8; --info-bg: #1e2c33;
+        --go: #8fd3aa; --go-bg: #1c2f24;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    header.bar {
+      display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline;
+      padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+    }
+    header.bar .brand { font-weight: 700; letter-spacing: .04em; }
+    header.bar nav { display: flex; flex-wrap: wrap; gap: 14px; }
+    header.bar .who { margin-left: auto; color: var(--muted); font-size: 13px; }
+    header.bar form { display: inline; }
+    main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    h1 { font-size: 22px; margin: 4px 0 16px; }
+    h2 { font-size: 17px; margin: 0 0 10px; }
+    h3 { font-size: 14px; margin: 16px 0 6px; color: var(--muted); text-transform: uppercase;
+         letter-spacing: .06em; }
+    a { color: var(--accent); }
+    section.panel {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+      padding: 14px 16px; margin-bottom: 16px;
+    }
+    p.lede { color: var(--muted); margin: 0 0 12px; }
+    .notice, .problem {
+      padding: 10px 12px; border-radius: 6px; margin: 0 0 12px; border: 1px solid;
+    }
+    .notice { background: var(--go-bg); border-color: var(--go); color: var(--go); }
+    .problem { background: var(--hard-bg); border-color: var(--hard); color: var(--hard); }
+    .banner {
+      background: var(--hard-bg); border: 1px solid var(--hard); color: var(--hard);
+      border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;
+    }
+    .banner strong { display: block; margin-bottom: 4px; }
+    .scroll { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line);
+             vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+    dl.facts dt { color: var(--muted); }
+    dl.facts dd { margin: 0; font-variant-numeric: tabular-nums; }
+    .tag {
+      display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 12px;
+      font-weight: 600; border: 1px solid;
+    }
+    .tag.HARD, .tag.DECLINE { background: var(--hard-bg); color: var(--hard); border-color: var(--hard); }
+    .tag.SOFT, .tag.CONDITIONAL { background: var(--soft-bg); color: var(--soft); border-color: var(--soft); }
+    .tag.INFO { background: var(--info-bg); color: var(--info); border-color: var(--info); }
+    .tag.GO { background: var(--go-bg); color: var(--go); border-color: var(--go); }
+    .tag.status { background: var(--info-bg); color: var(--info); border-color: var(--info); }
+    ul.plain { margin: 0; padding-left: 18px; }
+    ul.plain li { margin-bottom: 3px; }
+    form.stack { display: grid; gap: 10px; }
+    fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 12px; padding: 10px 12px; }
+    legend { color: var(--muted); font-size: 13px; padding: 0 4px; }
+    .grid3 { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
+    input, select, textarea {
+      width: 100%; padding: 7px 8px; font: inherit; color: var(--ink);
+      background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
+    }
+    textarea { min-height: 70px; resize: vertical; }
+    button {
+      font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 5px; cursor: pointer;
+      border: 1px solid var(--accent); background: var(--accent); color: #fff;
+    }
+    button.quiet { background: transparent; color: var(--accent); }
+    button.danger { background: transparent; color: var(--hard); border-color: var(--hard); }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+    .reply { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line);
+             border-radius: 6px; padding: 10px 12px; margin: 0 0 8px; }
+    .grid-cell.hit { background: var(--go-bg); color: var(--go); font-weight: 600; }
+    .grid-cell.solved { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .muted { color: var(--muted); }
+    .small { font-size: 13px; }
+    @media (max-width: 640px) {
+      main { padding: 12px; }
+      dl.facts { grid-template-columns: 1fr; gap: 0 0; }
+      dl.facts dt { margin-top: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <span class="brand">GLENWOOD</span>
+    <nav>
+      <a href="/queue">Queue</a>
+      <a href="/queue/new">New deal</a>
+    </nav>
+    {% if user %}
+      <span class="who">
+        {{ user.name }} &lt;{{ user.email }}&gt;
+        <form method="post" action="/logout">
+          <button class="quiet" type="submit">Sign out</button>
+        </form>
+      </span>
+    {% endif %}
+  </header>
+  <main>
+    {% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+    {% for problem in problems %}<p class="problem">{{ problem }}</p>{% endfor %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

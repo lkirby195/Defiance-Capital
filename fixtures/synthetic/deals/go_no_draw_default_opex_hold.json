@@ -61,7 +61,10 @@
       "term_months": 12,
       "market_rent_monthly": "1450.00",
       "annual_utilities_usd": "720.00",
-      "asset_type": "SFR"
+      "asset_type": "SFR",
+      "court_records": {
+        "as_of": "2026-09-16"
+      }
     },
     "expected": {
       "rehab_months": 9,

@@ -201,6 +201,7 @@ Tables (one-line intent each; full DDL via Alembic migrations):
 - `underwrites` — full underwrite inputs, outputs, sensitivity grid (JSONB), version of engine used
 - `documents` — credit reports, valuations, contracts, generated memos/LOIs; file storage ref + hash
 - `ma_sync` — handoff log to Mortgage Automator: payload, MA ids, status
+- `users` — the people who sign in to the review queue; what `audit_log.actor` resolves to
 - `audit_log` — who changed what; required because credit and court data are in here
 
 Money stored as `NUMERIC(14,2)`. Rates as `NUMERIC(7,5)`. All enrichment raw responses retained.
@@ -257,8 +258,9 @@ Both the screen and the underwrite raise `TEAM_SOURCED_VALUES` (Info, fixed in c
 any value they ran on carries source `TEAM`, and the message names which — as-is value, ARV,
 court records, or some combination. It never moves a verdict; it is there so the reason
 survives into the credit memo (§9.2), where a reader is deciding how much weight to put on
-a Go. The underwrite takes no court inputs (§8), so only the two halves of the valuation can
-be named there.
+a Go. All three can be named at either stage: the underwrite re-runs the §7.2 tests on the
+record in force at underwrite time (§8.1), so a hand search reaches it too — named as the
+team's only where no adapter has superseded it by then.
 
 ---
 
@@ -342,6 +344,10 @@ From intake + enrichment, plus:
 - `credit_score` (Credco, replaces self-reported tranche); verified deal count (deed history)
 - `market_rent` (RentCast/PropStream/team), monthly, used for the DSCR takeout
 - `annual_taxes`, `annual_insurance` (team actuals; config defaults as % of **as-is value** when absent) and `annual_utilities` (team input) → holding costs and the REO carry
+- `court_records`: the §7.2 court and filing tests are re-run here on the source in force at
+  underwrite time, adapter over team (§6.1). They are not copied from the `screens` row —
+  weeks can pass between the two stages and a pull that has since landed supersedes the hand
+  search Stage 1 ran on — so the stored underwrite stands on its own for the credit memo.
 - `asset_type` (from intake) and the team-stated exit → the §3 exit inference
 - `term_months` (from bucket; 12+ → team sets)
 - `rehab_months` = `term_months − listing_months` (config, placeholder 3; the last months of the term are listing and sale; floored at 0). Not a team input.
@@ -469,8 +475,11 @@ UnderwriteResult
   flags: [ {code, severity, message} ]
 ```
 
-Underwrite flag codes. `REFI_SHORTFALL` and `DOWNSIDE_COVER_BELOW_FLOOR` take their severity
-from config; the two informational codes are fixed `Info` in code and config must not grade them:
+Underwrite flag codes. The §7.2 court codes and the credit, experience and leverage codes the
+screen raises appear here too, on the underwrite's own inputs and with the same severities.
+The four below are the underwrite's own: `REFI_SHORTFALL` and `DOWNSIDE_COVER_BELOW_FLOOR`
+take their severity from config; the two informational codes are fixed `Info` in code and
+config must not grade them:
 
 | Code | Severity | Raised when |
 |---|---|---|
@@ -534,6 +543,12 @@ Config is versioned; each `screens`/`underwrites` row records the config hash us
 - **Listing sites:** address extraction from URLs only; no page scraping.
 - **Business-purpose lending:** intake and LOI language reflect business-purpose loans; no consumer-purpose features.
 - **Court/lien data:** used for underwriting decisions on business-purpose loans; retained with source and timestamp.
+- **Access:** the review queue is behind a session cookie and nothing it serves is public. No
+  self-signup and no password reset in v1 — a user is created and deactivated from the command
+  line, so the list of people who can read credit and court findings is maintained on purpose.
+  Deactivating ends every live session at once, because the user row is read on each request.
+  Every service write takes an actor and records an `audit_log` row, sign-in and sign-out
+  included.
 
 ---
 
@@ -549,6 +564,17 @@ Config is versioned; each `screens`/`underwrites` row records the config hash us
 | 5 | Credco + RicherValues adapters; credit memo + LOI generation from templates | 2, templates |
 | 6 | MA handoff | 5 |
 | 7 | Back-test on 8–10 historical deals; calibrate config; mechanics walkthrough → monthly ledger if warranted | 2, fixtures |
+
+Phase 4's review queue is built: sign-in and `users`, the queue list, the deal page, the team
+actions, and the team-entry form. Its SMS ingestion and contract OCR wait on the LinkedPhone
+recon (§13) — there is nothing to parse until the webhook shape is known, and a parser written
+against a guess is a parser rewritten.
+
+The queue list pins one thing above the status groups: a deal that picked up a Hard flag
+**after** it reached `LOI_SENT` or `HANDED_OFF`. Past that point a Decline no longer closes a
+deal (§4.6) — a person owns it and the flags are recorded for them to read — so nothing else
+surfaces a Hard flag raised that late. "After" is measured against the `audit_log` row that
+recorded the move into that status.
 
 ---
 

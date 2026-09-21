@@ -1,6 +1,6 @@
 {
   "name": "conditional_tolerance_band_wholetail",
-  "description": "WHOLETAIL in Colorado Springs; LTV 76.0% is over the 75.0% cap but inside the 5 pt band. Conditional. Underwrite (verified 705 / 3 deals, term 6, team-set retail exit $285,000): r* 13.50% lands on the grid (11 columns); the DSCR takeout falls $26,237.92 short of the payoff due (SOFT); downside cover 1.00x passes.",
+  "description": "WHOLETAIL in Colorado Springs; LTV 76.0% is over the 75.0% cap but inside the 5 pt band, and a judgment satisfied inside the lookback is a SOFT court flag. Conditional. Underwrite (verified 705 / 3 deals, term 6, team-set retail exit $285,000): r* 13.50% lands on the grid (11 columns); the same SPEC §7.2 court test runs again here and raises the same SOFT flag (SPEC §8.1); the DSCR takeout falls $26,237.92 short of the payoff due (SOFT); downside cover 1.00x passes.",
   "inputs": {
     "deal": {
       "product": "WHOLETAIL",
@@ -17,7 +17,10 @@
       "repeat_borrower_self_reported": false
     },
     "court_records": {
-      "as_of": "2026-09-09"
+      "as_of": "2026-09-09",
+      "satisfied_judgment_or_released_lien_dates": [
+        "2025-01-10"
+      ]
     }
   },
   "expected": {
@@ -25,6 +28,10 @@
     "flags": [
       {
         "code": "LTV_AS_IS_OVER_CAP",
+        "severity": "SOFT"
+      },
+      {
+        "code": "SATISFIED_JUDGMENT_OR_RELEASED_LIEN_IN_LOOKBACK",
         "severity": "SOFT"
       }
     ],
@@ -41,7 +48,8 @@
     },
     "reasons_contain": [
       "LTV (as-is) 76.0% is over the 75.0% cap",
-      "within the 5.0 pt tolerance band (limit 80.0%)"
+      "within the 5.0 pt tolerance band (limit 80.0%)",
+      "Satisfied judgment or released lien dated 2025-01-10"
     ],
     "reply_contains": [
       "lower loan amount"
@@ -71,7 +79,13 @@
       "annual_insurance_usd": "1100.00",
       "annual_utilities_usd": "1200.00",
       "exit_price": "285000.00",
-      "stated_exit": "WHOLETAIL"
+      "stated_exit": "WHOLETAIL",
+      "court_records": {
+        "as_of": "2026-09-09",
+        "satisfied_judgment_or_released_lien_dates": [
+          "2025-01-10"
+        ]
+      }
     },
     "expected": {
       "rehab_months": 3,
@@ -123,6 +137,10 @@
         },
         {
           "code": "REFI_SHORTFALL",
+          "severity": "SOFT"
+        },
+        {
+          "code": "SATISFIED_JUDGMENT_OR_RELEASED_LIEN_IN_LOOKBACK",
           "severity": "SOFT"
         }
       ]

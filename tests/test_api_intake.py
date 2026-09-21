@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 
@@ -13,9 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from api.main import app
 from db.models import Borrower, Deal, Entity, IntakeSubmission, Property
-from db.session import get_session
 from schema.models import (
     Channel,
     Product,
@@ -31,17 +28,6 @@ from tests.conftest import requires_db
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/synthetic/team_entry_complete.json"
 
 pytestmark = requires_db
-
-
-@pytest.fixture
-def client(db_session: Session) -> Iterator[TestClient]:
-    def override() -> Iterator[Session]:
-        yield db_session
-
-    app.dependency_overrides[get_session] = override
-    with TestClient(app) as client:
-        yield client
-    app.dependency_overrides.clear()
 
 
 def test_complete_team_entry_is_stored(client: TestClient, db_session: Session) -> None:

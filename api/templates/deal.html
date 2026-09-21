@@ -1,0 +1,460 @@
+{% extends "base.html" %}
+{% import "_flags.html" as parts %}
+{% block title %}Deal — GLENWOOD{% endblock %}
+
+{% macro option_list(name, options, chosen, blank="—") %}
+  <select id="{{ name }}" name="{{ name }}">
+    <option value="">{{ blank }}</option>
+    {% for option in options %}
+      <option value="{{ option }}" {% if chosen == option %}selected{% endif %}>{{ option }}</option>
+    {% endfor %}
+  </select>
+{% endmacro %}
+
+{% macro yes_no_select(name, chosen) %}
+  <select id="{{ name }}" name="{{ name }}">
+    <option value="">—</option>
+    <option value="true" {% if chosen == "true" %}selected{% endif %}>Yes</option>
+    <option value="false" {% if chosen == "false" %}selected{% endif %}>No</option>
+  </select>
+{% endmacro %}
+
+{% block content %}
+<h1>
+  {% if deal.property and deal.property.address_raw %}{{ deal.property.address_raw }}
+  {% elif deal.property and deal.property.listing_url %}{{ deal.property.listing_url }}
+  {% else %}Deal {{ deal.id }}{% endif %}
+  <span class="tag status">{{ deal.status | plain }}</span>
+</h1>
+<p class="lede small">
+  {{ deal.borrower.name if deal.borrower and deal.borrower.name else "(no borrower name)" }}
+  {% if deal.borrower and deal.borrower.phone %} · {{ deal.borrower.phone }}{% endif %}
+  {% if deal.borrower and deal.borrower.entities %}
+    · {{ deal.borrower.entities | map(attribute="name") | join(", ") }}{% endif %}
+  · entered {{ deal.created_at | when }} via {{ deal.channel | plain }}
+</p>
+
+{# --- intake facts (SPEC §9.1) ------------------------------------------------------------ #}
+<section class="panel">
+  <h2>Intake</h2>
+  <dl class="facts">
+    <dt>Purchase price</dt><dd>{{ deal.purchase_price | money }}</dd>
+    <dt>Rehab budget</dt><dd>{{ deal.rehab_budget | money }}</dd>
+    <dt>Loan requested</dt><dd>{{ deal.loan_requested | money }}</dd>
+    <dt>Term bucket</dt><dd>{{ deal.term_bucket | plain }}</dd>
+    <dt>Product</dt>
+    <dd>{{ deal.product | plain }} <span class="small muted">({{ deal.product_source | plain }})</span></dd>
+    <dt>Asset type</dt><dd>{{ deal.asset_type | plain }}</dd>
+    <dt>Stated exit</dt><dd>{{ deal.stated_exit | plain }}</dd>
+    <dt>Credit (self-reported)</dt><dd>{{ deal.credit_range_self_reported | plain }}</dd>
+    <dt>Experience (self-reported)</dt><dd>{{ deal.experience_bucket_self_reported | plain }}</dd>
+    <dt>Repeat borrower</dt><dd>{{ deal.repeat_borrower_self_reported | yes_no }}</dd>
+    <dt>State</dt>
+    <dd>{{ deal.property.state | plain if deal.property else "—" }}
+      {% if deal.property %}<span class="small muted">({{ deal.property.state_source | plain }})</span>{% endif %}</dd>
+    <dt>Credit authorization</dt><dd>{{ deal.credit_authorization_signed | yes_no }}</dd>
+  </dl>
+
+  <h3>Still needed from the borrower</h3>
+  {% if deal.missing_fields %}
+    <ul class="plain small">
+      {% for field in deal.missing_fields %}<li>{{ field }}</li>{% endfor %}
+    </ul>
+    <p class="small muted">
+      The deal stays NEEDS_INFO and is not priced until these are in (SPEC §4.1).
+    </p>
+  {% else %}
+    <p class="small muted">Nothing outstanding — the minimum viable intake is complete.</p>
+  {% endif %}
+</section>
+
+{# --- run the engine ---------------------------------------------------------------------- #}
+<section class="panel">
+  <h2>Run</h2>
+  <div class="actions">
+    <form method="post" action="/queue/deals/{{ deal.id }}/screen">
+      <button type="submit">Run screen</button>
+    </form>
+    <form method="post" action="/queue/deals/{{ deal.id }}/underwrite">
+      <button type="submit">Run underwrite</button>
+    </form>
+  </div>
+  <p class="small muted" style="margin-top:10px">
+    The screen takes no paid pulls (SPEC §7). The underwrite needs an as-is value, an ARV, a
+    market rent and annual utilities — enter them below first, or it will say which are
+    missing.
+  </p>
+</section>
+
+{# --- team actions (SPEC §4.6) ------------------------------------------------------------- #}
+<section class="panel">
+  <h2>Actions</h2>
+  <div class="grid3">
+    <form method="post" action="/queue/deals/{{ deal.id }}/advance">
+      <button type="submit" {% if not allowed.advance %}disabled{% endif %}>Advance to review</button>
+      <p class="small muted">{{ "SCREENED only." if not allowed.advance else "Take the deal on." }}</p>
+    </form>
+
+    <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/decline">
+      <label for="decline_reason">Decline — reason (required)</label>
+      <input id="decline_reason" name="reason" maxlength="500"
+             {% if not allowed.decline %}disabled{% endif %}>
+      <button class="danger" type="submit" {% if not allowed.decline %}disabled{% endif %}>Decline</button>
+    </form>
+
+    <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/dead">
+      <label for="dead_reason">Mark dead — reason (optional)</label>
+      <input id="dead_reason" name="reason" maxlength="500"
+             {% if not allowed.dead %}disabled{% endif %}>
+      <button class="danger" type="submit" {% if not allowed.dead %}disabled{% endif %}>Mark dead</button>
+    </form>
+
+    <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/reopen">
+      <label for="reopen_reason">Re-open — reason (required)</label>
+      <input id="reopen_reason" name="reason" maxlength="500"
+             {% if not allowed.reopen %}disabled{% endif %}>
+      <button type="submit" {% if not allowed.reopen %}disabled{% endif %}>Re-open</button>
+      <p class="small muted">DECLINED only. DEAD is final.</p>
+    </form>
+  </div>
+
+  <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/note" style="margin-top:12px">
+    <label for="note">Note</label>
+    <textarea id="note" name="note" maxlength="4000"></textarea>
+    <div class="actions"><button class="quiet" type="submit">Add note</button></div>
+  </form>
+</section>
+
+{# --- team overrides (SPEC §6.1, §8.1) ------------------------------------------------------ #}
+<section class="panel">
+  <h2>Team entry</h2>
+  <p class="lede small">
+    The interim source until the enrichment adapters land (SPEC §6.1). An adapter value always
+    wins over anything here, and what is entered stays on the deal either way. Saving replaces
+    the whole block — a box left blank means the deal carries no such value.
+  </p>
+  <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/overrides">
+    <fieldset>
+      <legend>Valuation</legend>
+      <div class="grid3">
+        <div>
+          <label for="as_is_value_team">As-is value</label>
+          <input id="as_is_value_team" name="as_is_value_team" inputmode="decimal"
+                 value="{{ form.as_is_value_team }}">
+        </div>
+        <div>
+          <label for="arv_team">ARV</label>
+          <input id="arv_team" name="arv_team" inputmode="decimal" value="{{ form.arv_team }}">
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Holding costs and the DSCR takeout (annual, except the rent)</legend>
+      <div class="grid3">
+        <div>
+          <label for="actual_annual_taxes_usd">Taxes — blank uses the config % of as-is</label>
+          <input id="actual_annual_taxes_usd" name="actual_annual_taxes_usd" inputmode="decimal"
+                 value="{{ form.actual_annual_taxes_usd }}">
+        </div>
+        <div>
+          <label for="actual_annual_insurance_usd">Insurance — blank uses the config %</label>
+          <input id="actual_annual_insurance_usd" name="actual_annual_insurance_usd"
+                 inputmode="decimal" value="{{ form.actual_annual_insurance_usd }}">
+        </div>
+        <div>
+          <label for="actual_annual_utilities_usd">Utilities — no default</label>
+          <input id="actual_annual_utilities_usd" name="actual_annual_utilities_usd"
+                 inputmode="decimal" value="{{ form.actual_annual_utilities_usd }}">
+        </div>
+        <div>
+          <label for="market_rent_monthly">Market rent (monthly) — no default</label>
+          <input id="market_rent_monthly" name="market_rent_monthly" inputmode="decimal"
+                 value="{{ form.market_rent_monthly }}">
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Structure</legend>
+      <div class="grid3">
+        <div>
+          <label for="asset_type">Asset type</label>
+          {{ option_list("asset_type", enums.asset_type, form.asset_type) }}
+        </div>
+        <div>
+          <label for="product">Product — blank leaves the inferred one</label>
+          {{ option_list("product", enums.product, form.product) }}
+        </div>
+        <div>
+          <label for="stated_exit">Stated exit</label>
+          {{ option_list("stated_exit", enums.stated_exit, form.stated_exit) }}
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Court and filing search (SPEC §7.2)</legend>
+      <div class="grid3">
+        <div>
+          <label for="court_records_status">Outcome — NOT_CHECKED is not CLEAN</label>
+          {{ option_list("court_records_status", enums.court_records_status,
+                         form.court_records_status) }}
+        </div>
+        <div>
+          <label for="court_records_as_of">Searched on — lookbacks run from this date</label>
+          <input id="court_records_as_of" name="court_records_as_of" type="date"
+                 value="{{ form.court_records_as_of }}">
+        </div>
+      </div>
+      <p class="small muted">
+        One row per matter. Each carries the fact its code is tested on: the date for a
+        lookback, the amount for a threshold, the lien facts for a subject-property
+        encumbrance — so the config thresholds decide the outcome, not the entry.
+      </p>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Code</th><th>Occurred on</th><th class="num">Amount</th>
+              <th>Lien kind</th><th>Senior</th><th>Resolved at close</th><th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for matter in matters %}
+              <tr>
+                <td>{{ option_list("matter_code", enums.court_flag, matter.code) }}</td>
+                <td><input name="matter_occurred_on" type="date" value="{{ matter.occurred_on }}"></td>
+                <td><input name="matter_amount_usd" inputmode="decimal" value="{{ matter.amount_usd }}"></td>
+                <td>{{ option_list("matter_lien_kind", enums.lien_kind, matter.lien_kind) }}</td>
+                <td>{{ yes_no_select("matter_senior", matter.senior) }}</td>
+                <td>{{ yes_no_select("matter_resolved_at_close", matter.resolved_at_close) }}</td>
+                <td><input name="matter_description" maxlength="500" value="{{ matter.description }}"></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </fieldset>
+
+    <div class="actions"><button type="submit">Save team entry</button></div>
+  </form>
+</section>
+
+{# --- screen summary (SPEC §9.1) ------------------------------------------------------------ #}
+<section class="panel">
+  <h2>Screen</h2>
+  {% if screen %}
+    <p class="lede small">
+      <span class="tag {{ screen.result.verdict | plain }}">{{ screen.result.verdict | plain }}</span>
+      run {{ screen.created_at | when }} · engine {{ screen.result.engine_version }} ·
+      config {{ screen.result.config_hash[:12] }}
+    </p>
+
+    <h3>Score components</h3>
+    <dl class="facts small">
+      <dt>Credit tranche</dt>
+      <dd>{{ screen.result.components.credit_tranche | plain }}
+        <span class="muted">({{ "verified" if screen.result.components.credit_tranche_verified
+          else "self-reported" }})</span></dd>
+      <dt>Floor tranche</dt>
+      <dd>{{ screen.result.components.floor_tranche | plain }} —
+        {{ "meets it" if screen.result.components.credit_meets_floor else "below it" }}</dd>
+      <dt>Experience tier</dt>
+      <dd>{{ screen.result.components.experience_tier | plain }}
+        <span class="muted">(self-reported
+          {{ screen.result.components.experience_tier_self_reported | plain }}, verified
+          {{ screen.result.components.experience_tier_verified | plain }})</span></dd>
+      <dt>Repeat-borrower override</dt>
+      <dd>{{ screen.result.components.repeat_borrower_override_applied | yes_no }}</dd>
+      <dt>Court records from</dt>
+      <dd>{{ screen.result.components.court_records_source | plain }}</dd>
+    </dl>
+
+    <h3>Sizing against caps</h3>
+    {{ parts.sizing_table(screen.result.sizing) }}
+
+    <h3>Flags</h3>
+    {{ parts.flag_list(screen.result.flags) }}
+
+    <h3>Reasons</h3>
+    {% if screen.result.reasons %}
+      <ul class="plain small">
+        {% for reason in screen.result.reasons %}<li>{{ reason }}</li>{% endfor %}
+      </ul>
+    {% else %}<p class="small muted">No reasons — nothing was flagged.</p>{% endif %}
+
+    <h3>Suggested reply</h3>
+    <p class="reply" id="suggested-reply">{{ screen.result.suggested_reply }}</p>
+    <div class="actions">
+      <button class="quiet" type="button" data-copy="suggested-reply">Copy reply</button>
+      <span class="small muted" id="copy-state" role="status"></span>
+    </div>
+    <p class="small muted">
+      A draft. It must be sent by hand: a person edits it and sends it from their own phone.
+      Nothing on this page sends anything — GLENWOOD does no automated outbound SMS
+      (SPEC §11).
+    </p>
+  {% else %}
+    <p class="small muted">Not screened yet.</p>
+  {% endif %}
+</section>
+
+{# --- underwrite (SPEC §8.7) ----------------------------------------------------------------- #}
+<section class="panel">
+  <h2>Underwrite</h2>
+  {% if underwrite %}
+    {% set result = underwrite.result %}
+    <p class="lede small">
+      run {{ underwrite.created_at | when }} · engine {{ result.engine_version }} ·
+      config {{ result.config_hash[:12] }}
+    </p>
+
+    <h3>Sizing on verified values</h3>
+    {{ parts.sizing_table(result.sizing) }}
+
+    <h3>Pricing</h3>
+    <dl class="facts small">
+      <dt>Term</dt><dd>{{ result.term_months }} months ({{ result.rehab_months }} rehab)</dd>
+      <dt>Solved rate r*</dt><dd>{{ result.solved_rate | rate }}</dd>
+      <dt>Lender yield at r*</dt><dd>{{ result.lender_yield_at_solve | rate }}</dd>
+      <dt>Interest at r*</dt><dd>{{ result.lender_at_solve.interest | money }}</dd>
+      <dt>Fees at r*</dt><dd>{{ result.lender_at_solve.fees.total | money }}</dd>
+      <dt>Average outstanding</dt><dd>{{ result.lender_at_solve.avg_outstanding | money }}</dd>
+    </dl>
+
+    <h3>Lender yield grid (SPEC §8.5)</h3>
+    <p class="small muted">
+      Target {{ result.grid_lender.target | pct }}. Shaded cells meet it; the outlined column
+      is r*{{ ", inserted into the grid in rate order" if result.grid_lender.solved_rate_inserted
+      else ", which already sat on the configured grid" }}.
+    </p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Month</th>
+            {% for column in result.grid_lender.rates %}
+              {# The headers are rounded to a tenth, so the solved column says which it is
+                 rather than leaving the reader to match it against r* above. #}
+              <th class="num">{{ column | pct }}{% if column == result.solved_rate %}
+                <span class="muted">r*</span>{% endif %}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in result.grid_lender.rows %}
+            <tr>
+              <th>{{ row.month }}</th>
+              {% for cell in row.cells %}
+                <td class="num grid-cell {{ 'hit' if cell.meets_target }} {{ 'solved' if cell.is_solved_rate }}">
+                  {{ cell.annualized_yield | pct }}
+                </td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Exit — DSCR takeout</h3>
+    <dl class="facts small">
+      <dt>Exit type</dt>
+      <dd>{{ result.exit.type | plain }}
+        <span class="muted">({{ result.exit.exit_source | plain }})</span></dd>
+      <dt>Gross rent (annual)</dt><dd>{{ result.exit.gross_rent_annual | money }}</dd>
+      <dt>Taxes</dt>
+      <dd>{{ result.exit.annual_taxes | money }}
+        <span class="muted">({{ result.exit.annual_taxes_source | plain }})</span></dd>
+      <dt>Insurance</dt>
+      <dd>{{ result.exit.annual_insurance | money }}
+        <span class="muted">({{ result.exit.annual_insurance_source | plain }})</span></dd>
+      <dt>NOI</dt><dd>{{ result.exit.noi_annual | money }}</dd>
+      <dt>LTV takeout</dt><dd>{{ result.exit.ltv_takeout | money }}</dd>
+      <dt>DSCR takeout</dt><dd>{{ result.exit.dscr_takeout | money }}</dd>
+      <dt>Max takeout</dt><dd>{{ result.exit.max_takeout | money }}</dd>
+      <dt>Payoff due</dt><dd>{{ result.exit.payoff_due | money }}</dd>
+      <dt>DSCR at payoff</dt><dd>{{ result.exit.dscr_at_payoff | ratio }}</dd>
+      <dt>Refi covers</dt>
+      <dd>{{ result.exit.refi_covers | yes_no }}
+        {% if not result.exit.refi_covers %}
+          <span class="muted">short {{ result.exit.shortfall | money }}</span>{% endif %}</dd>
+    </dl>
+
+    <h3>Downside — REO</h3>
+    <dl class="facts small">
+      <dt>Recovery basis</dt><dd>{{ result.downside.recovery_basis | money }}</dd>
+      <dt>Liquidation</dt><dd>{{ result.downside.liquidation | money }}</dd>
+      <dt>Foreclosure</dt>
+      <dd>{{ result.downside.foreclosure_months }} months,
+        {{ result.downside.foreclosure_cost | money }}</dd>
+      <dt>Recovery</dt><dd>{{ result.downside.recovery | money }}</dd>
+      <dt>Exposure</dt><dd>{{ result.downside.exposure | money }}</dd>
+      <dt>Cover</dt>
+      <dd>{{ result.downside.cover | ratio }} against a
+        {{ result.downside.cover_floor | ratio }} floor —
+        {{ "passes" if result.downside.passed else "below it" }}</dd>
+    </dl>
+
+    <h3>Borrower economics <span class="muted">(information only)</span></h3>
+    <dl class="facts small">
+      <dt>Total project cost</dt><dd>{{ result.borrower_at_solve.total_project_cost | money }}</dd>
+      <dt>Holding costs</dt><dd>{{ result.borrower_at_solve.holding_costs | money }}</dd>
+      <dt>Exit net</dt><dd>{{ result.borrower_at_solve.exit_net | money }}</dd>
+      <dt>Profit</dt><dd>{{ result.borrower_at_solve.profit | money }}</dd>
+      <dt>Cash in</dt><dd>{{ result.borrower_at_solve.cash_in | money }}</dd>
+      <dt>Cash-on-cash</dt><dd>{{ result.borrower_at_solve.cash_on_cash | pct }}</dd>
+    </dl>
+
+    <h3>Flags</h3>
+    {{ parts.flag_list(result.flags) }}
+  {% else %}
+    <p class="small muted">Not underwritten yet.</p>
+  {% endif %}
+</section>
+
+{# --- the audit trail (SPEC §5, §11) --------------------------------------------------------- #}
+<section class="panel">
+  <h2>History</h2>
+  {% if trail %}
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>When</th><th>Who</th><th>What</th><th>Detail</th></tr>
+        </thead>
+        <tbody>
+          {% for row in trail %}
+            <tr>
+              <td class="small">{{ row.created_at | when }}</td>
+              <td class="small">{{ row.actor }}</td>
+              <td class="small"><strong>{{ row.action }}</strong></td>
+              <td class="small">
+                {% if row.after and row.after.get("note") %}{{ row.after["note"] }}
+                {% elif row.after and row.after.get("reason") %}{{ row.after["reason"] }}
+                {% elif row.after %}{{ row.after | join(", ") }}
+                {% else %}—{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="small muted">Nothing recorded yet.</p>
+  {% endif %}
+</section>
+
+<script>
+  // The one piece of client-side script in the queue. Everything else is a form post.
+  document.querySelectorAll("[data-copy]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var source = document.getElementById(button.dataset.copy);
+      var state = document.getElementById("copy-state");
+      navigator.clipboard.writeText(source.innerText).then(
+        function () { state.textContent = "Copied — send it by hand."; },
+        function () { state.textContent = "Could not copy; select the text instead."; }
+      );
+    });
+  });
+</script>
+{% endblock %}

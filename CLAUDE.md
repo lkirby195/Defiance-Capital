@@ -14,7 +14,7 @@ Intake → enrichment → screen → underwrite → outputs pipeline for a hard 
 - Pydantic v2 for all schemas and config
 - pytest; `hypothesis` allowed for engine property tests
 - `python-docx` for memo/LOI generation
-- `ruff` for lint/format, `mypy --strict` on `engine/`, `schema/`, `config/`, `intake/` and `services/`
+- `ruff` for lint/format, `mypy --strict` on `engine/`, `schema/`, `config/`, `intake/`, `services/`, `api/` and `cli/`
 
 ## Layout
 
@@ -57,14 +57,23 @@ glenwood-uw/
     repository.py          # intake -> rows
     migrations/            # Alembic
   services/                # the seam: load a deal, run the pure engine, persist, return
+    actions.py             # the team actions: advance, decline, mark dead, reopen, note, overrides
     assemble.py            # deals row -> ScreenInputs / UnderwriteInputs; adapter-over-team
+    audit.py               # append audit_log rows; read one deal's trail
     enrichment.py          # what the adapters produced (Phase 3); the precedence rule
+    intake.py              # store an IntakeRecord with an actor
     lifecycle.py           # the two automatic status transitions (SPEC 4.6)
+    passwords.py           # PBKDF2 hash / verify; pure
     persistence.py         # append screens / underwrites rows; rebuild results from them
-    requests.py            # UnderwriteRequest: the SPEC 8.1 inputs supplied at underwrite time
+    queue.py               # the review-queue list: grouping, ordering, the pin rule
+    requests.py            # UnderwriteRequest / TeamOverrides: what the team supplies by hand
     runner.py              # run_screen, run_underwrite
+    users.py               # create / deactivate / authenticate a queue user
   api/
-    main.py, routes/       # webhooks, queue, actions (advance, decline, generate LOI, handoff)
+    main.py, routes/       # auth, queue, intake, deals
+    security.py            # the signed session cookie and the who-is-signed-in dependencies
+    forms.py, render.py    # HTML form parsing; the Jinja environment and its filters
+    templates/             # the review queue's own pages (committed; not the docx templates)
   cli/
     main.py, fixtures.py   # `glenwood run` / `glenwood export` on a fixture, no database
   outputs/
@@ -94,6 +103,8 @@ glenwood-uw/
 
 **Record everything.** Every enrichment call writes an `enrichment_runs` row with the raw response. Every screen and underwrite records `ENGINE_VERSION` and the config hash. Nothing is overwritten; re-runs create new rows.
 
+**Every service write takes an actor and writes `audit_log`.** Credit and court data are in here (SPEC §11), so a write nobody is named for is not acceptable. `services/` never commits; the audit row lands in the caller's transaction beside the change it describes, so a rolled-back change cannot leave an audit row claiming it happened. A password, a hash, or anything else a person would not want in a log never goes in one.
+
 **Config is validated on load.** `Config` must reject a yaml with missing keys or out-of-range values at startup, not at the first deal.
 
 **Bump `ENGINE_VERSION`** on any change to math in `engine/`, and add or update a fixture test that demonstrates the change.
@@ -105,6 +116,8 @@ glenwood-uw/
 - **No credit pull without authorization.** `credco.py` must check `deal.credit_authorization_signed` and refuse otherwise. Do not add an override.
 - **Mortgage Automator is write-only at handoff.** Do not write to MA before the "LOI accepted" action. Reads (borrower match) are fine anytime.
 - **No dependency on any other repo.** See top of file.
+- **No self-signup and no password reset.** Users are created and deactivated from the command line. Do not add a registration page, an invite link, or a reset-by-email flow to v1.
+- **No client-side JS in the queue beyond the copy button.** Server-rendered Jinja, plain form posts, POST-redirect-GET. If a page seems to need script, it needs a different page.
 
 ## Style
 
@@ -121,8 +134,13 @@ uv sync
 uv run alembic upgrade head
 uv run pytest
 uv run ruff check . && uv run ruff format .
-uv run mypy engine schema config intake services
-uv run uvicorn api.main:app --reload
+uv run mypy engine schema config intake services api cli
+uv run uvicorn api.main:app --reload     # the review queue at http://127.0.0.1:8000/queue
+
+# the first user; there is no self-signup (SPEC 11). Omit --password to be prompted.
+uv run glenwood users create --name "Sam Reed" --email sam@glenwood.example
+uv run glenwood users deactivate --email sam@glenwood.example
+uv run glenwood users list
 
 # run the engine on a fixture deal, no database:
 uv run glenwood run fixtures/synthetic/deals/go_split_draw_denver.json --underwrite

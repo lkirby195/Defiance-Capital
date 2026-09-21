@@ -1,5 +1,6 @@
-# Client-supplied, never commit
-templates/
+# Client-supplied, never commit. Anchored to the repository root: api/templates/ holds the
+# review queue's own Jinja pages, which are source and are committed.
+/templates/
 fixtures/historical/
 
 # Secrets and env

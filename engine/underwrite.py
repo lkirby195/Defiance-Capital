@@ -7,6 +7,12 @@ from the verified credit score and deal count exactly as in the screen (``credit
 mismatches, repeat-borrower notes) carry into the underwrite flags alongside the leverage
 flags (SPEC §8.2), the takeout shortfall, and the downside cover (SPEC §8.6). Borrower
 profit and cash-on-cash are information only: no floor, no flag.
+
+The SPEC §7.2 court and filing tests run again here, on whatever source is in force at
+underwrite time - adapter over team, the same precedence as the screen (SPEC §6.1). They are
+not copied from the screens row: weeks can pass between Stage 1 and Stage 2, and a pull that
+has since landed supersedes the hand search the screen ran on. The stored underwrite is
+therefore self-contained, which is what the credit memo (SPEC §9.2) needs.
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ from engine.calc.lender import lender_return
 from engine.calc.outstanding import LoanTerms, loan_terms
 from engine.grids import yield_grid
 from engine.screen import (
+    court_flags,
     credit_check,
     experience_check,
     leverage_flags,
@@ -147,9 +154,8 @@ def underwrite(inputs: UnderwriteInputs, config: Config) -> UnderwriteResult:
         credit.flags
         + experience.flags
         + leverage_flags(sizing)
-        # The underwrite takes no court inputs (SPEC §8), so only the valuation can be
-        # team-sourced here; the screen's own flag covers the court search.
-        + team_sourced_flags(sizing, None)
+        + court_flags(inputs.court_records, config)
+        + team_sourced_flags(sizing, inputs.court_records)
         + structure_flags(loan, config)
         + solve_flags(solved_rate, config)
         + exit_flags(exit_result, config)

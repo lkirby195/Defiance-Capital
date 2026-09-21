@@ -212,6 +212,44 @@ class DocumentKind(StrEnum):
     LOI = "LOI"
 
 
+class AuditAction(StrEnum):
+    """Stable codes for ``audit_log.action``.  # SPEC §5, §11
+
+    One per thing a person can do, not one per column that moved: the row carries what
+    changed in ``before``/``after``, and the code says what the person thought they were
+    doing. Stable because an auditor reads them years later and a renamed code would orphan
+    every row already written under the old name.
+
+    ``LOI_SENT`` and ``HANDED_OFF`` are written by the SPEC §12 Phase 5 and 6 actions, which
+    do not exist yet. They are named here because the queue already reads them: a Hard flag
+    raised *after* a deal reached one of those states is the case worth pinning to the top,
+    and "after" is measured against the row that recorded the move (SPEC §12).
+    """
+
+    # Deals
+    INTAKE_CREATED = "INTAKE_CREATED"
+    SCREEN_RUN = "SCREEN_RUN"
+    UNDERWRITE_RUN = "UNDERWRITE_RUN"
+    OVERRIDES_SAVED = "OVERRIDES_SAVED"
+    ADVANCED_TO_REVIEW = "ADVANCED_TO_REVIEW"
+    DECLINED = "DECLINED"
+    MARKED_DEAD = "MARKED_DEAD"
+    REOPENED = "REOPENED"
+    NOTE_ADDED = "NOTE_ADDED"
+    LOI_SENT = "LOI_SENT"  # SPEC §9.3, Phase 5
+    HANDED_OFF = "HANDED_OFF"  # SPEC §9.4, Phase 6
+    # Users and access (SPEC §11: credit data access is logged)
+    USER_CREATED = "USER_CREATED"
+    USER_DEACTIVATED = "USER_DEACTIVATED"
+    SIGNED_IN = "SIGNED_IN"
+    SIGNED_OUT = "SIGNED_OUT"
+
+
+# The statuses a deal is pinned out of when a Hard flag lands after it got there (SPEC §12),
+# and the audit actions that record it getting there.
+PINNED_AFTER_ACTIONS: tuple[AuditAction, ...] = (AuditAction.LOI_SENT, AuditAction.HANDED_OFF)
+
+
 # What the screen tests each court code on (SPEC §7.2), so a team-entered matter can be
 # rejected at the door when it does not carry it.
 DATED_COURT_FLAGS: frozenset[CourtFlag] = frozenset(
@@ -358,6 +396,14 @@ class DealInfo(BaseModel):
     actual_annual_insurance_usd: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
+    # The other two SPEC §8.1 team inputs: annual utilities (holding costs and the REO carry)
+    # and the monthly market rent the DSCR takeout is computed on. Neither has a config
+    # default or an adapter behind it, so the team enters them once and the underwrite reads
+    # them off the deal unless an UnderwriteRequest carries a newer number.
+    actual_annual_utilities_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    market_rent_monthly: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     # Team-supplied valuation, used when no adapter has produced one (SPEC §6). An adapter
     # value always wins; these stay on the deal either way, for audit.
     as_is_value_team: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
@@ -703,6 +749,13 @@ class UnderwriteInputs(BaseModel):
     the as-is value. ``exit_price`` defaults to the ARV (flip); the team sets a retail price
     for wholetail. ``extension_fee_pct`` defaults to the config default. ``asset_type`` and
     ``stated_exit`` drive the SPEC §3 exit inference.
+
+    ``court_records`` is the latest source in force at underwrite time, adapter over team,
+    exactly as at the screen (SPEC §6.1, §8.1). The underwrite re-runs the SPEC §7.2 tests on
+    it rather than trusting the screen's: weeks can pass between the two, the pull an adapter
+    now has may have superseded the hand search the screen ran on, and the stored underwrite
+    is what a credit memo is written from. ``None`` means no source was checked, which is
+    reported as an INFO flag and never read as clean.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -721,6 +774,7 @@ class UnderwriteInputs(BaseModel):
     exit_price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     asset_type: AssetType | None = None
     stated_exit: StatedExit = StatedExit.UNKNOWN
+    court_records: CourtRecordInputs | None = None
 
     @model_validator(mode="after")
     def _valuation_is_complete(self) -> UnderwriteInputs:

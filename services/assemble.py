@@ -62,10 +62,15 @@ _REQUIRED: tuple[tuple[str, str], ...] = (
 
 
 def _present[T](value: T | None) -> T:
-    """Narrow an optional column to its type; ``deal_core`` has already checked it."""
+    """Narrow an optional column to its type; the caller has already checked it."""
     if value is None:  # pragma: no cover - unreachable once the missing list is empty
         raise ValueError("required value is missing")
     return value
+
+
+def _first[T](*candidates: T | None) -> T | None:
+    """The first candidate that is not None; None when every one of them is."""
+    return next((value for value in candidates if value is not None), None)
 
 
 @dataclass(frozen=True)
@@ -290,26 +295,34 @@ def underwrite_inputs(
 
     Every optional value falls back the same way: the request, then what is on the deal,
     then the engine's own default. Taxes and insurance end at None, which is the engine's
-    signal to use the config percentage of the as-is value (SPEC §8.6). The valuation has no
-    such default - SPEC §8.1 requires both halves - so a deal with nothing from an adapter,
-    nothing on the request and nothing from the team is named as not ready rather than
-    underwritten on a guess.
+    signal to use the config percentage of the as-is value (SPEC §8.6). Three inputs have no
+    such default - the two halves of the valuation (SPEC §8.1 requires both), the market rent
+    the DSCR takeout is computed on, and the annual utilities - so a deal carrying none of
+    them from an adapter, the request or the team is named as not ready rather than
+    underwritten on a guess, and every one that is absent is named at once.
+
+    The court record is resolved here the same way the screen resolves it, adapter over team
+    (SPEC §6.1), and not read off the stored screen: the underwrite runs the SPEC §7.2 tests
+    again on whatever is in force now, which may be a pull that landed after Stage 1.
     """
     core = deal_core(deal)
-    taxes = (
-        request.annual_taxes_usd
-        if request.annual_taxes_usd is not None
-        else deal.actual_annual_taxes_usd
-    )
-    insurance = (
-        request.annual_insurance_usd
-        if request.annual_insurance_usd is not None
-        else deal.actual_annual_insurance_usd
-    )
+    taxes = _first(request.annual_taxes_usd, deal.actual_annual_taxes_usd)
+    insurance = _first(request.annual_insurance_usd, deal.actual_annual_insurance_usd)
+    utilities = _first(request.annual_utilities_usd, deal.actual_annual_utilities_usd)
+    market_rent = _first(request.market_rent_monthly, deal.market_rent_monthly)
     valuation = resolve_valuation(deal, adapters, request)
     missing = [
-        f"{name} (no adapter value, none on the request, none on the deal)"
-        for name, value in (("as_is_value", valuation.as_is_value), ("arv", valuation.arv))
+        f"{name} ({why})"
+        for name, value, why in (
+            (
+                "as_is_value",
+                valuation.as_is_value,
+                "no adapter value, none on the request, none on the deal",
+            ),
+            ("arv", valuation.arv, "no adapter value, none on the request, none on the deal"),
+            ("market_rent_monthly", market_rent, "none on the request, none on the deal"),
+            ("annual_utilities_usd", utilities, "none on the request, none on the deal"),
+        )
         if value is None
     ]
     if missing:
@@ -323,12 +336,13 @@ def underwrite_inputs(
         state=core.state,
         borrower=borrower_inputs(core, request),
         term_months=resolve_term_months(deal, request),
-        market_rent_monthly=request.market_rent_monthly,
+        market_rent_monthly=_present(market_rent),
         annual_taxes_usd=taxes,
         annual_insurance_usd=insurance,
-        annual_utilities_usd=request.annual_utilities_usd,
+        annual_utilities_usd=_present(utilities),
         extension_fee_pct=request.extension_fee_pct,
         exit_price=request.exit_price,
         asset_type=request.asset_type or deal.asset_type,
         stated_exit=request.stated_exit or deal.stated_exit or StatedExit.UNKNOWN,
+        court_records=court_records(deal, adapters),
     )

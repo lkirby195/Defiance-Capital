@@ -63,7 +63,10 @@
       "annual_taxes_usd": "1000.00",
       "annual_insurance_usd": "800.00",
       "annual_utilities_usd": "600.00",
-      "stated_exit": "FLIP"
+      "stated_exit": "FLIP",
+      "court_records": {
+        "as_of": "2026-09-09"
+      }
     },
     "expected": {
       "rehab_months": 3,

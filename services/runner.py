@@ -4,6 +4,11 @@ The only I/O in a screen or an underwrite happens here: load the deal, hand type
 the pure engine, append a row, return the result. Neither function commits - the caller owns
 the transaction boundary, so an API request or a script can run both in one unit of work.
 
+Both take an actor and record an ``audit_log`` row beside the run (SPEC §5, §11). The
+``screens`` / ``underwrites`` row says what the engine decided; the audit row says who asked
+it to, which is the question an auditor has about a system holding credit and court data.
+The audit row names the run it belongs to rather than repeating it.
+
 Each function also moves the deal through the one lifecycle step its stage owns
 (``services/lifecycle.py``): a screen leaves a never-screened deal SCREENED or DECLINED, an
 underwrite leaves a screened or in-review deal UNDERWRITING, and a declined or dead deal is
@@ -21,13 +26,15 @@ from config.config import Config, get_config
 from db.models import Deal
 from engine.screen import screen
 from engine.underwrite import underwrite
-from schema.models import ScreenResult, Status, UnderwriteResult, Verdict
+from schema.models import AuditAction, ScreenResult, Status, UnderwriteResult, Verdict
 from services.assemble import screen_inputs, underwrite_inputs
+from services.audit import DEALS, record_audit
 from services.enrichment import AdapterValues, adapter_values
 from services.errors import DealNotFound, DealNotUnderwritable
 from services.lifecycle import (
     advance_after_screen,
     advance_for_underwrite,
+    check_intake_complete,
     check_underwritable,
 )
 from services.persistence import record_screen, record_underwrite
@@ -47,6 +54,8 @@ def run_screen(
     deal_id: UUID,
     config: Config | None = None,
     adapters: AdapterValues | None = None,
+    *,
+    actor: str,
 ) -> ScreenResult:
     """Screen a stored deal, append the ``screens`` row, advance the status.  # SPEC §7
 
@@ -55,10 +64,25 @@ def run_screen(
     """
     cfg = config or get_config()
     deal = load_deal(session, deal_id)
+    before = deal.status
     inputs = screen_inputs(deal, adapters or adapter_values(session, deal))
     result = screen(inputs, cfg)
-    record_screen(session, deal.id, inputs, result)
+    row = record_screen(session, deal.id, inputs, result)
     advance_after_screen(deal, result.verdict)
+    record_audit(
+        session,
+        actor=actor,
+        action=AuditAction.SCREEN_RUN,
+        table_name=DEALS,
+        row_id=deal.id,
+        before={"status": before.value},
+        after={
+            "status": deal.status.value,
+            "screen_id": str(row.id),
+            "verdict": result.verdict.value,
+            "engine_version": result.engine_version,
+        },
+    )
     return result
 
 
@@ -68,6 +92,8 @@ def run_underwrite(
     request: UnderwriteRequest,
     config: Config | None = None,
     adapters: AdapterValues | None = None,
+    *,
+    actor: str,
 ) -> UnderwriteResult:
     """Underwrite a stored deal, append the ``underwrites`` row, advance the status.  # SPEC §8
 
@@ -76,20 +102,38 @@ def run_underwrite(
     rather than pass it. The screen it runs is a real one - its row is recorded and it moves
     the status like any other - and a Decline stops the underwrite there.
 
-    The status is otherwise checked before any work is done: a declined or dead deal raises
-    ``DealNotUnderwritable`` and nothing is written.
+    The status is otherwise checked before any work is done and nothing is written when it
+    refuses: a declined or dead deal raises ``DealNotUnderwritable``, and one still short of
+    the minimum viable intake raises ``DealNotReady`` naming the fields the team has yet to
+    collect (SPEC §4.1).
     """
     cfg = config or get_config()
     deal = load_deal(session, deal_id)
+    check_intake_complete(deal)
     resolved = adapters or adapter_values(session, deal)
     if deal.status is Status.NEW:
-        if run_screen(session, deal_id, cfg, resolved).verdict is Verdict.DECLINE:
+        if run_screen(session, deal_id, cfg, resolved, actor=actor).verdict is Verdict.DECLINE:
             raise DealNotUnderwritable(
                 deal.id, deal.status, detail="the screen it just ran declined it"
             )
     check_underwritable(deal)
+    before = deal.status
     inputs = underwrite_inputs(deal, request, resolved)
     result = underwrite(inputs, cfg)
-    record_underwrite(session, deal.id, inputs, result)
+    row = record_underwrite(session, deal.id, inputs, result)
     advance_for_underwrite(deal)
+    record_audit(
+        session,
+        actor=actor,
+        action=AuditAction.UNDERWRITE_RUN,
+        table_name=DEALS,
+        row_id=deal.id,
+        before={"status": before.value},
+        after={
+            "status": deal.status.value,
+            "underwrite_id": str(row.id),
+            "solved_rate": str(result.solved_rate),
+            "engine_version": result.engine_version,
+        },
+    )
     return result

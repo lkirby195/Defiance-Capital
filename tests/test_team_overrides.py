@@ -9,7 +9,6 @@ valued and searched reaches Go where the same deal without those entries does no
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -20,12 +19,11 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from api.main import app
 from config.config import Config
 from db.models import Deal
 from db.repository import transient_deal
-from db.session import get_session
 from engine.screen import screen
+from engine.underwrite import underwrite
 from intake.normalize import normalize
 from intake.parsers.team_form import TeamEntryForm, parse_team_form
 from schema.models import (
@@ -48,10 +46,16 @@ from services import (
     run_underwrite,
     screen_result,
 )
-from services.assemble import court_records, resolve_valuation, screen_inputs
+from services.assemble import (
+    court_records,
+    resolve_valuation,
+    screen_inputs,
+    underwrite_inputs,
+)
 from services.enrichment import AdapterValues
 from tests.conftest import requires_db, store_deal
 
+ACTOR = "tester@glenwood.example"
 CONFIG = Config.load()
 D = Decimal
 FIXTURE = (
@@ -351,7 +355,7 @@ def test_the_overrides_survive_a_round_trip_through_the_deals_row(
 def test_a_stored_screen_records_that_the_numbers_were_the_team_s(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    run_screen(db_session, deal_with_overrides.id, CONFIG)
+    run_screen(db_session, deal_with_overrides.id, CONFIG, actor=ACTOR)
     db_session.commit()
     row = latest_screen(db_session, deal_with_overrides.id)
     assert row is not None
@@ -373,6 +377,7 @@ def test_an_underwrite_falls_back_to_the_team_valuation_on_the_deal(
         deal_with_overrides.id,
         UnderwriteRequest(market_rent_monthly=D("2400.00"), annual_utilities_usd=D("840.00")),
         CONFIG,
+        actor=ACTOR,
     )
     db_session.commit()
     assert result.sizing.as_is_value_source is ValueSource.TEAM
@@ -393,6 +398,7 @@ def test_an_underwrite_with_no_valuation_anywhere_is_named_not_guessed(
             stored_deal.id,
             UnderwriteRequest(market_rent_monthly=D("1500.00"), annual_utilities_usd=D("600.00")),
             CONFIG,
+            actor=ACTOR,
         )
     assert caught.value.missing == [
         "as_is_value (no adapter value, none on the request, none on the deal)",
@@ -402,19 +408,60 @@ def test_an_underwrite_with_no_valuation_anywhere_is_named_not_guessed(
 
 @requires_db
 def test_the_intake_endpoint_refuses_an_incoherent_court_block(
-    db_session: Session, team_entry_with_overrides: dict[str, Any]
+    client: TestClient, team_entry_with_overrides: dict[str, Any]
 ) -> None:
     """A 422 from the form, not a 500 from half-way through assembly."""
-
-    def override() -> Iterator[Session]:
-        yield db_session
-
-    app.dependency_overrides[get_session] = override
-    with TestClient(app) as client:
-        response = client.post(
-            "/intake/team",
-            json={**team_entry_with_overrides, "court_records_status": "FLAGS"},
-        )
-    app.dependency_overrides.clear()
+    response = client.post(
+        "/intake/team",
+        json={**team_entry_with_overrides, "court_records_status": "FLAGS"},
+    )
     assert response.status_code == 422
     assert "FLAGS needs at least one matter" in response.text
+
+
+# --- the court record the underwrite runs on (SPEC §8.1) -----------------------------------------
+
+
+def underwrite_request(**overrides: Any) -> UnderwriteRequest:
+    base: dict[str, Any] = {
+        "market_rent_monthly": D("2400.00"),
+        "annual_utilities_usd": D("840.00"),
+    }
+    base.update(overrides)
+    return UnderwriteRequest(**base)
+
+
+def test_the_underwrite_is_assembled_with_the_court_record_in_force() -> None:
+    """Stage 2 resolves the record itself rather than inheriting Stage 1's.  # SPEC §8.1"""
+    deal = deal_from()
+    assembled = underwrite_inputs(deal, underwrite_request())
+    assert assembled.court_records is not None
+    assert assembled.court_records.source is ValueSource.TEAM
+    assert assembled.court_records.as_of == SEARCHED_ON
+
+
+def test_an_adapter_court_record_reaches_the_underwrite_over_the_team_search() -> None:
+    """The precedence rule is the same at both stages.  # SPEC §6.1, §8.1"""
+    deal = deal_from(
+        court_records_status=CourtRecordsStatus.FLAGS,
+        court_records_team=[{"code": "ACTIVE_FORECLOSURE_AS_OWNER"}],
+    )
+    by_hand = underwrite_inputs(deal, underwrite_request())
+    assert by_hand.court_records is not None
+    assert by_hand.court_records.active_foreclosure_as_owner is True
+
+    pulled = underwrite_inputs(
+        deal,
+        underwrite_request(),
+        AdapterValues(court_records=CourtRecordInputs(as_of=SEARCHED_ON)),
+    )
+    assert pulled.court_records is not None
+    assert pulled.court_records.source is ValueSource.ADAPTER
+    assert pulled.court_records.active_foreclosure_as_owner is False
+    # and the flag follows the record the underwrite actually ran on
+    assert CourtFlag.ACTIVE_FORECLOSURE_AS_OWNER in {
+        f.code for f in underwrite(by_hand, CONFIG).flags
+    }
+    assert CourtFlag.ACTIVE_FORECLOSURE_AS_OWNER not in {
+        f.code for f in underwrite(pulled, CONFIG).flags
+    }

@@ -20,10 +20,17 @@ class DealNotFound(ServiceError):
 
 
 class DealNotReady(ServiceError):
-    """The deal is missing values the engine needs; ``missing`` names them.
+    """The deal is missing values a run needs; ``missing`` names them.
 
-    Distinct from ``IntakeRecord.missing_fields`` (SPEC §4.1), which is what the team still
-    has to ask the borrower for. This is the narrower set the engine cannot run without.
+    Two sets reach here, and both are things the team has to go and get:
+
+    * the narrow set the engine cannot run without (``services/assemble.py``), named as the
+      column they sit in - ``deal.product``, ``as_is_value``;
+    * the minimum viable intake (SPEC §4.1) still outstanding on a ``NEEDS_INFO`` deal,
+      which is ``IntakeRecord.missing_fields`` verbatim - ``borrower.phone``.
+
+    The queue shows either list the same way, so the distinction is in where the names come
+    from, not in what the reader does about them.
     """
 
     def __init__(self, deal_id: UUID, missing: list[str]) -> None:
@@ -46,3 +53,49 @@ class DealNotUnderwritable(ServiceError):
         )
         self.deal_id = deal_id
         self.status = status
+
+
+class UserExists(ServiceError):
+    """A user already signs in with that email."""
+
+    def __init__(self, email: str) -> None:
+        super().__init__(f"a user already exists with email {email}")
+        self.email = email
+
+
+class UserNotFound(ServiceError):
+    """No ``users`` row with that email."""
+
+    def __init__(self, email: str) -> None:
+        super().__init__(f"no user with email {email}")
+        self.email = email
+
+
+class ActionNotAllowed(ServiceError):
+    """The deal's status rules the team action out.  # SPEC §4.6
+
+    The review-queue actions each apply from a defined set of statuses: a deal already dead
+    is not declined, a deal that was never declined is not re-opened. ``allowed_from`` names
+    the states the action does run from, so the queue can say why the button did nothing.
+    """
+
+    def __init__(
+        self, deal_id: UUID, status: Status, action: str, allowed_from: set[Status]
+    ) -> None:
+        names = ", ".join(sorted(s.value for s in allowed_from)) or "no status"
+        super().__init__(
+            f"deal {deal_id} is {status.value}, so it cannot be {action}; "
+            f"that action applies from {names}"
+        )
+        self.deal_id = deal_id
+        self.status = status
+        self.action = action
+        self.allowed_from = allowed_from
+
+
+class ReasonRequired(ServiceError):
+    """The action records a reason and none was given."""
+
+    def __init__(self, action: str) -> None:
+        super().__init__(f"{action} records a reason; enter one and try again")
+        self.action = action

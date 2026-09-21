@@ -15,14 +15,15 @@ yanked out from under them.
 
 Everything else keeps the status it has: a non-Decline re-screen never drags a deal
 backwards, and re-underwriting one already in UNDERWRITING is a no-op. A DECLINED or DEAD
-deal is refused outright rather than quietly priced.
+deal is refused outright rather than quietly priced, and so is a NEEDS_INFO one: its intake
+is not finished, so there is nothing to price yet.
 """
 
 from __future__ import annotations
 
 from db.models import Deal
 from schema.models import Status, Verdict
-from services.errors import DealNotUnderwritable
+from services.errors import DealNotReady, DealNotUnderwritable
 
 # A clean screen only moves a deal that has never been screened.
 SCREEN_ADVANCES_FROM: frozenset[Status] = frozenset({Status.NEW})
@@ -32,6 +33,8 @@ DECLINE_CLOSES_FROM: frozenset[Status] = frozenset({Status.NEW, Status.SCREENED,
 UNDERWRITE_ADVANCES_FROM: frozenset[Status] = frozenset({Status.SCREENED, Status.IN_REVIEW})
 # A dead or declined deal is not priced until a person re-opens it.
 UNDERWRITE_REFUSED_FROM: frozenset[Status] = frozenset({Status.DECLINED, Status.DEAD})
+# An intake the team is still chasing is not priced at all.
+UNDERWRITE_REFUSED_UNTIL_COMPLETE: frozenset[Status] = frozenset({Status.NEEDS_INFO})
 
 
 def status_after_screen(current: Status, verdict: Verdict) -> Status:
@@ -50,6 +53,23 @@ def check_underwritable(deal: Deal) -> None:
     """Refuse to underwrite a deal the team has already closed out.  # SPEC §4.5"""
     if deal.status in UNDERWRITE_REFUSED_FROM:
         raise DealNotUnderwritable(deal.id, deal.status)
+
+
+def check_intake_complete(deal: Deal) -> None:
+    """Refuse to underwrite a deal whose intake is still short.  # SPEC §4.1, §4.6
+
+    NEEDS_INFO means the minimum viable intake is incomplete and the team is still asking
+    the borrower for it. Pricing one would either fail deeper in on the first absent value
+    or, worse, succeed on the handful that happen to be there and leave an ``underwrites``
+    row on a deal nobody could act on - the status does not advance out of NEEDS_INFO, so
+    nothing on the deal would say the price was struck on a part-filled intake.
+
+    ``DealNotReady`` carries ``deal.missing_fields`` as the normalizer wrote it, so the
+    refusal names what to go and ask for rather than only that the deal is not ready.
+    """
+    if deal.status not in UNDERWRITE_REFUSED_UNTIL_COMPLETE:
+        return
+    raise DealNotReady(deal.id, list(deal.missing_fields) or ["the minimum viable intake"])
 
 
 def advance_after_screen(deal: Deal, verdict: Verdict) -> Status:

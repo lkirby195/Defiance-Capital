@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from decimal import Decimal
 from typing import Any
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from api.main import app
 from db.models import Deal, Screen, Underwrite
-from db.session import get_session
 from engine.version import ENGINE_VERSION
 from schema.models import Status
 from tests.conftest import requires_db
@@ -31,17 +27,6 @@ UNDERWRITE_BODY: dict[str, Any] = {
     "market_rent_monthly": "1800.00",
     "annual_utilities_usd": "720.00",
 }
-
-
-@pytest.fixture
-def client(db_session: Session) -> Iterator[TestClient]:
-    def override() -> Iterator[Session]:
-        yield db_session
-
-    app.dependency_overrides[get_session] = override
-    with TestClient(app) as client:
-        yield client
-    app.dependency_overrides.clear()
 
 
 def test_screen_route_stores_a_row_and_returns_the_result(

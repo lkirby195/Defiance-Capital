@@ -546,8 +546,9 @@ def team_sourced_flags(sizing: SizingResult, court_records: CourtRecordInputs | 
     say which it is. The message names which values it was, so the reason survives into the
     credit memo (SPEC §9.2) where a reader is deciding how much weight to put on it.
 
-    The underwrite passes ``None`` for the court records: it takes no court inputs (SPEC §8),
-    so only the two halves of the valuation can be team-sourced there.
+    Both stages pass their own court record: the underwrite re-runs the SPEC §7.2 tests on
+    whatever source is in force at underwrite time (SPEC §8.1), so a hand search can be named
+    there too - and named as the team's only if no adapter has superseded it by then.
     """
     entered = [
         label
