@@ -19,6 +19,7 @@ from config.config import Config
 from db.models import Deal, Screen, Underwrite
 from schema.models import Severity, Status, Verdict
 from services import (
+    DealNotReady,
     DealNotUnderwritable,
     UnderwriteRequest,
     latest_screen,
@@ -28,7 +29,7 @@ from services import (
     status_after_screen,
     status_after_underwrite,
 )
-from tests.conftest import TEAM_ENTRY_WITH_OVERRIDES, requires_db
+from tests.conftest import TEAM_ENTRY_WITH_OVERRIDES, requires_db, store_deal
 
 CONFIG = Config.load()
 D = Decimal
@@ -301,3 +302,41 @@ def test_the_fixture_states_the_statuses_its_deal_ends_in(
     db_session.commit()
     expected = fixture["underwrite"]["expected"]["status_after_underwrite"]
     assert deal_with_overrides.status.value == expected
+
+
+# --- an intake the team is still chasing (SPEC §4.1, §4.6) ---------------------------------------
+
+
+@requires_db
+def test_an_incomplete_intake_is_not_priced_and_names_what_is_missing(
+    db_session: Session, team_entry_with_overrides: dict[str, Any]
+) -> None:
+    """A NEEDS_INFO deal raises DealNotReady carrying ``missing_fields``.  # SPEC §4.1
+
+    The deal below keeps every value the engine itself needs, so nothing deeper in the
+    assembly would have objected: without this check it would have been priced, and the
+    ``underwrites`` row would have landed on a deal still sitting in NEEDS_INFO.
+    """
+    payload = dict(team_entry_with_overrides)
+    payload.pop("borrower_phone")
+    deal = store_deal(db_session, payload)
+    assert deal.status is Status.NEEDS_INFO
+    assert deal.missing_fields == ["borrower.phone"]
+
+    with pytest.raises(DealNotReady) as caught:
+        run_underwrite(db_session, deal.id, request(), CONFIG)
+    assert caught.value.missing == ["borrower.phone"]
+    assert "borrower.phone" in str(caught.value)
+
+    rows = db_session.scalars(select(Underwrite).where(Underwrite.deal_id == deal.id)).all()
+    assert rows == []
+    assert deal.status is Status.NEEDS_INFO
+
+
+@requires_db
+def test_completing_the_intake_lets_the_same_deal_be_priced(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """The refusal is about the status, not the deal: complete, it prices."""
+    run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG)
+    assert deal_with_overrides.status is Status.UNDERWRITING

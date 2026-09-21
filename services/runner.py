@@ -28,6 +28,7 @@ from services.errors import DealNotFound, DealNotUnderwritable
 from services.lifecycle import (
     advance_after_screen,
     advance_for_underwrite,
+    check_intake_complete,
     check_underwritable,
 )
 from services.persistence import record_screen, record_underwrite
@@ -76,11 +77,14 @@ def run_underwrite(
     rather than pass it. The screen it runs is a real one - its row is recorded and it moves
     the status like any other - and a Decline stops the underwrite there.
 
-    The status is otherwise checked before any work is done: a declined or dead deal raises
-    ``DealNotUnderwritable`` and nothing is written.
+    The status is otherwise checked before any work is done and nothing is written when it
+    refuses: a declined or dead deal raises ``DealNotUnderwritable``, and one still short of
+    the minimum viable intake raises ``DealNotReady`` naming the fields the team has yet to
+    collect (SPEC §4.1).
     """
     cfg = config or get_config()
     deal = load_deal(session, deal_id)
+    check_intake_complete(deal)
     resolved = adapters or adapter_values(session, deal)
     if deal.status is Status.NEW:
         if run_screen(session, deal_id, cfg, resolved).verdict is Verdict.DECLINE:

@@ -16,6 +16,7 @@ from services.errors import (
 from services.lifecycle import (
     advance_after_screen,
     advance_for_underwrite,
+    check_intake_complete,
     check_underwritable,
     status_after_screen,
     status_after_underwrite,
@@ -42,6 +43,7 @@ __all__ = [
     "adapter_values",
     "advance_after_screen",
     "advance_for_underwrite",
+    "check_intake_complete",
     "check_underwritable",
     "latest_screen",
     "latest_underwrite",

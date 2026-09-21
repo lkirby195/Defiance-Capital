@@ -20,10 +20,17 @@ class DealNotFound(ServiceError):
 
 
 class DealNotReady(ServiceError):
-    """The deal is missing values the engine needs; ``missing`` names them.
+    """The deal is missing values a run needs; ``missing`` names them.
 
-    Distinct from ``IntakeRecord.missing_fields`` (SPEC §4.1), which is what the team still
-    has to ask the borrower for. This is the narrower set the engine cannot run without.
+    Two sets reach here, and both are things the team has to go and get:
+
+    * the narrow set the engine cannot run without (``services/assemble.py``), named as the
+      column they sit in - ``deal.product``, ``as_is_value``;
+    * the minimum viable intake (SPEC §4.1) still outstanding on a ``NEEDS_INFO`` deal,
+      which is ``IntakeRecord.missing_fields`` verbatim - ``borrower.phone``.
+
+    The queue shows either list the same way, so the distinction is in where the names come
+    from, not in what the reader does about them.
     """
 
     def __init__(self, deal_id: UUID, missing: list[str]) -> None:
