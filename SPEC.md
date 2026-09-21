@@ -257,8 +257,9 @@ Both the screen and the underwrite raise `TEAM_SOURCED_VALUES` (Info, fixed in c
 any value they ran on carries source `TEAM`, and the message names which — as-is value, ARV,
 court records, or some combination. It never moves a verdict; it is there so the reason
 survives into the credit memo (§9.2), where a reader is deciding how much weight to put on
-a Go. The underwrite takes no court inputs (§8), so only the two halves of the valuation can
-be named there.
+a Go. All three can be named at either stage: the underwrite re-runs the §7.2 tests on the
+record in force at underwrite time (§8.1), so a hand search reaches it too — named as the
+team's only where no adapter has superseded it by then.
 
 ---
 
@@ -342,6 +343,10 @@ From intake + enrichment, plus:
 - `credit_score` (Credco, replaces self-reported tranche); verified deal count (deed history)
 - `market_rent` (RentCast/PropStream/team), monthly, used for the DSCR takeout
 - `annual_taxes`, `annual_insurance` (team actuals; config defaults as % of **as-is value** when absent) and `annual_utilities` (team input) → holding costs and the REO carry
+- `court_records`: the §7.2 court and filing tests are re-run here on the source in force at
+  underwrite time, adapter over team (§6.1). They are not copied from the `screens` row —
+  weeks can pass between the two stages and a pull that has since landed supersedes the hand
+  search Stage 1 ran on — so the stored underwrite stands on its own for the credit memo.
 - `asset_type` (from intake) and the team-stated exit → the §3 exit inference
 - `term_months` (from bucket; 12+ → team sets)
 - `rehab_months` = `term_months − listing_months` (config, placeholder 3; the last months of the term are listing and sale; floored at 0). Not a team input.
@@ -469,8 +474,11 @@ UnderwriteResult
   flags: [ {code, severity, message} ]
 ```
 
-Underwrite flag codes. `REFI_SHORTFALL` and `DOWNSIDE_COVER_BELOW_FLOOR` take their severity
-from config; the two informational codes are fixed `Info` in code and config must not grade them:
+Underwrite flag codes. The §7.2 court codes and the credit, experience and leverage codes the
+screen raises appear here too, on the underwrite's own inputs and with the same severities.
+The four below are the underwrite's own: `REFI_SHORTFALL` and `DOWNSIDE_COVER_BELOW_FLOOR`
+take their severity from config; the two informational codes are fixed `Info` in code and
+config must not grade them:
 
 | Code | Severity | Raised when |
 |---|---|---|

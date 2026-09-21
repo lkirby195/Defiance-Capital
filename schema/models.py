@@ -703,6 +703,13 @@ class UnderwriteInputs(BaseModel):
     the as-is value. ``exit_price`` defaults to the ARV (flip); the team sets a retail price
     for wholetail. ``extension_fee_pct`` defaults to the config default. ``asset_type`` and
     ``stated_exit`` drive the SPEC §3 exit inference.
+
+    ``court_records`` is the latest source in force at underwrite time, adapter over team,
+    exactly as at the screen (SPEC §6.1, §8.1). The underwrite re-runs the SPEC §7.2 tests on
+    it rather than trusting the screen's: weeks can pass between the two, the pull an adapter
+    now has may have superseded the hand search the screen ran on, and the stored underwrite
+    is what a credit memo is written from. ``None`` means no source was checked, which is
+    reported as an INFO flag and never read as clean.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -721,6 +728,7 @@ class UnderwriteInputs(BaseModel):
     exit_price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     asset_type: AssetType | None = None
     stated_exit: StatedExit = StatedExit.UNKNOWN
+    court_records: CourtRecordInputs | None = None
 
     @model_validator(mode="after")
     def _valuation_is_complete(self) -> UnderwriteInputs:

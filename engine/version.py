@@ -22,8 +22,15 @@ the target it was solved for instead of missing it by a unit in the last place o
 commitments. Every fixture's grid flag counts were recomputed against it. The screen and the
 underwrite also raise TEAM_SOURCED_VALUES (INFO) when a value they ran on was entered by
 hand (SPEC §6.1).
+
+Phase 4 (0.7.0) gives the underwrite court inputs of its own: ``UnderwriteInputs`` carries a
+``CourtRecordInputs``, and the underwrite re-runs the SPEC §7.2 tests on it rather than
+leaving the court record to Stage 1 (SPEC §8.1). The same inputs therefore produce a longer
+flag list than they did at 0.6.0 - the §7.2 codes, COURT_RECORDS_NOT_CHECKED where nothing
+was checked, and a TEAM_SOURCED_VALUES message that can now name the court search - so the
+version moves even though no formula changed.
 """
 
 from __future__ import annotations
 
-ENGINE_VERSION = "0.6.0"
+ENGINE_VERSION = "0.7.0"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
@@ -11,6 +12,8 @@ from engine.underwrite import downside_flags, exit_flags, underwrite
 from engine.version import ENGINE_VERSION
 from schema.models import (
     BorrowerInputs,
+    CourtFlag,
+    CourtRecordInputs,
     ExperienceBucket,
     ExperienceTier,
     Flag,
@@ -31,6 +34,7 @@ from schema.models import (
 CONFIG = Config.load()
 D = Decimal
 TIGHT = D("0.000000000001")
+SEARCHED_ON = date(2026, 9, 9)
 
 
 def config_with(**sections: dict[str, Any]) -> Config:
@@ -77,6 +81,9 @@ def inputs(**overrides: Any) -> UnderwriteInputs:
         "annual_insurance_usd": D("1200.00"),
         "annual_utilities_usd": D("600.00"),
         "stated_exit": StatedExit.FLIP,
+        # A clean search, dated: the underwrite runs the SPEC §7.2 tests on its own court
+        # record (SPEC §8.1), and an absent one is an INFO flag rather than a clean bill.
+        "court_records": CourtRecordInputs(as_of=SEARCHED_ON),
     }
     base.update(overrides)
     return UnderwriteInputs(**base)
@@ -396,3 +403,45 @@ def test_the_underwrite_flags_a_hand_entered_valuation() -> None:
 def test_the_underwrite_is_silent_when_the_valuation_was_pulled() -> None:
     result = underwrite(inputs(), CONFIG)
     assert ScreenFlag.TEAM_SOURCED_VALUES not in [f.code for f in result.flags]
+
+
+# --- court and filing records at underwrite time (SPEC §7.2, §8.1) -------------------------------
+
+
+def test_the_underwrite_runs_the_court_tests_again_on_its_own_record() -> None:
+    """A §7.2 finding reaches the underwrite flags, not only the screen's.  # SPEC §8.1"""
+    result = underwrite(
+        inputs(
+            court_records=CourtRecordInputs(as_of=SEARCHED_ON, open_tax_liens_usd=[D("3200.00")])
+        ),
+        CONFIG,
+    )
+    lien = [f for f in result.flags if f.code is CourtFlag.OPEN_TAX_LIEN]
+    assert len(lien) == 1
+    assert lien[0].severity is CONFIG.flags.severities[CourtFlag.OPEN_TAX_LIEN]
+    assert "3,200.00" in lien[0].message
+
+
+def test_an_unchecked_court_record_is_informational_at_underwrite_too() -> None:
+    """No source checked is an INFO flag, never read as clean.  # SPEC §6.1, §7.2"""
+    result = underwrite(inputs(court_records=None), CONFIG)
+    unchecked = [f for f in result.flags if f.code is ScreenFlag.COURT_RECORDS_NOT_CHECKED]
+    assert len(unchecked) == 1
+    assert unchecked[0].severity is Severity.INFO
+
+
+def test_a_court_record_the_underwrite_ran_on_can_be_team_sourced() -> None:
+    """TEAM_SOURCED_VALUES names the hand search at underwrite as well.  # SPEC §6.1"""
+    result = underwrite(
+        inputs(court_records=CourtRecordInputs(as_of=SEARCHED_ON, source=ValueSource.TEAM)),
+        CONFIG,
+    )
+    sourced = [f for f in result.flags if f.code is ScreenFlag.TEAM_SOURCED_VALUES]
+    assert len(sourced) == 1
+    assert sourced[0].message.startswith("Court records came from the team")
+
+
+def test_an_adapter_court_record_is_not_named_as_team_sourced() -> None:
+    """The default source is the adapter, which raises nothing.  # SPEC §6.1"""
+    result = underwrite(inputs(), CONFIG)
+    assert ScreenFlag.TEAM_SOURCED_VALUES not in {f.code for f in result.flags}

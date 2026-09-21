@@ -130,6 +130,14 @@ def _sheet_inputs(
             "drives the exit inference",
         ),
         ("Stated exit", underwrite_inputs.stated_exit.value, None, "a stated exit always wins"),
+        (
+            "Court records",
+            underwrite_inputs.court_records.source.value
+            if underwrite_inputs.court_records
+            else None,
+            None,
+            "SPEC §7.2 tests re-run here; blank when no source was checked",
+        ),
         ("Credit (self-reported)", borrower.credit_range_self_reported.value, None, ""),
         ("Credit score (verified)", borrower.verified_credit_score, INTEGER, ""),
         ("Experience (self-reported)", borrower.experience_bucket_self_reported.value, None, ""),

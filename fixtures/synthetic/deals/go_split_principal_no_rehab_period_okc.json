@@ -67,7 +67,10 @@
       "annual_taxes_usd": "2000.00",
       "annual_insurance_usd": "1100.00",
       "annual_utilities_usd": "600.00",
-      "asset_type": "UNITS_2_4"
+      "asset_type": "UNITS_2_4",
+      "court_records": {
+        "as_of": "2026-09-16"
+      }
     },
     "expected": {
       "rehab_months": 0,
@@ -113,8 +116,14 @@
         "passed": true
       },
       "flags": [
-        {"code": "NO_REHAB_PERIOD", "severity": "INFO"},
-        {"code": "SOLVED_RATE_BELOW_GRID", "severity": "INFO"}
+        {
+          "code": "NO_REHAB_PERIOD",
+          "severity": "INFO"
+        },
+        {
+          "code": "SOLVED_RATE_BELOW_GRID",
+          "severity": "INFO"
+        }
       ]
     }
   }

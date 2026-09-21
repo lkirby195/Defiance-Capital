@@ -26,6 +26,7 @@ from db.models import Deal
 from db.repository import transient_deal
 from db.session import get_session
 from engine.screen import screen
+from engine.underwrite import underwrite
 from intake.normalize import normalize
 from intake.parsers.team_form import TeamEntryForm, parse_team_form
 from schema.models import (
@@ -48,7 +49,12 @@ from services import (
     run_underwrite,
     screen_result,
 )
-from services.assemble import court_records, resolve_valuation, screen_inputs
+from services.assemble import (
+    court_records,
+    resolve_valuation,
+    screen_inputs,
+    underwrite_inputs,
+)
 from services.enrichment import AdapterValues
 from tests.conftest import requires_db, store_deal
 
@@ -418,3 +424,51 @@ def test_the_intake_endpoint_refuses_an_incoherent_court_block(
     app.dependency_overrides.clear()
     assert response.status_code == 422
     assert "FLAGS needs at least one matter" in response.text
+
+
+# --- the court record the underwrite runs on (SPEC §8.1) -----------------------------------------
+
+
+def underwrite_request(**overrides: Any) -> UnderwriteRequest:
+    base: dict[str, Any] = {
+        "market_rent_monthly": D("2400.00"),
+        "annual_utilities_usd": D("840.00"),
+    }
+    base.update(overrides)
+    return UnderwriteRequest(**base)
+
+
+def test_the_underwrite_is_assembled_with_the_court_record_in_force() -> None:
+    """Stage 2 resolves the record itself rather than inheriting Stage 1's.  # SPEC §8.1"""
+    deal = deal_from()
+    assembled = underwrite_inputs(deal, underwrite_request())
+    assert assembled.court_records is not None
+    assert assembled.court_records.source is ValueSource.TEAM
+    assert assembled.court_records.as_of == SEARCHED_ON
+
+
+def test_an_adapter_court_record_reaches_the_underwrite_over_the_team_search() -> None:
+    """The precedence rule is the same at both stages.  # SPEC §6.1, §8.1"""
+    deal = deal_from(
+        court_records_status=CourtRecordsStatus.FLAGS,
+        court_records_team=[{"code": "ACTIVE_FORECLOSURE_AS_OWNER"}],
+    )
+    by_hand = underwrite_inputs(deal, underwrite_request())
+    assert by_hand.court_records is not None
+    assert by_hand.court_records.active_foreclosure_as_owner is True
+
+    pulled = underwrite_inputs(
+        deal,
+        underwrite_request(),
+        AdapterValues(court_records=CourtRecordInputs(as_of=SEARCHED_ON)),
+    )
+    assert pulled.court_records is not None
+    assert pulled.court_records.source is ValueSource.ADAPTER
+    assert pulled.court_records.active_foreclosure_as_owner is False
+    # and the flag follows the record the underwrite actually ran on
+    assert CourtFlag.ACTIVE_FORECLOSURE_AS_OWNER in {
+        f.code for f in underwrite(by_hand, CONFIG).flags
+    }
+    assert CourtFlag.ACTIVE_FORECLOSURE_AS_OWNER not in {
+        f.code for f in underwrite(pulled, CONFIG).flags
+    }

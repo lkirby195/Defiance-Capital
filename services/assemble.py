@@ -294,6 +294,10 @@ def underwrite_inputs(
     such default - SPEC §8.1 requires both halves - so a deal with nothing from an adapter,
     nothing on the request and nothing from the team is named as not ready rather than
     underwritten on a guess.
+
+    The court record is resolved here the same way the screen resolves it, adapter over team
+    (SPEC §6.1), and not read off the stored screen: the underwrite runs the SPEC §7.2 tests
+    again on whatever is in force now, which may be a pull that landed after Stage 1.
     """
     core = deal_core(deal)
     taxes = (
@@ -331,4 +335,5 @@ def underwrite_inputs(
         exit_price=request.exit_price,
         asset_type=request.asset_type or deal.asset_type,
         stated_exit=request.stated_exit or deal.stated_exit or StatedExit.UNKNOWN,
+        court_records=court_records(deal, adapters),
     )
