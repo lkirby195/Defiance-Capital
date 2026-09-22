@@ -27,6 +27,7 @@ from schema.models import (
     LeverageMetric,
     Product,
     ScreenResult,
+    TakeoutStatus,
     UnderwriteResult,
     ValueSource,
     Verdict,
@@ -197,15 +198,23 @@ def test_fixture_underwrite_borrower_exit_downside(path: Path) -> None:
     exit_result, want = result.exit, expected["exit"]
     assert exit_result.type.value == want["type"]
     assert exit_result.exit_source.value == want["exit_source"]
-    assert cents(exit_result.noi_annual) == D(want["noi_annual"])
+    assert exit_result.status.value == want.get("status", "EVALUATED")
     assert cents(exit_result.ltv_takeout) == D(want["ltv_takeout"])
-    assert cents(exit_result.dscr_takeout) == D(want["dscr_takeout"])
-    assert cents(exit_result.max_takeout) == D(want["max_takeout"])
     assert cents(exit_result.payoff_due) == D(want["payoff_due"])
-    assert exit_result.dscr_at_payoff is not None
-    assert exit_result.dscr_at_payoff.quantize(D("0.001")) == D(want["dscr_at_payoff"])
-    assert exit_result.refi_covers is want["refi_covers"]
-    assert cents(exit_result.shortfall) == D(want["shortfall"])
+    if exit_result.status is TakeoutStatus.NOT_EVALUATED:
+        # no rent, so nothing the rent feeds exists; refi_covers is unknown, not false
+        assert want["refi_covers"] is None
+        for name in ("noi_annual", "dscr_takeout", "max_takeout", "shortfall"):
+            assert want[name] is None and getattr(exit_result, name) is None, name
+        assert exit_result.dscr_at_payoff is None and exit_result.refi_covers is None
+    else:
+        assert cents(exit_result.noi_annual) == D(want["noi_annual"])
+        assert cents(exit_result.dscr_takeout) == D(want["dscr_takeout"])
+        assert cents(exit_result.max_takeout) == D(want["max_takeout"])
+        assert exit_result.dscr_at_payoff is not None
+        assert exit_result.dscr_at_payoff.quantize(D("0.001")) == D(want["dscr_at_payoff"])
+        assert exit_result.refi_covers is want["refi_covers"]
+        assert cents(exit_result.shortfall) == D(want["shortfall"])
 
     downside, want = result.downside, expected["downside"]
     assert cents(downside.recovery_basis) == D(want["recovery_basis"])

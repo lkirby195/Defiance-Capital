@@ -341,9 +341,10 @@ Runs on Conditional/Go deals when a team member advances them. Paid pulls happen
 From intake + enrichment, plus:
 
 - `as_is_value`, `arv` (RicherValues or team override); both required to underwrite
+- `loan_purchase_portion`, `loan_rehab_portion` — the team's division of `loan_requested` on a `SPLIT_DRAW` or `SPLIT_PRINCIPAL` deal (§8.2); **both required to underwrite one**, and null on `NO_DRAW` / `WHOLETAIL`. A borrower-channel intake carries only `loan_requested`; the split is a team entry, so a deal that has not been divided yet still screens and is refused an underwrite by name
 - `credit_score` (Credco, replaces self-reported tranche); verified deal count (deed history)
-- `market_rent` (RentCast/PropStream/team), monthly, used for the DSCR takeout
-- `annual_taxes`, `annual_insurance` (team actuals; config defaults as % of **as-is value** when absent) and `annual_utilities` (team input) → holding costs and the REO carry
+- `market_rent` (RentCast/PropStream/team), monthly, used for the DSCR takeout. **Optional**: there is no config default and no percentage of anything stands in for what a property lets for, so a deal without one is underwritten with the DSCR takeout `NOT_EVALUATED` and an Info flag `MARKET_RENT_MISSING` (§8.6) rather than on a zero rent, which would fabricate a shortfall
+- `annual_taxes`, `annual_insurance`, `annual_utilities` (team actuals; config defaults as % of **as-is value** when absent, source `DEFAULT`) → holding costs and the REO carry
 - `court_records`: the §7.2 court and filing tests are re-run here on the source in force at
   underwrite time, adapter over team (§6.1). They are not copied from the `screens` row —
   weeks can pass between the two stages and a pull that has since landed supersedes the hand
@@ -359,9 +360,14 @@ From intake + enrichment, plus:
 
 Same metrics as §7.4 with verified values. Product-specific:
 
-- `NO_DRAW`, `WHOLETAIL`: `commitment = loan_requested`; LTV on as-is
-- `SPLIT_DRAW`: `commitment = loan_requested`; `holdback = min(rehab_adj, commitment − purchase_portion)`; purchase portion defaults to `commitment − rehab_adj`, team can override
-- `SPLIT_PRINCIPAL`: `principal_note = purchase portion`; `tranche_a = rehab portion`; `commitment = principal_note + tranche_a`
+The two split products carry an explicit `loan_purchase_portion` and `loan_rehab_portion`, entered by the team and adding up to `loan_requested` (§8.1). Nothing is derived: there is no default purchase portion and no override of one.
+
+- `NO_DRAW`, `WHOLETAIL`: `commitment = loan_requested`; no split; LTV on as-is
+- `SPLIT_DRAW`: `commitment = loan_requested`; `holdback = min(rehab_adj, loan_rehab_portion)`; `funded_at_close = commitment − holdback`
+- `SPLIT_PRINCIPAL`: `principal_note = loan_purchase_portion`; `tranche_a = min(rehab_adj, loan_rehab_portion)`; `commitment = principal_note + tranche_a`
+- Either split product with **no split entered**: `commitment = loan_requested` and no split is reported. That is a borrower-channel intake nobody has divided yet; the screen runs, the underwrite refuses (§8.1)
+
+The rehab side is capped at `rehab_adj` on both: the lender does not hold back more than the contingency-adjusted rehab budget could ever draw. On `SPLIT_PRINCIPAL` the cap lowers the commitment below the request, which is what `COMMITMENT_BELOW_REQUEST` (Info, §7.5) reports; on `SPLIT_DRAW` it does not, because there is one note — the money above the cap is advanced at close instead of held back, so only the timing moves.
 
 Output: pass/fail on each cap, with the cap and the actual.
 
@@ -444,7 +450,9 @@ refi_covers   = max_takeout ≥ payoff_due
 shortfall     = max(0, payoff_due − max_takeout)
 ```
 
-Report `max_takeout`, `refi_covers`, `shortfall`, and the DSCR at `payoff_due`. Flag `REFI_SHORTFALL` (severity config) when `refi_covers` is false. Taxes and insurance are team actuals when supplied, else config defaults as % of the **as-is value** — the property is taxed and insured as it stands, not at its repaired value. The same two figures feed the holding costs above and the REO carry below, so a deal uses one tax number and one insurance number everywhere.
+Report `max_takeout`, `refi_covers`, `shortfall`, and the DSCR at `payoff_due`. Flag `REFI_SHORTFALL` (severity config) when `refi_covers` is false. Taxes, insurance and utilities are team actuals when supplied, else config defaults as % of the **as-is value** — the property is taxed, insured and carried as it stands, not at its repaired value. The same three figures feed the holding costs above and the REO carry below, so a deal uses one of each everywhere.
+
+**No market rent.** The takeout runs on a rent and nothing stands in for one, so a deal without a `market_rent` is reported `status: NOT_EVALUATED`: `gross_rent`, `opex`, `noi`, `dscr_loan`, `max_takeout`, the DSCR at payoff, and `shortfall` are all null, and **`refi_covers` is null, not false** — a takeout nobody could compute has not failed. `MARKET_RENT_MISSING` (Info, fixed in code) is raised instead of `REFI_SHORTFALL`, which is not tested. The exit type, the two opex figures, `arv × takeout_ltv` and `payoff_due` do not depend on the rent and are reported as usual. The REO downside below is unaffected: it carries taxes, insurance and utilities, none of which is a rent.
 
 **REO downside** — every deal; no income or cap-rate valuation:
 
@@ -470,7 +478,9 @@ UnderwriteResult
   lender_yield_at_solve                                        # lender_yield(term, r*) = target_irr
   grid_lender                                                  # §8.5
   borrower_at_solve: {profit, cash_in, coc, ...}               # §8.6, information only
-  exit: {type, exit_source, noi, dscr_at_payoff, max_takeout, payoff_due, refi_covers, shortfall}
+  exit: {type, exit_source, status, noi, dscr_at_payoff, max_takeout, payoff_due, refi_covers, shortfall}
+                                                               # status NOT_EVALUATED -> every
+                                                               # rent-derived figure null (§8.6)
   downside: {recovery_basis, liquidation, recovery, exposure, cover}
   flags: [ {code, severity, message} ]
 ```
@@ -487,6 +497,7 @@ config must not grade them:
 | `DOWNSIDE_COVER_BELOW_FLOOR` | config | §8.6, `downside_cover < cover_floor` |
 | `NO_REHAB_PERIOD` | Info (fixed) | `SPLIT_PRINCIPAL` with `term ≤ listing_months`, so `rehab_months = 0` and Tranche A is fully drawn from close (§8.3) |
 | `SOLVED_RATE_BELOW_GRID` | Info (fixed) | `r*` lands below `rate_grid.min`, including a negative `r*` where the fees alone exceed the target income at that term (§8.4). `r*` is reported as computed and inserted into the grid in rate order |
+| `MARKET_RENT_MISSING` | Info (fixed) | §8.6, no `market_rent` on the deal, so the DSCR takeout is `NOT_EVALUATED` and `REFI_SHORTFALL` is not tested |
 
 ---
 

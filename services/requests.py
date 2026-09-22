@@ -11,14 +11,20 @@ engine default:
     as_is_value / arv     request -> deal.as_is_value_team / arv_team -> not ready (SPEC §8.1)
     annual taxes          request -> deal.actual_annual_taxes_usd -> % of as-is (SPEC §8.6)
     annual insurance      request -> deal.actual_annual_insurance_usd -> % of as-is
-    annual utilities      request -> deal.actual_annual_utilities_usd -> not ready
-    market rent           request -> deal.market_rent_monthly -> not ready
+    annual utilities      request -> deal.actual_annual_utilities_usd -> % of as-is (SPEC §8.6)
+    market rent           request -> deal.market_rent_monthly -> no DSCR takeout (SPEC §8.6)
     asset type, exit      request -> deal -> unknown (SPEC §3)
 
-Utilities and market rent have no config default and no adapter behind them, so there is no
-third step to fall to: a deal carrying neither is named as not ready rather than priced on a
-zero. A zero would not be neutral - it would understate the holding costs and fabricate a
-DSCR shortfall - so it is not a defensible stand-in for a number nobody has entered.
+Market rent is the one with no third step. A percentage of a value stands in for a cost the
+property incurs whatever it is worth - taxes, insurance, the utilities on a vacant house -
+but nothing stands in for what it lets for, and a zero rent would not be neutral: it would
+fabricate a DSCR shortfall on every deal whose rent nobody happened to look up. So a deal
+without one is underwritten with the takeout NOT_EVALUATED and an INFO flag saying so,
+rather than priced on a guess or refused outright.
+
+The loan split is not here at all. It used to be (``purchase_portion_override``, a single
+number typed at run time); it is now two columns on the deal, entered on the team-entry form
+(SPEC §8.2), so there is one place it lives and one place it is edited.
 
 An adapter value, when one exists, wins over every step of that (``services/enrichment.py``).
 """
@@ -73,9 +79,6 @@ class UnderwriteRequest(BaseModel):
     # Overrides of what intake captured; None leaves the deal's own value in force.
     asset_type: AssetType | None = None
     stated_exit: StatedExit | None = None
-    purchase_portion_override: Decimal | None = Field(
-        default=None, ge=0, max_digits=14, decimal_places=2
-    )
 
 
 class TeamOverrides(BaseModel):

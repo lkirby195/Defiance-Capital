@@ -486,7 +486,7 @@ def test_ltv_breach_on_purchase_price_says_so() -> None:
     )
 
 
-def test_split_principal_override_below_request_is_an_info_flag() -> None:
+def test_split_principal_capped_tranche_a_below_request_is_an_info_flag() -> None:
     sizing = size_deal(
         deal(
             product=Product.SPLIT_PRINCIPAL,
@@ -495,7 +495,8 @@ def test_split_principal_override_below_request_is_an_info_flag() -> None:
             loan_requested=D("170000.00"),
             as_is_value=D("230000.00"),
             arv=D("290000.00"),
-            purchase_portion_override=D("80000.00"),
+            loan_purchase_portion=D("80000.00"),
+            loan_rehab_portion=D("90000.00"),  # capped at rehab_adj = 66,000
         ),
         Tranche.T2,
         ExperienceTier.E2,
@@ -507,6 +508,7 @@ def test_split_principal_override_below_request_is_an_info_flag() -> None:
     assert "commitment $146,000.00" in flag.message
     assert "$170,000.00 requested" in flag.message
     assert "Tranche A $66,000.00" in flag.message
+    assert "entered rehab portion is capped" in flag.message
     assert "rehab budget $66,000.00" in flag.message
 
 
@@ -520,7 +522,8 @@ def test_no_commitment_flag_when_the_request_is_fully_allocated() -> None:
                 loan_requested=D("70000.00"),
                 as_is_value=D("230000.00"),
                 arv=D("290000.00"),
-                purchase_portion_override=D("10000.00"),
+                loan_purchase_portion=D("10000.00"),
+                loan_rehab_portion=D("60000.00"),  # under rehab_adj = 66,000, so uncapped
             ),
             Tranche.T2,
             ExperienceTier.E2,

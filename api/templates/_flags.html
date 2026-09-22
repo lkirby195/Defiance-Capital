@@ -56,11 +56,18 @@
     <dt>Commitment</dt><dd>{{ sizing.commitment | money }}</dd>
     <dt>Funded at close</dt><dd>{{ sizing.funded_at_close | money }}</dd>
     {% if sizing.split %}
-      <dt>Purchase portion</dt>
-      <dd>{{ sizing.split.purchase_portion | money }}
-        {% if sizing.split.purchase_portion_overridden %}
-          <span class="small muted">(team override)</span>{% endif %}</dd>
-      <dt>Rehab portion</dt><dd>{{ sizing.split.rehab_portion | money }}</dd>
+      {% set principal = sizing.product | plain == "SPLIT_PRINCIPAL" %}
+      <dt>{{ "Principal Note" if principal else "Purchase portion" }}</dt>
+      <dd>{{ sizing.split.purchase_portion | money }}</dd>
+      <dt>{{ "Tranche A" if principal else "Rehab holdback" }}</dt>
+      <dd>{{ sizing.split.rehab_portion | money }}
+        {% if sizing.split.rehab_portion_capped %}
+          <span class="small muted">(entered
+            {{ sizing.split.rehab_portion_requested | money }}, capped at the
+            contingency-adjusted rehab budget)</span>{% endif %}</dd>
+    {% elif sizing.product | plain in ("SPLIT_DRAW", "SPLIT_PRINCIPAL") %}
+      <dt>Loan split</dt>
+      <dd class="muted">not entered — sized on the loan requested (SPEC §8.2)</dd>
     {% endif %}
     <dt>As-is value from</dt><dd>{{ sizing.as_is_value_source | plain }}</dd>
     <dt>ARV from</dt><dd>{{ sizing.arv_source | plain }}</dd>

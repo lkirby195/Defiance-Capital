@@ -20,6 +20,7 @@ from db.models import Deal
 from schema.models import (
     AMOUNT_COURT_FLAGS,
     DATED_COURT_FLAGS,
+    SPLIT_PRODUCTS,
     BorrowerInputs,
     CourtFlag,
     CourtRecordInputs,
@@ -81,10 +82,22 @@ class DealCore:
     purchase_price: Decimal
     rehab_budget: Decimal
     loan_requested: Decimal
+    loan_purchase_portion: Decimal | None
+    loan_rehab_portion: Decimal | None
     credit_range: Tranche
     experience_bucket: ExperienceBucket
     repeat_borrower: bool
     state: State
+
+
+def intake_gaps(deal: Deal) -> list[str]:
+    """The engine-required intake values this deal is still without, named as the team
+    would chase them.
+
+    Read by ``deal_core`` to refuse a run and by ``services/readiness.py`` to say in advance
+    why the button is off, so the page and the refusal cannot name different things.
+    """
+    return [name for attr, name in _REQUIRED if getattr(deal, attr) is None]
 
 
 def deal_core(deal: Deal) -> DealCore:
@@ -93,7 +106,7 @@ def deal_core(deal: Deal) -> DealCore:
     The property's state is OTHER until a property row exists, which the screen flags
     (SPEC §7.5) rather than treating as a missing input.
     """
-    missing = [name for attr, name in _REQUIRED if getattr(deal, attr) is None]
+    missing = intake_gaps(deal)
     if missing:
         raise DealNotReady(deal.id, missing)
     return DealCore(
@@ -101,6 +114,8 @@ def deal_core(deal: Deal) -> DealCore:
         purchase_price=_present(deal.purchase_price),
         rehab_budget=_present(deal.rehab_budget),
         loan_requested=_present(deal.loan_requested),
+        loan_purchase_portion=deal.loan_purchase_portion,
+        loan_rehab_portion=deal.loan_rehab_portion,
         credit_range=_present(deal.credit_range_self_reported),
         experience_bucket=_present(deal.experience_bucket_self_reported),
         repeat_borrower=_present(deal.repeat_borrower_self_reported),
@@ -226,22 +241,25 @@ def court_records(
     return team_court_records(deal)
 
 
-def sizing_inputs(
-    core: DealCore,
-    valuation: Valuation = NO_VALUATION,
-    purchase_portion_override: Decimal | None = None,
-) -> SizingInputs:
-    """The deal numbers plus the valuation in force and where each half of it came from."""
+def sizing_inputs(core: DealCore, valuation: Valuation = NO_VALUATION) -> SizingInputs:
+    """The deal numbers plus the valuation in force and where each half of it came from.
+
+    The loan split travels with the deal (SPEC §8.2) rather than being handed in at run
+    time: it is a description of the loan, not a judgement made at pricing. Both halves are
+    None on a deal nobody has divided, which the screen sizes without a split and the
+    underwrite refuses (SPEC §8.1).
+    """
     return SizingInputs(
         product=core.product,
         purchase_price=core.purchase_price,
         rehab_budget=core.rehab_budget,
         loan_requested=core.loan_requested,
+        loan_purchase_portion=core.loan_purchase_portion,
+        loan_rehab_portion=core.loan_rehab_portion,
         as_is_value=valuation.as_is_value,
         as_is_value_source=valuation.as_is_value_source,
         arv=valuation.arv,
         arv_source=valuation.arv_source,
-        purchase_portion_override=purchase_portion_override,
     )
 
 
@@ -294,12 +312,14 @@ def underwrite_inputs(
     """Assemble ``UnderwriteInputs`` from the deal plus the team's §8.1 additions.
 
     Every optional value falls back the same way: the request, then what is on the deal,
-    then the engine's own default. Taxes and insurance end at None, which is the engine's
-    signal to use the config percentage of the as-is value (SPEC §8.6). Three inputs have no
-    such default - the two halves of the valuation (SPEC §8.1 requires both), the market rent
-    the DSCR takeout is computed on, and the annual utilities - so a deal carrying none of
-    them from an adapter, the request or the team is named as not ready rather than
-    underwritten on a guess, and every one that is absent is named at once.
+    then the engine's own default. Taxes, insurance and utilities end at None, which is the
+    engine's signal to use the config percentage of the as-is value (SPEC §8.6); the market
+    rent ends at None too, which leaves the DSCR takeout NOT_EVALUATED with an INFO flag
+    rather than computed on a zero.
+
+    Two things have no default and stop the run: the valuation, because SPEC §8.1 requires
+    both halves of it, and the loan split on a split product, because SPEC §8.2 prices the
+    two portions. Every one that is absent is named at once rather than one per attempt.
 
     The court record is resolved here the same way the screen resolves it, adapter over team
     (SPEC §6.1), and not read off the stored screen: the underwrite runs the SPEC §7.2 tests
@@ -311,35 +331,29 @@ def underwrite_inputs(
     utilities = _first(request.annual_utilities_usd, deal.actual_annual_utilities_usd)
     market_rent = _first(request.market_rent_monthly, deal.market_rent_monthly)
     valuation = resolve_valuation(deal, adapters, request)
-    missing = [
-        f"{name} ({why})"
-        for name, value, why in (
-            (
-                "as_is_value",
-                valuation.as_is_value,
-                "no adapter value, none on the request, none on the deal",
-            ),
-            ("arv", valuation.arv, "no adapter value, none on the request, none on the deal"),
-            ("market_rent_monthly", market_rent, "none on the request, none on the deal"),
-            ("annual_utilities_usd", utilities, "none on the request, none on the deal"),
-        )
-        if value is None
+    no_valuation = "no adapter value, none on the request, none on the deal"
+    needed: list[tuple[str, object | None, str]] = [
+        ("as_is_value", valuation.as_is_value, no_valuation),
+        ("arv", valuation.arv, no_valuation),
     ]
+    if core.product in SPLIT_PRODUCTS:
+        split_why = f"a {core.product.value} loan is advanced in two parts (SPEC §8.2)"
+        needed += [
+            ("deal.loan_purchase_portion", core.loan_purchase_portion, split_why),
+            ("deal.loan_rehab_portion", core.loan_rehab_portion, split_why),
+        ]
+    missing = [f"{name} ({why})" for name, value, why in needed if value is None]
     if missing:
         raise DealNotReady(deal.id, missing)
     return UnderwriteInputs(
-        deal=sizing_inputs(
-            core,
-            valuation,
-            purchase_portion_override=request.purchase_portion_override,
-        ),
+        deal=sizing_inputs(core, valuation),
         state=core.state,
         borrower=borrower_inputs(core, request),
         term_months=resolve_term_months(deal, request),
-        market_rent_monthly=_present(market_rent),
+        market_rent_monthly=market_rent,
         annual_taxes_usd=taxes,
         annual_insurance_usd=insurance,
-        annual_utilities_usd=_present(utilities),
+        annual_utilities_usd=utilities,
         extension_fee_pct=request.extension_fee_pct,
         exit_price=request.exit_price,
         asset_type=request.asset_type or deal.asset_type,

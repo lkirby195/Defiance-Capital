@@ -28,7 +28,7 @@ from api.forms import problems
 from db.models import Deal
 from intake.normalize import normalize
 from intake.parsers.team_form import TeamEntryForm, parse_team_form
-from schema.models import Channel, IntakeRecord, ProductSource, StateSource
+from schema.models import SPLIT_PRODUCTS, Channel, IntakeRecord, ProductSource, StateSource
 
 # Every name the form renders, so a blank the browser dropped is still a blank box.
 TEAM_ENTRY_FIELDS: tuple[str, ...] = (
@@ -46,6 +46,8 @@ TEAM_ENTRY_FIELDS: tuple[str, ...] = (
     "purchase_price",
     "rehab_budget",
     "loan_requested",
+    "loan_purchase_portion",
+    "loan_rehab_portion",
     "term_bucket",
     "product",
     "asset_type",
@@ -77,6 +79,15 @@ REQUIRED_FIELDS: tuple[tuple[str, str], ...] = (
 )
 REQUIRED_NAMES: frozenset[str] = frozenset(name for name, _ in REQUIRED_FIELDS)
 
+# Required, but only on a split product (SPEC §8.2). The product box may be blank - the
+# normalizer infers one from the rehab budget - so the browser cannot be told which of these
+# two states the form is in, and it is marked "Required for a split" and checked here.
+SPLIT_FIELDS: tuple[tuple[str, str], ...] = (
+    ("loan_purchase_portion", "Purchase portion"),
+    ("loan_rehab_portion", "Rehab portion"),
+)
+SPLIT_NAMES: frozenset[str] = frozenset(name for name, _ in SPLIT_FIELDS)
+
 
 def missing_required(submitted: Mapping[str, str]) -> list[str]:
     """One line per required box left empty, naming it.  # SPEC §4.1
@@ -89,6 +100,23 @@ def missing_required(submitted: Mapping[str, str]) -> list[str]:
         f"{label} is required."
         for name, label in REQUIRED_FIELDS
         if not str(submitted.get(name, "")).strip()
+    ]
+
+
+def split_problems(form: TeamEntryForm) -> list[str]:
+    """The split the product asks for, or one line per thing wrong with it.  # SPEC §8.2
+
+    Presence only; ``TeamEntryForm`` has already refused a split that does not add up or one
+    on a product that has no split. Presence is the form's own rule rather than the model's,
+    because a borrower-channel intake legitimately carries a loan amount and no split at all
+    - a person filling this form in has the whole loan in front of them.
+    """
+    if form.effective_product not in SPLIT_PRODUCTS:
+        return []
+    return [
+        f"{label} is required on a {form.effective_product.value} loan."
+        for name, label in SPLIT_FIELDS
+        if getattr(form, name) is None
     ]
 
 
@@ -133,6 +161,8 @@ def intake_form_values(deal: Deal) -> dict[str, str]:
         "purchase_price": deal.purchase_price,
         "rehab_budget": deal.rehab_budget,
         "loan_requested": deal.loan_requested,
+        "loan_purchase_portion": deal.loan_purchase_portion,
+        "loan_rehab_portion": deal.loan_rehab_portion,
         "term_bucket": deal.term_bucket,
         "product": deal.product if deal.product_source is ProductSource.ENTERED else None,
         "asset_type": deal.asset_type,
@@ -167,7 +197,8 @@ def read_form(
         form = TeamEntryForm.model_validate({**submitted, "court_records_team": matters})
     except ValidationError as exc:
         return None, missing + problems(exc)
-    return (None, missing) if missing else (form, [])
+    complaints = missing + split_problems(form)
+    return (None, complaints) if complaints else (form, [])
 
 
 def intake_record(form: TeamEntryForm) -> IntakeRecord:

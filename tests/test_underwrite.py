@@ -11,6 +11,7 @@ from config.config import DEFAULT_PATH, Config, load_yaml
 from engine.underwrite import downside_flags, exit_flags, underwrite
 from engine.version import ENGINE_VERSION
 from schema.models import (
+    SPLIT_PRODUCTS,
     BorrowerInputs,
     CourtFlag,
     CourtRecordInputs,
@@ -67,6 +68,13 @@ def deal(**overrides: Any) -> SizingInputs:
         "arv": D("165000.00"),
     }
     base.update(overrides)
+    if base["product"] in SPLIT_PRODUCTS and "loan_purchase_portion" not in base:
+        # the split the team would have entered: the rehab side is the contingency-adjusted
+        # budget (capped at the request), the rest is the purchase side (SPEC §8.2)
+        loan = D(base["loan_requested"])
+        rehab = min(loan, (D(base["rehab_budget"]) * D("1.10")).quantize(D("0.01")))
+        base["loan_purchase_portion"] = loan - rehab
+        base["loan_rehab_portion"] = rehab
     return SizingInputs(**base)
 
 

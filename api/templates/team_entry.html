@@ -41,6 +41,11 @@
 
   <section class="panel">
     <h2>Deal</h2>
+    <p class="small muted">
+      A SPLIT_DRAW or SPLIT_PRINCIPAL loan is advanced in two parts, so both portions are
+      required and have to add up to the loan requested (SPEC §8.2). A NO_DRAW or WHOLETAIL
+      loan is one advance and carries neither.
+    </p>
     <div class="grid3">
       {{ fields.text_box("purchase_price", "Purchase price", form.purchase_price,
                          required=true, mode="decimal") }}
@@ -48,6 +53,12 @@
                          required=true, mode="decimal") }}
       {{ fields.text_box("loan_requested", "Loan requested", form.loan_requested,
                          required=true, mode="decimal") }}
+      {{ fields.text_box("loan_purchase_portion",
+                         "Purchase portion — the Principal Note on SPLIT_PRINCIPAL",
+                         form.loan_purchase_portion, mark="split", mode="decimal") }}
+      {{ fields.text_box("loan_rehab_portion",
+                         "Rehab portion — the holdback, or Tranche A",
+                         form.loan_rehab_portion, mark="split", mode="decimal") }}
       {{ fields.select_box("term_bucket", "Term", enums.term_bucket, form.term_bucket,
                            required=true) }}
       {{ fields.select_box("product", "Product — blank is inferred from the rehab budget",

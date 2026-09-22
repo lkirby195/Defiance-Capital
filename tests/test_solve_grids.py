@@ -23,7 +23,14 @@ from engine.grids import (
 )
 from engine.sizing import size_deal
 from engine.solve import required_interest, solve_rate, target_income
-from schema.models import ExperienceTier, Product, SizingInputs, Tranche, YieldGrid
+from schema.models import (
+    SPLIT_PRODUCTS,
+    ExperienceTier,
+    Product,
+    SizingInputs,
+    Tranche,
+    YieldGrid,
+)
 
 CONFIG = Config.load()
 D = Decimal
@@ -49,6 +56,13 @@ def deal(product: Product = Product.NO_DRAW, **overrides: Any) -> SizingInputs:
         "arv": D("290000.00"),
     }
     base.update(overrides)
+    if base["product"] in SPLIT_PRODUCTS and "loan_purchase_portion" not in base:
+        # the split the team would have entered: the rehab side is the contingency-adjusted
+        # budget (capped at the request), the rest is the purchase side (SPEC §8.2)
+        loan = D(base["loan_requested"])
+        rehab = min(loan, (D(base["rehab_budget"]) * D("1.10")).quantize(D("0.01")))
+        base["loan_purchase_portion"] = loan - rehab
+        base["loan_rehab_portion"] = rehab
     return SizingInputs(**base)
 
 

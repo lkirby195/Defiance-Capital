@@ -138,7 +138,14 @@ def test_product_inference_and_source_are_stored(client: TestClient, db_session:
     assert deal.product is Product.SPLIT_DRAW
     assert deal.product_source is ProductSource.INFERRED
 
-    entered = client.post("/intake/team", json={**payload, "product": "WHOLETAIL"})
+    # WHOLETAIL is one advance, so the fixture's split comes off with the product (SPEC §8.2)
+    wholetail = {
+        **payload,
+        "product": "WHOLETAIL",
+        "loan_purchase_portion": None,
+        "loan_rehab_portion": None,
+    }
+    entered = client.post("/intake/team", json=wholetail)
     assert entered.status_code == 201, entered.text
     deal = db_session.get(Deal, entered.json()["id"])
     assert deal is not None

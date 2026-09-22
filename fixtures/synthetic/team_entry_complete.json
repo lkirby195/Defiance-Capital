@@ -13,5 +13,7 @@
   "loan_requested": "190000.00",
   "term_bucket": "9",
   "asset_type": "SFR",
-  "stated_exit": "FLIP"
+  "stated_exit": "FLIP",
+  "loan_purchase_portion": "143800.00",
+  "loan_rehab_portion": "46200.00"
 }

@@ -13,11 +13,13 @@ from decimal import Decimal
 
 from config.config import Config
 from schema.models import (
+    SPLIT_PRODUCTS,
     LeverageMetric,
     Product,
     ScreenComponents,
     ScreenResult,
     SizingResult,
+    TakeoutStatus,
     UnderwriteResult,
     ValueBasis,
     ValueSource,
@@ -33,8 +35,9 @@ _METRIC_LABEL = {
 }
 
 
-def money(amount: Decimal) -> str:
-    return f"${amount:,.2f}"
+def money(amount: Decimal | None) -> str:
+    """``$1,234.56``; ``n/a`` for a figure that was not computed (SPEC §8.6)."""
+    return "n/a" if amount is None else f"${amount:,.2f}"
 
 
 def pct1(value: Decimal) -> str:
@@ -96,11 +99,17 @@ def render_sizing(sizing: SizingResult, config: Config, title: str = "SIZING") -
             if sizing.product is Product.SPLIT_PRINCIPAL
             else ("Purchase portion", "Rehab holdback")
         )
-        override = "team override" if sizing.split.purchase_portion_overridden else ""
+        capped = (
+            f"entered {money(sizing.split.rehab_portion_requested)}, capped at rehab_adj"
+            if sizing.split.rehab_portion_capped
+            else ""
+        )
         lines += [
-            row(f"  {purchase}", money(sizing.split.purchase_portion), override),
-            row(f"  {rehab}", money(sizing.split.rehab_portion)),
+            row(f"  {purchase}", money(sizing.split.purchase_portion)),
+            row(f"  {rehab}", money(sizing.split.rehab_portion), capped),
         ]
+    elif sizing.product in SPLIT_PRODUCTS:
+        lines.append(row("  Loan split", "not entered", "sized on the loan requested"))
     lines += ["", f"  {'Metric':<16}{'Actual':>10}{'Cap':>10}{'Limit':>10}   Status"]
     for metric, check in sizing.metrics.items():
         actual = pct1(check.actual) if check.actual is not None else "n/a"
@@ -173,13 +182,32 @@ def render_screen(result: ScreenResult, config: Config) -> list[str]:
     return lines
 
 
-def render_grid(grid: YieldGrid) -> list[str]:
+def commitment_note(sizing: SizingResult) -> str:
+    """The commitment and, on a split product, how it divides.  # SPEC §8.2
+
+    On the grid heading because every cell in it is a yield on that commitment: a reader
+    comparing two grids is comparing two loan shapes, and the shape belongs beside them.
+    """
+    if sizing.split is None:
+        return money(sizing.commitment)
+    halves = (
+        "Principal Note / Tranche A"
+        if sizing.product is Product.SPLIT_PRINCIPAL
+        else "at close / holdback"
+    )
+    return (
+        f"{money(sizing.commitment)} = {money(sizing.split.purchase_portion)}"
+        f" + {money(sizing.split.rehab_portion)} ({halves})"
+    )
+
+
+def render_grid(grid: YieldGrid, sizing: SizingResult) -> list[str]:
     """The lender-yield grid: rates across, payoff months down.  # SPEC §8.5
 
     ``*`` marks a cell at or above the target; the r* column is marked in the header, so a
     solved rate below the configured grid shows up as the first column rather than hiding.
     """
-    lines = heading("GRID", f"lender_yield(month, rate); * meets {pct1(grid.target)}")
+    lines = heading("GRID", f"on {commitment_note(sizing)}; * meets {pct1(grid.target)}")
     header = "  month "
     for rate in grid.rates:
         mark = "*" if rate == grid.solved_rate else " "
@@ -243,6 +271,13 @@ def render_borrower(result: UnderwriteResult) -> list[str]:
     return lines
 
 
+def _covers(refi_covers: bool | None) -> str:
+    """``yes`` / ``NO`` / ``unknown``: None is a takeout nobody could run (SPEC §8.6)."""
+    if refi_covers is None:
+        return "unknown"
+    return "yes" if refi_covers else "NO"
+
+
 def render_exit(result: UnderwriteResult, config: Config) -> list[str]:
     """DSCR takeout; runs on every deal whatever the exit.  # SPEC §8.6"""
     exit_result = result.exit
@@ -252,6 +287,8 @@ def render_exit(result: UnderwriteResult, config: Config) -> list[str]:
     )
     dscr = ratio2(exit_result.dscr_at_payoff) if exit_result.dscr_at_payoff is not None else "n/a"
     takeout = config.takeout
+    if exit_result.status is TakeoutStatus.NOT_EVALUATED:
+        lines.append("  NOT EVALUATED: no market rent, so there is no NOI to size against")
     lines += [
         row("Gross rent (annual)", money(exit_result.gross_rent_annual)),
         row(
@@ -271,7 +308,7 @@ def render_exit(result: UnderwriteResult, config: Config) -> list[str]:
         row("Max takeout", money(exit_result.max_takeout), "lesser of the two"),
         row("Payoff due", money(exit_result.payoff_due), "commitment + payoff fees"),
         row("DSCR at payoff due", dscr),
-        row("Refi covers", "yes" if exit_result.refi_covers else "NO"),
+        row("Refi covers", _covers(exit_result.refi_covers)),
         row("Shortfall", money(exit_result.shortfall)),
     ]
     return lines
@@ -332,7 +369,7 @@ def render_underwrite(
     return [
         *sizing,
         *render_lender(result, config),
-        *render_grid(result.grid_lender),
+        *render_grid(result.grid_lender, result.sizing),
         *render_borrower(result),
         *render_exit(result, config),
         *render_downside(result),

@@ -104,6 +104,8 @@ SPLIT_PRINCIPAL_DEAL = SizingInputs(
     purchase_price=D("150000.00"),
     rehab_budget=D("60000.00"),
     loan_requested=D("170000.00"),
+    loan_purchase_portion=D("104000.00"),
+    loan_rehab_portion=D("66000.00"),
     as_is_value=D("230000.00"),
     arv=D("290000.00"),
 )

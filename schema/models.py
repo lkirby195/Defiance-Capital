@@ -341,6 +341,48 @@ def validate_court_records(
         raise ValueError("court_records_status FLAGS needs at least one matter")
 
 
+# The products whose loan is advanced in two parts (SPEC §3, §8.2). Both carry an explicit
+# purchase / rehab split; the other two products are one advance and carry none.
+SPLIT_PRODUCTS: frozenset[Product] = frozenset({Product.SPLIT_DRAW, Product.SPLIT_PRINCIPAL})
+
+
+def validate_loan_split(
+    product: Product | None,
+    loan_requested: Decimal | None,
+    purchase_portion: Decimal | None,
+    rehab_portion: Decimal | None,
+) -> None:
+    """The two halves of a split loan are coherent, or say why they are not.  # SPEC §8.2
+
+    Shared by ``DealInfo``, the team-entry form and ``SizingInputs``, so an incoherent split
+    is refused at the door rather than part-way through sizing. Three rules, and the third is
+    the one that matters: the split is a division of the loan requested, not a second opinion
+    about how much it is.
+
+    What is *not* checked here is presence. A borrower-channel intake carries a loan amount
+    and no split (SPEC §4.1, §4.2) - the split is a team entry - so a split product with
+    neither portion is coherent and simply has no split yet. The team-entry form requires
+    both (``api/intake_form.py``) and the underwrite refuses without them (SPEC §8.1).
+    """
+    if (purchase_portion is None) != (rehab_portion is None):
+        raise ValueError(
+            "loan_purchase_portion and loan_rehab_portion are set together or not at all"
+        )
+    if purchase_portion is None or rehab_portion is None:
+        return
+    if product is not None and product not in SPLIT_PRODUCTS:
+        raise ValueError(
+            f"a loan split applies only to {' / '.join(sorted(p.value for p in SPLIT_PRODUCTS))}, "
+            f"not {product.value}"
+        )
+    if loan_requested is not None and purchase_portion + rehab_portion != loan_requested:
+        raise ValueError(
+            f"the loan split must add up to the loan requested: "
+            f"{purchase_portion} + {rehab_portion} is {purchase_portion + rehab_portion}, "
+            f"not {loan_requested}"
+        )
+
+
 def _now_utc() -> datetime:
     return datetime.now(UTC)
 
@@ -380,6 +422,14 @@ class DealInfo(BaseModel):
     purchase_price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     rehab_budget: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     loan_requested: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    # How the loan requested divides between the purchase advance and the rehab money, for
+    # the two split products only (SPEC §8.2). A team entry: a borrower-channel intake
+    # carries the loan amount and nothing about its shape, so both are None until somebody
+    # enters them and the underwrite refuses a split product without them (SPEC §8.1).
+    loan_purchase_portion: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    loan_rehab_portion: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     term_bucket: TermBucket | None = None
     # Asset type from intake; with the term it drives the exit inference (SPEC §3). None
     # means unknown, which only ever leaves the exit UNKNOWN - it never forces one.
@@ -419,6 +469,13 @@ class DealInfo(BaseModel):
     def _product_and_source_together(self) -> DealInfo:
         if (self.product is None) != (self.product_source is None):
             raise ValueError("product and product_source must be set together")
+        return self
+
+    @model_validator(mode="after")
+    def _loan_split_is_coherent(self) -> DealInfo:
+        validate_loan_split(
+            self.product, self.loan_requested, self.loan_purchase_portion, self.loan_rehab_portion
+        )
         return self
 
     @model_validator(mode="after")
@@ -484,6 +541,7 @@ class UnderwriteFlag(StrEnum):
     DOWNSIDE_COVER_BELOW_FLOOR = "DOWNSIDE_COVER_BELOW_FLOOR"  # REO recovery / exposure
     NO_REHAB_PERIOD = "NO_REHAB_PERIOD"  # INFO, SPEC §8.3: SPLIT_PRINCIPAL, term <= listing_months
     SOLVED_RATE_BELOW_GRID = "SOLVED_RATE_BELOW_GRID"  # INFO, SPEC §8.4: r* under rate_grid.min
+    MARKET_RENT_MISSING = "MARKET_RENT_MISSING"  # INFO, SPEC §8.1: no DSCR takeout to compute
 
 
 # Underwrite codes whose severity is a config decision; every other code is fixed INFO
@@ -577,8 +635,11 @@ class SizingInputs(BaseModel):
     """Deal numbers for implied leverage and the commitment split.  # SPEC §7.4, §8.2
 
     ``as_is_value`` / ``arv`` are None when enrichment or valuation has not supplied them.
-    ``purchase_portion_override`` is the team override of the purchase portion for the
-    split products only (SPEC §8.2).
+
+    ``loan_purchase_portion`` / ``loan_rehab_portion`` are the team's own division of the
+    loan requested, for the split products only (SPEC §8.2). Both None means the split has
+    not been entered yet, which is the state a borrower-channel intake is in: the screen
+    sizes on the loan requested and reports no split, and the underwrite refuses (SPEC §8.1).
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -591,9 +652,10 @@ class SizingInputs(BaseModel):
     arv: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     as_is_value_source: ValueSource | None = None
     arv_source: ValueSource | None = None
-    purchase_portion_override: Decimal | None = Field(
+    loan_purchase_portion: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
+    loan_rehab_portion: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
 
     @model_validator(mode="before")
     @classmethod
@@ -617,16 +679,18 @@ class SizingInputs(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _override_only_for_split_products(self) -> SizingInputs:
-        if self.purchase_portion_override is None:
-            return self
-        if self.product not in (Product.SPLIT_DRAW, Product.SPLIT_PRINCIPAL):
-            raise ValueError(
-                "purchase_portion_override applies only to SPLIT_DRAW / SPLIT_PRINCIPAL"
-            )
-        if self.purchase_portion_override > self.loan_requested:
-            raise ValueError("purchase_portion_override cannot exceed loan_requested")
+    def _loan_split_is_coherent(self) -> SizingInputs:
+        validate_loan_split(
+            self.product, self.loan_requested, self.loan_purchase_portion, self.loan_rehab_portion
+        )
         return self
+
+    @property
+    def loan_split(self) -> tuple[Decimal, Decimal] | None:
+        """The entered split, or None when the team has not divided the loan yet."""
+        if self.loan_purchase_portion is None or self.loan_rehab_portion is None:
+            return None
+        return self.loan_purchase_portion, self.loan_rehab_portion
 
 
 class BorrowerInputs(BaseModel):
@@ -671,17 +735,44 @@ class MetricCheck(BaseModel):
 
 
 class CommitmentSplit(BaseModel):
-    """Purchase / rehab split of a split product.  # SPEC §8.2
+    """Purchase / rehab split of a split product, as the team entered it.  # SPEC §8.2
 
     SPLIT_DRAW: ``rehab_portion`` is the holdback on the single note.
     SPLIT_PRINCIPAL: ``purchase_portion`` is the Principal Note, ``rehab_portion`` Tranche A.
+
+    ``rehab_portion`` is what the lender actually funds, which is the entered portion capped
+    at the contingency-adjusted rehab budget (``engine.sizing.commitment_split``);
+    ``rehab_portion_capped`` says whether that cap bit.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     purchase_portion: Decimal
     rehab_portion: Decimal
-    purchase_portion_overridden: bool
+    rehab_portion_requested: Decimal
+    rehab_portion_capped: bool
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_the_retired_override_flag(cls, data: Any) -> Any:
+        """Rebuild a row written before 0.8.0, when the split was a derived override.
+
+        ``purchase_portion_overridden`` said whether the team had overridden a purchase
+        portion the engine derived. There is no derivation left to override - the team enters
+        both halves - so the field is gone, and a stored ``screens`` / ``underwrites`` row
+        from before the change would otherwise fail to rebuild against ``extra="forbid"``.
+        The two fields it did not have default to the entered portion, uncapped, which is
+        what a pre-0.8.0 row's numbers already describe.
+        """
+        if not isinstance(data, dict) or "purchase_portion_overridden" not in data:
+            return data
+        rehab = data.get("rehab_portion")
+        return {
+            key: value for key, value in data.items() if key != "purchase_portion_overridden"
+        } | {
+            "rehab_portion_requested": data.get("rehab_portion_requested", rehab),
+            "rehab_portion_capped": data.get("rehab_portion_capped", False),
+        }
 
 
 class SizingResult(BaseModel):
@@ -744,11 +835,14 @@ class UnderwriteInputs(BaseModel):
     """Everything the underwrite needs; the caller assembles it from deal + enrichment.  # SPEC §8.1
 
     ``deal`` carries the verified ``as_is_value`` and ``arv`` (both required here, unlike the
-    screen). ``borrower`` carries the verified credit score and deal count when known; the
-    underwrite derives the caps cell from them exactly as the screen does. Annual taxes and
-    insurance are team actuals; ``None`` falls back to the config defaults as a percentage of
-    the as-is value. ``exit_price`` defaults to the ARV (flip); the team sets a retail price
-    for wholetail. ``extension_fee_pct`` defaults to the config default. ``asset_type`` and
+    screen) and, on a split product, the team's purchase / rehab split. ``borrower`` carries
+    the verified credit score and deal count when known; the underwrite derives the caps cell
+    from them exactly as the screen does. Annual taxes, insurance and utilities are team
+    actuals; ``None`` falls back to the config defaults as a percentage of the as-is value.
+    ``market_rent_monthly`` has no such default - nothing stands in for what a property lets
+    for - so ``None`` leaves the DSCR takeout NOT_EVALUATED (SPEC §8.6) rather than computed
+    on a zero. ``exit_price`` defaults to the ARV (flip); the team sets a retail price for
+    wholetail. ``extension_fee_pct`` defaults to the config default. ``asset_type`` and
     ``stated_exit`` drive the SPEC §3 exit inference.
 
     ``court_records`` is the latest source in force at underwrite time, adapter over team,
@@ -765,12 +859,14 @@ class UnderwriteInputs(BaseModel):
     state: State
     borrower: BorrowerInputs
     term_months: int = Field(ge=1, le=60)
-    market_rent_monthly: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    market_rent_monthly: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     annual_taxes_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     annual_insurance_usd: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
-    annual_utilities_usd: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    annual_utilities_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
     extension_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
     exit_price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     asset_type: AssetType | None = None
@@ -781,6 +877,22 @@ class UnderwriteInputs(BaseModel):
     def _valuation_is_complete(self) -> UnderwriteInputs:
         if self.deal.as_is_value is None or self.deal.arv is None:
             raise ValueError("underwrite requires both as_is_value and arv on the deal")
+        return self
+
+    @model_validator(mode="after")
+    def _a_split_product_carries_its_split(self) -> UnderwriteInputs:
+        """SPEC §8.2 prices the two portions; a split product without them cannot be priced.
+
+        The screen can size one: it reports the commitment and no split. The underwrite
+        cannot - SPLIT_PRINCIPAL's whole draw curve is the two notes (SPEC §8.3), and a
+        SPLIT_DRAW holdback decides what is advanced at close - so the team enters the split
+        before a deal is priced.
+        """
+        if self.deal.product in SPLIT_PRODUCTS and self.deal.loan_split is None:
+            raise ValueError(
+                f"underwrite requires the loan split on a {self.deal.product.value} deal: "
+                "loan_purchase_portion and loan_rehab_portion"
+            )
         return self
 
     @property
@@ -799,10 +911,24 @@ class UnderwriteInputs(BaseModel):
 
 
 class OpexSource(StrEnum):
-    """Where an annual taxes / insurance figure came from.  # SPEC §8.6"""
+    """Where an annual taxes / insurance / utilities figure came from.  # SPEC §8.6"""
 
     ACTUAL = "ACTUAL"  # team-supplied
     DEFAULT = "DEFAULT"  # config percentage of the as-is value
+
+
+class TakeoutStatus(StrEnum):
+    """Whether the DSCR takeout could be computed at all.  # SPEC §8.1, §8.6
+
+    The takeout runs on a market rent, and the market rent has no config default and no
+    adapter behind it: there is no percentage of anything that stands in for what a property
+    lets for. So a deal with no rent is underwritten without a takeout rather than with one
+    computed on a zero, which would report a DSCR shortfall the deal has not been shown to
+    have. ``refi_covers`` is None in that case, not False.
+    """
+
+    EVALUATED = "EVALUATED"
+    NOT_EVALUATED = "NOT_EVALUATED"  # no market rent on the deal (MARKET_RENT_MISSING)
 
 
 class FeeSchedule(BaseModel):
@@ -883,26 +1009,52 @@ class BorrowerEconomics(BaseModel):
 
 
 class ExitResult(BaseModel):
-    """DSCR takeout, run on every deal.  # SPEC §8.6"""
+    """DSCR takeout, run on every deal that has a market rent.  # SPEC §8.1, §8.6
+
+    The exit type, the two opex figures, the LTV takeout and the payoff due stand on their
+    own and are reported either way. Everything the rent feeds - the NOI and both loans
+    tested against it - is None when ``status`` is NOT_EVALUATED, ``refi_covers`` included:
+    a takeout nobody could compute has not failed.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     type: StatedExit  # stated by the team, else inferred from term x asset type (SPEC §3)
     exit_source: ExitSource  # STATED when the team set it, INFERRED when the engine did
-    gross_rent_annual: Decimal
+    status: TakeoutStatus = TakeoutStatus.EVALUATED
+    gross_rent_annual: Decimal | None
     annual_taxes: Decimal
     annual_taxes_source: OpexSource
     annual_insurance: Decimal
     annual_insurance_source: OpexSource
-    opex_annual: Decimal
-    noi_annual: Decimal
+    opex_annual: Decimal | None
+    noi_annual: Decimal | None
     ltv_takeout: Decimal  # arv x takeout ltv
-    dscr_takeout: Decimal  # loan whose debt service = noi / dscr_floor (0 when noi <= 0)
-    max_takeout: Decimal  # min of the two
+    dscr_takeout: Decimal | None  # loan whose debt service = noi / dscr_floor (0 when noi <= 0)
+    max_takeout: Decimal | None  # min of the two
     payoff_due: Decimal  # commitment + payoff fees
     dscr_at_payoff: Decimal | None  # noi / debt service on payoff_due
-    refi_covers: bool
-    shortfall: Decimal  # max(0, payoff_due - max_takeout)
+    refi_covers: bool | None  # None when the takeout was not evaluated
+    shortfall: Decimal | None  # max(0, payoff_due - max_takeout)
+
+    @model_validator(mode="after")
+    def _evaluated_means_every_rent_figure_is_there(self) -> ExitResult:
+        """The status and the numbers cannot disagree about whether a takeout happened."""
+        rent_derived = (
+            self.gross_rent_annual,
+            self.opex_annual,
+            self.noi_annual,
+            self.dscr_takeout,
+            self.max_takeout,
+            self.refi_covers,
+            self.shortfall,
+        )
+        evaluated = self.status is TakeoutStatus.EVALUATED
+        if evaluated and any(value is None for value in rent_derived):
+            raise ValueError("an EVALUATED takeout carries every figure the rent feeds")
+        if not evaluated and any(value is not None for value in rent_derived):
+            raise ValueError("a NOT_EVALUATED takeout carries none of the figures the rent feeds")
+        return self
 
 
 class DownsideResult(BaseModel):

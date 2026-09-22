@@ -21,12 +21,18 @@ team stated, else what the term and the asset type imply (SPEC §3):
     shortfall    = max(0, payoff_due - max_takeout)
 
 The percentage opex lines apply to gross rent. Taxes and insurance are team actuals or the
-config defaults as a percentage of the ARV (``engine.calc.borrower``).
+config defaults as a percentage of the as-is value (``engine.calc.borrower``).
+
+Without a market rent none of that exists and the result is NOT_EVALUATED with
+``refi_covers`` None (SPEC §8.1, §8.6). Not False: a takeout nobody could compute has not
+failed, and a zero rent would fabricate a shortfall on every deal whose rent nobody happened
+to look up.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 
 from config.config import Config
 from engine.calc.borrower import resolve_annual_insurance, resolve_annual_taxes
@@ -38,6 +44,7 @@ from schema.models import (
     ExitSource,
     Product,
     StatedExit,
+    TakeoutStatus,
     UnderwriteInputs,
 )
 
@@ -133,34 +140,57 @@ def dscr_at(loan_amount: Decimal, noi_annual: Decimal, config: Config) -> Decima
 
 
 def dscr_takeout(inputs: UnderwriteInputs, loan: LoanTerms, config: Config) -> ExitResult:
-    """Max takeout loan, whether it covers the payoff, and the shortfall.  # SPEC §8.6"""
+    """Max takeout loan, whether it covers the payoff, and the shortfall.  # SPEC §8.6
+
+    With no market rent on the deal there is no NOI, so there is no takeout to test and the
+    result says NOT_EVALUATED (SPEC §8.1). Everything that does not depend on the rent - the
+    exit type, the two opex figures, the LTV takeout and the payoff due - is reported
+    anyway, because those are real and a reader still wants them.
+    """
     exit_type, exit_source = infer_exit(
         inputs.stated_exit, inputs.asset_type, loan.term_months, loan.product, config
     )
-    gross_rent = inputs.market_rent_monthly * TWELVE
     taxes, taxes_source = resolve_annual_taxes(inputs, config)
     insurance, insurance_source = resolve_annual_insurance(inputs, config)
+    ltv_takeout = inputs.arv * config.takeout.ltv
+    due = payoff_due(loan, config)
+    common: dict[str, Any] = {
+        "type": exit_type,
+        "exit_source": exit_source,
+        "annual_taxes": taxes,
+        "annual_taxes_source": taxes_source,
+        "annual_insurance": insurance,
+        "annual_insurance_source": insurance_source,
+        "ltv_takeout": ltv_takeout,
+        "payoff_due": due,
+    }
+    if inputs.market_rent_monthly is None:
+        return ExitResult(
+            status=TakeoutStatus.NOT_EVALUATED,
+            gross_rent_annual=None,
+            opex_annual=None,
+            noi_annual=None,
+            dscr_takeout=None,
+            max_takeout=None,
+            dscr_at_payoff=None,
+            refi_covers=None,
+            shortfall=None,
+            **common,
+        )
+    gross_rent = inputs.market_rent_monthly * TWELVE
     opex = annual_opex(gross_rent, taxes, insurance, config)
     noi = gross_rent - opex
-    ltv_takeout = inputs.arv * config.takeout.ltv
     by_dscr = dscr_loan(noi, config)
     max_takeout = min(ltv_takeout, by_dscr)
-    due = payoff_due(loan, config)
     return ExitResult(
-        type=exit_type,
-        exit_source=exit_source,
+        status=TakeoutStatus.EVALUATED,
         gross_rent_annual=gross_rent,
-        annual_taxes=taxes,
-        annual_taxes_source=taxes_source,
-        annual_insurance=insurance,
-        annual_insurance_source=insurance_source,
         opex_annual=opex,
         noi_annual=noi,
-        ltv_takeout=ltv_takeout,
         dscr_takeout=by_dscr,
         max_takeout=max_takeout,
-        payoff_due=due,
         dscr_at_payoff=dscr_at(due, noi, config),
         refi_covers=max_takeout >= due,
         shortfall=max(ZERO, due - max_takeout),
+        **common,
     )

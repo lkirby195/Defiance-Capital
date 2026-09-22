@@ -69,6 +69,7 @@ glenwood-uw/
     passwords.py           # PBKDF2 hash / verify; pure
     persistence.py         # append screens / underwrites rows; rebuild results from them
     queue.py               # the review-queue list: grouping, ordering, the pin rule
+    readiness.py           # the SPEC 8.1 checklist: every input, its value, where it came from
     requests.py            # UnderwriteRequest / TeamOverrides: what the team supplies by hand
     runner.py              # run_screen, run_underwrite
     users.py               # create / deactivate / authenticate a queue user
@@ -104,6 +105,18 @@ glenwood-uw/
 **Money and rates.** Use `Decimal` for money and rates inside `engine/`. Never `float` for dollar amounts. Round only at output boundaries.
 
 **Adapters are thin and mockable.** Each adapter implements the `Adapter` Protocol in `adapters/base.py`, returns an `AdapterResult` (status, raw payload, parsed result, source, timestamp), and never raises on a remote failure — it returns `status=FAILED` with the error. All network calls go through `httpx` with timeouts. Every adapter has a fixture-backed test that does not hit the network.
+
+**A deal says why a button is off.** Anything the review queue refuses to run, it says the
+reason for *before* the person presses it. `services/readiness.py` derives the Underwrite
+inputs checklist from the same rules `services/assemble.py` raises `DealNotReady` on, so a
+page that calls a deal ready and a run that then refuses it cannot both exist. A new required
+input goes in one place and both readers pick it up.
+
+**A missing input is not a failing one.** Where an input has a defensible stand-in, use it and
+record the source as `DEFAULT` (`takeout.opex_defaults`). Where it has none - the market rent
+is the example - report the thing it feeds as not evaluated, with the figure `None` rather
+than `False` or `0`. A DSCR takeout nobody could compute has not fallen short, and a zero
+would manufacture a shortfall on every deal whose rent nobody looked up.
 
 **Record everything.** Every enrichment call writes an `enrichment_runs` row with the raw response. Every screen and underwrite records `ENGINE_VERSION` and the config hash. Nothing is overwritten; re-runs create new rows.
 

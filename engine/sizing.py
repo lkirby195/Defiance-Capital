@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from config.config import Config, LeverageCaps
 from schema.models import (
+    SPLIT_PRODUCTS,
     CapStatus,
     CommitmentSplit,
     ExperienceTier,
@@ -25,7 +26,6 @@ from schema.models import (
 
 ZERO = Decimal(0)
 ONE = Decimal(1)
-SPLIT_PRODUCTS = frozenset({Product.SPLIT_DRAW, Product.SPLIT_PRINCIPAL})
 
 
 def rehab_adjusted(rehab_budget: Decimal, config: Config) -> Decimal:
@@ -56,25 +56,33 @@ def commitment_split(
     """Commitment and purchase/rehab split per product.  # SPEC §8.2
 
     NO_DRAW, WHOLETAIL: commitment = loan_requested; no split.
-    SPLIT_DRAW: commitment = loan_requested; purchase portion defaults to
-        commitment - rehab_adj (floored at zero), team can override;
-        holdback = min(rehab_adj, commitment - purchase_portion).
-    SPLIT_PRINCIPAL: Principal Note = purchase portion (same default and override as
-        SPLIT_DRAW); Tranche A = min(rehab_adj, loan_requested - purchase portion), so it
-        is capped at the contingency-adjusted rehab budget; commitment = Principal Note +
-        Tranche A, which equals loan_requested unless the override leaves part of the
-        request unallocated (the screen reports that as COMMITMENT_BELOW_REQUEST).
+    SPLIT_DRAW: purchase portion and holdback as the team entered them (they add up to
+        loan_requested), so commitment = loan_requested and the holdback is the rehab
+        portion.
+    SPLIT_PRINCIPAL: Principal Note = purchase portion, Tranche A = rehab portion;
+        commitment = the two added back together.
+
+    The rehab side is capped at ``rehab_adj`` either way: the lender does not hold back more
+    than the contingency-adjusted rehab budget could ever draw. On SPLIT_PRINCIPAL the cap
+    lowers the commitment, which is what COMMITMENT_BELOW_REQUEST reports (SPEC §7.5); on
+    SPLIT_DRAW it does not, because there is one note - the money above the cap is advanced
+    at close instead of held back, so only the timing moves.
+
+    A split product with no split entered is sized on the loan requested with no split at
+    all. That is a borrower-channel intake before anybody has divided it (SPEC §4.2): the
+    screen still runs, and the underwrite refuses until the team enters it (SPEC §8.1).
     """
-    if inputs.product not in SPLIT_PRODUCTS:
+    entered = inputs.loan_split
+    if inputs.product not in SPLIT_PRODUCTS or entered is None:
         return inputs.loan_requested, None
-    override = inputs.purchase_portion_override
-    purchase = override if override is not None else max(ZERO, inputs.loan_requested - rehab_adj)
-    rehab = min(rehab_adj, inputs.loan_requested - purchase)
+    purchase, requested_rehab = entered
+    rehab = min(rehab_adj, requested_rehab)
     commitment = inputs.loan_requested if inputs.product is Product.SPLIT_DRAW else purchase + rehab
     split = CommitmentSplit(
         purchase_portion=purchase,
         rehab_portion=rehab,
-        purchase_portion_overridden=override is not None,
+        rehab_portion_requested=requested_rehab,
+        rehab_portion_capped=rehab < requested_rehab,
     )
     return commitment, split
 
@@ -149,9 +157,10 @@ def size_deal(
     onto the result, so a stored screen says whether the numbers it sized on were pulled or
     entered by hand.
 
-    ``commitment`` equals ``loan_requested`` for every product unless a SPLIT_PRINCIPAL
-    override leaves part of the request unallocated (see ``commitment_split``). The screen
-    turns the fallback and the missing ARV into flags (SPEC §7.4, §7.5).
+    ``commitment`` equals ``loan_requested`` for every product unless a SPLIT_PRINCIPAL rehab
+    portion is capped at ``rehab_adj`` and leaves part of the request unallocated (see
+    ``commitment_split``). The screen turns the fallback and the missing ARV into flags
+    (SPEC §7.4, §7.5).
     """
     rehab_adj = rehab_adjusted(inputs.rehab_budget, config)
     closing = buy_closing(inputs.purchase_price, config)

@@ -490,9 +490,8 @@ def leverage_flags(sizing: SizingResult) -> list[Flag]:
                 severity=Severity.INFO,
                 message=(
                     f"SPLIT_PRINCIPAL commitment {money(sizing.commitment)}{notes} is below the "
-                    f"{money(sizing.loan_requested)} requested: the purchase-portion override "
-                    f"leaves Tranche A capped at the contingency-adjusted rehab budget "
-                    f"{money(sizing.rehab_adj)}."
+                    f"{money(sizing.loan_requested)} requested: the entered rehab portion is "
+                    f"capped at the contingency-adjusted rehab budget {money(sizing.rehab_adj)}."
                 ),
             )
         )

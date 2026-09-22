@@ -8,7 +8,9 @@
       "rehab_budget": "50000.00",
       "loan_requested": "200000.00",
       "as_is_value": "300000.00",
-      "arv": "350000.00"
+      "arv": "350000.00",
+      "loan_purchase_portion": "145000.00",
+      "loan_rehab_portion": "55000.00"
     },
     "state": "CO",
     "borrower": {

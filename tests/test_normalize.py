@@ -19,6 +19,7 @@ from intake.normalize import (
 )
 from intake.parsers.team_form import TeamEntryForm, parse_team_form
 from schema.models import (
+    SPLIT_PRODUCTS,
     BorrowerInfo,
     Channel,
     DealInfo,
@@ -34,8 +35,25 @@ FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/synthetic/team_entry_c
 
 
 def complete_form(**overrides: object) -> TeamEntryForm:
+    """The complete team entry, with anything the caller names replaced.
+
+    The fixture is a SPLIT_DRAW deal and carries a loan split. An override that moves it off
+    a split product takes the split with it, because a NO_DRAW or WHOLETAIL loan has none
+    (SPEC §8.2) and the form refuses one - which is its own test rather than a trap for
+    every test that changes the product.
+    """
     payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
     payload.update(overrides)
+    chosen = payload.get("product")
+    budget = payload.get("rehab_budget")
+    product = (
+        Product(chosen)
+        if chosen is not None
+        else (infer_product(Decimal(str(budget))) if budget is not None else None)
+    )
+    if product not in SPLIT_PRODUCTS:
+        payload.pop("loan_purchase_portion", None)
+        payload.pop("loan_rehab_portion", None)
     return TeamEntryForm.model_validate(payload)
 
 

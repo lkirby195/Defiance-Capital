@@ -1,6 +1,6 @@
 {
   "name": "go_split_principal_override_below_request",
-  "description": "SPLIT_PRINCIPAL in Tulsa; the team sets the Principal Note to $80,000 so Tranche A is capped at the contingency-adjusted rehab budget ($66,000) and the commitment ($146,000) lands below the $170,000 requested. Leverage on the smaller commitment clears every cap. Go with an Info flag.",
+  "description": "SPLIT_PRINCIPAL in Tulsa; the team divides the $170,000 request 80,000 purchase / 90,000 rehab, and the rehab side is capped at the contingency-adjusted rehab budget ($66,000), so Tranche A is $66,000 and the commitment ($146,000) lands below the request. Leverage on the smaller commitment clears every cap. Go with an Info flag.",
   "inputs": {
     "deal": {
       "product": "SPLIT_PRINCIPAL",
@@ -9,7 +9,8 @@
       "loan_requested": "170000.00",
       "as_is_value": "230000.00",
       "arv": "290000.00",
-      "purchase_portion_override": "80000.00"
+      "loan_purchase_portion": "80000.00",
+      "loan_rehab_portion": "90000.00"
     },
     "state": "OK",
     "borrower": {
