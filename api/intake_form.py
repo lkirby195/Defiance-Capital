@@ -28,7 +28,14 @@ from api.forms import problems
 from db.models import Deal
 from intake.normalize import normalize
 from intake.parsers.team_form import TeamEntryForm, parse_team_form
-from schema.models import SPLIT_PRODUCTS, Channel, IntakeRecord, ProductSource, StateSource
+from schema.models import (
+    SPLIT_PRODUCTS,
+    Channel,
+    IntakeRecord,
+    ProductSource,
+    StateSource,
+    TermBucket,
+)
 
 # Every name the form renders, so a blank the browser dropped is still a blank box.
 TEAM_ENTRY_FIELDS: tuple[str, ...] = (
@@ -49,6 +56,7 @@ TEAM_ENTRY_FIELDS: tuple[str, ...] = (
     "loan_purchase_portion",
     "loan_rehab_portion",
     "term_bucket",
+    "term_months",
     "product",
     "asset_type",
     "stated_exit",
@@ -88,6 +96,20 @@ SPLIT_FIELDS: tuple[tuple[str, str], ...] = (
 )
 SPLIT_NAMES: frozenset[str] = frozenset(name for name, _ in SPLIT_FIELDS)
 
+# Required, but only on a 12_PLUS term (SPEC §8.1). Every other bucket names its own number
+# of months, so the box is rendered read-only with that number in it and there is nothing
+# for a person to supply.
+TERM_MONTHS = "term_months"
+
+# What the page prints on a box whose Required-ness depends on another answer, by name. The
+# template renders these strings and ``tests/test_intake_form.py`` asserts it does, so the
+# marker and the rule behind it cannot drift apart.
+CONDITIONAL_MARKS: dict[str, str] = {
+    "loan_purchase_portion": "Required for a split",
+    "loan_rehab_portion": "Required for a split",
+    TERM_MONTHS: "Required for a 12+ term",
+}
+
 
 def missing_required(submitted: Mapping[str, str]) -> list[str]:
     """One line per required box left empty, naming it.  # SPEC §4.1
@@ -118,6 +140,18 @@ def split_problems(form: TeamEntryForm) -> list[str]:
         for name, label in SPLIT_FIELDS
         if getattr(form, name) is None
     ]
+
+
+def term_problems(form: TeamEntryForm) -> list[str]:
+    """The term the bucket cannot name, or nothing.  # SPEC §8.1
+
+    Presence only; ``TeamEntryForm`` has already refused a term that disagrees with a bucket
+    that names one. A 12_PLUS bucket names none, and a deal cannot be priced without a term,
+    so the form asks for it rather than leaving it to the underwrite to refuse later.
+    """
+    if form.term_bucket is not TermBucket.M12_PLUS or form.term_months is not None:
+        return []
+    return ["Term in months is required on a 12+ term: the bucket names no number."]
 
 
 def text_value(value: Any) -> str:
@@ -164,6 +198,7 @@ def intake_form_values(deal: Deal) -> dict[str, str]:
         "loan_purchase_portion": deal.loan_purchase_portion,
         "loan_rehab_portion": deal.loan_rehab_portion,
         "term_bucket": deal.term_bucket,
+        "term_months": deal.term_months,
         "product": deal.product if deal.product_source is ProductSource.ENTERED else None,
         "asset_type": deal.asset_type,
         "stated_exit": deal.stated_exit,
@@ -197,7 +232,7 @@ def read_form(
         form = TeamEntryForm.model_validate({**submitted, "court_records_team": matters})
     except ValidationError as exc:
         return None, missing + problems(exc)
-    complaints = missing + split_problems(form)
+    complaints = missing + term_problems(form) + split_problems(form)
     return (None, complaints) if complaints else (form, [])
 
 

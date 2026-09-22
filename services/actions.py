@@ -23,7 +23,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import Deal, Screen
-from schema.models import SPLIT_PRODUCTS, AuditAction, ProductSource, Status
+from schema.models import (
+    SPLIT_PRODUCTS,
+    AuditAction,
+    ProductSource,
+    Status,
+    months_for_bucket,
+)
 from services.audit import DEALS, jsonable, record_audit
 from services.errors import ActionNotAllowed, ReasonRequired
 from services.requests import TeamOverrides
@@ -236,6 +242,7 @@ def save_overrides(
         after[field] = jsonable(submitted)
         setattr(deal, field, submitted)
     _apply_product(deal, overrides, before, after)
+    _apply_term_months(deal, overrides, before, after)
     if not after:
         return deal
     session.flush()
@@ -249,6 +256,28 @@ def save_overrides(
         after=after,
     )
     return deal
+
+
+def _apply_term_months(
+    deal: Deal, overrides: TeamOverrides, before: dict[str, Any], after: dict[str, Any]
+) -> None:
+    """Set the term only where the bucket does not already name one.  # SPEC §8.1
+
+    ``term_months`` is not an override for most deals: every bucket but ``12_PLUS`` names a
+    number, the page renders it read-only, and what comes back is whatever it was rendered
+    with. So the bucket's own number is re-derived here rather than trusted - a tampered
+    read-only box is a no-op instead of a row the database would reject.
+
+    On ``12_PLUS`` there is nothing to derive, and this block is the only place in the queue
+    a team member can set one: the Run underwrite button posts no form of its own.
+    """
+    named = months_for_bucket(deal.term_bucket)
+    wanted = named if named is not None else overrides.term_months
+    if wanted == deal.term_months:
+        return
+    before["term_months"] = deal.term_months
+    after["term_months"] = wanted
+    deal.term_months = wanted
 
 
 def _apply_product(

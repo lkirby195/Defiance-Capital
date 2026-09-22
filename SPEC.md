@@ -146,6 +146,7 @@ IntakeRecord
   deal:
     purchase_price, rehab_budget, loan_requested
     term_bucket: 3 | 6 | 9 | 12 | 12_PLUS
+    term_months?                 # the bucket's own number; the team's for 12_PLUS (§8.1)
     asset_type?: SFR | UNITS_2_4 | UNITS_5_PLUS | OTHER   # drives the §3 exit inference
     stated_exit?: FLIP | HOLD | WHOLETAIL | UNKNOWN
   team overrides (§6):           # stand-ins for enrichment, entered by hand
@@ -350,7 +351,7 @@ From intake + enrichment, plus:
   weeks can pass between the two stages and a pull that has since landed supersedes the hand
   search Stage 1 ran on — so the stored underwrite stands on its own for the credit memo.
 - `asset_type` (from intake) and the team-stated exit → the §3 exit inference
-- `term_months` (from bucket; 12+ → team sets)
+- `term_months` — a column on the deal, not derived on every read. Every bucket but `12_PLUS` names its own number of months, so the normalizer fills it at intake and the team-entry form shows it read-only; `12_PLUS` names none, so the team types one there or in the deal page's override block. **Required to underwrite**, and named by the readiness checklist and by `DealNotReady` when it is absent — which is only ever a `12_PLUS` deal nobody has given a term
 - `rehab_months` = `term_months − listing_months` (config, placeholder 3; the last months of the term are listing and sale; floored at 0). Not a team input.
 - `extension_fee_pct` (default from config, 0)
 - `exit_price` (team-set retail price for wholetail; default `arv`)

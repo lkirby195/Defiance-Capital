@@ -81,6 +81,7 @@ def intake_columns(record: IntakeRecord) -> dict[str, Any]:
         "loan_purchase_portion": record.deal.loan_purchase_portion,
         "loan_rehab_portion": record.deal.loan_rehab_portion,
         "term_bucket": record.deal.term_bucket,
+        "term_months": record.deal.term_months,
         "asset_type": record.deal.asset_type,
         "stated_exit": record.deal.stated_exit,
         "actual_annual_taxes_usd": record.deal.actual_annual_taxes_usd,

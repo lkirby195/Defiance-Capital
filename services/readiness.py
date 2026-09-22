@@ -31,8 +31,8 @@ from typing import Any
 
 from config.config import Config, get_config
 from db.models import Deal
-from schema.models import SPLIT_PRODUCTS, CourtRecordsStatus, Product
-from services.assemble import TERM_BUCKET_MONTHS, intake_gaps
+from schema.models import SPLIT_PRODUCTS, CourtRecordsStatus, Product, months_for_bucket
+from services.assemble import intake_gaps
 from services.enrichment import NO_ADAPTER_VALUES, AdapterValues
 
 
@@ -111,19 +111,29 @@ def _opex_default(as_is_value: Decimal | None, pct: Decimal) -> Decimal | None:
 
 
 def _term_row(deal: Deal) -> InputRow:
-    """Months from the bucket. 12_PLUS names no number, so somebody has to set one."""
-    months = TERM_BUCKET_MONTHS.get(deal.term_bucket) if deal.term_bucket is not None else None
+    """The term on the deal, and where it came from.  # SPEC §8.1
+
+    DEFAULT rather than TEAM where the bucket named it: nobody chose 9 months on a 9-month
+    bucket, the bucket did, and the box on the form is read-only to say so. On ``12_PLUS``
+    the bucket names none, so a value there is a person's own and its absence is the one
+    case where this row turns the button off.
+    """
+    named = months_for_bucket(deal.term_bucket)
+    if deal.term_months is None:
+        source = InputSource.MISSING
+    else:
+        source = InputSource.DEFAULT if named is not None else InputSource.TEAM
     return InputRow(
-        key="term_months",
+        key="deal.term_months",
         label="Term (months)",
-        value=months,
+        value=deal.term_months,
         money=False,
-        source=InputSource.TEAM if months is not None else InputSource.MISSING,
+        source=source,
         required=True,
         note=(
-            ""
-            if months is not None
-            else "the 12+ bucket names no number of months; a run needs one (SPEC §8.1)"
+            f"the {deal.term_bucket.value}-month bucket names it"
+            if named is not None and deal.term_bucket is not None
+            else "the 12+ bucket names no number of months; the team sets one (SPEC §8.1)"
         ),
     )
 

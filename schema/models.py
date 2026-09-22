@@ -70,6 +70,21 @@ class TermBucket(StrEnum):
     M12_PLUS = "12_PLUS"
 
 
+# The months each bucket names. 12_PLUS names none: a term past a year is a negotiation,
+# so the team sets the number (SPEC §4.1, §8.1).
+TERM_BUCKET_MONTHS: dict[TermBucket, int] = {
+    TermBucket.M3: 3,
+    TermBucket.M6: 6,
+    TermBucket.M9: 9,
+    TermBucket.M12: 12,
+}
+
+
+def months_for_bucket(bucket: TermBucket | None) -> int | None:
+    """The months a bucket names, or None for 12_PLUS and for no bucket at all."""
+    return None if bucket is None else TERM_BUCKET_MONTHS.get(bucket)
+
+
 class Channel(StrEnum):
     """Intake channel.  # SPEC §4.2"""
 
@@ -383,6 +398,27 @@ def validate_loan_split(
         )
 
 
+def validate_term_months(term_bucket: TermBucket | None, term_months: int | None) -> None:
+    """A term in months is the bucket's own number, or the team's for 12_PLUS.  # SPEC §8.1
+
+    Shared by ``DealInfo`` and the team-entry form. Two rules, and neither is about presence:
+    a term with no bucket behind it is a number nobody asked for, and a term that disagrees
+    with the bucket it came from is one of the two being wrong. Which one is absent is the
+    form's business (``api/intake_form.py``) and the underwrite's (SPEC §8.1) - a partial
+    intake has neither yet.
+    """
+    if term_months is None:
+        return
+    if term_bucket is None:
+        raise ValueError("term_months needs the term_bucket it came from")
+    named = months_for_bucket(term_bucket)
+    if named is not None and term_months != named:
+        raise ValueError(
+            f"term_bucket {term_bucket.value} names {named} months, not {term_months}; "
+            "only the 12_PLUS bucket leaves the number to the team"
+        )
+
+
 def _now_utc() -> datetime:
     return datetime.now(UTC)
 
@@ -431,6 +467,9 @@ class DealInfo(BaseModel):
     )
     loan_rehab_portion: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     term_bucket: TermBucket | None = None
+    # The term the deal is priced on (SPEC §8.1). Derived from the bucket for every bucket
+    # that names a number; entered by the team for 12_PLUS, which names none.
+    term_months: int | None = Field(default=None, ge=1, le=60)
     # Asset type from intake; with the term it drives the exit inference (SPEC §3). None
     # means unknown, which only ever leaves the exit UNKNOWN - it never forces one.
     asset_type: AssetType | None = None
@@ -469,6 +508,11 @@ class DealInfo(BaseModel):
     def _product_and_source_together(self) -> DealInfo:
         if (self.product is None) != (self.product_source is None):
             raise ValueError("product and product_source must be set together")
+        return self
+
+    @model_validator(mode="after")
+    def _term_is_coherent(self) -> DealInfo:
+        validate_term_months(self.term_bucket, self.term_months)
         return self
 
     @model_validator(mode="after")

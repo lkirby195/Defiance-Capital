@@ -35,6 +35,7 @@ from schema.models import (
     Tranche,
     validate_court_records,
     validate_loan_split,
+    validate_term_months,
 )
 
 
@@ -68,6 +69,9 @@ class TeamEntryForm(BaseModel):
     )
     loan_rehab_portion: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     term_bucket: TermBucket | None = None
+    # Derived from the bucket and shown read-only for every bucket that names a number of
+    # months; typed by the team for 12_PLUS, which names none (SPEC §8.1).
+    term_months: int | None = Field(default=None, ge=1, le=60)
     # Team-only extras (SPEC §4.2 "extra ones unlocked")
     asset_type: AssetType | None = None  # with the term, drives the exit inference (SPEC §3)
     stated_exit: StatedExit | None = None
@@ -105,6 +109,12 @@ class TeamEntryForm(BaseModel):
         if self.rehab_budget is None:
             return None
         return infer_product(self.rehab_budget)
+
+    @model_validator(mode="after")
+    def _term_is_coherent(self) -> TeamEntryForm:
+        """The same check ``DealInfo`` makes, so a tampered read-only box says so at the door."""
+        validate_term_months(self.term_bucket, self.term_months)
+        return self
 
     @model_validator(mode="after")
     def _loan_split_is_coherent(self) -> TeamEntryForm:
@@ -152,6 +162,7 @@ def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
             loan_purchase_portion=form.loan_purchase_portion,
             loan_rehab_portion=form.loan_rehab_portion,
             term_bucket=form.term_bucket,
+            term_months=form.term_months,
             asset_type=form.asset_type,
             stated_exit=form.stated_exit,
             product=form.product,

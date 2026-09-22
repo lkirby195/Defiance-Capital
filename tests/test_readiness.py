@@ -47,7 +47,7 @@ def test_every_spec_8_1_input_has_a_row(deal_with_overrides: Deal) -> None:
     assert {
         "as_is_value",
         "arv",
-        "term_months",
+        "deal.term_months",
         "market_rent_monthly",
         "annual_taxes_usd",
         "annual_insurance_usd",
@@ -158,11 +158,33 @@ def test_a_required_input_that_is_absent_turns_the_button_off(
     assert expected in readiness.missing
 
 
-def test_a_term_bucket_that_names_no_months_turns_it_off_too(
+def test_a_term_the_bucket_names_says_so_and_is_not_a_team_entry(
+    deal_with_overrides: Deal,
+) -> None:
+    """Nobody chose 9 months on a 9-month bucket; the bucket did.  # SPEC §8.1"""
+    row = rows(deal_with_overrides)["deal.term_months"]
+    assert row.value == 9
+    assert row.source is InputSource.DEFAULT
+    assert row.required is True
+    assert "9-month bucket names it" in row.note
+
+
+def test_a_twelve_plus_term_the_team_set_says_team(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    deal_with_overrides.term_bucket = TermBucket.M12_PLUS
+    deal_with_overrides.term_months = 18
+    db_session.commit()
+    row = rows(deal_with_overrides)["deal.term_months"]
+    assert row.value == 18 and row.source is InputSource.TEAM
+
+
+def test_a_twelve_plus_bucket_with_no_term_turns_the_button_off(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
     """12+ is a team decision; without it there is no term to price.  # SPEC §8.1"""
     deal_with_overrides.term_bucket = TermBucket.M12_PLUS
+    deal_with_overrides.term_months = None
     db_session.commit()
     readiness = underwrite_readiness(deal_with_overrides)
     assert readiness.ready is False
@@ -183,6 +205,7 @@ def test_an_intake_gap_is_named_the_way_the_refusal_names_it(
         ["as_is_value_team"],
         ["arv_team"],
         ["loan_purchase_portion", "loan_rehab_portion"],
+        ["term_months"],
         ["purchase_price"],
     ],
 )

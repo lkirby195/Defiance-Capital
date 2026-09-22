@@ -131,6 +131,7 @@ def override_form(deal: Deal) -> dict[str, str]:
         "asset_type",
         "product",
         "stated_exit",
+        "term_months",
         "court_records_status",
         "court_records_as_of",
     )

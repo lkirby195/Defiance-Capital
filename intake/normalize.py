@@ -31,6 +31,8 @@ from schema.models import (
     State,
     StateSource,
     Status,
+    TermBucket,
+    months_for_bucket,
 )
 
 # The minimum viable intake, in the order the team should ask for it.  # SPEC §4.1
@@ -113,6 +115,17 @@ def infer_state(address: str | None) -> State:
     return _STATE_WORDS.get(match.group(1).upper(), State.OTHER)
 
 
+def infer_term_months(bucket: TermBucket | None, entered: int | None) -> int | None:
+    """The months the bucket names; the team's own number when it names none.  # SPEC §8.1
+
+    Every bucket but ``12_PLUS`` names a number, so there is nothing for a person to decide
+    and nothing for one to get wrong: the derived value wins over whatever the read-only box
+    posted back. ``12_PLUS`` names none, so the team's number is all there is.
+    """
+    named = months_for_bucket(bucket)
+    return named if named is not None else entered
+
+
 def infer_product(rehab_budget: Decimal | None) -> Product | None:
     """NO_DRAW when there is no rehab budget, else SPLIT_DRAW; None until the budget is known.
 
@@ -171,6 +184,9 @@ def normalize(
         }
     )
     deal = parsed.deal
+    term = infer_term_months(deal.term_bucket, deal.term_months)
+    if term != deal.term_months:
+        deal = deal.model_copy(update={"term_months": term})
     if deal.product is None:
         inferred = infer_product(deal.rehab_budget)
         if inferred is not None:

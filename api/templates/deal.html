@@ -33,7 +33,9 @@
         {{ deal.loan_rehab_portion | money }} rehab
       {% else %}—{% endif %}
     </dd>
-    <dt>Term bucket</dt><dd>{{ deal.term_bucket | plain }}</dd>
+    <dt>Term bucket</dt>
+    <dd>{{ deal.term_bucket | plain }}
+      <span class="small muted">({{ deal.term_months | plain }} months)</span></dd>
     <dt>Product</dt>
     <dd>{{ deal.product | plain }} <span class="small muted">({{ deal.product_source | plain }})</span></dd>
     <dt>Asset type</dt><dd>{{ deal.asset_type | plain }}</dd>
@@ -214,6 +216,13 @@
                              enums.product, form.product) }}
         {{ fields.select_box("stated_exit", "Stated exit", enums.stated_exit,
                              form.stated_exit) }}
+        {#- The 12+ bucket names no number of months, and the Run underwrite button posts no
+            form of its own, so this box is the only place in the queue a term can be set on
+            one. Every other bucket names its own, so it is shown read-only and re-derived on
+            save (SPEC §8.1). -#}
+        {{ fields.text_box("term_months", "Term in months — the bucket names it unless 12+",
+                           form.term_months, mark="Required for a 12+ term", mode="numeric",
+                           readonly=deal.term_bucket | plain != "12_PLUS") }}
       </div>
     </fieldset>
 

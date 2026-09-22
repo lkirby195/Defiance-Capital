@@ -14,6 +14,7 @@ engine default:
     annual utilities      request -> deal.actual_annual_utilities_usd -> % of as-is (SPEC §8.6)
     market rent           request -> deal.market_rent_monthly -> no DSCR takeout (SPEC §8.6)
     asset type, exit      request -> deal -> unknown (SPEC §3)
+    term months          request -> deal.term_months -> not ready (SPEC §8.1)
 
 Market rent is the one with no third step. A percentage of a value stands in for a cost the
 property incurs whatever it is worth - taxes, insurance, the utilities on a vacant house -
@@ -120,6 +121,10 @@ class TeamOverrides(BaseModel):
     asset_type: AssetType | None = None
     stated_exit: StatedExit | None = None
     product: Product | None = None
+    # The term the deal is priced on (SPEC §8.1). Read-only on the page for every bucket
+    # that names a number, and ``save_overrides`` re-derives it there rather than trusting
+    # what came back; on 12_PLUS it is the one place the team can set one from the queue.
+    term_months: int | None = Field(default=None, ge=1, le=60)
     # The team's own court search (SPEC §7.2), one typed matter per entry.
     court_records_status: CourtRecordsStatus | None = None
     court_records_as_of: date | None = None
