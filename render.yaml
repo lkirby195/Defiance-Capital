@@ -42,7 +42,10 @@ services:
         - render.yaml
         - .python-version
     # `uv sync --frozen` fails rather than re-resolving if uv.lock is behind pyproject.toml,
-    # so what runs in production is the dependency set the tests ran against.
+    # so what runs in production is the dependency set the tests ran against. `--no-dev`
+    # leaves the dev group out of it: mypy, ruff, hypothesis and pgserver - which ships an
+    # entire PostgreSQL - are for a developer's machine and for CI, and none of them is
+    # imported outside tests/. tests/test_deployment.py holds both halves of that.
     buildCommand: pip install uv && uv sync --frozen --no-dev
     preDeployCommand: uv run alembic upgrade head
     startCommand: uv run uvicorn api.main:app --host 0.0.0.0 --port $PORT
