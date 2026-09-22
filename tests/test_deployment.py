@@ -8,6 +8,7 @@ secret that quietly became something a person has to remember to set.
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -81,6 +82,30 @@ def test_the_build_installs_the_locked_dependency_set(service: dict[str, Any]) -
     build = service["buildCommand"]
     assert "uv" in build
     assert "uv sync --frozen" in build
+
+
+def test_the_build_leaves_the_development_tools_out_of_production(
+    service: dict[str, Any],
+) -> None:
+    """``--no-dev``: a type checker, a linter and a test database are not part of serving.
+
+    They are not merely wasted install time. ``pgserver`` ships a whole PostgreSQL, and a
+    type checker on a production image is a thing a person can be tempted to run against
+    live code. Nothing in the dev group is imported outside ``tests/``, so leaving it out
+    cannot break a boot - and if something ever does import one, the deploy fails rather
+    than the group quietly coming back.
+    """
+    assert "--no-dev" in service["buildCommand"]
+
+
+def test_the_tools_the_deploy_skips_are_declared_as_development_only() -> None:
+    """``--no-dev`` only skips what is *in* the dev group, so this fails if one moves out."""
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    runtime = " ".join(project["project"]["dependencies"]).lower()
+    development = " ".join(project["dependency-groups"]["dev"]).lower()
+    for tool in ("mypy", "ruff", "pgserver", "hypothesis", "pytest"):
+        assert tool in development, f"{tool} is not in the dev group"
+        assert tool not in runtime, f"{tool} is a runtime dependency and ships either way"
 
 
 def test_the_deploy_migrates_before_the_new_code_serves_anything(service: dict[str, Any]) -> None:

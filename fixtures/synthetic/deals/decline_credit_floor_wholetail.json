@@ -40,7 +40,7 @@
       "LTARV": "PASS"
     },
     "reasons_contain": [
-      "Self-reported credit T5 (below 620) is below the floor tranche T4 (620-659)"
+      "Self-reported credit Under 620 is below the floor of 620–659."
     ],
     "reply_contains": [
       "not a fit"

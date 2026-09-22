@@ -30,6 +30,8 @@ PAGE_ROUTES = [
     ("GET", "/queue"),
     ("GET", "/queue/new"),
     ("GET", "/queue/deals/00000000-0000-0000-0000-000000000000"),
+    ("GET", "/queue/deals/00000000-0000-0000-0000-000000000000/intake"),
+    ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/intake"),
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/screen"),
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/underwrite"),
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/overrides"),
@@ -83,6 +85,7 @@ def test_every_route_is_accounted_for() -> None:
             ("GET", "/queue"),
             ("GET", "/queue/new"),
             ("GET", "/queue/deals/{deal_id}"),
+            ("GET", "/queue/deals/{deal_id}/intake"),
             ("GET", "/deals/{deal_id}"),
             ("GET", "/openapi.json"),
             ("GET", "/docs"),
@@ -92,6 +95,7 @@ def test_every_route_is_accounted_for() -> None:
         | {
             ("POST", f"/queue/deals/{{deal_id}}/{action}")
             for action in (
+                "intake",
                 "screen",
                 "underwrite",
                 "overrides",

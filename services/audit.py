@@ -52,6 +52,17 @@ def record_audit(
     return row
 
 
+def jsonable(value: Any) -> Any:
+    """A column value in a form ``audit_log``'s JSONB can hold.
+
+    Decimals, dates and enums all reach an audit row as themselves and none of them is JSON;
+    every one of them reads back exactly as it was written once it is a string.
+    """
+    if value is None or isinstance(value, bool | int | str | list | dict):
+        return value
+    return str(getattr(value, "value", value))
+
+
 def _for_row(table_name: str, row_id: UUID | str) -> Select[tuple[AuditLog]]:
     return select(AuditLog).where(AuditLog.table_name == table_name, AuditLog.row_id == str(row_id))
 

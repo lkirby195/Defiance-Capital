@@ -29,7 +29,10 @@ from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, RedirectResponse
 
 from api.security import issue_csrf
+from config.config import get_config
 from db.models import User
+from schema.labels import experience_label, tranche_label
+from schema.models import ExperienceBucket, Tranche
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -86,6 +89,27 @@ def plain(value: Any) -> str:
     return str(getattr(value, "value", value))
 
 
+def tranche(value: Tranche | str | None) -> str:
+    """A credit tranche as the FICO range it stands for.  # SPEC §7.1
+
+    ``T3`` is what the caps grids are keyed on and what every ``screens`` row stores; it is
+    not what a person picked off the form, and it is not shown to one. The cutoffs are
+    config, so the label is read from there rather than written out here - which is also why
+    this is the one filter that reaches for ``get_config()``.
+    """
+    chosen = None if value is None else Tranche(value)
+    return tranche_label(chosen, get_config().credit.tranche_cutoffs)
+
+
+def experience(value: ExperienceBucket | str | None) -> str:
+    """A self-reported experience bucket as the count of deals it stands for.  # SPEC §4.1
+
+    Takes the stored string as well as the enum, so a ``<select>`` can label its own options
+    with the same function that labels the value on the deal page.
+    """
+    return experience_label(None if value is None else ExperienceBucket(value))
+
+
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.filters.update(
     money=money,
@@ -97,6 +121,8 @@ templates.env.filters.update(
     yes_no=yes_no,
     when=when,
     plain=plain,
+    tranche=tranche,
+    experience=experience,
 )
 # A missing name in a template is a bug in the template, not an empty string on the page.
 templates.env.undefined = jinja2.StrictUndefined

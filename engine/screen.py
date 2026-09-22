@@ -25,6 +25,7 @@ from typing import NamedTuple
 from config.config import Config
 from engine.sizing import size_deal
 from engine.version import ENGINE_VERSION
+from schema.labels import tranche_label
 from schema.models import (
     BorrowerInputs,
     CapStatus,
@@ -142,14 +143,12 @@ def tranche_from_score(score: int, config: Config) -> Tranche:
 
 
 def tranche_range_text(tranche: Tranche, config: Config) -> str:
-    """'740+', '700-739', ..., 'below 620', from the config cutoffs."""
-    cutoffs = config.credit.tranche_cutoffs
-    if tranche is Tranche.T5:
-        return f"below {cutoffs[Tranche.T4]}"
-    index = _TRANCHE_ORDER.index(tranche)
-    if index == 0:
-        return f"{cutoffs[tranche]}+"
-    return f"{cutoffs[tranche]}-{cutoffs[_TRANCHE_ORDER[index - 1]] - 1}"
+    """The FICO range a tranche stands for: '740+', '700–739', ..., 'Under 620'.
+
+    The one formatter, shared with the review queue (``schema/labels.py``), so a flag
+    message and the screen summary beside it never disagree about what T3 means.
+    """
+    return tranche_label(tranche, config.credit.tranche_cutoffs)
 
 
 def is_below_floor(tranche: Tranche, config: Config) -> bool:
@@ -177,9 +176,8 @@ def credit_check(borrower: BorrowerInputs, config: Config) -> CreditOutcome:
                     severity=Severity.SOFT,
                     message=(
                         f"Verified credit score {borrower.verified_credit_score} "
-                        f"({tranche.value}, {tranche_range_text(tranche, config)}) differs from "
-                        f"self-reported {self_reported.value} "
-                        f"({tranche_range_text(self_reported, config)})."
+                        f"({tranche_range_text(tranche, config)}) differs from the "
+                        f"self-reported {tranche_range_text(self_reported, config)}."
                     ),
                 )
             )
@@ -192,9 +190,9 @@ def credit_check(borrower: BorrowerInputs, config: Config) -> CreditOutcome:
                 code=ScreenFlag.CREDIT_BELOW_FLOOR,
                 severity=Severity.HARD,
                 message=(
-                    f"{'Verified' if verified else 'Self-reported'} credit {tranche.value} "
-                    f"({tranche_range_text(tranche, config)}) is below the floor tranche "
-                    f"{floor.value} ({tranche_range_text(floor, config)})."
+                    f"{'Verified' if verified else 'Self-reported'} credit "
+                    f"{tranche_range_text(tranche, config)} is below the floor of "
+                    f"{tranche_range_text(floor, config)}."
                 ),
             )
         )

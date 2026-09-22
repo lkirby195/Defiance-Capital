@@ -47,7 +47,8 @@
   </div>
   <dl class="facts small" style="margin-top:10px">
     <dt>Product</dt><dd>{{ sizing.product | plain }}</dd>
-    <dt>Caps cell</dt><dd>{{ sizing.credit_tranche | plain }} × {{ sizing.experience_tier | plain }}</dd>
+    <dt>Caps cell</dt>
+    <dd>{{ sizing.credit_tranche | tranche }} × {{ sizing.experience_tier | plain }}</dd>
     <dt>Rehab + contingency</dt><dd>{{ sizing.rehab_adj | money }}</dd>
     <dt>Buy-side closing (borrower cash)</dt><dd>{{ sizing.buy_closing | money }}</dd>
     <dt>Total cost</dt><dd>{{ sizing.total_cost | money }}</dd>

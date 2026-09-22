@@ -30,8 +30,24 @@ from tests.conftest import USER_PASSWORD, QueueClient, requires_db, sign_in
 
 pytestmark = requires_db
 
+# A complete team-entry body, so the intake posts below are refused for the token and not
+# for a missing box (``api/intake_form.py``).
+COMPLETE_INTAKE: dict[str, Any] = {
+    "borrower_name": "Sam",
+    "borrower_phone": "918-555-0101",
+    "credit_range": "T2",
+    "experience_bucket": "3_5",
+    "repeat_borrower": "false",
+    "address": "1 Main St, Tulsa, OK 74119",
+    "purchase_price": "100000.00",
+    "rehab_budget": "0",
+    "loan_requested": "70000.00",
+    "term_bucket": "9",
+}
+
 # Every state-changing path a browser posts to, with a body that would otherwise be accepted.
 GUARDED: list[tuple[str, dict[str, Any]]] = [
+    ("/queue/deals/{deal}/intake", COMPLETE_INTAKE),
     ("/queue/deals/{deal}/screen", {}),
     ("/queue/deals/{deal}/underwrite", {}),
     ("/queue/deals/{deal}/overrides", {"as_is_value_team": "250000.00"}),
@@ -40,7 +56,7 @@ GUARDED: list[tuple[str, dict[str, Any]]] = [
     ("/queue/deals/{deal}/dead", {"reason": "went quiet"}),
     ("/queue/deals/{deal}/reopen", {"reason": "new ARV"}),
     ("/queue/deals/{deal}/note", {"note": "spoke to the broker"}),
-    ("/intake/team", {"borrower_name": "Sam"}),
+    ("/intake/team", COMPLETE_INTAKE),
     ("/logout", {}),
 ]
 
@@ -226,6 +242,7 @@ def test_a_get_is_not_guarded(client: QueueClient, deal_with_overrides: Deal) ->
     """A route that changes something on a GET would be the bug, not the missing token."""
     assert client.get("/queue").status_code == 200
     assert client.get(f"/queue/deals/{deal_with_overrides.id}").status_code == 200
+    assert client.get(f"/queue/deals/{deal_with_overrides.id}/intake").status_code == 200
     assert client.get("/queue/new").status_code == 200
 
 
@@ -258,7 +275,9 @@ def forms_on(body: str) -> list[str]:
     return FORM_TAG.findall(body)
 
 
-@pytest.mark.parametrize("path", ["/queue", "/queue/new", "/queue/deals/{deal}"])
+@pytest.mark.parametrize(
+    "path", ["/queue", "/queue/new", "/queue/deals/{deal}", "/queue/deals/{deal}/intake"]
+)
 def test_every_post_form_on_a_page_carries_the_field(
     client: QueueClient, deal_with_overrides: Deal, path: str
 ) -> None:
