@@ -367,7 +367,7 @@ The two split products carry an explicit `loan_purchase_portion` and `loan_rehab
 - `SPLIT_PRINCIPAL`: `principal_note = loan_purchase_portion`; `tranche_a = min(rehab_adj, loan_rehab_portion)`; `commitment = principal_note + tranche_a`
 - Either split product with **no split entered**: `commitment = loan_requested` and no split is reported. That is a borrower-channel intake nobody has divided yet; the screen runs, the underwrite refuses (§8.1)
 
-The rehab side is capped at `rehab_adj` on both: the lender does not hold back more than the contingency-adjusted rehab budget could ever draw. On `SPLIT_PRINCIPAL` the cap lowers the commitment below the request, which is what `COMMITMENT_BELOW_REQUEST` (Info, §7.5) reports; on `SPLIT_DRAW` it does not, because there is one note — the money above the cap is advanced at close instead of held back, so only the timing moves.
+The rehab side is capped at `rehab_adj` on both: the lender does not hold back more than the contingency-adjusted rehab budget could ever draw. Whenever that cap bites, `REHAB_PORTION_EXCEEDS_BUDGET` (Info) names the portion entered and the budget it was capped at. What happens next differs by product: on `SPLIT_PRINCIPAL` the cap lowers the commitment below the request, which `COMMITMENT_BELOW_REQUEST` (Info) reports as well; on `SPLIT_DRAW` it does not, because there is one note — the money above the cap is advanced at close instead of held back, so only the timing moves and the Info flag is the only sign of it.
 
 Output: pass/fail on each cap, with the cap and the actual.
 

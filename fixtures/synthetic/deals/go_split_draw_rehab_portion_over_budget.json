@@ -1,0 +1,56 @@
+{
+  "name": "go_split_draw_rehab_portion_over_budget",
+  "description": "The go_split_draw_denver deal with the $200,000 request divided 130,000 purchase / 70,000 rehab instead. The rehab side is over the contingency-adjusted rehab budget ($55,000), so the holdback is capped there and the $15,000 difference is advanced at close. One note, so the commitment is still the full request and every leverage number is the Denver deal's: the Info flag is the only thing that moves. Go.",
+  "inputs": {
+    "deal": {
+      "product": "SPLIT_DRAW",
+      "purchase_price": "200000.00",
+      "rehab_budget": "50000.00",
+      "loan_requested": "200000.00",
+      "as_is_value": "270000.00",
+      "arv": "330000.00",
+      "loan_purchase_portion": "130000.00",
+      "loan_rehab_portion": "70000.00"
+    },
+    "state": "CO",
+    "borrower": {
+      "credit_range_self_reported": "T1",
+      "experience_bucket_self_reported": "6_PLUS",
+      "repeat_borrower_self_reported": false
+    },
+    "court_records": {
+      "as_of": "2026-09-09"
+    }
+  },
+  "expected": {
+    "verdict": "GO",
+    "flags": [
+      {
+        "code": "REHAB_PORTION_EXCEEDS_BUDGET",
+        "severity": "INFO"
+      }
+    ],
+    "credit_tranche": "T1",
+    "experience_tier": "E3",
+    "repeat_borrower_override_applied": false,
+    "all_pass": true,
+    "commitment": "200000.00",
+    "funded_at_close": "145000.00",
+    "split": {
+      "purchase_portion": "130000.00",
+      "rehab_portion": "55000.00"
+    },
+    "metrics": {
+      "LTC": "PASS",
+      "LTV_AS_IS": "PASS",
+      "LTARV": "PASS"
+    },
+    "reasons_contain": [
+      "Info: SPLIT_DRAW rehab portion $70,000.00 exceeds the contingency-adjusted rehab budget $55,000.00; the holdback is capped at the budget and the difference is advanced at close."
+    ],
+    "reply_contains": [
+      "fit on first pass",
+      "credit authorization"
+    ]
+  }
+}
