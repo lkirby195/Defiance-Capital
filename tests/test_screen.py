@@ -124,10 +124,19 @@ def test_tranche_from_score_uses_config_cutoffs(score: int, tranche: Tranche) ->
 
 
 def test_tranche_range_text() -> None:
+    """The label a person reads; the T-code stays the stored value (SPEC §7.1)."""
     assert tranche_range_text(Tranche.T1, CONFIG) == "740+"
-    assert tranche_range_text(Tranche.T2, CONFIG) == "700-739"
-    assert tranche_range_text(Tranche.T4, CONFIG) == "620-659"
-    assert tranche_range_text(Tranche.T5, CONFIG) == "below 620"
+    assert tranche_range_text(Tranche.T2, CONFIG) == "700–739"
+    assert tranche_range_text(Tranche.T4, CONFIG) == "620–659"
+    assert tranche_range_text(Tranche.T5, CONFIG) == "Under 620"
+
+
+def test_tranche_range_text_follows_the_config_cutoffs() -> None:
+    """A lender who moves a cutoff moves the label with it; nothing here is written out."""
+    moved = config_with(credit={"tranche_cutoffs": {"T1": 760, "T2": 720, "T3": 680, "T4": 640}})
+    assert tranche_range_text(Tranche.T1, moved) == "760+"
+    assert tranche_range_text(Tranche.T2, moved) == "720–759"
+    assert tranche_range_text(Tranche.T5, moved) == "Under 640"
 
 
 def test_floor_tranche_is_config() -> None:
@@ -143,7 +152,7 @@ def test_credit_below_floor_is_hard_and_names_the_floor() -> None:
     assert outcome.tranche is Tranche.T5 and outcome.verified is False
     [flag] = outcome.flags
     assert flag.code is ScreenFlag.CREDIT_BELOW_FLOOR and flag.severity is Severity.HARD
-    assert "T5 (below 620)" in flag.message and "floor tranche T4 (620-659)" in flag.message
+    assert flag.message == "Self-reported credit Under 620 is below the floor of 620–659."
 
 
 def test_verified_score_replaces_self_report_and_flags_mismatch() -> None:
@@ -151,13 +160,14 @@ def test_verified_score_replaces_self_report_and_flags_mismatch() -> None:
     assert outcome.tranche is Tranche.T4 and outcome.verified is True
     [flag] = outcome.flags
     assert flag.code is ScreenFlag.CREDIT_MISMATCH and flag.severity is Severity.SOFT
-    assert "650 (T4, 620-659)" in flag.message and "self-reported T2 (700-739)" in flag.message
+    assert "650 (620–659)" in flag.message and "self-reported 700–739" in flag.message
+    assert "T4" not in flag.message and "T2" not in flag.message
 
 
 def test_verified_score_below_floor_declines_even_if_self_report_was_fine() -> None:
     outcome = credit_check(borrower(verified_credit_score=600), CONFIG)
     assert codes(outcome.flags) == ["CREDIT_MISMATCH", "CREDIT_BELOW_FLOOR"]
-    assert outcome.flags[1].message.startswith("Verified credit T5")
+    assert outcome.flags[1].message.startswith("Verified credit Under 620")
 
 
 def test_matching_verified_score_raises_no_flag() -> None:
