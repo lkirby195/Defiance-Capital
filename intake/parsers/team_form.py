@@ -17,7 +17,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from intake.normalize import ParsedIntake
+from intake.normalize import ParsedIntake, infer_product
 from schema.models import (
     AssetType,
     BorrowerInfo,
@@ -34,6 +34,7 @@ from schema.models import (
     TermBucket,
     Tranche,
     validate_court_records,
+    validate_loan_split,
 )
 
 
@@ -59,6 +60,13 @@ class TeamEntryForm(BaseModel):
     purchase_price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     rehab_budget: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     loan_requested: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    # The split of the loan requested, on the two split products only (SPEC §8.2). The web
+    # form requires both when the product is one of those (``api/intake_form.py``); a JSON
+    # post of a partial intake may carry neither, which is a deal nobody has divided yet.
+    loan_purchase_portion: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    loan_rehab_portion: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     term_bucket: TermBucket | None = None
     # Team-only extras (SPEC §4.2 "extra ones unlocked")
     asset_type: AssetType | None = None  # with the term, drives the exit inference (SPEC §3)
@@ -83,6 +91,31 @@ class TeamEntryForm(BaseModel):
     court_records_status: CourtRecordsStatus | None = None
     court_records_as_of: date | None = None  # the day the team searched; lookbacks run from it
     court_records_team: list[TeamCourtRecord] = Field(default_factory=list)
+
+    @property
+    def effective_product(self) -> Product | None:
+        """The product this form produces: the one chosen, else the inferred one.  # SPEC §3
+
+        The product box may be left blank, in which case the normalizer infers it from the
+        rehab budget. The split rules are about the product the deal will end up with, so
+        they are tested against that rather than against an empty box.
+        """
+        if self.product is not None:
+            return self.product
+        if self.rehab_budget is None:
+            return None
+        return infer_product(self.rehab_budget)
+
+    @model_validator(mode="after")
+    def _loan_split_is_coherent(self) -> TeamEntryForm:
+        """The same check ``DealInfo`` makes, against the product the form will produce."""
+        validate_loan_split(
+            self.effective_product,
+            self.loan_requested,
+            self.loan_purchase_portion,
+            self.loan_rehab_portion,
+        )
+        return self
 
     @model_validator(mode="after")
     def _court_records_are_coherent(self) -> TeamEntryForm:
@@ -116,6 +149,8 @@ def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
             purchase_price=form.purchase_price,
             rehab_budget=form.rehab_budget,
             loan_requested=form.loan_requested,
+            loan_purchase_portion=form.loan_purchase_portion,
+            loan_rehab_portion=form.loan_rehab_portion,
             term_bucket=form.term_bucket,
             asset_type=form.asset_type,
             stated_exit=form.stated_exit,

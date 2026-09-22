@@ -26,6 +26,13 @@
     <dt>Purchase price</dt><dd>{{ deal.purchase_price | money }}</dd>
     <dt>Rehab budget</dt><dd>{{ deal.rehab_budget | money }}</dd>
     <dt>Loan requested</dt><dd>{{ deal.loan_requested | money }}</dd>
+    <dt>Loan split</dt>
+    <dd>
+      {% if deal.loan_purchase_portion is not none %}
+        {{ deal.loan_purchase_portion | money }} purchase +
+        {{ deal.loan_rehab_portion | money }} rehab
+      {% else %}—{% endif %}
+    </dd>
     <dt>Term bucket</dt><dd>{{ deal.term_bucket | plain }}</dd>
     <dt>Product</dt>
     <dd>{{ deal.product | plain }} <span class="small muted">({{ deal.product_source | plain }})</span></dd>
@@ -78,14 +85,51 @@
     </form>
     <form method="post" action="/queue/deals/{{ deal.id }}/underwrite">
       {{ csrf.field(csrf_token) }}
-      <button type="submit">Run underwrite</button>
+      <button type="submit" {% if not readiness.ready %}disabled{% endif %}>Run underwrite</button>
     </form>
   </div>
   <p class="small muted" style="margin-top:10px">
-    The screen takes no paid pulls (SPEC §7). The underwrite needs an as-is value, an ARV, a
-    market rent and annual utilities — enter them below first, or it will say which are
-    missing.
+    The screen takes no paid pulls (SPEC §7). The underwrite runs on what the deal already
+    carries — the checklist below is that, in full.
   </p>
+
+  <h3>Underwrite inputs <span class="muted">(SPEC §8.1)</span></h3>
+  {% if readiness.ready %}
+    <p class="small muted">
+      Everything required is on the deal. Anything below marked MISSING is optional; the note
+      says what the run does without it.
+    </p>
+  {% else %}
+    <div class="banner">
+      <strong>Run underwrite is off until these are entered</strong>
+      <ul class="plain small">
+        {% for name in readiness.missing %}<li>{{ name }}</li>{% endfor %}
+      </ul>
+      Enter them on <a href="/queue/deals/{{ deal.id }}/intake">the intake</a> or in the Team
+      entry block below, then come back.
+    </div>
+  {% endif %}
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Input</th><th class="num">Value</th><th>From</th><th>Needed</th><th>Note</th></tr>
+      </thead>
+      <tbody>
+        {% for row in readiness.rows %}
+          <tr>
+            <td>{{ row.label }}</td>
+            <td class="num">
+              {% if row.money %}{{ row.value | money }}{% else %}{{ row.value | plain }}{% endif %}
+            </td>
+            <td><span class="tag {{ 'HARD' if row.required and not row.satisfied
+                     else ('GO' if row.satisfied else 'INFO') }}">{{ row.source | plain }}</span></td>
+            <td class="small">{{ "Required" if row.required else "Optional" }}</td>
+            <td class="small muted">{{ row.note }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </section>
 
 {# --- team actions (SPEC §4.6) ------------------------------------------------------------- #}
@@ -284,7 +328,13 @@
 
     <h3>Lender yield grid (SPEC §8.5)</h3>
     <p class="small muted">
-      Target {{ result.grid_lender.target | pct }}. Shaded cells meet it; the outlined column
+      Target {{ result.grid_lender.target | pct }} on a
+      {{ result.sizing.commitment | money }} commitment{% if result.sizing.split %},
+        {{ result.sizing.split.purchase_portion | money }} +
+        {{ result.sizing.split.rehab_portion | money }}
+        ({{ "Principal Note + Tranche A" if result.sizing.product | plain == "SPLIT_PRINCIPAL"
+            else "advanced at close + holdback" }}){% endif %}.
+      Shaded cells meet it; the outlined column
       is r*{{ ", inserted into the grid in rate order" if result.grid_lender.solved_rate_inserted
       else ", which already sat on the configured grid" }}.
     </p>
@@ -317,6 +367,13 @@
     </div>
 
     <h3>Exit — DSCR takeout</h3>
+    {% if result.exit.status | plain == "NOT_EVALUATED" %}
+      <p class="small muted">
+        <strong>NOT_EVALUATED</strong> — no market rent on the deal, so there is no NOI to
+        size a takeout against and nothing stands in for one. Whether a refinance covers the
+        payoff is unknown, not false. Enter a market rent and re-run.
+      </p>
+    {% endif %}
     <dl class="facts small">
       <dt>Exit type</dt>
       <dd>{{ result.exit.type | plain }}
@@ -336,7 +393,7 @@
       <dt>DSCR at payoff</dt><dd>{{ result.exit.dscr_at_payoff | ratio }}</dd>
       <dt>Refi covers</dt>
       <dd>{{ result.exit.refi_covers | yes_no }}
-        {% if not result.exit.refi_covers %}
+        {% if result.exit.refi_covers is false %}
           <span class="muted">short {{ result.exit.shortfall | money }}</span>{% endif %}</dd>
     </dl>
 

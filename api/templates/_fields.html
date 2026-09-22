@@ -9,16 +9,24 @@
    The attribute is a courtesy, not a control: `api/intake_form.py` checks the same list on
    the way in. #}
 
-{% macro badge(required) %}<span class="{{ "req" if required else "opt" }}">{{ "Required" if required else "Optional" }}</span>{% endmacro %}
+{# Three states, not two. A box can be required only on some deals - the loan split is
+   required on the two split products and forbidden on the other two (SPEC §8.2) - and the
+   product itself may be left blank for the normalizer to infer, so the browser cannot be
+   told which. It is marked as what it is and checked on the server. #}
+{% macro badge(required, mark="") %}
+  {%- if mark == "split" %}<span class="cond">Required for a split</span>
+  {%- elif required %}<span class="req">Required</span>
+  {%- else %}<span class="opt">Optional</span>{% endif -%}
+{% endmacro %}
 
-{% macro caption(name, text, required) %}<label for="{{ name }}">{{ text }} {{ badge(required) }}</label>{% endmacro %}
+{% macro caption(name, text, required, mark="") %}<label for="{{ name }}">{{ text }} {{ badge(required, mark) }}</label>{% endmacro %}
 
-{% macro text_box(name, text, value, required=false, kind="", mode="", maxlength=0, disabled=false, id="") %}
+{% macro text_box(name, text, value, required=false, kind="", mode="", maxlength=0, disabled=false, id="", mark="") %}
   {#- ``id`` only where one page carries the same name twice: the three reason boxes in the
       action block all post ``reason`` and each needs a label of its own. -#}
   {% set box = id or name %}
   <div>
-    {{ caption(box, text, required) }}
+    {{ caption(box, text, required, mark) }}
     <input id="{{ box }}" name="{{ name }}"
            {%- if kind %} type="{{ kind }}"{% endif %}
            {%- if mode %} inputmode="{{ mode }}"{% endif %}

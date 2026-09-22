@@ -8,7 +8,9 @@
       "rehab_budget": "40000.00",
       "loan_requested": "135000.00",
       "as_is_value": "110000.00",
-      "arv": "180000.00"
+      "arv": "180000.00",
+      "loan_purchase_portion": "91000.00",
+      "loan_rehab_portion": "44000.00"
     },
     "state": "OK",
     "borrower": {

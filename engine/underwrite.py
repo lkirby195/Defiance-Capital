@@ -45,6 +45,7 @@ from schema.models import (
     Flag,
     Product,
     Severity,
+    TakeoutStatus,
     UnderwriteFlag,
     UnderwriteInputs,
     UnderwriteResult,
@@ -102,8 +103,39 @@ def solve_flags(solved_rate: Decimal, config: Config) -> list[Flag]:
     ]
 
 
+def _evaluated(value: Decimal | None) -> Decimal:
+    """A rent-derived takeout figure, past the NOT_EVALUATED guard.
+
+    ``ExitResult`` validates that an EVALUATED takeout carries every one of them, so this
+    narrows the type rather than testing anything a caller could get wrong.
+    """
+    if value is None:  # pragma: no cover - ExitResult's own validator forbids it
+        raise ValueError("an EVALUATED takeout carries every figure the rent feeds")
+    return value
+
+
 def exit_flags(exit_result: ExitResult, config: Config) -> list[Flag]:
-    """REFI_SHORTFALL when the max takeout does not cover the payoff due.  # SPEC §8.6"""
+    """The takeout's own flags: no rent to run it on, or a shortfall.  # SPEC §8.1, §8.6
+
+    MARKET_RENT_MISSING is fixed INFO and replaces the shortfall test rather than joining
+    it: with no rent there is no NOI, so there is no takeout that could fall short. Saying
+    REFI_SHORTFALL here would be reporting a failure the deal has not been shown to have.
+    """
+    if exit_result.status is TakeoutStatus.NOT_EVALUATED:
+        return [
+            Flag(
+                code=UnderwriteFlag.MARKET_RENT_MISSING,
+                severity=Severity.INFO,
+                message=(
+                    "No market rent on the deal, so the DSCR takeout was not evaluated: "
+                    "there is no NOI to size a takeout loan against, and nothing stands in "
+                    f"for a rent. The {pct(config.takeout.ltv)} LTV takeout "
+                    f"{money(exit_result.ltv_takeout)} and the "
+                    f"{money(exit_result.payoff_due)} payoff due are reported regardless; "
+                    "enter a rent and re-run to test whether a refinance covers it."
+                ),
+            )
+        ]
     if exit_result.refi_covers:
         return []
     takeout = config.takeout
@@ -112,12 +144,13 @@ def exit_flags(exit_result: ExitResult, config: Config) -> list[Flag]:
             code=UnderwriteFlag.REFI_SHORTFALL,
             severity=config.flags.underwrite_severities[UnderwriteFlag.REFI_SHORTFALL],
             message=(
-                f"DSCR takeout {money(exit_result.max_takeout)} (lesser of {pct(takeout.ltv)} "
-                f"LTV on ARV = {money(exit_result.ltv_takeout)} and the loan at "
-                f"{takeout.dscr_floor:.2f}x DSCR, {pct(takeout.rate)} / "
-                f"{takeout.amortization_years}-yr = {money(exit_result.dscr_takeout)}) does not "
-                f"cover the {money(exit_result.payoff_due)} payoff due (commitment + payoff "
-                f"fees); shortfall {money(exit_result.shortfall)}."
+                f"DSCR takeout {money(_evaluated(exit_result.max_takeout))} (lesser of "
+                f"{pct(takeout.ltv)} LTV on ARV = {money(exit_result.ltv_takeout)} and the "
+                f"loan at {takeout.dscr_floor:.2f}x DSCR, {pct(takeout.rate)} / "
+                f"{takeout.amortization_years}-yr = "
+                f"{money(_evaluated(exit_result.dscr_takeout))}) does not cover the "
+                f"{money(exit_result.payoff_due)} payoff due (commitment + payoff fees); "
+                f"shortfall {money(_evaluated(exit_result.shortfall))}."
             ),
         )
     ]

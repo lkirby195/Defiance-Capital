@@ -18,7 +18,13 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from api.intake_form import REQUIRED_FIELDS, REQUIRED_NAMES, TEAM_ENTRY_FIELDS, intake_form_values
+from api.intake_form import (
+    REQUIRED_FIELDS,
+    REQUIRED_NAMES,
+    SPLIT_NAMES,
+    TEAM_ENTRY_FIELDS,
+    intake_form_values,
+)
 from db.models import Deal
 from schema.models import ExperienceBucket, Tranche
 from tests.conftest import QueueClient, requires_db
@@ -129,7 +135,12 @@ def test_every_box_on_the_form_says_which_it_is(
     shown = labels(body)
     for name in TEAM_ENTRY_FIELDS:
         assert name in shown, f"{name} has no label"
-        marker = "Required" if name in REQUIRED_NAMES else "Optional"
+        if name in SPLIT_NAMES:
+            # the third state: required on a split product and forbidden on the other two
+            # (SPEC §8.2), and the product box may be blank for the normalizer to infer
+            marker = "Required for a split"
+        else:
+            marker = "Required" if name in REQUIRED_NAMES else "Optional"
         assert marker in shown[name], f"{name} is not marked {marker}"
     # the repeated court-matter columns are marked once each, in the header
     assert body.count('<span class="opt">Optional</span>') >= len(TEAM_ENTRY_FIELDS) - len(
@@ -144,6 +155,8 @@ def test_the_browser_is_asked_to_hold_the_same_line(client: QueueClient) -> None
         assert name in found, f"{name} is not on the page"
         required = re.search(r"\srequired[\s>]", found[name]) is not None
         assert required is (name in REQUIRED_NAMES), name
+    # the conditional pair carries no attribute: HTML cannot say "required on some deals"
+    assert SPLIT_NAMES.isdisjoint(REQUIRED_NAMES)
 
 
 def test_the_required_list_is_the_minimum_viable_intake() -> None:

@@ -21,7 +21,9 @@
     "actual_annual_utilities_usd": "840.00",
     "market_rent_monthly": "2400.00",
     "court_records_status": "CLEAN",
-    "court_records_as_of": "2026-09-16"
+    "court_records_as_of": "2026-09-16",
+    "loan_purchase_portion": "138800.00",
+    "loan_rehab_portion": "46200.00"
   },
   "expected": {
     "verdict": "GO",

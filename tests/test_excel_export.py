@@ -19,7 +19,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from cli.fixtures import run_fixture
 from cli.main import main
 from config.config import Config
-from schema.models import UnderwriteResult
+from schema.models import TakeoutStatus, UnderwriteResult
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures/synthetic/deals"
 CONFIG = Config.load()
@@ -163,13 +163,19 @@ def test_borrower_exit_and_downside_sheets_match_the_engine(
     exit_values = labelled(book["Exit"])
     exit_result = result.exit
     assert exit_values["Exit type"] == exit_result.type.value
-    assert close(exit_values["NOI (annual)"], exit_result.noi_annual)
+    assert exit_values["Takeout"] == exit_result.status.value
     assert close(exit_values["Annual taxes"], exit_result.annual_taxes)
     assert close(exit_values["Annual insurance"], exit_result.annual_insurance)
-    assert close(exit_values["Max takeout"], exit_result.max_takeout)
     assert close(exit_values["Payoff due"], exit_result.payoff_due)
-    assert close(exit_values["Shortfall"], exit_result.shortfall)
-    assert exit_values["Refi covers"] is exit_result.refi_covers
+    if exit_result.status is TakeoutStatus.NOT_EVALUATED:
+        # the workbook leaves them blank rather than writing a zero somebody would read
+        for label in ("NOI (annual)", "Max takeout", "Shortfall", "Refi covers"):
+            assert exit_values[label] is None, label
+    else:
+        assert close(exit_values["NOI (annual)"], exit_result.noi_annual)
+        assert close(exit_values["Max takeout"], exit_result.max_takeout)
+        assert close(exit_values["Shortfall"], exit_result.shortfall)
+        assert exit_values["Refi covers"] is exit_result.refi_covers
 
     downside = labelled(book["Downside"])
     reo = result.downside

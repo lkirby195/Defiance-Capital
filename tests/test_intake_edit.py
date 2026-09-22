@@ -145,7 +145,13 @@ def test_an_edit_does_not_drag_a_screened_deal_backwards(
 
     assert (
         edit(
-            client, deal_id, form_body(team_entry_with_overrides, loan_requested="151000.00")
+            client,
+            deal_id,
+            form_body(
+                team_entry_with_overrides,
+                loan_requested="151000.00",
+                loan_purchase_portion="104800.00",
+            ),
         ).status_code
         == 303
     )
@@ -163,15 +169,28 @@ def test_an_edit_records_who_did_it_and_what_moved(
     edit(
         client,
         stored_deal.id,
-        form_body(team_entry, loan_requested="175000.00", borrower_email="dana.w@example.com"),
+        form_body(
+            team_entry,
+            loan_requested="175000.00",
+            loan_purchase_portion="128800.00",  # the split still has to add up (SPEC §8.2)
+            borrower_email="dana.w@example.com",
+        ),
     )
 
     db_session.expire_all()
     [row] = trail(db_session, AuditAction.INTAKE_EDITED)
     assert row.actor == "sam@glenwood.example"
     assert row.table_name == "deals" and row.row_id == str(stored_deal.id)
-    assert row.after == {"loan_requested": "175000.00", "borrower.email": "dana.w@example.com"}
-    assert row.before == {"loan_requested": "190000.00", "borrower.email": "dana@example.com"}
+    assert row.after == {
+        "loan_requested": "175000.00",
+        "loan_purchase_portion": "128800.00",
+        "borrower.email": "dana.w@example.com",
+    }
+    assert row.before == {
+        "loan_requested": "190000.00",
+        "loan_purchase_portion": "143800.00",
+        "borrower.email": "dana@example.com",
+    }
 
 
 def test_completing_an_intake_records_the_status_move(
@@ -269,7 +288,11 @@ def test_a_closed_or_committed_deal_is_not_edited(
     assert page.status_code == 303
     assert page.headers["location"].startswith(f"/queue/deals/{stored_deal.id}")
 
-    posted = edit(client, stored_deal.id, form_body(team_entry, loan_requested="1000.00"))
+    posted = edit(
+        client,
+        stored_deal.id,
+        form_body(team_entry, loan_requested="120000.00", loan_purchase_portion="73800.00"),
+    )
     assert posted.status_code == 409
     assert status.value in posted.text
 

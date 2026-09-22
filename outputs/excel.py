@@ -26,9 +26,11 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from config.config import Config
 from schema.models import (
+    SPLIT_PRODUCTS,
     Product,
     ScreenInputs,
     SizingResult,
+    TakeoutStatus,
     UnderwriteInputs,
     UnderwriteResult,
     ValueBasis,
@@ -110,7 +112,8 @@ def _sheet_inputs(
             _source(deal.as_is_value_source),
         ),
         ("ARV", deal.arv, MONEY, _source(deal.arv_source)),
-        ("Purchase portion override", deal.purchase_portion_override, MONEY, "team override"),
+        ("Loan purchase portion", deal.loan_purchase_portion, MONEY, "split products only"),
+        ("Loan rehab portion", deal.loan_rehab_portion, MONEY, "holdback / Tranche A"),
         ("Term (months)", underwrite_inputs.term_months, INTEGER, ""),
         ("Market rent (monthly)", underwrite_inputs.market_rent_monthly, MONEY, ""),
         ("Annual taxes", underwrite_inputs.annual_taxes_usd, MONEY, "blank = config default"),
@@ -188,11 +191,20 @@ def _sheet_sizing(book: Workbook, sizing: SizingResult, config: Config) -> None:
             if sizing.product is Product.SPLIT_PRINCIPAL
             else ("Purchase portion", "Rehab holdback")
         )
-        note = "team override" if sizing.split.purchase_portion_overridden else ""
+        note = (
+            f"entered {sizing.split.rehab_portion_requested}, capped at the "
+            "contingency-adjusted rehab budget"
+            if sizing.split.rehab_portion_capped
+            else ""
+        )
         rows += [
-            (purchase, sizing.split.purchase_portion, MONEY, note),
-            (rehab, sizing.split.rehab_portion, MONEY, ""),
+            (purchase, sizing.split.purchase_portion, MONEY, ""),
+            (rehab, sizing.split.rehab_portion, MONEY, note),
         ]
+    elif sizing.product in SPLIT_PRODUCTS:
+        rows.append(
+            ("Loan split", None, None, "not entered; sized on the loan requested (SPEC §8.2)")
+        )
     at = _rows(sheet, rows) + 1
     at = _header(sheet, at, ["Metric", "Actual", "Cap", "Limit", "Status", "Basis"])
     for metric, check in sizing.metrics.items():
@@ -250,7 +262,20 @@ def _sheet_grid(book: Workbook, result: UnderwriteResult) -> None:
     sheet = book.create_sheet("Grid")
     _title(sheet, "Lender yield grid")
     grid = result.grid_lender
-    sheet.cell(row=2, column=1, value="bold = at or above target; r* column marked")
+    sheet.cell(
+        row=2,
+        column=1,
+        value=(
+            f"on a {result.sizing.commitment:,.2f} commitment"
+            + (
+                f" ({result.sizing.split.purchase_portion:,.2f}"
+                f" + {result.sizing.split.rehab_portion:,.2f})"
+                if result.sizing.split is not None
+                else ""
+            )
+            + "; bold = at or above target; r* column marked"
+        ),
+    )
     at = 4
     head = sheet.cell(row=at, column=1, value="month")
     head.font = HEAD
@@ -315,6 +340,15 @@ def _sheet_exit(book: Workbook, result: UnderwriteResult, config: Config) -> Non
     takeout = config.takeout
     rows: list[Row] = [
         ("Exit type", exit_result.type.value, None, exit_result.exit_source.value.lower()),
+        (
+            "Takeout",
+            exit_result.status.value,
+            None,
+            ""
+            if exit_result.status is TakeoutStatus.EVALUATED
+            else "no market rent: every figure below that the rent feeds is blank, and "
+            "whether a refinance covers the payoff is unknown rather than no",
+        ),
         ("Gross rent (annual)", exit_result.gross_rent_annual, MONEY, ""),
         (
             "Annual taxes",

@@ -476,10 +476,10 @@ def test_the_run_buttons_screen_and_underwrite_the_deal(
     assert deal is not None and deal.status is Status.UNDERWRITING
 
 
-def test_the_underwrite_button_names_what_the_deal_still_needs(
+def test_the_underwrite_button_runs_without_a_rent_or_utilities(
     client: TestClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    """Utilities and market rent have no default, so a deal without them is not priced."""
+    """Both are optional now: utilities default from config, and the takeout stands down."""
     save_overrides(
         db_session,
         deal_with_overrides.id,
@@ -493,10 +493,29 @@ def test_the_underwrite_button_names_what_the_deal_still_needs(
     )
     db_session.commit()
 
+    response = client.post(
+        f"/queue/deals/{deal_with_overrides.id}/underwrite", follow_redirects=False
+    )
+    assert response.status_code == 303, response.text
+    page = client.get(f"/queue/deals/{deal_with_overrides.id}").text
+    assert "NOT_EVALUATED" in page
+    assert "MARKET_RENT_MISSING" in page
+
+
+def test_the_underwrite_button_names_what_the_deal_still_needs(
+    client: TestClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """A SPLIT_DRAW deal nobody has divided is screened and not priced.  # SPEC §8.1, §8.2"""
+    deal_with_overrides.loan_purchase_portion = None
+    deal_with_overrides.loan_rehab_portion = None
+    db_session.commit()
+
     response = client.post(f"/queue/deals/{deal_with_overrides.id}/underwrite")
     assert response.status_code == 422
-    assert "market_rent_monthly" in response.text
-    assert "annual_utilities_usd" in response.text
+    assert "deal.loan_purchase_portion" in response.text
+    assert "deal.loan_rehab_portion" in response.text
+    # and the page said so before the button was pressed
+    assert "Run underwrite is off until these are entered" in response.text
 
 
 def test_the_underwrite_button_refuses_a_closed_deal_and_keeps_the_page(

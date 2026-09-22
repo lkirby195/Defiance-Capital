@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import Deal, Screen
-from schema.models import AuditAction, ProductSource, Status
+from schema.models import SPLIT_PRODUCTS, AuditAction, ProductSource, Status
 from services.audit import DEALS, jsonable, record_audit
 from services.errors import ActionNotAllowed, ReasonRequired
 from services.requests import TeamOverrides
@@ -259,6 +259,12 @@ def _apply_product(
     A blank leaves the product alone, and a product equal to the one already on the deal
     leaves ``product_source`` alone: re-saving the block must not relabel a product the
     normalizer inferred as one a person entered.
+
+    Moving off a split product takes the loan split with it (SPEC §8.2). A NO_DRAW or
+    WHOLETAIL loan is one advance and has no purchase / rehab division, so leaving the old
+    one behind would be a deal describing a shape it no longer has - and the database says
+    so too (``ck_deals_loan_split_only_on_split_products``). Moving *onto* a split product
+    leaves the split empty, which the underwrite then names (SPEC §8.1).
     """
     chosen = overrides.product
     if chosen is None or chosen is deal.product:
@@ -269,3 +275,11 @@ def _apply_product(
     deal.product_source = ProductSource.ENTERED
     after["product"] = chosen.value
     after["product_source"] = ProductSource.ENTERED.value
+    if chosen in SPLIT_PRODUCTS:
+        return
+    for field in ("loan_purchase_portion", "loan_rehab_portion"):
+        if getattr(deal, field) is None:
+            continue
+        before[field] = jsonable(getattr(deal, field))
+        after[field] = None
+        setattr(deal, field, None)

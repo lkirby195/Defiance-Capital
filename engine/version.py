@@ -29,8 +29,30 @@ leaving the court record to Stage 1 (SPEC §8.1). The same inputs therefore prod
 flag list than they did at 0.6.0 - the §7.2 codes, COURT_RECORDS_NOT_CHECKED where nothing
 was checked, and a TEAM_SOURCED_VALUES message that can now name the court search - so the
 version moves even though no formula changed.
+
+Phase 4c (0.8.0) changes the split products and the takeout, and both change numbers.
+
+The purchase / rehab split is now entered by the team rather than derived: ``SizingInputs``
+carries ``loan_purchase_portion`` and ``loan_rehab_portion``, which add up to the loan
+requested, and ``purchase_portion_override`` is gone along with the
+``commitment - rehab_adj`` default behind it (SPEC §8.2). A split product with no split
+entered is sized on the loan requested and reports no split at all, which is where a
+borrower-channel intake sits until somebody divides it; the underwrite refuses one. The
+rehab side is still capped at ``rehab_adj`` and a SPLIT_PRINCIPAL commitment still lands
+below the request when that cap bites (COMMITMENT_BELOW_REQUEST). ``CommitmentSplit`` drops
+``purchase_portion_overridden`` - there is no derivation left to override - and gains
+``rehab_portion_requested`` and ``rehab_portion_capped``; a row written before 0.8.0 still
+rebuilds, through a validator that retires the old field.
+
+The DSCR takeout is no longer computed on a rent nobody entered. ``market_rent_monthly`` is
+optional, and without it ``ExitResult.status`` is NOT_EVALUATED, every figure the rent feeds
+is None - ``refi_covers`` included, rather than False - and the underwrite raises
+MARKET_RENT_MISSING (INFO, fixed) instead of REFI_SHORTFALL (SPEC §8.1, §8.6). Annual
+utilities gained the config default the taxes and insurance already had
+(``takeout.opex_defaults.utilities_pct_of_as_is_value``), so a deal without them is carried
+at a percentage of the as-is value instead of refusing to run.
 """
 
 from __future__ import annotations
 
-ENGINE_VERSION = "0.7.0"
+ENGINE_VERSION = "0.8.0"

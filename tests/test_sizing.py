@@ -25,6 +25,7 @@ from engine.sizing import (
     total_cost,
 )
 from schema.models import (
+    SPLIT_PRODUCTS,
     CapStatus,
     ExperienceTier,
     LeverageMetric,
@@ -39,6 +40,12 @@ D = Decimal
 
 
 def inputs(product: Product = Product.SPLIT_DRAW, **overrides: Any) -> SizingInputs:
+    """A deal, with the loan split already entered on a split product.
+
+    A split product with no split is a real state - a borrower-channel intake nobody has
+    divided (SPEC §4.2) - and it has a test of its own below. It is not the default here,
+    because almost every test in this file is about a deal somebody finished entering.
+    """
     base: dict[str, Any] = {
         "product": product,
         "purchase_price": D("100000.00"),
@@ -48,7 +55,18 @@ def inputs(product: Product = Product.SPLIT_DRAW, **overrides: Any) -> SizingInp
         "arv": D("200000.00"),
     }
     base.update(overrides)
+    if product in SPLIT_PRODUCTS and "loan_purchase_portion" not in base:
+        loan = D(base["loan_requested"])
+        # two places, like a real entry; hypothesis pushes cents through here
+        rehab = min(loan, (D(base["rehab_budget"]) * D("1.10")).quantize(D("0.01")))
+        base["loan_purchase_portion"] = loan - rehab
+        base["loan_rehab_portion"] = rehab
     return SizingInputs(**base)
+
+
+def split_inputs(product: Product, purchase: str, rehab: str) -> SizingInputs:
+    """A deal whose loan split is the pair given, whatever that pair says."""
+    return inputs(product, loan_purchase_portion=D(purchase), loan_rehab_portion=D(rehab))
 
 
 # --- §7.4 building blocks ----------------------------------------------------------------------
@@ -140,39 +158,30 @@ def test_single_note_products_have_no_split(product: Product) -> None:
     assert funded_at_close(product, commitment, split) == commitment
 
 
-def test_split_draw_default_split_and_holdback() -> None:
+def test_split_draw_holds_back_the_entered_rehab_portion() -> None:
     commitment, split = commitment_split(inputs(Product.SPLIT_DRAW), D("44000"))
-    assert commitment == D("120000.00")
+    assert commitment == D("120000.00")  # SPLIT_DRAW commitment is the loan requested
     assert split is not None
-    assert split.purchase_portion == D("76000.00")  # commitment - rehab_adj
-    assert split.rehab_portion == D("44000")  # holdback = min(rehab_adj, commitment - purchase)
-    assert split.purchase_portion_overridden is False
+    assert split.purchase_portion == D("76000.00")
+    assert split.rehab_portion == D("44000")  # the holdback, as entered
+    assert split.rehab_portion_capped is False
     assert funded_at_close(Product.SPLIT_DRAW, commitment, split) == D("76000.00")
 
 
-def test_split_draw_override_caps_holdback_at_remaining_commitment() -> None:
+def test_a_split_draw_rehab_portion_above_rehab_adj_is_advanced_at_close() -> None:
+    """One note, so the cap moves money from the holdback to close, not off the loan."""
     commitment, split = commitment_split(
-        inputs(Product.SPLIT_DRAW, purchase_portion_override=D("90000.00")), D("44000")
+        split_inputs(Product.SPLIT_DRAW, "60000.00", "60000.00"), D("44000")
     )
-    assert commitment == D("120000.00")  # SPLIT_DRAW commitment is always loan_requested
+    assert commitment == D("120000.00")
     assert split is not None
-    assert split.purchase_portion == D("90000.00")
-    assert split.rehab_portion == D("30000.00")  # min(44000, 120000 - 90000)
-    assert split.purchase_portion_overridden is True
-    assert funded_at_close(Product.SPLIT_DRAW, commitment, split) == D("90000.00")
+    assert split.rehab_portion == D("44000")  # capped at rehab_adj
+    assert split.rehab_portion_requested == D("60000.00")
+    assert split.rehab_portion_capped is True
+    assert funded_at_close(Product.SPLIT_DRAW, commitment, split) == D("76000.00")
 
 
-def test_split_draw_rehab_larger_than_loan_holds_everything_back() -> None:
-    commitment, split = commitment_split(
-        inputs(Product.SPLIT_DRAW, loan_requested=D("30000.00")), D("44000")
-    )
-    assert split is not None
-    assert split.purchase_portion == 0  # floored, never negative
-    assert split.rehab_portion == D("30000.00")
-    assert funded_at_close(Product.SPLIT_DRAW, commitment, split) == 0
-
-
-def test_split_principal_default_equals_loan_requested() -> None:
+def test_split_principal_notes_are_the_two_entered_portions() -> None:
     commitment, split = commitment_split(inputs(Product.SPLIT_PRINCIPAL), D("44000"))
     assert split is not None
     assert split.purchase_portion == D("76000.00")  # Principal Note
@@ -181,26 +190,41 @@ def test_split_principal_default_equals_loan_requested() -> None:
     assert funded_at_close(Product.SPLIT_PRINCIPAL, commitment, split) == D("76000.00")
 
 
-def test_split_principal_override_can_shrink_the_commitment() -> None:
+def test_split_principal_commitment_falls_when_tranche_a_is_capped() -> None:
     commitment, split = commitment_split(
-        inputs(Product.SPLIT_PRINCIPAL, purchase_portion_override=D("50000.00")), D("44000")
+        split_inputs(Product.SPLIT_PRINCIPAL, "50000.00", "70000.00"), D("44000")
     )
     assert split is not None
     assert split.purchase_portion == D("50000.00")
-    assert split.rehab_portion == D("44000")  # min(44000, 120000 - 50000)
+    assert split.rehab_portion == D("44000")  # Tranche A, capped at rehab_adj
     assert commitment == D("94000.00")  # Principal Note + Tranche A, SPEC §8.2
     assert funded_at_close(Product.SPLIT_PRINCIPAL, commitment, split) == D("50000.00")
 
 
+@pytest.mark.parametrize("product", sorted(SPLIT_PRODUCTS))
+def test_a_split_product_with_no_split_entered_is_sized_on_the_request(product: Product) -> None:
+    """A borrower-channel intake nobody has divided: the screen runs, with no split."""
+    data = inputs(product, loan_purchase_portion=None, loan_rehab_portion=None)
+    commitment, split = commitment_split(data, D("44000"))
+    assert commitment == D("120000.00")
+    assert split is None
+    assert funded_at_close(product, commitment, split) == commitment
+
+
 @pytest.mark.parametrize("product", [Product.NO_DRAW, Product.WHOLETAIL])
-def test_override_rejected_for_single_note_products(product: Product) -> None:
-    with pytest.raises(ValidationError, match="SPLIT_DRAW / SPLIT_PRINCIPAL"):
-        inputs(product, purchase_portion_override=D("1000.00"))
+def test_a_split_is_rejected_on_a_single_note_product(product: Product) -> None:
+    with pytest.raises(ValidationError, match="applies only to"):
+        split_inputs(product, "1000.00", "119000.00")
 
 
-def test_override_above_loan_requested_rejected() -> None:
-    with pytest.raises(ValidationError, match="cannot exceed loan_requested"):
-        inputs(Product.SPLIT_DRAW, purchase_portion_override=D("120000.01"))
+def test_a_split_that_does_not_add_up_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="must add up to the loan requested"):
+        split_inputs(Product.SPLIT_DRAW, "76000.00", "44000.01")
+
+
+def test_half_a_split_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="set together or not at all"):
+        inputs(Product.SPLIT_DRAW, loan_purchase_portion=D("76000.00"), loan_rehab_portion=None)
 
 
 @pytest.mark.parametrize(
@@ -262,9 +286,9 @@ def test_ltarv_not_available_when_arv_missing() -> None:
     assert result.all_pass is False
 
 
-def test_split_principal_override_changes_the_leverage_numerator() -> None:
+def test_a_capped_tranche_a_changes_the_leverage_numerator() -> None:
     result = size_deal(
-        inputs(Product.SPLIT_PRINCIPAL, purchase_portion_override=D("50000.00")),
+        split_inputs(Product.SPLIT_PRINCIPAL, "50000.00", "70000.00"),
         Tranche.T1,
         ExperienceTier.E3,
         CONFIG,
@@ -295,14 +319,17 @@ def test_split_invariants_hold_for_any_deal(
 ) -> None:
     data = inputs(product, purchase_price=price, rehab_budget=rehab, loan_requested=loan)
     result = size_deal(data, Tranche.T3, ExperienceTier.E1, CONFIG)
-    assert result.commitment == loan  # no override: commitment is what was asked for
     assert 0 <= result.funded_at_close <= result.commitment
     if result.split is None:
         assert product in (Product.NO_DRAW, Product.WHOLETAIL)
+        assert result.commitment == loan
     else:
         assert result.split.purchase_portion >= 0 and result.split.rehab_portion >= 0
-        assert result.split.purchase_portion + result.split.rehab_portion == result.commitment
         assert result.split.rehab_portion <= result.rehab_adj
+        # the helper never caps, so a commitment below the request means the cap bit
+        assert result.commitment <= loan
+        if product is Product.SPLIT_DRAW:
+            assert result.commitment == loan
     for check in result.metrics.values():
         assert check.actual is None or check.actual >= 0
         assert check.passed is (check.status is CapStatus.PASS)
@@ -318,9 +345,9 @@ def test_result_carries_loan_requested() -> None:
 
 
 def test_split_principal_tranche_a_never_exceeds_rehab_adj() -> None:
-    # the override leaves 110,000 of room, but Tranche A stays capped at rehab_adj = 44,000
+    # the team put 110,000 on the rehab side; Tranche A stays capped at rehab_adj = 44,000
     commitment, split = commitment_split(
-        inputs(Product.SPLIT_PRINCIPAL, purchase_portion_override=D("10000.00")), D("44000")
+        split_inputs(Product.SPLIT_PRINCIPAL, "10000.00", "110000.00"), D("44000")
     )
     assert split is not None
     assert split.rehab_portion == D("44000")

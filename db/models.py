@@ -189,6 +189,19 @@ class Deal(Base):
             "OR court_records_as_of IS NOT NULL",
             name="ck_deals_court_records_dated_when_searched",
         ),
+        # The two halves of a split loan are entered together (SPEC §8.2).
+        CheckConstraint(
+            "(loan_purchase_portion IS NULL) = (loan_rehab_portion IS NULL)",
+            name="ck_deals_loan_split_set_together",
+        ),
+        # ...and only on a product that has one. Spelled with the explicit NOT NULL rather
+        # than relying on IN, because `NULL IN (...)` is NULL and a CHECK passes on NULL:
+        # a deal with no product yet and a split on it would slip through.
+        CheckConstraint(
+            "loan_purchase_portion IS NULL "
+            "OR (product IS NOT NULL AND product IN ('SPLIT_DRAW', 'SPLIT_PRINCIPAL'))",
+            name="ck_deals_loan_split_only_on_split_products",
+        ),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -214,6 +227,11 @@ class Deal(Base):
     purchase_price: Mapped[Decimal | None] = mapped_column(MONEY)
     rehab_budget: Mapped[Decimal | None] = mapped_column(MONEY)
     loan_requested: Mapped[Decimal | None] = mapped_column(MONEY)
+    # How the loan requested divides between the purchase advance and the rehab money, on
+    # the two split products (SPEC §8.2). A team entry: a borrower-channel intake carries
+    # the amount and nothing about its shape, so both stay NULL until somebody enters them.
+    loan_purchase_portion: Mapped[Decimal | None] = mapped_column(MONEY)
+    loan_rehab_portion: Mapped[Decimal | None] = mapped_column(MONEY)
     term_bucket: Mapped[TermBucket | None] = mapped_column(_enum(TermBucket, "term_bucket"))
     # Asset type from intake; with the term it drives the exit inference (SPEC §3).
     asset_type: Mapped[AssetType | None] = mapped_column(_enum(AssetType, "asset_type"))

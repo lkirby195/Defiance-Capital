@@ -222,9 +222,13 @@ class DrawsConfig(_Section):
 class OpexDefaults(_Section):
     """Opex lines used when the deal does not supply them.  # SPEC §8.6
 
-    Rent percentages apply to gross annual rent; taxes and insurance default to a
-    percentage of the **as-is** value, not the ARV: the property is taxed and insured as
-    it stands.
+    Rent percentages apply to gross annual rent; taxes, insurance and utilities default to a
+    percentage of the **as-is** value, not the ARV: the property is carried as it stands.
+
+    There is deliberately no default for the market rent. A percentage of a value is a
+    defensible stand-in for a cost the property incurs whatever it is worth; nothing stands
+    in for what it lets for, so a deal without a rent gets no DSCR takeout (SPEC §8.6)
+    rather than one computed on a guess.
     """
 
     vacancy_pct_of_rent: Pct
@@ -232,6 +236,7 @@ class OpexDefaults(_Section):
     maintenance_pct_of_rent: Pct
     taxes_pct_of_as_is_value: Pct
     insurance_pct_of_as_is_value: Pct
+    utilities_pct_of_as_is_value: Pct
 
 
 class TakeoutConfig(_Section):

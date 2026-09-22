@@ -14,12 +14,11 @@ costs are the annual taxes, insurance, and utilities pro-rated to the payoff mon
                           - commitment
     cash_on_cash        = profit / cash_in                     # None when cash_in <= 0
 
-Annual taxes and insurance are team actuals; when absent they default to the config
-percentages of the **as-is** value (``takeout.opex_defaults``): the property is taxed and
-insured as it stands, not at its repaired value. Utilities are always a team input. These
-two figures are resolved once here and reused by the DSCR takeout (``engine.calc.exit``)
-and the REO carry (``engine.calc.downside``), so a deal carries one tax number and one
-insurance number everywhere.
+Annual taxes, insurance and utilities are team actuals; when absent they default to the
+config percentages of the **as-is** value (``takeout.opex_defaults``): the property is taxed,
+insured and carried as it stands, not at its repaired value. They are resolved once here and
+reused by the DSCR takeout (``engine.calc.exit``) and the REO carry
+(``engine.calc.downside``), so a deal carries one of each everywhere.
 """
 
 from __future__ import annotations
@@ -53,11 +52,27 @@ def resolve_annual_insurance(
     return default, OpexSource.DEFAULT
 
 
+def resolve_annual_utilities(
+    inputs: UnderwriteInputs, config: Config
+) -> tuple[Decimal, OpexSource]:
+    """Team actual when supplied, else as_is x opex_defaults.utilities_pct_of_as_is_value.
+
+    Utilities are carried on a vacant property whatever it is worth, so a percentage of the
+    as-is value is the same kind of stand-in as the tax and insurance defaults beside it -
+    unlike the market rent, which has none (SPEC §8.1).
+    """
+    if inputs.annual_utilities_usd is not None:
+        return inputs.annual_utilities_usd, OpexSource.ACTUAL
+    default = inputs.as_is_value * config.takeout.opex_defaults.utilities_pct_of_as_is_value
+    return default, OpexSource.DEFAULT
+
+
 def monthly_holding_cost(inputs: UnderwriteInputs, config: Config) -> Decimal:
     """(annual_taxes + annual_insurance + annual_utilities) / 12.  # SPEC §8.6"""
     taxes, _ = resolve_annual_taxes(inputs, config)
     insurance, _ = resolve_annual_insurance(inputs, config)
-    return (taxes + insurance + inputs.annual_utilities_usd) / TWELVE
+    utilities, _ = resolve_annual_utilities(inputs, config)
+    return (taxes + insurance + utilities) / TWELVE
 
 
 def exit_net(exit_price: Decimal, config: Config) -> Decimal:

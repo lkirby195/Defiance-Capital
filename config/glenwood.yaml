@@ -78,6 +78,7 @@ takeout:                                  # SPEC §8.6 DSCR takeout, run on ever
     maintenance_pct_of_rent: 0.05
     taxes_pct_of_as_is_value: 0.012       # of the as-is value, when annual taxes are not supplied
     insurance_pct_of_as_is_value: 0.005   # of the as-is value, when annual insurance is not supplied
+    utilities_pct_of_as_is_value: 0.004   # placeholder [v1 - revisit]: vacant-property utilities
 
 downside:                                 # SPEC §8.6 REO downside; no income / cap-rate valuation
   reo_haircut: 0.15                       # liquidation = min(as_is + rehab_adj, arv) x (1 - haircut)

@@ -78,6 +78,7 @@ from services import (
     save_overrides,
     screen_is_stale,
     screen_result,
+    underwrite_readiness,
     underwrite_result,
     update_intake,
 )
@@ -212,6 +213,10 @@ def render_deal(
             # person's call (SPEC §7), and the page's job is to make sure they know there is
             # one to make.
             "screen_is_stale": screen_is_stale(session, deal.id),
+            # What Run underwrite would run on, and why it is off when it is off
+            # (SPEC §8.1). The refusal behind the button reads the same rules, so the page
+            # cannot promise a run the assembly then declines.
+            "readiness": underwrite_readiness(deal),
             "form": form if form is not None else override_form(deal),
             "matters": matters if matters is not None else matter_rows(deal.court_records_team),
             "screen": (

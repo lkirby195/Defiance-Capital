@@ -78,6 +78,8 @@ def intake_columns(record: IntakeRecord) -> dict[str, Any]:
         "purchase_price": record.deal.purchase_price,
         "rehab_budget": record.deal.rehab_budget,
         "loan_requested": record.deal.loan_requested,
+        "loan_purchase_portion": record.deal.loan_purchase_portion,
+        "loan_rehab_portion": record.deal.loan_rehab_portion,
         "term_bucket": record.deal.term_bucket,
         "asset_type": record.deal.asset_type,
         "stated_exit": record.deal.stated_exit,
