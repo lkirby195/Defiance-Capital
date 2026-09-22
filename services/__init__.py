@@ -23,7 +23,7 @@ from services.actions import (
     reopen_status,
     save_overrides,
 )
-from services.audit import DEALS, USERS, deal_trail, last_action_at, record_audit
+from services.audit import DEALS, USERS, deal_trail, jsonable, last_action_at, record_audit
 from services.enrichment import NO_ADAPTER_VALUES, AdapterValues, adapter_values
 from services.errors import (
     ActionNotAllowed,
@@ -35,7 +35,13 @@ from services.errors import (
     UserExists,
     UserNotFound,
 )
-from services.intake import create_deal
+from services.intake import (
+    EDIT_INTAKE_FROM,
+    create_deal,
+    latest_submission,
+    screen_is_stale,
+    update_intake,
+)
 from services.lifecycle import (
     advance_after_screen,
     advance_for_underwrite,
@@ -77,6 +83,7 @@ __all__ = [
     "ADVANCE_TO_REVIEW_FROM",
     "DEALS",
     "DECLINE_FROM",
+    "EDIT_INTAKE_FROM",
     "MARK_DEAD_FROM",
     "NO_ADAPTER_VALUES",
     "REOPEN_FROM",
@@ -111,9 +118,11 @@ __all__ = [
     "decline",
     "get_user",
     "hash_password",
+    "jsonable",
     "last_action_at",
     "last_activity",
     "latest_screen",
+    "latest_submission",
     "latest_underwrite",
     "list_users",
     "load_deal",
@@ -129,10 +138,12 @@ __all__ = [
     "run_screen",
     "run_underwrite",
     "save_overrides",
+    "screen_is_stale",
     "screen_result",
     "status_after_screen",
     "status_after_underwrite",
     "underwrite_result",
+    "update_intake",
     "user_by_email",
     "verify_password",
 ]

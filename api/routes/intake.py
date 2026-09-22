@@ -25,15 +25,20 @@ from sqlalchemy.orm import Session
 from starlette.datastructures import FormData
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from api.forms import fields, is_form_post, problems, rows
-from api.render import page, redirect
-from api.routes.queue import MATTER_FIELDS, TEAM_ENTRY_FIELDS, enum_values, redisplay
+from api.forms import fields, is_form_post, rows
+from api.intake_form import intake_record, read_form
+from api.render import redirect
+from api.routes.queue import (
+    MATTER_FIELDS,
+    NEW_DEAL_INTRO,
+    redisplay,
+    team_entry_page,
+)
 from api.security import PostedUser, require_csrf
 from db.models import User
 from db.session import get_session
-from intake.normalize import normalize
-from intake.parsers.team_form import TeamEntryForm, parse_team_form
-from schema.models import Channel, IntakeRecord
+from intake.parsers.team_form import TeamEntryForm
+from schema.models import IntakeRecord
 from services import create_deal
 
 # The form half of this route is a browser post like any other, so it is guarded like
@@ -44,14 +49,8 @@ SessionDep = Annotated[Session, Depends(get_session)]
 
 
 def store(session: Session, form: TeamEntryForm, actor: str) -> IntakeRecord:
-    """Normalize, persist, audit, commit. The same path for both content types.
-
-    The raw payload kept on the immutable ``intake_submissions`` row is the validated form
-    rather than the bytes that arrived, so a JSON post and a form post of the same deal are
-    stored identically and neither carries a stray control field.
-    """
-    payload = form.model_dump(mode="json", exclude_none=True)
-    record = normalize(parse_team_form(form), Channel.TEAM, raw_payload=payload)
+    """Normalize, persist, audit, commit. The same path for both content types."""
+    record = intake_record(form)
     create_deal(session, record, actor=actor)
     session.commit()
     return record
@@ -81,23 +80,30 @@ async def submit_team_entry(request: Request, session: SessionDep, user: PostedU
 def _from_form(
     request: Request, session: Session, user: User, posted: FormData
 ) -> HTMLResponse | RedirectResponse:
-    """The browser half: validate, and on a rejection put the page back with the values on it."""
+    """The browser half: validate, and on a rejection put the page back with the values on it.
+
+    The form insists on the minimum viable intake and the JSON body above does not, which is
+    the one place the two content types deliberately part company. A partial intake is a real
+    thing (SPEC §4.1) and arrives from a channel that only has part of one - an SMS, a
+    listing link - or from a client posting JSON. A person sitting in front of this page has
+    the borrower on the phone; the ten boxes it marks Required are what the deal cannot be
+    screened without, and a browser that skipped them never reaches here anyway.
+    """
     submitted = fields(posted, skip=("matter_",))
     matters = rows(posted, "matter", MATTER_FIELDS)
-    try:
-        form = TeamEntryForm.model_validate({**submitted, "court_records_team": matters})
-    except ValidationError as exc:
-        return page(
+    form, complaints = read_form(submitted, matters)
+    if form is None:
+        return team_entry_page(
             request,
-            "team_entry.html",
-            {
-                "enums": enum_values(),
-                # Every name the template renders, so a dropped blank is still a blank box.
-                "form": {**dict.fromkeys(TEAM_ENTRY_FIELDS, ""), **submitted},
-                "matters": redisplay(matters),
-                "problems": problems(exc),
-            },
-            user=user,
+            user,
+            action="/intake/team",
+            heading="New deal",
+            intro=NEW_DEAL_INTRO,
+            submit_label="Create deal",
+            back_url="",
+            form=submitted,
+            matters=redisplay(matters),
+            complaints=complaints,
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
     record = store(session, form, user.email)

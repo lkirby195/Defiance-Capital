@@ -31,6 +31,7 @@ glenwood-uw/
   schema/
     intake.json            # canonical IntakeRecord JSON schema (generated from Pydantic, committed)
     models.py              # IntakeRecord, UnderwriteResult, enums (Product, Tranche, ExperienceTier, Verdict, ...)
+    labels.py              # what a person is shown where the model stores a code (T3 -> "660-699")
   engine/
     sizing.py              # LTV / LTC / LTARV, product-specific commitment split
     screen.py              # score components + verdict + reasons
@@ -63,7 +64,7 @@ glenwood-uw/
     assemble.py            # deals row -> ScreenInputs / UnderwriteInputs; adapter-over-team
     audit.py               # append audit_log rows; read one deal's trail
     enrichment.py          # what the adapters produced (Phase 3); the precedence rule
-    intake.py              # store an IntakeRecord with an actor
+    intake.py              # store an IntakeRecord with an actor; re-apply an edited one
     lifecycle.py           # the two automatic status transitions (SPEC 4.6)
     passwords.py           # PBKDF2 hash / verify; pure
     persistence.py         # append screens / underwrites rows; rebuild results from them
@@ -75,6 +76,7 @@ glenwood-uw/
     main.py, routes/       # auth, queue, intake, deals
     security.py            # the signed session cookie and the who-is-signed-in dependencies
     forms.py, render.py    # HTML form parsing; the Jinja environment and its filters
+    intake_form.py         # the team-entry form: its fields, which are required, a deal as one
     templates/             # the review queue's own pages (committed; not the docx templates)
   cli/
     main.py, fixtures.py   # `glenwood run` / `glenwood export` on a fixture, no database
@@ -119,6 +121,11 @@ glenwood-uw/
 - **Mortgage Automator is write-only at handoff.** Do not write to MA before the "LOI accepted" action. Reads (borrower match) are fine anytime.
 - **No dependency on any other repo.** See top of file.
 - **No self-signup and no password reset.** Users are created and deactivated from the command line. Do not add a registration page, an invite link, or a reset-by-email flow to v1.
+- **A code the model stores is never a label a person reads.** `Tranche` and
+  `ExperienceBucket` are grid coordinates and stored values; `schema/labels.py` turns them
+  into the FICO range and the deal count somebody actually picked, and every rendered page and
+  flag message goes through it. The credit labels are derived from the config cutoffs, so
+  moving a cutoff moves the label.
 - **No client-side JS in the queue beyond the copy button.** Server-rendered Jinja, plain form posts, POST-redirect-GET. If a page seems to need script, it needs a different page.
 - **Every form post carries a CSRF token.** The guard is a router-level dependency (`api/security.py`), so a new route is covered by where it lives rather than by somebody remembering; every `<form method="post">` renders `{{ csrf.field(csrf_token) }}`. `tests/test_csrf.py` posts to every guarded route without one and asserts the refusal — do not add a route that needs an exemption without saying why there.
 

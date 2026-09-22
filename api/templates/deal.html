@@ -1,24 +1,8 @@
 {% extends "base.html" %}
 {% import "_csrf.html" as csrf %}
 {% import "_flags.html" as parts %}
+{% import "_fields.html" as fields %}
 {% block title %}Deal — GLENWOOD{% endblock %}
-
-{% macro option_list(name, options, chosen, blank="—") %}
-  <select id="{{ name }}" name="{{ name }}">
-    <option value="">{{ blank }}</option>
-    {% for option in options %}
-      <option value="{{ option }}" {% if chosen == option %}selected{% endif %}>{{ option }}</option>
-    {% endfor %}
-  </select>
-{% endmacro %}
-
-{% macro yes_no_select(name, chosen) %}
-  <select id="{{ name }}" name="{{ name }}">
-    <option value="">—</option>
-    <option value="true" {% if chosen == "true" %}selected{% endif %}>Yes</option>
-    <option value="false" {% if chosen == "false" %}selected{% endif %}>No</option>
-  </select>
-{% endmacro %}
 
 {% block content %}
 <h1>
@@ -47,8 +31,9 @@
     <dd>{{ deal.product | plain }} <span class="small muted">({{ deal.product_source | plain }})</span></dd>
     <dt>Asset type</dt><dd>{{ deal.asset_type | plain }}</dd>
     <dt>Stated exit</dt><dd>{{ deal.stated_exit | plain }}</dd>
-    <dt>Credit (self-reported)</dt><dd>{{ deal.credit_range_self_reported | plain }}</dd>
-    <dt>Experience (self-reported)</dt><dd>{{ deal.experience_bucket_self_reported | plain }}</dd>
+    <dt>Credit (self-reported)</dt><dd>{{ deal.credit_range_self_reported | tranche }}</dd>
+    <dt>Experience (self-reported)</dt>
+    <dd>{{ deal.experience_bucket_self_reported | experience }} deals in 36 months</dd>
     <dt>Repeat borrower</dt><dd>{{ deal.repeat_borrower_self_reported | yes_no }}</dd>
     <dt>State</dt>
     <dd>{{ deal.property.state | plain if deal.property else "—" }}
@@ -67,6 +52,20 @@
   {% else %}
     <p class="small muted">Nothing outstanding — the minimum viable intake is complete.</p>
   {% endif %}
+
+  <div class="actions" style="margin-top:12px">
+    {% if allowed.edit_intake %}
+      <a href="/queue/deals/{{ deal.id }}/intake">Edit intake</a>
+      <span class="small muted">
+        The same form it was entered on. Every version is kept; a re-screen is not automatic.
+      </span>
+    {% else %}
+      <span class="small muted">
+        The intake is not editable on a {{ deal.status | plain }} deal — re-open it first, or
+        record the change as a note.
+      </span>
+    {% endif %}
+  </div>
 </section>
 
 {# --- run the engine ---------------------------------------------------------------------- #}
@@ -101,25 +100,22 @@
 
     <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/decline">
       {{ csrf.field(csrf_token) }}
-      <label for="decline_reason">Decline — reason (required)</label>
-      <input id="decline_reason" name="reason" maxlength="500"
-             {% if not allowed.decline %}disabled{% endif %}>
+      {{ fields.text_box("reason", "Decline — reason", "", required=true, maxlength=500,
+                         disabled=not allowed.decline, id="decline_reason") }}
       <button class="danger" type="submit" {% if not allowed.decline %}disabled{% endif %}>Decline</button>
     </form>
 
     <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/dead">
       {{ csrf.field(csrf_token) }}
-      <label for="dead_reason">Mark dead — reason (optional)</label>
-      <input id="dead_reason" name="reason" maxlength="500"
-             {% if not allowed.dead %}disabled{% endif %}>
+      {{ fields.text_box("reason", "Mark dead — reason", "", maxlength=500,
+                         disabled=not allowed.dead, id="dead_reason") }}
       <button class="danger" type="submit" {% if not allowed.dead %}disabled{% endif %}>Mark dead</button>
     </form>
 
     <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/reopen">
       {{ csrf.field(csrf_token) }}
-      <label for="reopen_reason">Re-open — reason (required)</label>
-      <input id="reopen_reason" name="reason" maxlength="500"
-             {% if not allowed.reopen %}disabled{% endif %}>
+      {{ fields.text_box("reason", "Re-open — reason", "", required=true, maxlength=500,
+                         disabled=not allowed.reopen, id="reopen_reason") }}
       <button type="submit" {% if not allowed.reopen %}disabled{% endif %}>Re-open</button>
       <p class="small muted">DECLINED only. DEAD is final.</p>
     </form>
@@ -127,8 +123,7 @@
 
   <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/note" style="margin-top:12px">
       {{ csrf.field(csrf_token) }}
-    <label for="note">Note</label>
-    <textarea id="note" name="note" maxlength="4000"></textarea>
+    {{ fields.text_area("note", "Note", required=true, maxlength=4000) }}
     <div class="actions"><button class="quiet" type="submit">Add note</button></div>
   </form>
 </section>
@@ -146,104 +141,52 @@
     <fieldset>
       <legend>Valuation</legend>
       <div class="grid3">
-        <div>
-          <label for="as_is_value_team">As-is value</label>
-          <input id="as_is_value_team" name="as_is_value_team" inputmode="decimal"
-                 value="{{ form.as_is_value_team }}">
-        </div>
-        <div>
-          <label for="arv_team">ARV</label>
-          <input id="arv_team" name="arv_team" inputmode="decimal" value="{{ form.arv_team }}">
-        </div>
+        {{ fields.text_box("as_is_value_team", "As-is value", form.as_is_value_team,
+                           mode="decimal") }}
+        {{ fields.text_box("arv_team", "ARV", form.arv_team, mode="decimal") }}
       </div>
     </fieldset>
 
     <fieldset>
       <legend>Holding costs and the DSCR takeout (annual, except the rent)</legend>
       <div class="grid3">
-        <div>
-          <label for="actual_annual_taxes_usd">Taxes — blank uses the config % of as-is</label>
-          <input id="actual_annual_taxes_usd" name="actual_annual_taxes_usd" inputmode="decimal"
-                 value="{{ form.actual_annual_taxes_usd }}">
-        </div>
-        <div>
-          <label for="actual_annual_insurance_usd">Insurance — blank uses the config %</label>
-          <input id="actual_annual_insurance_usd" name="actual_annual_insurance_usd"
-                 inputmode="decimal" value="{{ form.actual_annual_insurance_usd }}">
-        </div>
-        <div>
-          <label for="actual_annual_utilities_usd">Utilities — no default</label>
-          <input id="actual_annual_utilities_usd" name="actual_annual_utilities_usd"
-                 inputmode="decimal" value="{{ form.actual_annual_utilities_usd }}">
-        </div>
-        <div>
-          <label for="market_rent_monthly">Market rent (monthly) — no default</label>
-          <input id="market_rent_monthly" name="market_rent_monthly" inputmode="decimal"
-                 value="{{ form.market_rent_monthly }}">
-        </div>
+        {{ fields.text_box("actual_annual_taxes_usd",
+                           "Taxes — blank uses the config % of as-is",
+                           form.actual_annual_taxes_usd, mode="decimal") }}
+        {{ fields.text_box("actual_annual_insurance_usd", "Insurance — blank uses the config %",
+                           form.actual_annual_insurance_usd, mode="decimal") }}
+        {{ fields.text_box("actual_annual_utilities_usd", "Utilities — no default",
+                           form.actual_annual_utilities_usd, mode="decimal") }}
+        {{ fields.text_box("market_rent_monthly", "Market rent (monthly) — no default",
+                           form.market_rent_monthly, mode="decimal") }}
       </div>
     </fieldset>
 
     <fieldset>
       <legend>Structure</legend>
       <div class="grid3">
-        <div>
-          <label for="asset_type">Asset type</label>
-          {{ option_list("asset_type", enums.asset_type, form.asset_type) }}
-        </div>
-        <div>
-          <label for="product">Product — blank leaves the inferred one</label>
-          {{ option_list("product", enums.product, form.product) }}
-        </div>
-        <div>
-          <label for="stated_exit">Stated exit</label>
-          {{ option_list("stated_exit", enums.stated_exit, form.stated_exit) }}
-        </div>
+        {{ fields.select_box("asset_type", "Asset type", enums.asset_type, form.asset_type) }}
+        {{ fields.select_box("product", "Product — blank leaves the inferred one",
+                             enums.product, form.product) }}
+        {{ fields.select_box("stated_exit", "Stated exit", enums.stated_exit,
+                             form.stated_exit) }}
       </div>
     </fieldset>
 
     <fieldset>
       <legend>Court and filing search (SPEC §7.2)</legend>
       <div class="grid3">
-        <div>
-          <label for="court_records_status">Outcome — NOT_CHECKED is not CLEAN</label>
-          {{ option_list("court_records_status", enums.court_records_status,
-                         form.court_records_status) }}
-        </div>
-        <div>
-          <label for="court_records_as_of">Searched on — lookbacks run from this date</label>
-          <input id="court_records_as_of" name="court_records_as_of" type="date"
-                 value="{{ form.court_records_as_of }}">
-        </div>
+        {{ fields.select_box("court_records_status", "Outcome — NOT_CHECKED is not CLEAN",
+                             enums.court_records_status, form.court_records_status) }}
+        {{ fields.text_box("court_records_as_of", "Searched on — lookbacks run from this date",
+                           form.court_records_as_of, kind="date") }}
       </div>
       <p class="small muted">
         One row per matter. Each carries the fact its code is tested on: the date for a
         lookback, the amount for a threshold, the lien facts for a subject-property
         encumbrance — so the config thresholds decide the outcome, not the entry.
       </p>
-      <div class="scroll">
-        <table>
-          <thead>
-            <tr>
-              <th>Code</th><th>Occurred on</th><th class="num">Amount</th>
-              <th>Lien kind</th><th>Senior</th><th>Resolved at close</th><th>Description</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for matter in matters %}
-              <tr>
-                <td>{{ option_list("matter_code", enums.court_flag, matter.code) }}</td>
-                <td><input name="matter_occurred_on" type="date" value="{{ matter.occurred_on }}"></td>
-                <td><input name="matter_amount_usd" inputmode="decimal" value="{{ matter.amount_usd }}"></td>
-                <td>{{ option_list("matter_lien_kind", enums.lien_kind, matter.lien_kind) }}</td>
-                <td>{{ yes_no_select("matter_senior", matter.senior) }}</td>
-                <td>{{ yes_no_select("matter_resolved_at_close", matter.resolved_at_close) }}</td>
-                <td><input name="matter_description" maxlength="500" value="{{ matter.description }}"></td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+      {{ fields.matter_table(enums, matters) }}
     </fieldset>
 
     <div class="actions"><button type="submit">Save team entry</button></div>
@@ -253,6 +196,13 @@
 {# --- screen summary (SPEC §9.1) ------------------------------------------------------------ #}
 <section class="panel">
   <h2>Screen</h2>
+  {% if screen_is_stale %}
+    <p class="problem">
+      The intake changed after this screen ran, so the verdict below was reached on older
+      numbers. Re-running it is a decision, not something that happens on its own — press
+      Run screen above when you want one.
+    </p>
+  {% endif %}
   {% if screen %}
     <p class="lede small">
       <span class="tag {{ screen.result.verdict | plain }}">{{ screen.result.verdict | plain }}</span>
@@ -263,11 +213,11 @@
     <h3>Score components</h3>
     <dl class="facts small">
       <dt>Credit tranche</dt>
-      <dd>{{ screen.result.components.credit_tranche | plain }}
+      <dd>{{ screen.result.components.credit_tranche | tranche }}
         <span class="muted">({{ "verified" if screen.result.components.credit_tranche_verified
           else "self-reported" }})</span></dd>
       <dt>Floor tranche</dt>
-      <dd>{{ screen.result.components.floor_tranche | plain }} —
+      <dd>{{ screen.result.components.floor_tranche | tranche }} —
         {{ "meets it" if screen.result.components.credit_meets_floor else "below it" }}</dd>
       <dt>Experience tier</dt>
       <dd>{{ screen.result.components.experience_tier | plain }}

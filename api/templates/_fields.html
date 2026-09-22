@@ -1,0 +1,126 @@
+{# One form control, labelled and marked.  # SPEC §4.1, §12
+
+   Every box on every form in the queue says whether it is Required or Optional, because the
+   alternative is a person guessing and a submission bouncing. Required here means the
+   minimum viable intake (SPEC §4.1) and the handful of actions that record a reason; the
+   marker and the browser's own `required` attribute come from the same argument, so a box
+   cannot look required and post empty.
+
+   The attribute is a courtesy, not a control: `api/intake_form.py` checks the same list on
+   the way in. #}
+
+{% macro badge(required) %}<span class="{{ "req" if required else "opt" }}">{{ "Required" if required else "Optional" }}</span>{% endmacro %}
+
+{% macro caption(name, text, required) %}<label for="{{ name }}">{{ text }} {{ badge(required) }}</label>{% endmacro %}
+
+{% macro text_box(name, text, value, required=false, kind="", mode="", maxlength=0, disabled=false, id="") %}
+  {#- ``id`` only where one page carries the same name twice: the three reason boxes in the
+      action block all post ``reason`` and each needs a label of its own. -#}
+  {% set box = id or name %}
+  <div>
+    {{ caption(box, text, required) }}
+    <input id="{{ box }}" name="{{ name }}"
+           {%- if kind %} type="{{ kind }}"{% endif %}
+           {%- if mode %} inputmode="{{ mode }}"{% endif %}
+           {%- if maxlength %} maxlength="{{ maxlength }}"{% endif %}
+           value="{{ value }}"
+           {%- if required %} required{% endif %}
+           {%- if disabled %} disabled{% endif %}>
+  </div>
+{% endmacro %}
+
+{% macro text_area(name, text, required=false, maxlength=0) %}
+  <div>
+    {{ caption(name, text, required) }}
+    <textarea id="{{ name }}" name="{{ name }}"
+              {%- if maxlength %} maxlength="{{ maxlength }}"{% endif %}
+              {%- if required %} required{% endif %}></textarea>
+  </div>
+{% endmacro %}
+
+{# --- selects: the option's value is what is stored, its text is what a person reads ------- #}
+
+{% macro options(choices, chosen, labelled="") %}
+  <option value="">—</option>
+  {%- for choice in choices %}
+    <option value="{{ choice }}" {% if chosen == choice %}selected{% endif %}>
+      {%- if labelled == "tranche" %}{{ choice | tranche }}
+      {%- elif labelled == "experience" %}{{ choice | experience }}
+      {%- else %}{{ choice }}{% endif -%}
+    </option>
+  {%- endfor %}
+{% endmacro %}
+
+{% macro bare_select(name, choices, chosen, required=false, labelled="", labelled_by=true) %}
+  {#- A repeated row (the court matters below) carries no id: the name appears once per row
+      and a page cannot hold the same id twice. -#}
+  <select {% if labelled_by %}id="{{ name }}" {% endif %}name="{{ name }}"{% if required %} required{% endif %}>
+    {{- options(choices, chosen, labelled) -}}
+  </select>
+{% endmacro %}
+
+{% macro select_box(name, text, choices, chosen, required=false, labelled="") %}
+  <div>
+    {{ caption(name, text, required) }}
+    {{ bare_select(name, choices, chosen, required, labelled) }}
+  </div>
+{% endmacro %}
+
+{% macro tranche_box(name, text, choices, chosen, required=false) %}
+  {#- The FICO range is the label; T1..T5 stays the stored value (SPEC §7.1). -#}
+  {{ select_box(name, text, choices, chosen, required, "tranche") }}
+{% endmacro %}
+
+{% macro experience_box(name, text, choices, chosen, required=false) %}
+  {{ select_box(name, text, choices, chosen, required, "experience") }}
+{% endmacro %}
+
+{% macro bare_yes_no(name, chosen, required=false, labelled_by=true) %}
+  {#- Three states, not a checkbox: blank means nobody said, which an unticked box cannot
+      express and does not even submit (``api/forms.py``). -#}
+  <select {% if labelled_by %}id="{{ name }}" {% endif %}name="{{ name }}"{% if required %} required{% endif %}>
+    <option value="">—</option>
+    <option value="true" {% if chosen == "true" %}selected{% endif %}>Yes</option>
+    <option value="false" {% if chosen == "false" %}selected{% endif %}>No</option>
+  </select>
+{% endmacro %}
+
+{% macro yes_no_box(name, text, chosen, required=false) %}
+  <div>
+    {{ caption(name, text, required) }}
+    {{ bare_yes_no(name, chosen, required) }}
+  </div>
+{% endmacro %}
+
+{# --- the repeated court-matter rows (SPEC §7.2), the same table on both forms ------------- #}
+
+{% macro matter_table(enums, matters) %}
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Code {{ badge(false) }}</th>
+          <th>Occurred on {{ badge(false) }}</th>
+          <th class="num">Amount {{ badge(false) }}</th>
+          <th>Lien kind {{ badge(false) }}</th>
+          <th>Senior {{ badge(false) }}</th>
+          <th>Resolved at close {{ badge(false) }}</th>
+          <th>Description {{ badge(false) }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for matter in matters %}
+          <tr>
+            <td>{{ bare_select("matter_code", enums.court_flag, matter.code, labelled_by=false) }}</td>
+            <td><input name="matter_occurred_on" type="date" value="{{ matter.occurred_on }}"></td>
+            <td><input name="matter_amount_usd" inputmode="decimal" value="{{ matter.amount_usd }}"></td>
+            <td>{{ bare_select("matter_lien_kind", enums.lien_kind, matter.lien_kind, labelled_by=false) }}</td>
+            <td>{{ bare_yes_no("matter_senior", matter.senior, labelled_by=false) }}</td>
+            <td>{{ bare_yes_no("matter_resolved_at_close", matter.resolved_at_close, labelled_by=false) }}</td>
+            <td><input name="matter_description" maxlength="500" value="{{ matter.description }}"></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endmacro %}

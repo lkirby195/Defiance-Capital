@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from db.models import Deal, Screen
 from schema.models import AuditAction, ProductSource, Status
-from services.audit import DEALS, record_audit
+from services.audit import DEALS, jsonable, record_audit
 from services.errors import ActionNotAllowed, ReasonRequired
 from services.requests import TeamOverrides
 from services.runner import load_deal
@@ -232,8 +232,8 @@ def save_overrides(
         submitted = _override_value(overrides, field)
         if current == submitted:
             continue
-        before[field] = _jsonable(current)
-        after[field] = _jsonable(submitted)
+        before[field] = jsonable(current)
+        after[field] = jsonable(submitted)
         setattr(deal, field, submitted)
     _apply_product(deal, overrides, before, after)
     if not after:
@@ -269,10 +269,3 @@ def _apply_product(
     deal.product_source = ProductSource.ENTERED
     after["product"] = chosen.value
     after["product_source"] = ProductSource.ENTERED.value
-
-
-def _jsonable(value: Any) -> Any:
-    """A column value in a form ``audit_log``'s JSONB can hold."""
-    if value is None or isinstance(value, bool | int | str | list | dict):
-        return value
-    return str(value)

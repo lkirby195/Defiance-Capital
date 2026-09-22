@@ -11,7 +11,9 @@ so a refresh re-reads the deal instead of re-running the action; a failed one re
 the reason, because a failure usually has something to fix on the page.
 
 The team-entry form posts to ``/intake/team``, the route the JSON API already uses. It is one
-intake path with two content types, not two paths that can drift.
+intake path with two content types, not two paths that can drift. Editing the intake on a deal
+that already exists is the one thing that route cannot do - it creates - so that lives here,
+rendered from the same template through the same ``team_entry_page``.
 """
 
 from __future__ import annotations
@@ -25,6 +27,13 @@ from sqlalchemy.orm import Session
 from starlette.responses import HTMLResponse, RedirectResponse
 
 from api.forms import FormDep, fields, problems, rows
+from api.intake_form import (
+    TEAM_ENTRY_FIELDS,
+    intake_form_values,
+    intake_record,
+    read_form,
+    text_value,
+)
 from api.render import page, redirect
 from api.security import PageUser, require_csrf
 from db.models import Deal
@@ -44,6 +53,7 @@ from schema.models import (
 from services import (
     ADVANCE_TO_REVIEW_FROM,
     DECLINE_FROM,
+    EDIT_INTAKE_FROM,
     MARK_DEAD_FROM,
     REOPEN_FROM,
     ActionNotAllowed,
@@ -66,8 +76,10 @@ from services import (
     run_screen,
     run_underwrite,
     save_overrides,
+    screen_is_stale,
     screen_result,
     underwrite_result,
+    update_intake,
 )
 
 # Every state-changing request through this router carries a CSRF token, by living here
@@ -106,15 +118,6 @@ def enum_values() -> dict[str, list[str]]:
     }
 
 
-def _text(value: Any) -> str:
-    """A stored value as the string an ``<input>`` shows; None and absent both blank."""
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return str(getattr(value, "value", value))
-
-
 def override_form(deal: Deal) -> dict[str, str]:
     """The override block as form values, so the page renders what the deal currently says."""
     names = (
@@ -130,7 +133,7 @@ def override_form(deal: Deal) -> dict[str, str]:
         "court_records_status",
         "court_records_as_of",
     )
-    return {name: _text(getattr(deal, name)) for name in names}
+    return {name: text_value(getattr(deal, name)) for name in names}
 
 
 def blank_matter() -> dict[str, str]:
@@ -140,7 +143,7 @@ def blank_matter() -> dict[str, str]:
 def matter_rows(stored: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Stored matters as form rows, plus spare blanks to type into."""
     out = [
-        {**blank_matter(), **{key: _text(value) for key, value in matter.items()}}
+        {**blank_matter(), **{key: text_value(value) for key, value in matter.items()}}
         for matter in stored
     ]
     out.extend(blank_matter() for _ in range(SPARE_MATTER_ROWS))
@@ -163,37 +166,6 @@ def redisplay(matters: list[dict[str, str]]) -> list[dict[str, str]]:
     return filled
 
 
-# Every name the New deal form renders, so a blank the browser dropped is still a blank box.
-TEAM_ENTRY_FIELDS: tuple[str, ...] = (
-    "borrower_name",
-    "borrower_phone",
-    "borrower_email",
-    "entity_name",
-    "credit_range",
-    "experience_bucket",
-    "repeat_borrower",
-    "address",
-    "listing_url",
-    "county",
-    "state",
-    "purchase_price",
-    "rehab_budget",
-    "loan_requested",
-    "term_bucket",
-    "product",
-    "asset_type",
-    "stated_exit",
-    "as_is_value_team",
-    "arv_team",
-    "actual_annual_taxes_usd",
-    "actual_annual_insurance_usd",
-    "actual_annual_utilities_usd",
-    "market_rent_monthly",
-    "court_records_status",
-    "court_records_as_of",
-)
-
-
 def _allowed(deal: Deal) -> dict[str, bool]:
     """Which action buttons this deal's status leaves live.  # SPEC §4.6"""
     return {
@@ -201,6 +173,7 @@ def _allowed(deal: Deal) -> dict[str, bool]:
         "decline": deal.status in DECLINE_FROM,
         "dead": deal.status in MARK_DEAD_FROM,
         "reopen": deal.status in REOPEN_FROM,
+        "edit_intake": deal.status in EDIT_INTAKE_FROM,
     }
 
 
@@ -235,6 +208,10 @@ def render_deal(
             "deal": deal,
             "allowed": _allowed(deal),
             "enums": enum_values(),
+            # Not "re-screen it": whether an edited intake is worth another Stage 1 run is a
+            # person's call (SPEC §7), and the page's job is to make sure they know there is
+            # one to make.
+            "screen_is_stale": screen_is_stale(session, deal.id),
             "form": form if form is not None else override_form(deal),
             "matters": matters if matters is not None else matter_rows(deal.court_records_team),
             "screen": (
@@ -277,19 +254,73 @@ def queue_page(request: Request, session: SessionDep, user: PageUser) -> HTMLRes
     return page(request, "queue.html", {"view": queue_view(session)}, user=user)
 
 
-@router.get("/queue/new", response_class=HTMLResponse, response_model=None)
-def new_deal_page(request: Request, user: PageUser) -> HTMLResponse:
-    """The team-entry form (SPEC §4.2); it posts to ``/intake/team``."""
+NEW_DEAL_INTRO = (
+    "The team-entry channel (SPEC §4.2). The Required boxes are the minimum viable "
+    "intake (SPEC §4.1) — a deal cannot be screened without them, so this form "
+    "asks for all ten. Everything marked Optional can follow later. It posts to the same "
+    "route the API takes."
+)
+EDIT_INTAKE_INTRO = (
+    "The same form the deal was entered on, filled in with what it currently says. Saving "
+    "stores a new submission and leaves the old one on the record, immutable; the deal keeps "
+    "its id, its screens and its underwrites. A re-screen is not automatic."
+)
+
+
+def team_entry_page(
+    request: Request,
+    user: PageUser,
+    *,
+    action: str,
+    heading: str,
+    intro: str,
+    submit_label: str,
+    back_url: str,
+    form: dict[str, str],
+    matters: list[dict[str, str]],
+    complaints: list[str],
+    status_code: int = status.HTTP_200_OK,
+) -> HTMLResponse:
+    """The team-entry form, blank or filled in, for whichever route is showing it.
+
+    One renderer for four cases - the new deal, the edit, and each of them re-rendered with
+    what a rejected submission was carrying - so the two forms cannot drift into asking for
+    different things.
+    """
     return page(
         request,
         "team_entry.html",
         {
             "enums": enum_values(),
-            "form": dict.fromkeys(TEAM_ENTRY_FIELDS, ""),
-            "matters": [blank_matter() for _ in range(SPARE_MATTER_ROWS)],
-            "problems": [],
+            "action": action,
+            "heading": heading,
+            "intro": intro,
+            "submit_label": submit_label,
+            "back_url": back_url,
+            # Every name the template renders, so a dropped blank is still a blank box.
+            "form": {**dict.fromkeys(TEAM_ENTRY_FIELDS, ""), **form},
+            "matters": matters,
+            "problems": complaints,
         },
         user=user,
+        status_code=status_code,
+    )
+
+
+@router.get("/queue/new", response_class=HTMLResponse, response_model=None)
+def new_deal_page(request: Request, user: PageUser) -> HTMLResponse:
+    """The team-entry form (SPEC §4.2); it posts to ``/intake/team``."""
+    return team_entry_page(
+        request,
+        user,
+        action="/intake/team",
+        heading="New deal",
+        intro=NEW_DEAL_INTRO,
+        submit_label="Create deal",
+        back_url="",
+        form={},
+        matters=[blank_matter() for _ in range(SPARE_MATTER_ROWS)],
+        complaints=[],
     )
 
 
@@ -364,6 +395,100 @@ def underwrite_action(
         )
     session.commit()
     return redirect(deal_path(deal_id), f"Underwrite recorded at r* {result.solved_rate:.4%}.")
+
+
+# --- the intake, edited (SPEC §4.1) ---------------------------------------------------------------
+
+
+def _edit_page(
+    request: Request,
+    user: PageUser,
+    deal_id: UUID,
+    *,
+    form: dict[str, str],
+    matters: list[dict[str, str]],
+    complaints: list[str],
+    status_code: int = status.HTTP_200_OK,
+) -> HTMLResponse:
+    return team_entry_page(
+        request,
+        user,
+        action=f"{deal_path(deal_id)}/intake",
+        heading="Edit intake",
+        intro=EDIT_INTAKE_INTRO,
+        submit_label="Save intake",
+        back_url=deal_path(deal_id),
+        form=form,
+        matters=matters,
+        complaints=complaints,
+        status_code=status_code,
+    )
+
+
+@router.get("/queue/deals/{deal_id}/intake", response_class=HTMLResponse, response_model=None)
+def edit_intake_page(
+    request: Request, deal_id: UUID, session: SessionDep, user: PageUser
+) -> HTMLResponse | RedirectResponse:
+    """The team-entry form, filled in from the deal.  # SPEC §4.1, §4.2"""
+    try:
+        deal = load_deal(session, deal_id)
+    except DealNotFound:
+        return redirect("/queue", "That deal does not exist.")
+    if deal.status not in EDIT_INTAKE_FROM:
+        return redirect(
+            deal_path(deal_id),
+            f"The intake cannot be edited on a {deal.status.value} deal.",
+        )
+    return _edit_page(
+        request,
+        user,
+        deal_id,
+        form=intake_form_values(deal),
+        matters=matter_rows(deal.court_records_team),
+        complaints=[],
+    )
+
+
+@router.post("/queue/deals/{deal_id}/intake", response_model=None)
+def edit_intake_action(
+    request: Request, deal_id: UUID, session: SessionDep, user: PageUser, form: FormDep
+) -> HTMLResponse | RedirectResponse:
+    """Re-apply an edited intake: a new submission row, fresh ``missing_fields``, an audit row.
+
+    The status may move (``NEEDS_INFO`` to ``NEW`` once the intake is complete) but nothing is
+    re-run: the deal page says the screen is stale and a person decides.
+    """
+    submitted = fields(form, skip=("matter_",))
+    matters = submitted_matters(form)
+    entry, complaints = read_form(submitted, matters)
+    if entry is None:
+        return _edit_page(
+            request,
+            user,
+            deal_id,
+            form=submitted,
+            matters=redisplay(matters),
+            complaints=complaints,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    try:
+        update_intake(session, deal_id, intake_record(entry), actor=user.email)
+    except DealNotFound:
+        session.rollback()
+        return redirect("/queue", "That deal does not exist.")
+    except ActionNotAllowed as exc:
+        session.rollback()
+        return _edit_page(
+            request,
+            user,
+            deal_id,
+            form=submitted,
+            matters=redisplay(matters),
+            complaints=[str(exc)],
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    session.commit()
+    return redirect(deal_path(deal_id), "Intake updated.")
 
 
 # --- team entry ----------------------------------------------------------------------------------

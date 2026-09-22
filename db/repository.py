@@ -8,6 +8,8 @@ Existing rows are never modified here; the submission row is immutable.
 
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -59,6 +61,43 @@ def find_or_create_property(session: Session, info: PropertyInfo) -> Property | 
     return prop
 
 
+def intake_columns(record: IntakeRecord) -> dict[str, Any]:
+    """The ``deals`` columns an ``IntakeRecord`` owns, by column name.
+
+    One mapping, so creating a deal from an intake and re-applying an edited one
+    (``services/intake.py``) can never write different sets of columns. Everything outside
+    it - the id, the channel, the status, the borrower and property links - belongs to the
+    row rather than to the intake, and is set by whoever is writing the row.
+    """
+    return {
+        "product": record.deal.product,
+        "product_source": record.deal.product_source,
+        "credit_range_self_reported": record.borrower.credit_range,
+        "experience_bucket_self_reported": record.borrower.experience_bucket,
+        "repeat_borrower_self_reported": record.borrower.repeat_borrower,
+        "purchase_price": record.deal.purchase_price,
+        "rehab_budget": record.deal.rehab_budget,
+        "loan_requested": record.deal.loan_requested,
+        "term_bucket": record.deal.term_bucket,
+        "asset_type": record.deal.asset_type,
+        "stated_exit": record.deal.stated_exit,
+        "actual_annual_taxes_usd": record.deal.actual_annual_taxes_usd,
+        "actual_annual_insurance_usd": record.deal.actual_annual_insurance_usd,
+        "actual_annual_utilities_usd": record.deal.actual_annual_utilities_usd,
+        "market_rent_monthly": record.deal.market_rent_monthly,
+        "as_is_value_team": record.deal.as_is_value_team,
+        "arv_team": record.deal.arv_team,
+        "court_records_status": record.deal.court_records_status,
+        "court_records_as_of": record.deal.court_records_as_of,
+        # exclude_none keeps the stored matter to the fields the team actually filled in;
+        # every omitted field is the model's own default on the way back out.
+        "court_records_team": [
+            matter.model_dump(mode="json", exclude_none=True)
+            for matter in record.deal.court_records_team
+        ],
+    }
+
+
 def build_deal(record: IntakeRecord, borrower: Borrower | None, prop: Property | None) -> Deal:
     """The ``deals`` row for an ``IntakeRecord``, attached to nothing.
 
@@ -66,40 +105,15 @@ def build_deal(record: IntakeRecord, borrower: Borrower | None, prop: Property |
     team-entry fixture and run it through the same assembly the API uses, with no database
     behind it (``cli/fixtures.py``).
     """
-    deal = Deal(
+    return Deal(
         id=record.id,
         borrower=borrower,
         property=prop,
         channel=record.channel,
         status=record.status,
-        product=record.deal.product,
-        product_source=record.deal.product_source,
-        credit_range_self_reported=record.borrower.credit_range,
-        experience_bucket_self_reported=record.borrower.experience_bucket,
-        repeat_borrower_self_reported=record.borrower.repeat_borrower,
-        purchase_price=record.deal.purchase_price,
-        rehab_budget=record.deal.rehab_budget,
-        loan_requested=record.deal.loan_requested,
-        term_bucket=record.deal.term_bucket,
-        asset_type=record.deal.asset_type,
-        stated_exit=record.deal.stated_exit,
-        actual_annual_taxes_usd=record.deal.actual_annual_taxes_usd,
-        actual_annual_insurance_usd=record.deal.actual_annual_insurance_usd,
-        actual_annual_utilities_usd=record.deal.actual_annual_utilities_usd,
-        market_rent_monthly=record.deal.market_rent_monthly,
-        as_is_value_team=record.deal.as_is_value_team,
-        arv_team=record.deal.arv_team,
-        court_records_status=record.deal.court_records_status,
-        court_records_as_of=record.deal.court_records_as_of,
-        # exclude_none keeps the stored matter to the fields the team actually filled in;
-        # every omitted field is the model's own default on the way back out.
-        court_records_team=[
-            matter.model_dump(mode="json", exclude_none=True)
-            for matter in record.deal.court_records_team
-        ],
         missing_fields=list(record.missing_fields),
+        **intake_columns(record),
     )
-    return deal
 
 
 def transient_deal(record: IntakeRecord) -> Deal:
