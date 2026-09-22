@@ -503,13 +503,70 @@ def test_split_principal_capped_tranche_a_below_request_is_an_info_flag() -> Non
         CONFIG,
     )
     assert sizing.commitment == D("146000.00") and sizing.loan_requested == D("170000.00")
-    [flag] = leverage_flags(sizing)
+    # two Info flags, and they say different things: one that the entered rehab portion is
+    # over the budget, one that the commitment fell as a result
+    flags = leverage_flags(sizing)
+    assert [f.code for f in flags] == [
+        ScreenFlag.REHAB_PORTION_EXCEEDS_BUDGET,
+        ScreenFlag.COMMITMENT_BELOW_REQUEST,
+    ]
+    flag = flags[1]
     assert flag.code is ScreenFlag.COMMITMENT_BELOW_REQUEST and flag.severity is Severity.INFO
     assert "commitment $146,000.00" in flag.message
     assert "$170,000.00 requested" in flag.message
     assert "Tranche A $66,000.00" in flag.message
     assert "entered rehab portion is capped" in flag.message
     assert "rehab budget $66,000.00" in flag.message
+
+
+def test_a_rehab_portion_over_the_budget_is_an_info_flag_on_both_split_products() -> None:
+    """Naming both amounts: what the team entered, and what the budget allows.  # SPEC §8.2"""
+    for product, consequence in (
+        (Product.SPLIT_PRINCIPAL, "Tranche A is capped at the budget"),
+        (Product.SPLIT_DRAW, "the difference is advanced at close"),
+    ):
+        sizing = size_deal(
+            deal(
+                product=product,
+                purchase_price=D("150000.00"),
+                rehab_budget=D("60000.00"),
+                loan_requested=D("170000.00"),
+                as_is_value=D("230000.00"),
+                arv=D("290000.00"),
+                loan_purchase_portion=D("80000.00"),
+                loan_rehab_portion=D("90000.00"),  # rehab_adj is 66,000
+            ),
+            Tranche.T2,
+            ExperienceTier.E2,
+            CONFIG,
+        )
+        flag = next(
+            f for f in leverage_flags(sizing) if f.code is ScreenFlag.REHAB_PORTION_EXCEEDS_BUDGET
+        )
+        assert flag.severity is Severity.INFO
+        assert f"{product.value} rehab portion $90,000.00" in flag.message
+        assert "rehab budget $66,000.00" in flag.message
+        assert consequence in flag.message
+
+
+def test_no_rehab_portion_flag_when_the_portion_is_within_the_budget() -> None:
+    sizing = size_deal(
+        deal(
+            product=Product.SPLIT_DRAW,
+            purchase_price=D("150000.00"),
+            rehab_budget=D("60000.00"),
+            loan_requested=D("170000.00"),
+            as_is_value=D("230000.00"),
+            arv=D("290000.00"),
+            loan_purchase_portion=D("104000.00"),
+            loan_rehab_portion=D("66000.00"),  # exactly rehab_adj, so nothing is capped
+        ),
+        Tranche.T2,
+        ExperienceTier.E2,
+        CONFIG,
+    )
+    codes = {f.code for f in leverage_flags(sizing)}
+    assert ScreenFlag.REHAB_PORTION_EXCEEDS_BUDGET not in codes
 
 
 def test_no_commitment_flag_when_the_request_is_fully_allocated() -> None:

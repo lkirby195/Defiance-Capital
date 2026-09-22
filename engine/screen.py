@@ -461,7 +461,10 @@ def state_flags(state: State, config: Config) -> list[Flag]:
 
 
 def leverage_flags(sizing: SizingResult) -> list[Flag]:
-    """Cap breaches (HARD beyond the band, SOFT within) and missing values.  # SPEC §7.4, §7.5"""
+    """Cap breaches (HARD beyond the band, SOFT within), missing values, and the loan split.
+
+    # SPEC §7.4, §7.5, §8.2
+    """
     flags: list[Flag] = []
     cell = f"{sizing.product.value}/{sizing.credit_tranche.value}/{sizing.experience_tier.value}"
     if sizing.ltv_basis is ValueBasis.PURCHASE_PRICE:
@@ -476,8 +479,30 @@ def leverage_flags(sizing: SizingResult) -> list[Flag]:
                 ),
             )
         )
+    split = sizing.split
+    if split is not None and split.rehab_portion_capped:
+        # What the cap does next differs by product, and a reader wants the consequence as
+        # much as the fact: SPLIT_PRINCIPAL loses the difference off the commitment, which
+        # COMMITMENT_BELOW_REQUEST then reports; SPLIT_DRAW keeps it and advances it at
+        # close, so only the timing of the money moves.
+        consequence = (
+            "Tranche A is capped at the budget, so the commitment falls below the request"
+            if sizing.product is Product.SPLIT_PRINCIPAL
+            else "the holdback is capped at the budget and the difference is advanced at close"
+        )
+        flags.append(
+            Flag(
+                code=ScreenFlag.REHAB_PORTION_EXCEEDS_BUDGET,
+                severity=Severity.INFO,
+                message=(
+                    f"{sizing.product.value} rehab portion "
+                    f"{money(split.rehab_portion_requested)} exceeds the "
+                    f"contingency-adjusted rehab budget {money(sizing.rehab_adj)}; "
+                    f"{consequence}."
+                ),
+            )
+        )
     if sizing.product is Product.SPLIT_PRINCIPAL and sizing.commitment < sizing.loan_requested:
-        split = sizing.split
         notes = (
             f" (Principal Note {money(split.purchase_portion)} + "
             f"Tranche A {money(split.rehab_portion)})"

@@ -44,7 +44,8 @@
     <p class="small muted">
       A SPLIT_DRAW or SPLIT_PRINCIPAL loan is advanced in two parts, so both portions are
       required and have to add up to the loan requested (SPEC §8.2). A NO_DRAW or WHOLETAIL
-      loan is one advance and carries neither.
+      loan is one advance and carries neither. Every term bucket but 12+ names its own number
+      of months, so that box fills itself; 12+ names none and the team sets it (SPEC §8.1).
     </p>
     <div class="grid3">
       {{ fields.text_box("purchase_price", "Purchase price", form.purchase_price,
@@ -55,12 +56,18 @@
                          required=true, mode="decimal") }}
       {{ fields.text_box("loan_purchase_portion",
                          "Purchase portion — the Principal Note on SPLIT_PRINCIPAL",
-                         form.loan_purchase_portion, mark="split", mode="decimal") }}
+                         form.loan_purchase_portion, mark="Required for a split", mode="decimal") }}
       {{ fields.text_box("loan_rehab_portion",
                          "Rehab portion — the holdback, or Tranche A",
-                         form.loan_rehab_portion, mark="split", mode="decimal") }}
+                         form.loan_rehab_portion, mark="Required for a split", mode="decimal") }}
       {{ fields.select_box("term_bucket", "Term", enums.term_bucket, form.term_bucket,
                            required=true) }}
+      {#- Read-only wherever the bucket names the number: there is nothing to decide, and
+          the normalizer re-derives it on the way in either way. A blank bucket leaves it
+          editable, because a person picking 12+ next has nowhere else to type one. -#}
+      {{ fields.text_box("term_months", "Term in months", form.term_months,
+                         mark="Required for a 12+ term", mode="numeric",
+                         readonly=form.term_bucket not in ("", "12_PLUS")) }}
       {{ fields.select_box("product", "Product — blank is inferred from the rehab budget",
                            enums.product, form.product) }}
       {{ fields.select_box("asset_type", "Asset type", enums.asset_type, form.asset_type) }}

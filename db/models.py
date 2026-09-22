@@ -24,6 +24,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Table,
@@ -202,6 +203,15 @@ class Deal(Base):
             "OR (product IS NOT NULL AND product IN ('SPLIT_DRAW', 'SPLIT_PRINCIPAL'))",
             name="ck_deals_loan_split_only_on_split_products",
         ),
+        # A term in months is the bucket's own number, or the team's for 12_PLUS (SPEC §8.1).
+        # Spelled out rather than cast, so the mapping a reader checks is the one the
+        # database enforces.
+        CheckConstraint(
+            "term_months IS NULL OR (term_bucket IS NOT NULL AND ("
+            "term_bucket = '12_PLUS' OR term_months = CASE term_bucket "
+            "WHEN '3' THEN 3 WHEN '6' THEN 6 WHEN '9' THEN 9 WHEN '12' THEN 12 END))",
+            name="ck_deals_term_months_matches_bucket",
+        ),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -233,6 +243,10 @@ class Deal(Base):
     loan_purchase_portion: Mapped[Decimal | None] = mapped_column(MONEY)
     loan_rehab_portion: Mapped[Decimal | None] = mapped_column(MONEY)
     term_bucket: Mapped[TermBucket | None] = mapped_column(_enum(TermBucket, "term_bucket"))
+    # The term the deal is priced on (SPEC §8.1): the bucket's own number for every bucket
+    # that names one, the team's for 12_PLUS. Stored rather than derived on every read, so
+    # the readiness checklist and the underwrite refusal both have one thing to point at.
+    term_months: Mapped[int | None] = mapped_column(Integer)
     # Asset type from intake; with the term it drives the exit inference (SPEC §3).
     asset_type: Mapped[AssetType | None] = mapped_column(_enum(AssetType, "asset_type"))
     stated_exit: Mapped[StatedExit | None] = mapped_column(_enum(StatedExit, "stated_exit"))

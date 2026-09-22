@@ -7,21 +7,25 @@
    cannot look required and post empty.
 
    The attribute is a courtesy, not a control: `api/intake_form.py` checks the same list on
-   the way in. #}
+   the way in.
+
+   `readonly` is the other half of that: a box whose value is derived - the term a bucket
+   names (SPEC §8.1) - is shown rather than hidden, and posted back rather than dropped, but
+   nobody is invited to argue with it. The server re-derives it either way. #}
 
 {# Three states, not two. A box can be required only on some deals - the loan split is
    required on the two split products and forbidden on the other two (SPEC §8.2) - and the
    product itself may be left blank for the normalizer to infer, so the browser cannot be
    told which. It is marked as what it is and checked on the server. #}
 {% macro badge(required, mark="") %}
-  {%- if mark == "split" %}<span class="cond">Required for a split</span>
+  {%- if mark %}<span class="cond">{{ mark }}</span>
   {%- elif required %}<span class="req">Required</span>
   {%- else %}<span class="opt">Optional</span>{% endif -%}
 {% endmacro %}
 
 {% macro caption(name, text, required, mark="") %}<label for="{{ name }}">{{ text }} {{ badge(required, mark) }}</label>{% endmacro %}
 
-{% macro text_box(name, text, value, required=false, kind="", mode="", maxlength=0, disabled=false, id="", mark="") %}
+{% macro text_box(name, text, value, required=false, kind="", mode="", maxlength=0, disabled=false, id="", mark="", readonly=false) %}
   {#- ``id`` only where one page carries the same name twice: the three reason boxes in the
       action block all post ``reason`` and each needs a label of its own. -#}
   {% set box = id or name %}
@@ -33,6 +37,7 @@
            {%- if maxlength %} maxlength="{{ maxlength }}"{% endif %}
            value="{{ value }}"
            {%- if required %} required{% endif %}
+           {%- if readonly %} readonly{% endif %}
            {%- if disabled %} disabled{% endif %}>
   </div>
 {% endmacro %}

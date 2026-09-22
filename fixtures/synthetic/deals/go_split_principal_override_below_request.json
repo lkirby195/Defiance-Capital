@@ -1,6 +1,6 @@
 {
   "name": "go_split_principal_override_below_request",
-  "description": "SPLIT_PRINCIPAL in Tulsa; the team divides the $170,000 request 80,000 purchase / 90,000 rehab, and the rehab side is capped at the contingency-adjusted rehab budget ($66,000), so Tranche A is $66,000 and the commitment ($146,000) lands below the request. Leverage on the smaller commitment clears every cap. Go with an Info flag.",
+  "description": "SPLIT_PRINCIPAL in Tulsa; the team divides the $170,000 request 80,000 purchase / 90,000 rehab, and the rehab side is over the contingency-adjusted rehab budget ($66,000). Two Info flags say so in order: the portion exceeds the budget, and Tranche A capped at it leaves the commitment ($146,000) below the request. Leverage on the smaller commitment clears every cap. Go.",
   "inputs": {
     "deal": {
       "product": "SPLIT_PRINCIPAL",
@@ -26,6 +26,10 @@
     "verdict": "GO",
     "flags": [
       {
+        "code": "REHAB_PORTION_EXCEEDS_BUDGET",
+        "severity": "INFO"
+      },
+      {
         "code": "COMMITMENT_BELOW_REQUEST",
         "severity": "INFO"
       }
@@ -46,8 +50,8 @@
       "LTARV": "PASS"
     },
     "reasons_contain": [
-      "Info: SPLIT_PRINCIPAL commitment $146,000.00 (Principal Note $80,000.00 + Tranche A $66,000.00) is below the $170,000.00 requested",
-      "capped at the contingency-adjusted rehab budget $66,000.00"
+      "Info: SPLIT_PRINCIPAL rehab portion $90,000.00 exceeds the contingency-adjusted rehab budget $66,000.00; Tranche A is capped at the budget",
+      "Info: SPLIT_PRINCIPAL commitment $146,000.00 (Principal Note $80,000.00 + Tranche A $66,000.00) is below the $170,000.00 requested"
     ],
     "reply_contains": [
       "fit on first pass"

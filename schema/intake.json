@@ -413,6 +413,20 @@
             }
           ],
           "default": null
+        },
+        "term_months": {
+          "anyOf": [
+            {
+              "maximum": 60,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Term Months"
         }
       },
       "title": "DealInfo",

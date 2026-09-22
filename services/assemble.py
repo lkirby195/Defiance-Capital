@@ -33,7 +33,6 @@ from schema.models import (
     StatedExit,
     SubjectPropertyLien,
     TeamCourtRecord,
-    TermBucket,
     Tranche,
     UnderwriteInputs,
     ValueSource,
@@ -41,14 +40,6 @@ from schema.models import (
 from services.enrichment import NO_ADAPTER_VALUES, AdapterValues
 from services.errors import DealNotReady
 from services.requests import UnderwriteRequest
-
-# Term buckets that name a number of months; 12_PLUS is a team decision (SPEC §8.1).
-TERM_BUCKET_MONTHS: dict[TermBucket, int] = {
-    TermBucket.M3: 3,
-    TermBucket.M6: 6,
-    TermBucket.M9: 9,
-    TermBucket.M12: 12,
-}
 
 # What the engine needs from the deal itself, named as the team would chase them.
 _REQUIRED: tuple[tuple[str, str], ...] = (
@@ -293,17 +284,15 @@ def screen_inputs(deal: Deal, adapters: AdapterValues = NO_ADAPTER_VALUES) -> Sc
     )
 
 
-def resolve_term_months(deal: Deal, request: UnderwriteRequest) -> int:
-    """The request's term, else the months the deal's bucket names.  # SPEC §8.1
+def resolve_term_months(deal: Deal, request: UnderwriteRequest) -> int | None:
+    """The request's term, else the one on the deal.  # SPEC §8.1
 
-    ``12_PLUS`` names no number, so the team has to set one; so does a deal with no bucket.
+    Not derived from the bucket here any more: the normalizer derives it once, on the way in
+    (``intake/normalize.py``), so the column is the term and there is one thing for the
+    readiness checklist and the refusal below to name. None means nobody has set one, which
+    on a ``12_PLUS`` deal is the state this is here to make visible.
     """
-    if request.term_months is not None:
-        return request.term_months
-    months = TERM_BUCKET_MONTHS.get(deal.term_bucket) if deal.term_bucket is not None else None
-    if months is None:
-        raise DealNotReady(deal.id, ["term_months (the 12_PLUS bucket names no number)"])
-    return months
+    return request.term_months if request.term_months is not None else deal.term_months
 
 
 def underwrite_inputs(
@@ -317,9 +306,10 @@ def underwrite_inputs(
     rent ends at None too, which leaves the DSCR takeout NOT_EVALUATED with an INFO flag
     rather than computed on a zero.
 
-    Two things have no default and stop the run: the valuation, because SPEC §8.1 requires
-    both halves of it, and the loan split on a split product, because SPEC §8.2 prices the
-    two portions. Every one that is absent is named at once rather than one per attempt.
+    Three things have no default and stop the run: the valuation, because SPEC §8.1 requires
+    both halves of it; the term in months, which every bucket but ``12_PLUS`` derives for
+    itself; and the loan split on a split product, because SPEC §8.2 prices the two portions.
+    Every one that is absent is named at once rather than one per attempt.
 
     The court record is resolved here the same way the screen resolves it, adapter over team
     (SPEC §6.1), and not read off the stored screen: the underwrite runs the SPEC §7.2 tests
@@ -336,6 +326,14 @@ def underwrite_inputs(
         ("as_is_value", valuation.as_is_value, no_valuation),
         ("arv", valuation.arv, no_valuation),
     ]
+    term_months = resolve_term_months(deal, request)
+    needed.append(
+        (
+            "deal.term_months",
+            term_months,
+            "the 12+ bucket names no number of months, so the team sets one (SPEC §8.1)",
+        )
+    )
     if core.product in SPLIT_PRODUCTS:
         split_why = f"a {core.product.value} loan is advanced in two parts (SPEC §8.2)"
         needed += [
@@ -349,7 +347,7 @@ def underwrite_inputs(
         deal=sizing_inputs(core, valuation),
         state=core.state,
         borrower=borrower_inputs(core, request),
-        term_months=resolve_term_months(deal, request),
+        term_months=_present(term_months),
         market_rent_monthly=market_rent,
         annual_taxes_usd=taxes,
         annual_insurance_usd=insurance,

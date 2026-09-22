@@ -51,8 +51,17 @@ MARKET_RENT_MISSING (INFO, fixed) instead of REFI_SHORTFALL (SPEC §8.1, §8.6).
 utilities gained the config default the taxes and insurance already had
 (``takeout.opex_defaults.utilities_pct_of_as_is_value``), so a deal without them is carried
 at a percentage of the as-is value instead of refusing to run.
+
+Phase 4d (0.8.1) adds one informational flag and moves no math. REHAB_PORTION_EXCEEDS_BUDGET
+(INFO) is raised on either split product when the entered rehab portion is over the
+contingency-adjusted rehab budget, naming both amounts (SPEC §8.2). The cap itself is
+unchanged - the same deals size to the same commitment they did at 0.8.0 - but until now the
+cap was only visible on SPLIT_PRINCIPAL, and then only as its effect
+(COMMITMENT_BELOW_REQUEST); on SPLIT_DRAW it moved $15,000 from a holdback to the closing
+table and said nothing at all. The version moves because the same inputs now produce a
+longer flag list.
 """
 
 from __future__ import annotations
 
-ENGINE_VERSION = "0.8.0"
+ENGINE_VERSION = "0.8.1"

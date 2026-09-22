@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from config.config import Config
 from db.models import Deal, Screen
 from engine.version import ENGINE_VERSION
-from schema.models import AssetType, ExitSource, StatedExit, Verdict
+from schema.models import AssetType, ExitSource, StatedExit, TermBucket, Verdict
 from services import (
     DealNotFound,
     DealNotReady,
@@ -150,15 +150,18 @@ def test_underwrite_row_drops_nothing_the_result_carried(
     assert row.inputs["term_months"] == result.term_months
 
 
-def test_underwrite_takes_the_term_from_the_bucket_unless_told_otherwise(
+def test_underwrite_takes_the_term_from_the_deal_unless_told_otherwise(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    from_bucket = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
-    assert from_bucket.term_months == 9  # the deal's term_bucket is "9"
+    """The column, derived from the bucket at intake; a request still outranks it."""
+    assert deal_with_overrides.term_months == 9  # the deal's term_bucket is "9"
+    from_deal = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
+    assert from_deal.term_months == 9
     stated = run_underwrite(
         db_session, deal_with_overrides.id, request(term_months=18), CONFIG, actor=ACTOR
     )
     assert stated.term_months == 18
+    assert deal_with_overrides.term_months == 9, "a run does not write back to the deal"
     db_session.commit()
 
 
@@ -213,10 +216,24 @@ def test_missing_deal_and_incomplete_deal_are_named_not_guessed(
     assert caught.value.missing == ["deal.loan_requested", "borrower.credit_range"]
 
 
-def test_a_deal_with_no_term_bucket_cannot_be_underwritten_silently(
+def test_a_deal_with_no_term_cannot_be_underwritten_silently(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    deal_with_overrides.term_bucket = None
+    """A 12+ bucket names no months, so a deal on one carries a term or is refused."""
+    deal_with_overrides.term_months = None
+    deal_with_overrides.term_bucket = TermBucket.M12_PLUS
     db_session.flush()
-    with pytest.raises(DealNotReady, match="term_months"):
+    with pytest.raises(DealNotReady, match="deal.term_months"):
         run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
+
+
+def test_a_twelve_plus_deal_with_a_term_on_it_underwrites(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """The other half: a number on the deal is all a 12+ bucket needs.  # SPEC §8.1"""
+    deal_with_overrides.term_bucket = TermBucket.M12_PLUS
+    deal_with_overrides.term_months = 18
+    db_session.flush()
+    result = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
+    assert result.term_months == 18
+    db_session.commit()
