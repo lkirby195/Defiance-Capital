@@ -4,6 +4,11 @@
 {% import "_fields.html" as fields %}
 {% block title %}Deal — GLENWOOD{% endblock %}
 
+{# The first eight panels are the SPEC §9 order, the same order the CLI prints and the
+   workbook writes: the three §8.1 input groups, then the ledger and its IRR, then the three
+   analyses, then the flags. The working furniture — the run buttons and their checklist, the
+   team actions, the override block, the screen and the audit trail — sits below them. #}
+
 {% block content %}
 <h1>
   {% if deal.property and deal.property.address_raw %}{{ deal.property.address_raw }}
@@ -19,34 +24,32 @@
   · entered {{ deal.created_at | when }} via {{ deal.channel | plain }}
 </p>
 
-{# --- intake facts (SPEC §9.1) ------------------------------------------------------------ #}
+{% set result = underwrite.result if underwrite else none %}
+
+{# --- 1. Overview (SPEC §8.1) --------------------------------------------------------------- #}
 <section class="panel">
-  <h2>Intake</h2>
+  <h2>Overview</h2>
   <dl class="facts">
-    <dt>Purchase price</dt><dd>{{ deal.purchase_price | money }}</dd>
-    <dt>Rehab budget</dt><dd>{{ deal.rehab_budget | money }}</dd>
-    <dt>Loan requested</dt><dd>{{ deal.loan_requested | money }}</dd>
-    <dt>Loan split</dt>
-    <dd>
-      {% if deal.loan_purchase_portion is not none %}
-        {{ deal.loan_purchase_portion | money }} purchase +
-        {{ deal.loan_rehab_portion | money }} rehab
-      {% else %}—{% endif %}
-    </dd>
-    <dt>Term bucket</dt>
-    <dd>{{ deal.term_bucket | plain }}
-      <span class="small muted">({{ deal.term_months | plain }} months)</span></dd>
-    <dt>Product</dt>
-    <dd>{{ deal.product | plain }} <span class="small muted">({{ deal.product_source | plain }})</span></dd>
-    <dt>Asset type</dt><dd>{{ deal.asset_type | plain }}</dd>
-    <dt>Stated exit</dt><dd>{{ deal.stated_exit | plain }}</dd>
-    <dt>Credit (self-reported)</dt><dd>{{ deal.credit_range_self_reported | tranche }}</dd>
+    <dt>Borrower Name</dt>
+    <dd>{{ deal.borrower.name if deal.borrower else "—" }}</dd>
+    <dt>Guarantor Name</dt><dd>{{ deal.guarantor_name | plain }}</dd>
+    <dt>Credit Range (self-reported)</dt>
+    <dd>{{ deal.credit_range_self_reported | tranche }}</dd>
     <dt>Experience (self-reported)</dt>
     <dd>{{ deal.experience_bucket_self_reported | experience }} deals in 36 months</dd>
     <dt>Repeat borrower</dt><dd>{{ deal.repeat_borrower_self_reported | yes_no }}</dd>
-    <dt>State</dt>
-    <dd>{{ deal.property.state | plain if deal.property else "—" }}
-      {% if deal.property %}<span class="small muted">({{ deal.property.state_source | plain }})</span>{% endif %}</dd>
+    <dt>Loan Purpose</dt><dd>{{ deal.loan_purpose | plain }}</dd>
+    <dt>Loan Type</dt>
+    <dd>{{ deal.product | plain }}
+      <span class="small muted">({{ deal.product_source | plain }})</span></dd>
+    <dt>Closing Date</dt><dd>{{ deal.closing_date | when }}</dd>
+    <dt>Term (months)</dt>
+    <dd>{{ deal.term_months | plain }}
+      <span class="small muted">(the borrower asked for
+        {{ deal.term_bucket | plain }})</span></dd>
+    <dt>Payoff Date</dt>
+    <dd>{{ payoff_date | when }}
+      <span class="small muted">derived: closing plus the term</span></dd>
     <dt>Credit authorization</dt><dd>{{ deal.credit_authorization_signed | yes_no }}</dd>
   </dl>
 
@@ -61,20 +64,278 @@
   {% else %}
     <p class="small muted">Nothing outstanding — the minimum viable intake is complete.</p>
   {% endif %}
+</section>
 
-  <div class="actions" style="margin-top:12px">
-    {% if allowed.edit_intake %}
-      <a href="/queue/deals/{{ deal.id }}/intake">Edit intake</a>
-      <span class="small muted">
-        The same form it was entered on. Every version is kept; a re-screen is not automatic.
-      </span>
-    {% else %}
-      <span class="small muted">
-        The intake is not editable on a {{ deal.status | plain }} deal — re-open it first, or
-        record the change as a note.
-      </span>
+{# --- 2. Property Overview (SPEC §8.1) ------------------------------------------------------ #}
+<section class="panel">
+  <h2>Property Overview</h2>
+  <p class="small muted">Descriptive. No part of the §8 math reads any of it.</p>
+  <dl class="facts">
+    <dt>Address</dt>
+    <dd>{{ deal.property.address_raw | plain if deal.property else "—" }}</dd>
+    <dt>City</dt><dd>{{ deal.property.city | plain if deal.property else "—" }}</dd>
+    <dt>State</dt>
+    <dd>{{ deal.property.state | plain if deal.property else "—" }}
+      {% if deal.property %}<span class="small muted">({{ deal.property.state_source | plain }})</span>{% endif %}</dd>
+    <dt>Units</dt><dd>{{ deal.property.units | plain if deal.property else "—" }}</dd>
+    <dt>Structures</dt><dd>{{ deal.property.structures | plain if deal.property else "—" }}</dd>
+    <dt>SF</dt><dd>{{ deal.property.sf | whole if deal.property else "—" }}</dd>
+    <dt>Year Built</dt><dd>{{ deal.property.year_built | plain if deal.property else "—" }}</dd>
+    <dt>Year Renovated</dt>
+    <dd>{{ deal.property.year_renovated | plain if deal.property else "—" }}</dd>
+    <dt>Beds</dt><dd>{{ deal.property.beds | plain if deal.property else "—" }}</dd>
+    <dt>Baths</dt><dd>{{ deal.property.baths | plain if deal.property else "—" }}</dd>
+    <dt>Garage Spaces</dt>
+    <dd>{{ deal.property.garage_spaces | plain if deal.property else "—" }}</dd>
+    <dt>Asset type</dt><dd>{{ deal.asset_type | plain }}</dd>
+    <dt>Stated exit</dt><dd>{{ deal.stated_exit | plain }}</dd>
+  </dl>
+</section>
+
+{# --- 3. Deal Economics (SPEC §8.1) --------------------------------------------------------- #}
+<section class="panel">
+  <h2>Deal Economics</h2>
+  {% if result %}
+    {% set economics = result.economics %}
+    <dl class="facts">
+      <dt>Purchase Price</dt><dd>{{ economics.purchase_price | money }}</dd>
+      <dt>Rehab Costs</dt><dd>{{ economics.rehab_costs | money }}</dd>
+      <dt>Contingency</dt>
+      <dd>{{ economics.contingency | money }}
+        <span class="small muted">({{ economics.contingency_pct | pct }} of rehab)</span></dd>
+      <dt>Rehab + contingency</dt><dd>{{ economics.rehab_adj | money }}</dd>
+      <dt>Closing Costs</dt><dd>{{ economics.closing_costs | money }}</dd>
+      <dt>Holding Costs (total)</dt>
+      <dd>{{ economics.holding_costs_total | money }}
+        <span class="small muted">{{ economics.holding_costs_monthly | money }}/mo over the
+          term</span></dd>
+      <dt>Origination Fee</dt>
+      <dd>{{ economics.origination_fee_pct | pct }} —
+        {{ economics.origination_at_close | money }} at close,
+        {{ economics.origination_at_payoff | money }} at payoff</dd>
+      <dt>Interest Rate</dt><dd>{{ economics.interest_rate | pct }}</dd>
+      <dt>Loan Requested</dt><dd>{{ economics.loan_requested | money }}</dd>
+      <dt>Commitment</dt><dd>{{ economics.commitment | money }}</dd>
+      <dt>Funded at close</dt><dd>{{ economics.funded_at_close | money }}</dd>
+      {% if economics.loan_purchase_portion is not none %}
+        <dt>Loan split</dt>
+        <dd>{{ economics.loan_purchase_portion | money }} purchase +
+          {{ economics.loan_rehab_portion | money }} rehab</dd>
+      {% endif %}
+    </dl>
+  {% else %}
+    <p class="small muted">
+      As entered; the resolved figures — and whatever config stood in for a blank — appear
+      here once the deal has been underwritten.
+    </p>
+    <dl class="facts">
+      <dt>Purchase Price</dt><dd>{{ deal.purchase_price | money }}</dd>
+      <dt>Rehab Costs</dt><dd>{{ deal.rehab_costs | money }}</dd>
+      <dt>Contingency</dt><dd>{{ deal.contingency_pct | pct }}</dd>
+      <dt>Closing Costs</dt><dd>{{ deal.closing_costs_usd | money }}</dd>
+      <dt>Holding Costs (total)</dt><dd>{{ deal.holding_costs_total_usd | money }}</dd>
+      <dt>Origination Fee</dt><dd>{{ deal.origination_fee_pct | pct }}</dd>
+      <dt>Interest Rate</dt><dd>{{ deal.interest_rate | pct }}</dd>
+      <dt>Loan Requested</dt><dd>{{ deal.loan_requested | money }}</dd>
+      <dt>Loan split</dt>
+      <dd>
+        {% if deal.loan_purchase_portion is not none %}
+          {{ deal.loan_purchase_portion | money }} purchase +
+          {{ deal.loan_rehab_portion | money }} rehab
+        {% else %}—{% endif %}
+      </dd>
+    </dl>
+  {% endif %}
+</section>
+
+{# --- 4. Return Overview (SPEC §8.3) -------------------------------------------------------- #}
+<section class="panel">
+  <h2>Return Overview</h2>
+  {% if result %}
+    {% set overview = result.return_overview %}
+    <p class="lede small">
+      run {{ underwrite.created_at | when }} · engine {{ result.engine_version }} ·
+      config {{ result.config_hash[:12] }} ·
+      {{ result.term_months }} months ({{ result.rehab_months }} rehab) from
+      {{ result.closing_date | when }} to {{ result.payoff_date | when }}
+    </p>
+    <dl class="facts">
+      <dt>IRR</dt>
+      <dd><strong>{{ overview.irr | rate }}</strong>
+        <span class="small muted">XIRR on the actual dates, annualized and compounded</span></dd>
+      <dt>Total interest</dt><dd>{{ overview.total_interest | money }}</dd>
+      <dt>Total fees</dt><dd>{{ overview.total_fees | money }}</dd>
+      <dt>Total profit</dt><dd>{{ overview.total_profit | money }}</dd>
+    </dl>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th><th class="num">Month</th><th class="num">Funding</th>
+            <th class="num">Future Draws</th><th class="num">Interest</th>
+            <th class="num">Fees</th><th class="num">Payoff</th><th class="num">Net</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in overview.entries %}
+            <tr>
+              <td>{{ entry.date | when }}</td>
+              <td class="num">{{ entry.month }}</td>
+              <td class="num">{{ entry.funding | money }}</td>
+              <td class="num">{{ entry.draws | money }}</td>
+              <td class="num">{{ entry.interest | money }}</td>
+              <td class="num">{{ entry.fees | money }}</td>
+              <td class="num">{{ entry.payoff | money }}</td>
+              <td class="num"><strong>{{ entry.net | money }}</strong></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <th>Total</th><th></th>
+            <th class="num">{{ overview.total_funding | money }}</th>
+            <th class="num">{{ overview.total_draws | money }}</th>
+            <th class="num">{{ overview.total_interest | money }}</th>
+            <th class="num">{{ overview.total_fees | money }}</th>
+            <th class="num">{{ overview.total_payoff | money }}</th>
+            <th class="num">{{ overview.total_profit | money }}</th>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  {% else %}
+    <p class="small muted">Not underwritten yet.</p>
+  {% endif %}
+</section>
+
+{# --- 5. Flip Analysis (SPEC §8.4) ---------------------------------------------------------- #}
+<section class="panel">
+  <h2>Flip Analysis</h2>
+  {% if result %}
+    {% set flip = result.flip %}
+    {% if flip.status | plain == "OFF" %}
+      <p class="small muted">
+        <strong>OFF</strong> — the exit is {{ result.exit.type | plain }}
+        ({{ result.exit.exit_source | plain }}), so the flip was not asked for. The cost
+        stack below stands either way; turn the toggle on to sell at an estimated sale price.
+      </p>
+    {% elif flip.status | plain == "NOT_EVALUATED" %}
+      <p class="small muted">
+        <strong>NOT_EVALUATED</strong> — no estimated sale price, so there is nothing to sell
+        at. The cost stack below stands.
+      </p>
     {% endif %}
-  </div>
+    <dl class="facts small">
+      <dt>Estimated Sale Price</dt><dd>{{ flip.estimated_sale_price | money }}</dd>
+      <dt>Broker selling costs</dt>
+      <dd>{{ flip.broker_costs | money }}
+        <span class="muted">({{ flip.broker_selling_pct | pct }})</span></dd>
+      <dt>Purchase price + closing costs</dt>
+      <dd>{{ flip.purchase_price | money }} + {{ flip.closing_costs | money }}</dd>
+      <dt>Holding costs</dt><dd>{{ flip.holding_costs_total | money }}</dd>
+      <dt>Rehab costs</dt><dd>{{ flip.rehab_costs | money }}</dd>
+      <dt>Contingency</dt><dd>{{ flip.contingency | money }}</dd>
+      <dt>Financing costs</dt>
+      <dd>{{ flip.financing_costs | money }}
+        <span class="muted">interest + both origination halves</span></dd>
+      <dt>Total costs</dt><dd>{{ flip.total_costs | money }}</dd>
+      <dt>Net profit</dt><dd><strong>{{ flip.net_profit | money }}</strong></dd>
+      <dt>Yield (Profit / Costs)</dt>
+      <dd>{{ flip.profit_yield | pct }}
+        <span class="muted">a project margin, not an annualized return</span></dd>
+    </dl>
+  {% else %}
+    <p class="small muted">Not underwritten yet.</p>
+  {% endif %}
+</section>
+
+{# --- 6. Rental Analysis (SPEC §8.5) -------------------------------------------------------- #}
+<section class="panel">
+  <h2>Rental Analysis</h2>
+  {% if result %}
+    {% set rental = result.rental %}
+    {% if rental.status | plain == "OFF" %}
+      <p class="small muted">
+        <strong>OFF</strong> — the exit is {{ result.exit.type | plain }}
+        ({{ result.exit.exit_source | plain }}) and nobody turned it on.
+      </p>
+    {% elif rental.status | plain == "NOT_EVALUATED" %}
+      <p class="small muted">
+        <strong>NOT_EVALUATED</strong> — no monthly rent on the deal, so there is no net
+        monthly income to cover a debt service with and nothing stands in for one. Enter a
+        rent and re-run.
+      </p>
+    {% endif %}
+    <dl class="facts small">
+      <dt>Monthly Rent</dt><dd>{{ rental.monthly_rent | money }}</dd>
+      <dt>Expenses</dt>
+      <dd>{{ rental.expenses | money }}
+        <span class="muted">({{ rental.expenses_pct | pct }} of rent)</span></dd>
+      <dt>Monthly holding costs</dt><dd>{{ rental.holding_costs_monthly | money }}</dd>
+      <dt>Net monthly income</dt><dd>{{ rental.net_monthly_income | money }}</dd>
+      <dt>Debt service</dt>
+      <dd>{{ rental.debt_service_monthly | money }}
+        <span class="muted">on {{ rental.loan_amount | money }} at
+          {{ rental.takeout_rate | pct }}, {{ rental.amortization_years }}-yr</span></dd>
+      <dt>DSCR</dt>
+      <dd>{{ rental.dscr | ratio }} against a {{ rental.dscr_floor | ratio }} floor —
+        {% if rental.passed is none %}not tested
+        {% elif rental.passed %}passes{% else %}below it{% endif %}</dd>
+    </dl>
+  {% else %}
+    <p class="small muted">Not underwritten yet.</p>
+  {% endif %}
+</section>
+
+{# --- 7. Take-Back Analysis (SPEC §8.6) ----------------------------------------------------- #}
+<section class="panel">
+  <h2>Take-Back Analysis</h2>
+  {% if result %}
+    {% set take_back = result.take_back %}
+    <p class="small muted">
+      What it costs GLENWOOD to end up owning the property, and whether the rent carries it.
+      Always run, whatever the exit says.
+    </p>
+    {% if take_back.status | plain == "NOT_EVALUATED" %}
+      <p class="small muted">
+        <strong>NOT_EVALUATED</strong> — no monthly rent, so there is no DSCR to test. The
+        cost below stands.
+      </p>
+    {% endif %}
+    <dl class="facts small">
+      <dt>Loan amount</dt><dd>{{ take_back.loan_amount | money }}</dd>
+      <dt>Lost interest</dt>
+      <dd>{{ take_back.lost_interest | money }}
+        <span class="muted">{{ take_back.lost_interest_months }} months at
+          {{ take_back.interest_rate | pct }}</span></dd>
+      <dt>Legal costs</dt><dd>{{ take_back.legal_costs | money }}</dd>
+      <dt>Total cost</dt><dd><strong>{{ take_back.total_cost | money }}</strong></dd>
+      <dt>Debt service</dt>
+      <dd>{{ take_back.debt_service_monthly | money }}
+        <span class="muted">on the total cost at {{ take_back.interest_rate | pct }},
+          {{ take_back.amortization_years }}-yr</span></dd>
+      <dt>Net monthly income</dt><dd>{{ take_back.net_monthly_income | money }}</dd>
+      <dt>DSCR at loan cost</dt>
+      <dd>{{ take_back.dscr | ratio }} against a {{ take_back.dscr_floor | ratio }} floor —
+        {% if take_back.passed is none %}not tested
+        {% elif take_back.passed %}passes{% else %}below it{% endif %}</dd>
+    </dl>
+  {% else %}
+    <p class="small muted">Not underwritten yet.</p>
+  {% endif %}
+</section>
+
+{# --- 8. Flags (SPEC §8.8) ------------------------------------------------------------------ #}
+<section class="panel">
+  <h2>Flags</h2>
+  {% if result %}
+    <h3>Sizing against caps</h3>
+    {{ parts.sizing_table(result.sizing) }}
+    <h3>Raised</h3>
+    {{ parts.flag_list(result.flags) }}
+  {% else %}
+    <p class="small muted">Not underwritten yet — the screen's own flags are below.</p>
+  {% endif %}
 </section>
 
 {# --- run the engine ---------------------------------------------------------------------- #}
@@ -121,7 +382,9 @@
           <tr>
             <td>{{ row.label }}</td>
             <td class="num">
-              {% if row.money %}{{ row.value | money }}{% else %}{{ row.value | plain }}{% endif %}
+              {% if row.fmt == "money" %}{{ row.value | money }}
+              {% elif row.fmt == "pct" %}{{ row.value | pct }}
+              {% else %}{{ row.value | plain }}{% endif %}
             </td>
             <td><span class="tag {{ 'HARD' if row.required and not row.satisfied
                      else ('GO' if row.satisfied else 'INFO') }}">{{ row.source | plain }}</span></td>
@@ -131,6 +394,20 @@
         {% endfor %}
       </tbody>
     </table>
+  </div>
+
+  <div class="actions" style="margin-top:12px">
+    {% if allowed.edit_intake %}
+      <a href="/queue/deals/{{ deal.id }}/intake">Edit intake</a>
+      <span class="small muted">
+        The same form it was entered on. Every version is kept; a re-screen is not automatic.
+      </span>
+    {% else %}
+      <span class="small muted">
+        The intake is not editable on a {{ deal.status | plain }} deal — re-open it first, or
+        record the change as a note.
+      </span>
+    {% endif %}
   </div>
 </section>
 
@@ -180,49 +457,65 @@
   <p class="lede small">
     The interim source until the enrichment adapters land (SPEC §6.1). An adapter value always
     wins over anything here, and what is entered stays on the deal either way. Saving replaces
-    the whole block — a box left blank means the deal carries no such value.
+    the whole block — a box left blank means the deal carries no such value, and for the four
+    economics with a config default that means the default.
   </p>
   <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/overrides">
       {{ csrf.field(csrf_token) }}
     <fieldset>
-      <legend>Valuation</legend>
+      <legend>Overview</legend>
       <div class="grid3">
-        {{ fields.text_box("as_is_value_team", "As-is value", form.as_is_value_team,
-                           mode="decimal") }}
-        {{ fields.text_box("arv_team", "ARV", form.arv_team, mode="decimal") }}
-      </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Holding costs and the DSCR takeout (annual, except the rent)</legend>
-      <div class="grid3">
-        {{ fields.text_box("actual_annual_taxes_usd",
-                           "Taxes — blank uses the config % of as-is",
-                           form.actual_annual_taxes_usd, mode="decimal") }}
-        {{ fields.text_box("actual_annual_insurance_usd", "Insurance — blank uses the config %",
-                           form.actual_annual_insurance_usd, mode="decimal") }}
-        {{ fields.text_box("actual_annual_utilities_usd", "Utilities — no default",
-                           form.actual_annual_utilities_usd, mode="decimal") }}
-        {{ fields.text_box("market_rent_monthly", "Market rent (monthly) — no default",
-                           form.market_rent_monthly, mode="decimal") }}
-      </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Structure</legend>
-      <div class="grid3">
-        {{ fields.select_box("asset_type", "Asset type", enums.asset_type, form.asset_type) }}
-        {{ fields.select_box("product", "Product — blank leaves the inferred one",
+        {{ fields.select_box("loan_purpose", "Loan Purpose", enums.loan_purpose,
+                             form.loan_purpose) }}
+        {{ fields.select_box("product", "Loan Type — blank leaves the inferred one",
                              enums.product, form.product) }}
+        {{ fields.text_box("closing_date", "Closing Date — month 0 of the ledger",
+                           form.closing_date, kind="date") }}
+        {{ fields.text_box("term_months", "Term (months)", form.term_months, mode="numeric") }}
+        {#- Rendered blank on purpose: the payoff date is not a column, it is the closing date
+            plus the term (SPEC §8.1). Typing one here is the other way of saying the term. -#}
+        {{ fields.text_box("payoff_date",
+                           "Payoff Date — blank keeps the term beside it",
+                           form.payoff_date, kind="date") }}
+      </div>
+      <p class="small muted">
+        Currently {{ payoff_date | when }}. Enter either box and the other derives; a payoff
+        date that is not a whole number of months after closing is refused by name.
+      </p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Deal Economics — blank uses the config default, except the rate</legend>
+      <div class="grid3">
+        {{ fields.text_box("interest_rate", "Interest Rate — annual, as a fraction",
+                           form.interest_rate, mode="decimal") }}
+        {{ fields.text_box("contingency_pct", "Contingency", form.contingency_pct,
+                           mode="decimal") }}
+        {{ fields.text_box("closing_costs_usd", "Closing Costs", form.closing_costs_usd,
+                           mode="decimal") }}
+        {{ fields.text_box("holding_costs_total_usd", "Holding Costs (total over the hold)",
+                           form.holding_costs_total_usd, mode="decimal") }}
+        {{ fields.text_box("origination_fee_pct", "Origination Fee", form.origination_fee_pct,
+                           mode="decimal") }}
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Valuation, rent and the analyses</legend>
+      <div class="grid3">
+        {{ fields.text_box("as_is_value_team", "As-is value — LTV only", form.as_is_value_team,
+                           mode="decimal") }}
+        {{ fields.text_box("estimated_sale_price_team", "Estimated Sale Price",
+                           form.estimated_sale_price_team, mode="decimal") }}
+        {{ fields.text_box("monthly_rent", "Monthly Rent — no default", form.monthly_rent,
+                           mode="decimal") }}
+        {{ fields.select_box("asset_type", "Asset type", enums.asset_type, form.asset_type) }}
         {{ fields.select_box("stated_exit", "Stated exit", enums.stated_exit,
                              form.stated_exit) }}
-        {#- The 12+ bucket names no number of months, and the Run underwrite button posts no
-            form of its own, so this box is the only place in the queue a term can be set on
-            one. Every other bucket names its own, so it is shown read-only and re-derived on
-            save (SPEC §8.1). -#}
-        {{ fields.text_box("term_months", "Term in months — the bucket names it unless 12+",
-                           form.term_months, mark="Required for a 12+ term", mode="numeric",
-                           readonly=deal.term_bucket | plain != "12_PLUS") }}
+        {{ fields.yes_no_box("flip_analysis", "Flip analysis — blank takes the §3 default",
+                             form.flip_analysis) }}
+        {{ fields.yes_no_box("rental_analysis", "Rental analysis — blank takes the §3 default",
+                             form.rental_analysis) }}
       </div>
     </fieldset>
 
@@ -309,132 +602,6 @@
     </p>
   {% else %}
     <p class="small muted">Not screened yet.</p>
-  {% endif %}
-</section>
-
-{# --- underwrite (SPEC §8.7) ----------------------------------------------------------------- #}
-<section class="panel">
-  <h2>Underwrite</h2>
-  {% if underwrite %}
-    {% set result = underwrite.result %}
-    <p class="lede small">
-      run {{ underwrite.created_at | when }} · engine {{ result.engine_version }} ·
-      config {{ result.config_hash[:12] }}
-    </p>
-
-    <h3>Sizing on verified values</h3>
-    {{ parts.sizing_table(result.sizing) }}
-
-    <h3>Pricing</h3>
-    <dl class="facts small">
-      <dt>Term</dt><dd>{{ result.term_months }} months ({{ result.rehab_months }} rehab)</dd>
-      <dt>Solved rate r*</dt><dd>{{ result.solved_rate | rate }}</dd>
-      <dt>Lender yield at r*</dt><dd>{{ result.lender_yield_at_solve | rate }}</dd>
-      <dt>Interest at r*</dt><dd>{{ result.lender_at_solve.interest | money }}</dd>
-      <dt>Fees at r*</dt><dd>{{ result.lender_at_solve.fees.total | money }}</dd>
-      <dt>Average outstanding</dt><dd>{{ result.lender_at_solve.avg_outstanding | money }}</dd>
-    </dl>
-
-    <h3>Lender yield grid (SPEC §8.5)</h3>
-    <p class="small muted">
-      Target {{ result.grid_lender.target | pct }} on a
-      {{ result.sizing.commitment | money }} commitment{% if result.sizing.split %},
-        {{ result.sizing.split.purchase_portion | money }} +
-        {{ result.sizing.split.rehab_portion | money }}
-        ({{ "Principal Note + Tranche A" if result.sizing.product | plain == "SPLIT_PRINCIPAL"
-            else "advanced at close + holdback" }}){% endif %}.
-      Shaded cells meet it; the outlined column
-      is r*{{ ", inserted into the grid in rate order" if result.grid_lender.solved_rate_inserted
-      else ", which already sat on the configured grid" }}.
-    </p>
-    <div class="scroll">
-      <table>
-        <thead>
-          <tr>
-            <th>Month</th>
-            {% for column in result.grid_lender.rates %}
-              {# The headers are rounded to a tenth, so the solved column says which it is
-                 rather than leaving the reader to match it against r* above. #}
-              <th class="num">{{ column | pct }}{% if column == result.solved_rate %}
-                <span class="muted">r*</span>{% endif %}</th>
-            {% endfor %}
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in result.grid_lender.rows %}
-            <tr>
-              <th>{{ row.month }}</th>
-              {% for cell in row.cells %}
-                <td class="num grid-cell {{ 'hit' if cell.meets_target }} {{ 'solved' if cell.is_solved_rate }}">
-                  {{ cell.annualized_yield | pct }}
-                </td>
-              {% endfor %}
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-
-    <h3>Exit — DSCR takeout</h3>
-    {% if result.exit.status | plain == "NOT_EVALUATED" %}
-      <p class="small muted">
-        <strong>NOT_EVALUATED</strong> — no market rent on the deal, so there is no NOI to
-        size a takeout against and nothing stands in for one. Whether a refinance covers the
-        payoff is unknown, not false. Enter a market rent and re-run.
-      </p>
-    {% endif %}
-    <dl class="facts small">
-      <dt>Exit type</dt>
-      <dd>{{ result.exit.type | plain }}
-        <span class="muted">({{ result.exit.exit_source | plain }})</span></dd>
-      <dt>Gross rent (annual)</dt><dd>{{ result.exit.gross_rent_annual | money }}</dd>
-      <dt>Taxes</dt>
-      <dd>{{ result.exit.annual_taxes | money }}
-        <span class="muted">({{ result.exit.annual_taxes_source | plain }})</span></dd>
-      <dt>Insurance</dt>
-      <dd>{{ result.exit.annual_insurance | money }}
-        <span class="muted">({{ result.exit.annual_insurance_source | plain }})</span></dd>
-      <dt>NOI</dt><dd>{{ result.exit.noi_annual | money }}</dd>
-      <dt>LTV takeout</dt><dd>{{ result.exit.ltv_takeout | money }}</dd>
-      <dt>DSCR takeout</dt><dd>{{ result.exit.dscr_takeout | money }}</dd>
-      <dt>Max takeout</dt><dd>{{ result.exit.max_takeout | money }}</dd>
-      <dt>Payoff due</dt><dd>{{ result.exit.payoff_due | money }}</dd>
-      <dt>DSCR at payoff</dt><dd>{{ result.exit.dscr_at_payoff | ratio }}</dd>
-      <dt>Refi covers</dt>
-      <dd>{{ result.exit.refi_covers | yes_no }}
-        {% if result.exit.refi_covers is false %}
-          <span class="muted">short {{ result.exit.shortfall | money }}</span>{% endif %}</dd>
-    </dl>
-
-    <h3>Downside — REO</h3>
-    <dl class="facts small">
-      <dt>Recovery basis</dt><dd>{{ result.downside.recovery_basis | money }}</dd>
-      <dt>Liquidation</dt><dd>{{ result.downside.liquidation | money }}</dd>
-      <dt>Foreclosure</dt>
-      <dd>{{ result.downside.foreclosure_months }} months,
-        {{ result.downside.foreclosure_cost | money }}</dd>
-      <dt>Recovery</dt><dd>{{ result.downside.recovery | money }}</dd>
-      <dt>Exposure</dt><dd>{{ result.downside.exposure | money }}</dd>
-      <dt>Cover</dt>
-      <dd>{{ result.downside.cover | ratio }} against a
-        {{ result.downside.cover_floor | ratio }} floor —
-        {{ "passes" if result.downside.passed else "below it" }}</dd>
-    </dl>
-
-    <h3>Borrower economics <span class="muted">(information only)</span></h3>
-    <dl class="facts small">
-      <dt>Total project cost</dt><dd>{{ result.borrower_at_solve.total_project_cost | money }}</dd>
-      <dt>Holding costs</dt><dd>{{ result.borrower_at_solve.holding_costs | money }}</dd>
-      <dt>Exit net</dt><dd>{{ result.borrower_at_solve.exit_net | money }}</dd>
-      <dt>Profit</dt><dd>{{ result.borrower_at_solve.profit | money }}</dd>
-      <dt>Cash in</dt><dd>{{ result.borrower_at_solve.cash_in | money }}</dd>
-      <dt>Cash-on-cash</dt><dd>{{ result.borrower_at_solve.cash_on_cash | pct }}</dd>
-    </dl>
-
-    <h3>Flags</h3>
-    {{ parts.flag_list(result.flags) }}
-  {% else %}
-    <p class="small muted">Not underwritten yet.</p>
   {% endif %}
 </section>
 

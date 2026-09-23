@@ -102,10 +102,10 @@ class Thresholds(_Section):
 
 
 class FlagsConfig(_Section):
-    """Court, filing, and underwrite flag severities; lookbacks; thresholds.  # SPEC §7.2, §8.6
+    """Court, filing, and underwrite flag severities; lookbacks; thresholds.  # SPEC §7.2, §8.8
 
     Only the graded underwrite codes (``GRADED_UNDERWRITE_FLAGS``) are severity decisions.
-    The informational ones are fixed ``Info`` in code (SPEC §8.7), so grading them in the
+    The informational ones are fixed ``Info`` in code (SPEC §8.8), so grading them in the
     yaml would be a lie about what the engine does and is rejected.
     """
 
@@ -130,7 +130,7 @@ class FlagsConfig(_Section):
         if ungradable:
             raise ValueError(
                 "flags.underwrite_severities cannot grade the informational codes "
-                f"(fixed Info in code, SPEC §8.7): {', '.join(sorted(ungradable))}"
+                f"(fixed Info in code, SPEC §8.8): {', '.join(sorted(ungradable))}"
             )
         return self
 
@@ -142,55 +142,20 @@ class ExperienceConfig(_Section):
 
 
 class FeesConfig(_Section):
-    """Fee schedule.  # SPEC §3, §8.1, §8.6"""
+    """Fee defaults.  # SPEC §3, §8.1, §8.4
 
-    origination_pct: Pct
-    origination_at_close_pct: Pct
-    origination_at_payoff_pct: Pct
-    extension_default_pct: Pct
-    selling_cost_pct: Pct
-    contingency_pct: Pct
-    # One buy-side closing number: borrower cash, inside total_cost for the screen's LTC
-    # (SPEC §7.4) and inside the borrower's project cost (SPEC §8.6).
-    borrower_closing_pct_of_price: Pct
+    Every one but the broker's is the **default for a SPEC §8.1 input**: the team may enter
+    its own number on the deal, and these are what stands in when nobody has. The origination
+    split is not a tunable - it is half at close and half at payoff in code (SPEC §3) - so a
+    yaml that still carries the two halves is refused by ``extra="forbid"`` rather than
+    quietly ignored.
+    """
 
-    @model_validator(mode="after")
-    def _origination_split_sums(self) -> FeesConfig:
-        if self.origination_at_close_pct + self.origination_at_payoff_pct != self.origination_pct:
-            raise ValueError(
-                "origination_at_close_pct + origination_at_payoff_pct must equal origination_pct"
-            )
-        return self
-
-
-class RateGrid(_Section):
-    """Rate axis of the sensitivity grid.  # SPEC §8.5"""
-
-    min: Pct
-    max: Pct
-    step: Annotated[Decimal, Field(gt=0, le=1)]
-
-    @model_validator(mode="after")
-    def _grid_is_well_formed(self) -> RateGrid:
-        if self.min >= self.max:
-            raise ValueError("rate_grid.min must be below rate_grid.max")
-        if (self.max - self.min) % self.step != 0:
-            raise ValueError("rate_grid.step must divide (max - min) exactly")
-        return self
-
-
-class MonthWindow(_Section):
-    """Month axis of the sensitivity grid: rows term .. term + after_term.  # SPEC §8.5"""
-
-    after_term: Months
-
-
-class ReturnsConfig(_Section):
-    """Lender return target and grid axes.  # SPEC §8.4, §8.5"""
-
-    target_irr: Pct
-    rate_grid: RateGrid
-    month_window: MonthWindow
+    origination_default_pct: Pct  # of the commitment; half at close, half at payoff
+    contingency_default_pct: Pct  # of rehab_costs
+    closing_costs_default_usd: Money  # the lender's closing costs; inside the LTC denominator
+    holding_costs_default_pct_of_cost: Pct  # of purchase_price + rehab_costs, total over the hold
+    broker_selling_pct: Pct  # the flip's cost of selling (SPEC §8.4); not an input
 
 
 class ExitConfig(_Section):
@@ -199,7 +164,8 @@ class ExitConfig(_Section):
     A term at or below ``resale_max_term_months`` on an SFR or a 2-4 infers a resale; a
     term at or above ``hold_min_term_months`` infers a hold. The gap between them (10-11
     months on the placeholders) infers nothing and stays UNKNOWN, which is the point of
-    having two numbers rather than one cut point.
+    having two numbers rather than one cut point. All the exit does is default the two
+    analysis toggles (SPEC §8.1).
     """
 
     resale_max_term_months: Months
@@ -213,56 +179,38 @@ class ExitConfig(_Section):
 
 
 class DrawsConfig(_Section):
-    """Draw-curve constants.  # SPEC §8.3"""
+    """The draw schedule's one constant.  # SPEC §8.3
 
-    draw_avg_utilization: Pct  # average Tranche A utilization over the rehab period
-    listing_months: Months  # rehab_months = term - listing_months
-
-
-class OpexDefaults(_Section):
-    """Opex lines used when the deal does not supply them.  # SPEC §8.6
-
-    Rent percentages apply to gross annual rent; taxes, insurance and utilities default to a
-    percentage of the **as-is** value, not the ARV: the property is carried as it stands.
-
-    There is deliberately no default for the market rent. A percentage of a value is a
-    defensible stand-in for a cost the property incurs whatever it is worth; nothing stands
-    in for what it lets for, so a deal without a rent gets no DSCR takeout (SPEC §8.6)
-    rather than one computed on a guess.
+    ``rehab_months = term_months - listing_months``, floored at 0: the last months of the
+    term are listing and sale, not rehab. There is no average-utilization number any more -
+    the ledger draws the money month by month and states the balance directly.
     """
 
-    vacancy_pct_of_rent: Pct
-    management_pct_of_rent: Pct
-    maintenance_pct_of_rent: Pct
-    taxes_pct_of_as_is_value: Pct
-    insurance_pct_of_as_is_value: Pct
-    utilities_pct_of_as_is_value: Pct
+    listing_months: Months
 
 
-class TakeoutConfig(_Section):
-    """DSCR takeout assumptions.  # SPEC §8.6"""
+class RentalConfig(_Section):
+    """Rental analysis assumptions.  # SPEC §8.5"""
 
-    ltv: Pct
-    rate: Pct
+    expenses_pct_of_rent: Pct
+    takeout_rate: Pct
     amortization_years: Annotated[int, Field(ge=1, le=40)]
     dscr_floor: Annotated[Decimal, Field(gt=0, le=5)]
-    opex_defaults: OpexDefaults
 
 
-class DownsideConfig(_Section):
-    """REO downside assumptions.  # SPEC §8.6"""
+class TakeBackConfig(_Section):
+    """Take-back analysis assumptions.  # SPEC §8.6
 
-    reo_haircut: Pct
-    foreclosure_cost_usd: Money
-    foreclosure_months: dict[State, Months]
-    cover_floor: Annotated[Decimal, Field(gt=0, le=5)]
+    What it costs GLENWOOD to end up owning the property: the interest it stops collecting
+    while that happens, and the legal bill. The debt service is computed at the deal's own
+    note rate, not a takeout rate - this is GLENWOOD carrying its own money, not a borrower
+    refinancing away from it.
+    """
 
-    @model_validator(mode="after")
-    def _every_state_has_foreclosure_months(self) -> DownsideConfig:
-        missing = [s.value for s in State if s not in self.foreclosure_months]
-        if missing:
-            raise ValueError(f"downside.foreclosure_months is missing: {', '.join(missing)}")
-        return self
+    lost_interest_months: Months
+    legal_costs_usd: Money
+    amortization_years: Annotated[int, Field(ge=1, le=40)]
+    dscr_floor: Annotated[Decimal, Field(gt=0, le=5)]
 
 
 class StatesConfig(_Section):
@@ -294,11 +242,10 @@ class Config(_Section):
     flags: FlagsConfig
     experience: ExperienceConfig
     fees: FeesConfig
-    returns: ReturnsConfig
     exit: ExitConfig
     draws: DrawsConfig
-    takeout: TakeoutConfig
-    downside: DownsideConfig
+    rental: RentalConfig
+    take_back: TakeBackConfig
     states: StatesConfig
 
     @model_validator(mode="after")

@@ -17,7 +17,7 @@ credit:                                   # SPEC §7.1
 screen:                                   # SPEC §7.5
   tolerance_band: 0.05                    # leverage above cap by <= this -> Conditional; beyond -> Decline
 
-flags:                                    # SPEC §7.2, §8.6
+flags:                                    # SPEC §7.2, §8.8
   severities:
     BANKRUPTCY_IN_LOOKBACK: HARD
     ACTIVE_FORECLOSURE_AS_OWNER: HARD
@@ -27,9 +27,9 @@ flags:                                    # SPEC §7.2, §8.6
     SATISFIED_JUDGMENT_OR_RELEASED_LIEN_IN_LOOKBACK: SOFT
     LANDLORD_TENANT_AS_LANDLORD: INFO
     SUBJECT_PROPERTY_LIEN_OR_LIS_PENDENS: HARD   # applies when senior and unresolved at close
-  underwrite_severities:                  # SPEC §8.6 underwrite flags
-    REFI_SHORTFALL: SOFT                         # DSCR takeout does not cover commitment + payoff fees
-    DOWNSIDE_COVER_BELOW_FLOOR: HARD             # REO recovery / exposure below downside.cover_floor
+  underwrite_severities:                  # SPEC §8.8 underwrite flags
+    DSCR_BELOW_FLOOR: SOFT                       # rental DSCR below rental.dscr_floor (SPEC §8.5)
+    TAKE_BACK_DSCR_BELOW_FLOOR: HARD             # take-back DSCR below take_back.dscr_floor (§8.6)
   lookbacks:
     bankruptcy_years: 4
     satisfied_judgment_years: 3
@@ -40,54 +40,36 @@ flags:                                    # SPEC §7.2, §8.6
 experience:                               # SPEC §7.3
   repeat_borrower_min_tier: E2            # repeat GLENWOOD borrower with clean payoff history is treated as at least this tier
 
-fees:                                     # SPEC §3, §8.1
-  origination_pct: 0.02                   # of total commitment
-  origination_at_close_pct: 0.01          # at_close + at_payoff must equal origination_pct
-  origination_at_payoff_pct: 0.01         # also the "unpaid fees" in payoff_due and REO exposure (SPEC §8.6)
-  extension_default_pct: 0.0              # of commitment, charged if payoff month > term; no rate step-up
-  selling_cost_pct: 0.06                  # on exit_price (borrower) and on REO liquidation (downside)
-  contingency_pct: 0.10                   # applied to rehab budget (SPEC §7.4); lender funds and borrower spends it
-  borrower_closing_pct_of_price: 0.03     # buy-side closing, borrower cash: in total_cost for LTC (SPEC §7.4) and in the borrower's project cost (SPEC §8.6)
-
-returns:                                  # SPEC §8.4, §8.5
-  target_irr: 0.175                       # lender_yield(term, r*) = target_irr solves r*
-  rate_grid:                              # 10.0% -> 15.0% in 50 bps = 11 columns; r* inserted if not on the grid
-    min: 0.10
-    max: 0.15
-    step: 0.005
-  month_window:                           # rows: term .. term + after_term (no early payoff, SPEC §8.4)
-    after_term: 6
+fees:                                     # SPEC §3, §8.1, §8.4
+  # Every one but the broker's is the DEFAULT for a SPEC §8.1 input: the team may enter
+  # its own number on the deal, and these are what stands in when nobody has.
+  origination_default_pct: 0.02           # of the commitment; half at close, half at payoff
+  contingency_default_pct: 0.00           # of rehab_costs; rehab_adj = rehab_costs x (1 + this)
+  closing_costs_default_usd: 1000.00      # the lender's closing costs; inside the LTC denominator
+  holding_costs_default_pct_of_cost: 0.02 # of purchase_price + rehab_costs, TOTAL over the hold
+  broker_selling_pct: 0.04                # the flip's cost of selling (SPEC §8.4); not an input
 
 exit:                                     # SPEC §3 exit inference; a team-stated exit always wins
-  resale_max_term_months: 9               # term <= this on an SFR / 2-4 infers a resale (flip, or wholetail on that product)
-  hold_min_term_months: 12                # term >= this infers a hold; the gap between the two infers nothing
-                                          #   (UNKNOWN), and every deal runs DSCR and REO regardless (SPEC §8.6)
+  resale_max_term_months: 9               # term <= this on an SFR / 2-4 infers a resale (flip, or
+                                          #   wholetail on that product), which defaults flip on
+  hold_min_term_months: 12                # term >= this infers a hold, which defaults rental on;
+                                          #   the gap between the two infers nothing (UNKNOWN)
 
 draws:                                    # SPEC §8.3
-  draw_avg_utilization: 0.50              # average Tranche A utilization over the rehab period (0.50 = straight-line)
-  listing_months: 3                       # rehab_months = term - listing_months; the last months are listing / sale
+  listing_months: 3                       # rehab_months = term_months - this, floored at 0;
+                                          #   the last months of the term are listing / sale
 
-takeout:                                  # SPEC §8.6 DSCR takeout, run on every deal
-  ltv: 0.75                               # of ARV
-  rate: 0.075
+rental:                                   # SPEC §8.5 rental analysis
+  expenses_pct_of_rent: 0.35              # operating expenses as a share of the monthly rent
+  takeout_rate: 0.065                     # the rate a takeout lender would amortize at
   amortization_years: 30
-  dscr_floor: 1.20
-  opex_defaults:                          # used when the deal does not supply the line item
-    vacancy_pct_of_rent: 0.05             # of gross annual rent
-    management_pct_of_rent: 0.08
-    maintenance_pct_of_rent: 0.05
-    taxes_pct_of_as_is_value: 0.012       # of the as-is value, when annual taxes are not supplied
-    insurance_pct_of_as_is_value: 0.005   # of the as-is value, when annual insurance is not supplied
-    utilities_pct_of_as_is_value: 0.004   # placeholder [v1 - revisit]: vacant-property utilities
+  dscr_floor: 1.20                        # flag DSCR_BELOW_FLOOR below this
 
-downside:                                 # SPEC §8.6 REO downside; no income / cap-rate valuation
-  reo_haircut: 0.15                       # liquidation = min(as_is + rehab_adj, arv) x (1 - haircut)
-  foreclosure_cost_usd: 10000
-  foreclosure_months:                     # months of holding cost carried through foreclosure, by state
-    OK: 8
-    CO: 4
-    OTHER: 8                              # placeholder: the longer of the served states
-  cover_floor: 1.0                        # flag DOWNSIDE_COVER_BELOW_FLOOR when recovery / exposure is below this
+take_back:                                # SPEC §8.6 take-back analysis; replaces the REO downside
+  lost_interest_months: 3                 # months of interest GLENWOOD stops collecting
+  legal_costs_usd: 5000.00
+  amortization_years: 30                  # debt service is at the deal's OWN interest rate
+  dscr_floor: 1.00                        # flag TAKE_BACK_DSCR_BELOW_FLOOR below this
 
 states:                                   # SPEC §10
   served: [OK, CO]

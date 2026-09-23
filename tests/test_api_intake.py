@@ -37,25 +37,26 @@ def test_complete_team_entry_is_stored(client: TestClient, db_session: Session) 
     body = response.json()
     assert body["status"] == "NEW"
     assert body["missing_fields"] == []
-    assert body["borrower"]["phone"] == "+19185550142"
+    assert body["borrower"]["phone"] == "+17205550192"
 
     deal = db_session.get(Deal, body["id"])
     assert deal is not None
     assert deal.status is Status.NEW
     assert deal.channel is Channel.TEAM
-    assert deal.purchase_price == Decimal("185000.00")
+    assert deal.purchase_price == Decimal("200000.00")
     assert deal.term_bucket is TermBucket.M9
-    assert deal.credit_range_self_reported is Tranche.T2
+    assert deal.credit_range_self_reported is Tranche.T1
     assert deal.missing_fields == []
     assert deal.credit_authorization_signed is False
-    assert deal.borrower is not None and deal.borrower.phone == "+19185550142"
-    assert [e.name for e in deal.borrower.entities] == ["Whitfield Holdings LLC"]
-    assert deal.property is not None and deal.property.state is State.OK
+    assert deal.borrower is not None and deal.borrower.phone == "+17205550192"
+    assert [e.name for e in deal.borrower.entities] == ["Ortiz Builds LLC"]
+    assert deal.property is not None and deal.property.state is State.CO
     assert deal.property.state_source is StateSource.INFERRED  # no state on the form
-    assert deal.property.address_normalized == "1412 S CHEYENNE AVE, TULSA, OK 74119"
-    assert deal.actual_annual_taxes_usd is None and deal.actual_annual_insurance_usd is None
+    assert deal.property.address_normalized == "3320 MEADE ST, DENVER, CO 80211"
+    assert deal.monthly_rent is None and deal.as_is_value_team is None
+    assert deal.closing_date is not None and deal.interest_rate == Decimal("0.12000")
     assert len(deal.submissions) == 1
-    assert deal.submissions[0].raw_payload["borrower_phone"] == "(918) 555-0142"
+    assert deal.submissions[0].raw_payload["borrower_phone"] == "720-555-0192"
 
 
 def test_partial_entry_is_needs_info(client: TestClient, db_session: Session) -> None:
@@ -76,7 +77,7 @@ def test_repeat_inquiry_reuses_borrower_property_and_entity(
 ) -> None:
     payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
     first = client.post("/intake/team", json=payload)
-    second = client.post("/intake/team", json={**payload, "borrower_phone": "918-555-0142"})
+    second = client.post("/intake/team", json={**payload, "borrower_phone": "(720) 555-0192"})
     assert first.status_code == 201 and second.status_code == 201
     assert first.json()["id"] != second.json()["id"]
     assert db_session.scalar(select(func.count()).select_from(Borrower)) == 1
@@ -96,26 +97,30 @@ def test_bad_money_is_rejected(client: TestClient) -> None:
     assert response.status_code == 422
 
 
-def test_entered_state_and_actual_opex_are_stored(client: TestClient, db_session: Session) -> None:
+def test_entered_state_and_the_team_economics_are_stored(
+    client: TestClient, db_session: Session
+) -> None:
     payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
     payload.update(
         {
             "state": "OK",
-            "actual_annual_taxes_usd": "2400.00",
-            "actual_annual_insurance_usd": "900.00",
+            "holding_costs_total_usd": "9600.00",
+            "monthly_rent": "2500.00",
+            "contingency_pct": "0.1",
         }
     )
     response = client.post("/intake/team", json=payload)
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["property"]["state_source"] == "ENTERED"
-    assert body["deal"]["actual_annual_taxes_usd"] == "2400.00"
+    assert body["deal"]["holding_costs_total_usd"] == "9600.00"
     deal = db_session.get(Deal, body["id"])
     assert deal is not None and deal.property is not None
     assert deal.property.state is State.OK
     assert deal.property.state_source is StateSource.ENTERED
-    assert deal.actual_annual_taxes_usd == Decimal("2400.00")
-    assert deal.actual_annual_insurance_usd == Decimal("900.00")
+    assert deal.holding_costs_total_usd == Decimal("9600.00")
+    assert deal.monthly_rent == Decimal("2500.00")
+    assert deal.contingency_pct == Decimal("0.10000")
 
 
 def test_inferred_state_source_is_stored(client: TestClient, db_session: Session) -> None:

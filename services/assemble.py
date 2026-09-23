@@ -13,10 +13,13 @@ instead of ``| None`` everywhere.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from typing import NamedTuple
 
+from config.config import Config, get_config
 from db.models import Deal
+from engine.calc.exit import flip_default, infer_exit, rental_default
 from schema.models import (
     AMOUNT_COURT_FLAGS,
     DATED_COURT_FLAGS,
@@ -45,7 +48,7 @@ from services.requests import UnderwriteRequest
 _REQUIRED: tuple[tuple[str, str], ...] = (
     ("product", "deal.product"),
     ("purchase_price", "deal.purchase_price"),
-    ("rehab_budget", "deal.rehab_budget"),
+    ("rehab_costs", "deal.rehab_costs"),
     ("loan_requested", "deal.loan_requested"),
     ("credit_range_self_reported", "borrower.credit_range"),
     ("experience_bucket_self_reported", "borrower.experience_bucket"),
@@ -71,10 +74,12 @@ class DealCore:
 
     product: Product
     purchase_price: Decimal
-    rehab_budget: Decimal
+    rehab_costs: Decimal
     loan_requested: Decimal
     loan_purchase_portion: Decimal | None
     loan_rehab_portion: Decimal | None
+    contingency_pct: Decimal | None
+    closing_costs_usd: Decimal | None
     credit_range: Tranche
     experience_bucket: ExperienceBucket
     repeat_borrower: bool
@@ -103,10 +108,12 @@ def deal_core(deal: Deal) -> DealCore:
     return DealCore(
         product=_present(deal.product),
         purchase_price=_present(deal.purchase_price),
-        rehab_budget=_present(deal.rehab_budget),
+        rehab_costs=_present(deal.rehab_costs),
         loan_requested=_present(deal.loan_requested),
         loan_purchase_portion=deal.loan_purchase_portion,
         loan_rehab_portion=deal.loan_rehab_portion,
+        contingency_pct=deal.contingency_pct,
+        closing_costs_usd=deal.closing_costs_usd,
         credit_range=_present(deal.credit_range_self_reported),
         experience_bucket=_present(deal.experience_bucket_self_reported),
         repeat_borrower=_present(deal.repeat_borrower_self_reported),
@@ -115,12 +122,12 @@ def deal_core(deal: Deal) -> DealCore:
 
 
 class Valuation(NamedTuple):
-    """The as-is value and ARV the engine will run on, and where each came from."""
+    """The valuation the engine will run on, and where each half of it came from."""
 
     as_is_value: Decimal | None
     as_is_value_source: ValueSource | None
-    arv: Decimal | None
-    arv_source: ValueSource | None
+    estimated_sale_price: Decimal | None
+    estimated_sale_price_source: ValueSource | None
 
 
 NO_VALUATION = Valuation(None, None, None, None)
@@ -148,16 +155,19 @@ def resolve_valuation(
     deal at intake, and the one a team member types when they advance the deal to
     underwrite. The request wins between those two - it is the more recent judgement - and
     an adapter value wins over both. Nothing here writes back to the deal, so
-    ``as_is_value_team`` and ``arv_team`` survive a run that did not use them.
+    ``as_is_value_team`` and ``estimated_sale_price_team`` survive a run that did not use
+    them.
     """
     team_as_is = deal.as_is_value_team
-    team_arv = deal.arv_team
+    team_sale = deal.estimated_sale_price_team
     if request is not None:
         team_as_is = request.as_is_value if request.as_is_value is not None else team_as_is
-        team_arv = request.arv if request.arv is not None else team_arv
+        team_sale = (
+            request.estimated_sale_price if request.estimated_sale_price is not None else team_sale
+        )
     as_is_value, as_is_source = resolve_one(adapters.as_is_value, team_as_is)
-    arv, arv_source = resolve_one(adapters.arv, team_arv)
-    return Valuation(as_is_value, as_is_source, arv, arv_source)
+    sale_price, sale_source = resolve_one(adapters.estimated_sale_price, team_sale)
+    return Valuation(as_is_value, as_is_source, sale_price, sale_source)
 
 
 def team_court_records(deal: Deal) -> CourtRecordInputs | None:
@@ -232,25 +242,37 @@ def court_records(
     return team_court_records(deal)
 
 
-def sizing_inputs(core: DealCore, valuation: Valuation = NO_VALUATION) -> SizingInputs:
+def sizing_inputs(
+    core: DealCore,
+    valuation: Valuation = NO_VALUATION,
+    request: UnderwriteRequest | None = None,
+) -> SizingInputs:
     """The deal numbers plus the valuation in force and where each half of it came from.
 
     The loan split travels with the deal (SPEC §8.2) rather than being handed in at run
     time: it is a description of the loan, not a judgement made at pricing. Both halves are
     None on a deal nobody has divided, which the screen sizes without a split and the
     underwrite refuses (SPEC §8.1).
+
+    The contingency and the lender's closing costs are here because both stages size on
+    them (SPEC §8.2): a request may carry a newer number than the deal does, and None at the
+    end of both means the config default.
     """
     return SizingInputs(
         product=core.product,
         purchase_price=core.purchase_price,
-        rehab_budget=core.rehab_budget,
+        rehab_costs=core.rehab_costs,
         loan_requested=core.loan_requested,
         loan_purchase_portion=core.loan_purchase_portion,
         loan_rehab_portion=core.loan_rehab_portion,
+        contingency_pct=_first(request.contingency_pct if request else None, core.contingency_pct),
+        closing_costs_usd=_first(
+            request.closing_costs_usd if request else None, core.closing_costs_usd
+        ),
         as_is_value=valuation.as_is_value,
         as_is_value_source=valuation.as_is_value_source,
-        arv=valuation.arv,
-        arv_source=valuation.arv_source,
+        estimated_sale_price=valuation.estimated_sale_price,
+        estimated_sale_price_source=valuation.estimated_sale_price_source,
     )
 
 
@@ -284,15 +306,70 @@ def screen_inputs(deal: Deal, adapters: AdapterValues = NO_ADAPTER_VALUES) -> Sc
     )
 
 
+def resolve_closing_date(deal: Deal, request: UnderwriteRequest) -> date | None:
+    """The request's closing date, else the one on the deal.  # SPEC §8.1"""
+    return request.closing_date if request.closing_date is not None else deal.closing_date
+
+
 def resolve_term_months(deal: Deal, request: UnderwriteRequest) -> int | None:
     """The request's term, else the one on the deal.  # SPEC §8.1
 
-    Not derived from the bucket here any more: the normalizer derives it once, on the way in
-    (``intake/normalize.py``), so the column is the term and there is one thing for the
-    readiness checklist and the refusal below to name. None means nobody has set one, which
-    on a ``12_PLUS`` deal is the state this is here to make visible.
+    A request may name the term as a payoff date instead, which ``UnderwriteRequest``
+    converts against its own closing date; the column is otherwise the term, seeded from the
+    bucket at intake and free to differ from it. None means nobody has set one at all.
     """
-    return request.term_months if request.term_months is not None else deal.term_months
+    requested = request.requested_term_months
+    return requested if requested is not None else deal.term_months
+
+
+def resolved_exit(
+    deal: Deal, request: UnderwriteRequest, term_months: int | None, config: Config | None = None
+) -> StatedExit:
+    """The §3 exit this deal would be underwritten under, as far as it can be known here.
+
+    UNKNOWN when there is no term or no product yet, which is exactly what the inference
+    would say about a deal it cannot place. The engine runs the same ``infer_exit``; this is
+    here so the readiness checklist and the assembly's own refusal agree with it in advance
+    about which analyses are on (SPEC §8.1).
+    """
+    if term_months is None or deal.product is None:
+        return StatedExit.UNKNOWN
+    exit_type, _ = infer_exit(
+        _first(request.stated_exit, deal.stated_exit) or StatedExit.UNKNOWN,
+        _first(request.asset_type, deal.asset_type),
+        term_months,
+        deal.product,
+        config if config is not None else get_config(),
+    )
+    return exit_type
+
+
+def flip_is_on(
+    deal: Deal, request: UnderwriteRequest, term_months: int | None, config: Config | None = None
+) -> bool:
+    """Whether the Flip analysis would run, which decides if a sale price is required.
+
+    # SPEC §8.1. A toggle set by hand wins; otherwise the §3 exit decides.
+    """
+    toggle = _first(request.flip_analysis, deal.flip_analysis)
+    if toggle is not None:
+        return toggle
+    return flip_default(resolved_exit(deal, request, term_months, config))
+
+
+def rental_is_on(
+    deal: Deal, request: UnderwriteRequest, term_months: int | None, config: Config | None = None
+) -> bool:
+    """Whether the Rental analysis would run.  # SPEC §8.1
+
+    Nothing is required by it either way - the Take-Back analysis needs the same rent and
+    runs regardless - so this is for the checklist to report rather than for the button.
+    """
+    toggle = _first(request.rental_analysis, deal.rental_analysis)
+    if toggle is not None:
+        return toggle
+    rent = _first(request.monthly_rent, deal.monthly_rent)
+    return rental_default(resolved_exit(deal, request, term_months, config), rent)
 
 
 def underwrite_inputs(
@@ -300,61 +377,77 @@ def underwrite_inputs(
 ) -> UnderwriteInputs:
     """Assemble ``UnderwriteInputs`` from the deal plus the team's §8.1 additions.
 
-    Every optional value falls back the same way: the request, then what is on the deal,
-    then the engine's own default. Taxes, insurance and utilities end at None, which is the
-    engine's signal to use the config percentage of the as-is value (SPEC §8.6); the market
-    rent ends at None too, which leaves the DSCR takeout NOT_EVALUATED with an INFO flag
-    rather than computed on a zero.
+    Every optional value falls back the same way: the request, then what is on the deal, then
+    the engine's own default. The contingency, the closing costs, the holding costs and the
+    origination fee end at None, which is the engine's signal to use the config default
+    (SPEC §8.1); the monthly rent ends at None too, which leaves the Rental and Take-Back
+    analyses NOT_EVALUATED with an INFO flag rather than computed on a zero.
 
-    Three things have no default and stop the run: the valuation, because SPEC §8.1 requires
-    both halves of it; the term in months, which every bucket but ``12_PLUS`` derives for
-    itself; and the loan split on a split product, because SPEC §8.2 prices the two portions.
-    Every one that is absent is named at once rather than one per attempt.
+    Five things have no default and stop the run, and every one that is absent is named at
+    once rather than one per attempt:
+
+    * the closing date, the term and the interest rate, because the ledger is dated months of
+      interest and none of the three has a defensible stand-in (SPEC §8.3);
+    * the loan split on a split product, because SPEC §8.2 advances the two portions
+      differently and the draw schedule is one of them;
+    * the estimated sale price **while the Flip analysis is on**, because that is what the
+      flip sells at (SPEC §8.4). With the toggle off it is optional, and a deal without one
+      is sized with LTARV not available, exactly as at the screen.
+
+    The as-is value is no longer one of them: it feeds LTV only, and LTV falls back to the
+    purchase price with a flag (SPEC §7.4).
 
     The court record is resolved here the same way the screen resolves it, adapter over team
     (SPEC §6.1), and not read off the stored screen: the underwrite runs the SPEC §7.2 tests
     again on whatever is in force now, which may be a pull that landed after Stage 1.
     """
     core = deal_core(deal)
-    taxes = _first(request.annual_taxes_usd, deal.actual_annual_taxes_usd)
-    insurance = _first(request.annual_insurance_usd, deal.actual_annual_insurance_usd)
-    utilities = _first(request.annual_utilities_usd, deal.actual_annual_utilities_usd)
-    market_rent = _first(request.market_rent_monthly, deal.market_rent_monthly)
     valuation = resolve_valuation(deal, adapters, request)
-    no_valuation = "no adapter value, none on the request, none on the deal"
-    needed: list[tuple[str, object | None, str]] = [
-        ("as_is_value", valuation.as_is_value, no_valuation),
-        ("arv", valuation.arv, no_valuation),
-    ]
+    closing_date = resolve_closing_date(deal, request)
     term_months = resolve_term_months(deal, request)
-    needed.append(
+    interest_rate = _first(request.interest_rate, deal.interest_rate)
+    needed: list[tuple[str, object | None, str]] = [
+        ("deal.closing_date", closing_date, "month 0 of the ledger (SPEC §8.3)"),
         (
             "deal.term_months",
             term_months,
-            "the 12+ bucket names no number of months, so the team sets one (SPEC §8.1)",
-        )
-    )
+            "the ledger runs closing to payoff; enter a term or a payoff date (SPEC §8.1)",
+        ),
+        ("deal.interest_rate", interest_rate, "the ledger's interest rows (SPEC §8.3)"),
+    ]
     if core.product in SPLIT_PRODUCTS:
         split_why = f"a {core.product.value} loan is advanced in two parts (SPEC §8.2)"
         needed += [
             ("deal.loan_purchase_portion", core.loan_purchase_portion, split_why),
             ("deal.loan_rehab_portion", core.loan_rehab_portion, split_why),
         ]
+    if flip_is_on(deal, request, term_months):
+        needed.append(
+            (
+                "estimated_sale_price",
+                valuation.estimated_sale_price,
+                "the Flip analysis sells at it (SPEC §8.4); turn the toggle off to run without",
+            )
+        )
     missing = [f"{name} ({why})" for name, value, why in needed if value is None]
     if missing:
         raise DealNotReady(deal.id, missing)
     return UnderwriteInputs(
-        deal=sizing_inputs(core, valuation),
+        deal=sizing_inputs(core, valuation, request),
         state=core.state,
         borrower=borrower_inputs(core, request),
+        closing_date=_present(closing_date),
         term_months=_present(term_months),
-        market_rent_monthly=market_rent,
-        annual_taxes_usd=taxes,
-        annual_insurance_usd=insurance,
-        annual_utilities_usd=utilities,
-        extension_fee_pct=request.extension_fee_pct,
-        exit_price=request.exit_price,
-        asset_type=request.asset_type or deal.asset_type,
-        stated_exit=request.stated_exit or deal.stated_exit or StatedExit.UNKNOWN,
+        interest_rate=_present(interest_rate),
+        origination_fee_pct=_first(request.origination_fee_pct, deal.origination_fee_pct),
+        holding_costs_total_usd=_first(
+            request.holding_costs_total_usd, deal.holding_costs_total_usd
+        ),
+        monthly_rent=_first(request.monthly_rent, deal.monthly_rent),
+        flip_analysis=_first(request.flip_analysis, deal.flip_analysis),
+        rental_analysis=_first(request.rental_analysis, deal.rental_analysis),
+        loan_purpose=_first(request.loan_purpose, deal.loan_purpose),
+        asset_type=_first(request.asset_type, deal.asset_type),
+        stated_exit=_first(request.stated_exit, deal.stated_exit) or StatedExit.UNKNOWN,
         court_records=court_records(deal, adapters),
     )

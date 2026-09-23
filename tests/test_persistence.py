@@ -43,11 +43,11 @@ MISSING_UUID = UUID("00000000-0000-0000-0000-000000000000")
 def request(**overrides: Any) -> UnderwriteRequest:
     base: dict[str, Any] = {
         "as_is_value": D("230000.00"),
-        "arv": D("260000.00"),
+        "estimated_sale_price": D("260000.00"),
         "verified_credit_score": 715,
         "verified_deals_36mo": 4,
-        "market_rent_monthly": D("1800.00"),
-        "annual_utilities_usd": D("720.00"),
+        "monthly_rent": D("1800.00"),
+        "holding_costs_total_usd": D("3600.00"),
     }
     base.update(overrides)
     return UnderwriteRequest(**base)
@@ -106,10 +106,14 @@ def test_screens_are_append_only_and_ordered(db_session: Session, stored_deal: D
 def test_screen_without_a_valuation_flags_rather_than_guesses(
     db_session: Session, stored_deal: Deal
 ) -> None:
-    """Enrichment is Phase 3, so a screen today runs with no as-is value and no ARV."""
+    """Enrichment is Phase 3, so a screen today runs with no valuation at all."""
     result = run_screen(db_session, stored_deal.id, CONFIG, actor=ACTOR)
     codes = {flag.code.value for flag in result.flags}
-    assert {"AS_IS_VALUE_MISSING", "ARV_MISSING", "COURT_RECORDS_NOT_CHECKED"} <= codes
+    assert {
+        "AS_IS_VALUE_MISSING",
+        "ESTIMATED_SALE_PRICE_MISSING",
+        "COURT_RECORDS_NOT_CHECKED",
+    } <= codes
     assert result.verdict is not Verdict.GO
 
 
@@ -126,12 +130,14 @@ def test_run_underwrite_appends_a_row_and_round_trips(
     assert row.config_hash == CONFIG.config_hash
     rebuilt = underwrite_result(row)
     assert rebuilt == result
-    assert row.grid_lender["rates"]
-    assert rebuilt.grid_lender == result.grid_lender
-    # solved_rate is a NUMERIC(7,5) copy for querying; the JSONB keeps full precision
-    assert row.solved_rate == result.solved_rate.quantize(D("0.00001"))
-    assert rebuilt.solved_rate == result.solved_rate
-    assert rebuilt.solved_rate != row.solved_rate  # the column really is the lossy one
+    assert row.outputs["return_overview"]["entries"]
+    assert rebuilt.return_overview == result.return_overview
+    # irr is a NUMERIC(7,5) copy for querying; the JSONB keeps full precision
+    irr = result.return_overview.irr
+    assert irr is not None
+    assert row.irr == irr.quantize(D("0.00001"))
+    assert rebuilt.return_overview.irr == irr
+    assert rebuilt.return_overview.irr != row.irr  # the column really is the lossy one
 
 
 def test_underwrite_row_drops_nothing_the_result_carried(
@@ -142,9 +148,12 @@ def test_underwrite_row_drops_nothing_the_result_carried(
     row = latest_underwrite(db_session, deal_with_overrides.id)
     assert row is not None
     rebuilt = underwrite_result(row)
-    assert rebuilt.borrower_at_solve == result.borrower_at_solve
+    assert rebuilt.economics == result.economics
+    assert rebuilt.return_overview == result.return_overview
     assert rebuilt.exit == result.exit
-    assert rebuilt.downside == result.downside
+    assert rebuilt.flip == result.flip
+    assert rebuilt.rental == result.rental
+    assert rebuilt.take_back == result.take_back
     assert rebuilt.flags == result.flags
     assert rebuilt.sizing == result.sizing
     assert row.inputs["term_months"] == result.term_months
@@ -153,29 +162,29 @@ def test_underwrite_row_drops_nothing_the_result_carried(
 def test_underwrite_takes_the_term_from_the_deal_unless_told_otherwise(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    """The column, derived from the bucket at intake; a request still outranks it."""
-    assert deal_with_overrides.term_months == 9  # the deal's term_bucket is "9"
+    """The column, seeded from the bucket at intake; a request still outranks it."""
+    assert deal_with_overrides.term_months == 6  # the deal's term_bucket is "6"
     from_deal = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
-    assert from_deal.term_months == 9
+    assert from_deal.term_months == 6
     stated = run_underwrite(
         db_session, deal_with_overrides.id, request(term_months=18), CONFIG, actor=ACTOR
     )
     assert stated.term_months == 18
-    assert deal_with_overrides.term_months == 9, "a run does not write back to the deal"
+    assert deal_with_overrides.term_months == 6, "a run does not write back to the deal"
     db_session.commit()
 
 
-def test_underwrite_falls_back_to_the_deals_own_opex_actuals(
+def test_underwrite_falls_back_to_the_deals_own_economics(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    deal_with_overrides.actual_annual_taxes_usd = D("2650.00")
+    """A request beats the deal; the deal beats config; config is the last word (SPEC §8.1)."""
+    deal_with_overrides.origination_fee_pct = D("0.03000")
     db_session.flush()
-    result = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
-    assert result.exit.annual_taxes == D("2650.00")
-    assert result.exit.annual_taxes_source.value == "ACTUAL"
-    # nothing supplied for insurance, so the config default on the as-is value stands
-    assert result.exit.annual_insurance_source.value == "DEFAULT"
-    assert result.exit.annual_insurance == D("230000.00") * D("0.005")
+    from_deal = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
+    assert from_deal.economics.origination_fee_pct == D("0.03000")
+    # the holding cost comes off the request here, and the contingency off config
+    assert from_deal.economics.holding_costs_total == D("3600.00")
+    assert from_deal.economics.contingency_pct == CONFIG.fees.contingency_default_pct
     db_session.commit()
 
 
@@ -185,7 +194,8 @@ def test_underwrite_uses_the_deals_asset_type_and_stated_exit(
     assert deal_with_overrides.asset_type is AssetType.SFR
     assert deal_with_overrides.stated_exit is None
     inferred = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
-    assert inferred.exit.type is StatedExit.FLIP  # 9 months on an SFR resells (SPEC §3)
+    # 6 months on an SFR resells, and the product is WHOLETAIL, so the exit is too (SPEC §3)
+    assert inferred.exit.type is StatedExit.WHOLETAIL
     assert inferred.exit.exit_source is ExitSource.INFERRED
 
     longer = run_underwrite(

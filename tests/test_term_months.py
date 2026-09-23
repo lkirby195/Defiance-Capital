@@ -1,28 +1,27 @@
-"""The term in months, beside the bucket it came from.  # SPEC §8.1
+"""The term in months, and the bucket that seeds it.  # SPEC §8.1
 
-Two paths, and the whole point is that they stay apart.
+`term_bucket` is the borrower's own answer to "how long do you need the loan?" It seeds
+`term_months` at intake — every bucket but `12_PLUS` names a number — and it does not fix it.
+The deal is priced on the team's term, typed in months or implied by a payoff date, and a
+deal repriced to 7 months on a 6-month ask is a real thing rather than a row to reject.
 
-**Derived.** Every bucket but `12_PLUS` names a number of months. The normalizer fills the
-column at intake, the form shows it read-only, and the server re-derives it on the way in —
-so the box is a display of a decision already made and tampering with it is a no-op.
+That is the v0.3 change. Before it the two were pinned together by a check constraint, the
+box was read-only, and the server re-derived the bucket's number over whatever came back.
 
-**Entered.** `12_PLUS` names none. The team types one, on the team-entry form or in the deal
-page's override block, and until somebody does the readiness checklist says so and the
-underwrite refuses. That was the state this change exists for: before it, the Run underwrite
-button posted no term of its own, so a `12_PLUS` deal could not be priced from the queue at
-all and nothing on the page said why.
+`12_PLUS` names no number at all, so a deal on that bucket carries no term until somebody
+sets one, and the readiness checklist and the underwrite both say so by name.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from db.models import Deal
@@ -93,22 +92,44 @@ def test_a_deal_entered_through_the_form_carries_it(
     assert deal.term_months == 9
 
 
-def test_the_derived_number_wins_over_a_tampered_box() -> None:
-    """The box is read-only on the page, so what comes back is not a person's judgement."""
+def test_the_bucket_seeds_the_term_when_nobody_has_set_one() -> None:
     record = normalize(
-        parse_team_form(TeamEntryForm(**payload(term_bucket="6"))), Channel.TEAM, raw_payload={}
+        parse_team_form(TeamEntryForm(**payload(term_bucket="6", term_months=None))),
+        Channel.TEAM,
+        raw_payload={},
     )
     assert record.deal.term_months == 6
 
 
-def test_a_term_that_disagrees_with_its_bucket_is_refused_at_the_door() -> None:
-    with pytest.raises(ValidationError, match="names 9 months, not 11"):
-        TeamEntryForm(**payload(term_months=11))
+def test_a_term_the_team_typed_wins_over_the_bucket_it_came_from() -> None:
+    """The bucket was the ask; the term is what the deal is priced on (SPEC §8.1)."""
+    record = normalize(
+        parse_team_form(TeamEntryForm(**payload(term_bucket="9", term_months=11))),
+        Channel.TEAM,
+        raw_payload={},
+    )
+    assert record.deal.term_months == 11
 
 
-def test_a_term_with_no_bucket_behind_it_is_refused() -> None:
-    with pytest.raises(ValidationError, match="needs the term_bucket it came from"):
-        TeamEntryForm(**payload(term_bucket=None, term_months=9))
+def test_a_payoff_date_sets_the_term_instead() -> None:
+    form = TeamEntryForm(
+        **payload(term_months=None, closing_date="2027-01-01", payoff_date="2027-08-01")
+    )
+    record = normalize(parse_team_form(form), Channel.TEAM, raw_payload={})
+    assert record.deal.term_months == 7
+
+
+def test_a_payoff_date_that_is_not_a_whole_number_of_months_is_refused() -> None:
+    with pytest.raises(ValidationError, match="not a whole number of months"):
+        TeamEntryForm(
+            **payload(term_months=None, closing_date="2027-01-01", payoff_date="2027-08-15")
+        )
+
+
+def test_a_term_with_no_bucket_behind_it_is_allowed_now() -> None:
+    """A JSON intake may carry a term and no bucket; neither implies the other any more."""
+    form = TeamEntryForm(**payload(term_bucket=None, term_months=9))
+    assert form.effective_term_months == 9
 
 
 def test_the_form_shows_the_derived_number_read_only(client: TestClient) -> None:
@@ -152,13 +173,14 @@ def test_the_edit_page_renders_the_term_editable_on_a_twelve_plus_deal(
     assert "readonly" not in box
 
 
-def test_the_edit_page_renders_it_read_only_when_the_bucket_names_it(
+def test_the_edit_page_renders_the_term_editable_whatever_the_bucket_says(
     client: TestClient, db_session: Session
 ) -> None:
+    """Editable everywhere now: the bucket seeds it, the team owns it (SPEC §8.1)."""
     deal = stored(client, db_session, payload())
     body = client.get(f"/queue/deals/{deal.id}/intake").text
     box = body[body.index('id="term_months"') :][:200]
-    assert "readonly" in box
+    assert "readonly" not in box
     assert 'value="9"' in box
 
 
@@ -181,16 +203,33 @@ def test_the_override_block_is_where_a_twelve_plus_term_gets_set(
     assert again is not None and again.term_months == 18
 
 
-def test_the_override_block_re_derives_rather_than_trusting_a_named_bucket(
+def test_the_override_block_reprices_a_deal_off_its_bucket(
     client: TestClient, db_session: Session
 ) -> None:
-    """The box is read-only there too, so a number that came back wrong is a no-op."""
+    """A 9-month ask repriced to 12 is a real thing, and the column follows the team."""
     deal = stored(client, db_session, payload())  # a 9-month bucket
-    save_overrides(db_session, deal.id, TeamOverrides(term_months=36), actor=ACTOR)
+    save_overrides(db_session, deal.id, TeamOverrides(term_months=12), actor=ACTOR)
     db_session.commit()
     db_session.expire_all()
     again = db_session.get(Deal, deal.id)
-    assert again is not None and again.term_months == 9
+    assert again is not None and again.term_months == 12
+    assert again.term_bucket is TermBucket.M9  # the ask is still on the record
+
+
+def test_the_override_block_takes_a_payoff_date_instead_of_a_term(
+    client: TestClient, db_session: Session
+) -> None:
+    deal = stored(client, db_session, payload())
+    save_overrides(
+        db_session,
+        deal.id,
+        TeamOverrides(closing_date=date(2027, 1, 1), payoff_date=date(2027, 11, 1)),
+        actor=ACTOR,
+    )
+    db_session.commit()
+    db_session.expire_all()
+    again = db_session.get(Deal, deal.id)
+    assert again is not None and again.term_months == 10
 
 
 def test_the_deal_page_shows_the_term_beside_its_bucket(
@@ -198,7 +237,8 @@ def test_the_deal_page_shows_the_term_beside_its_bucket(
 ) -> None:
     deal = stored(client, db_session, payload())
     body = client.get(f"/queue/deals/{deal.id}").text
-    assert "(9 months)" in body
+    assert "the borrower asked for" in body
+    assert "<dt>Term (months)</dt>" in body
     assert 'name="term_months"' in body  # and the override block carries a box
 
 
@@ -214,9 +254,8 @@ def test_the_page_says_the_button_is_off_on_a_twelve_plus_deal_with_no_term(
 # --- and what the database insists on ------------------------------------------------------------
 
 
-def test_a_term_that_disagrees_with_its_bucket_is_refused_by_the_database(
-    db_session: Session,
-) -> None:
+def test_the_database_no_longer_pins_the_term_to_the_bucket(db_session: Session) -> None:
+    """The constraint is gone with v0.3 (migration 0010): a repriced deal is a real row."""
     db_session.add(
         Deal(
             channel=Channel.TEAM,
@@ -226,18 +265,16 @@ def test_a_term_that_disagrees_with_its_bucket_is_refused_by_the_database(
             term_months=11,
         )
     )
-    with pytest.raises(IntegrityError, match="ck_deals_term_months_matches_bucket"):
-        db_session.flush()
-    db_session.rollback()
+    db_session.flush()
+    assert db_session.query(Deal).one().term_months == 11
 
 
-def test_a_term_with_no_bucket_is_refused_by_the_database(db_session: Session) -> None:
+def test_a_term_with_no_bucket_is_accepted_by_the_database(db_session: Session) -> None:
     db_session.add(
         Deal(channel=Channel.TEAM, status=Status.NEEDS_INFO, missing_fields=[], term_months=9)
     )
-    with pytest.raises(IntegrityError, match="ck_deals_term_months_matches_bucket"):
-        db_session.flush()
-    db_session.rollback()
+    db_session.flush()
+    assert db_session.query(Deal).one().term_bucket is None
 
 
 def test_a_twelve_plus_bucket_takes_any_term(db_session: Session) -> None:

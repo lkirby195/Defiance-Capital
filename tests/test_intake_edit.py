@@ -75,9 +75,9 @@ def test_the_edit_page_is_the_form_filled_in(client: QueueClient, stored_deal: D
     assert response.status_code == 200
     body = response.text
     assert f'action="/queue/deals/{stored_deal.id}/intake"' in body
-    assert 'value="Dana Whitfield"' in body
-    assert 'value="185000.00"' in body
-    assert 'value="T2" selected' in body
+    assert 'value="Rafael Ortiz"' in body
+    assert 'value="200000.00"' in body
+    assert 'value="T1" selected' in body
     assert "Save intake" in body
 
 
@@ -101,7 +101,7 @@ def test_an_edit_keeps_the_old_submission_and_adds_a_new_one(
         )
     )
     assert len(rows) == 2
-    assert rows[0].raw_payload["purchase_price"] == "185000.00"
+    assert rows[0].raw_payload["purchase_price"] == "200000.00"
     assert rows[1].raw_payload["purchase_price"] == "192500.00"
     deal = db_session.get(Deal, deal_id)
     assert deal is not None and str(deal.purchase_price) == "192500.00"
@@ -124,7 +124,7 @@ def test_a_completed_intake_leaves_needs_info(
     assert deal is not None
     assert deal.status is Status.NEW
     assert deal.missing_fields == []
-    assert deal.credit_range_self_reported is Tranche.T2
+    assert deal.credit_range_self_reported is Tranche.T1
     assert deal.term_bucket is TermBucket.M9
 
 
@@ -147,11 +147,7 @@ def test_an_edit_does_not_drag_a_screened_deal_backwards(
         edit(
             client,
             deal_id,
-            form_body(
-                team_entry_with_overrides,
-                loan_requested="151000.00",
-                loan_purchase_portion="104800.00",
-            ),
+            form_body(team_entry_with_overrides, loan_requested="115000.00"),
         ).status_code
         == 303
     )
@@ -172,7 +168,7 @@ def test_an_edit_records_who_did_it_and_what_moved(
         form_body(
             team_entry,
             loan_requested="175000.00",
-            loan_purchase_portion="128800.00",  # the split still has to add up (SPEC §8.2)
+            loan_purchase_portion="127000.00",  # the split still has to add up (SPEC §8.2)
             borrower_email="dana.w@example.com",
         ),
     )
@@ -183,13 +179,13 @@ def test_an_edit_records_who_did_it_and_what_moved(
     assert row.table_name == "deals" and row.row_id == str(stored_deal.id)
     assert row.after == {
         "loan_requested": "175000.00",
-        "loan_purchase_portion": "128800.00",
+        "loan_purchase_portion": "127000.00",
         "borrower.email": "dana.w@example.com",
     }
     assert row.before == {
-        "loan_requested": "190000.00",
-        "loan_purchase_portion": "143800.00",
-        "borrower.email": "dana@example.com",
+        "loan_requested": "195000.00",
+        "loan_purchase_portion": "147000.00",
+        "borrower.email": "rafael@ortizbuilds.example",
     }
 
 
@@ -249,7 +245,7 @@ def test_the_screen_is_called_stale_only_after_the_intake_moves(
     fresh = client.get(f"/queue/deals/{deal_id}").text
     assert "changed after this screen ran" not in fresh, "a screen just run is not stale"
 
-    edit(client, deal_id, form_body(team_entry_with_overrides, rehab_budget="51000.00"))
+    edit(client, deal_id, form_body(team_entry_with_overrides, rehab_costs="6000.00"))
 
     stale = client.get(f"/queue/deals/{deal_id}").text
     assert "changed after this screen ran" in stale
@@ -291,7 +287,7 @@ def test_a_closed_or_committed_deal_is_not_edited(
     posted = edit(
         client,
         stored_deal.id,
-        form_body(team_entry, loan_requested="120000.00", loan_purchase_portion="73800.00"),
+        form_body(team_entry, loan_requested="120000.00", loan_purchase_portion="72000.00"),
     )
     assert posted.status_code == 409
     assert status.value in posted.text
@@ -299,7 +295,7 @@ def test_a_closed_or_committed_deal_is_not_edited(
     db_session.expire_all()
     deal = db_session.get(Deal, stored_deal.id)
     assert deal is not None
-    assert str(deal.loan_requested) == "190000.00", "the refused edit wrote a column anyway"
+    assert str(deal.loan_requested) == "195000.00", "the refused edit wrote a column anyway"
     assert len(list(db_session.scalars(select(IntakeSubmission)))) == 1
     assert trail(db_session, AuditAction.INTAKE_EDITED) == []
     assert client.get(f"/queue/deals/{stored_deal.id}").text.count("Edit intake") == 0

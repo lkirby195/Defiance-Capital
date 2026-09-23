@@ -1,0 +1,147 @@
+{
+  "name": "go_split_principal_okc",
+  "description": "SPLIT_PRINCIPAL rehab in OKC; a 10% contingency and a 3% origination fee, both team-entered over the config defaults. Go. Underwrite: 12 months at 12%, a $136,000 Principal Note plus $54,000 of Tranche A drawn $6,000 a month over nine months, so the interest climbs $60 a month until the tranche is full; IRR 16.582%. A 12-month term infers HOLD, so the flip is on only because the team turned it on.",
+  "inputs": {
+    "deal": {
+      "product": "SPLIT_PRINCIPAL",
+      "purchase_price": "180000.00",
+      "rehab_costs": "60000.00",
+      "loan_requested": "190000.00",
+      "contingency_pct": "0.10",
+      "as_is_value": "270000.00",
+      "estimated_sale_price": "300000.00",
+      "loan_purchase_portion": "136000.00",
+      "loan_rehab_portion": "54000.00"
+    },
+    "state": "OK",
+    "borrower": {
+      "credit_range_self_reported": "T1",
+      "experience_bucket_self_reported": "6_PLUS",
+      "repeat_borrower_self_reported": false
+    },
+    "court_records": {
+      "as_of": "2026-09-09"
+    }
+  },
+  "expected": {
+    "verdict": "GO",
+    "flags": [],
+    "credit_tranche": "T1",
+    "experience_tier": "E3",
+    "repeat_borrower_override_applied": false,
+    "all_pass": true,
+    "commitment": "190000.00",
+    "funded_at_close": "136000.00",
+    "total_cost": "247000.00",
+    "rehab_adj": "66000.00",
+    "metrics": {
+      "LTC": "PASS",
+      "LTV_AS_IS": "PASS",
+      "LTARV": "PASS"
+    },
+    "reasons_contain": [],
+    "reply_contains": [
+      "fit on first pass"
+    ],
+    "split": {
+      "purchase_portion": "136000.00",
+      "rehab_portion": "54000.00"
+    }
+  },
+  "underwrite": {
+    "inputs": {
+      "deal": {
+        "product": "SPLIT_PRINCIPAL",
+        "purchase_price": "180000.00",
+        "rehab_costs": "60000.00",
+        "loan_requested": "190000.00",
+        "contingency_pct": "0.10",
+        "as_is_value": "270000.00",
+        "estimated_sale_price": "300000.00",
+        "loan_purchase_portion": "136000.00",
+        "loan_rehab_portion": "54000.00"
+      },
+      "state": "OK",
+      "borrower": {
+        "credit_range_self_reported": "T1",
+        "experience_bucket_self_reported": "6_PLUS",
+        "repeat_borrower_self_reported": false,
+        "verified_credit_score": 745,
+        "verified_deals_36mo": 9
+      },
+      "closing_date": "2026-11-15",
+      "term_months": 12,
+      "interest_rate": "0.12",
+      "court_records": {
+        "as_of": "2026-09-09"
+      },
+      "origination_fee_pct": "0.03",
+      "holding_costs_total_usd": "12000.00",
+      "monthly_rent": "2400.00",
+      "flip_analysis": true,
+      "asset_type": "SFR",
+      "loan_purpose": "CONSTRUCTION"
+    },
+    "expected": {
+      "payoff_date": "2027-11-15",
+      "rehab_months": 9,
+      "commitment": "190000.00",
+      "funded_at_close": "136000.00",
+      "economics": {
+        "rehab_adj": "66000.00",
+        "contingency": "6000.00",
+        "closing_costs": "1000.00",
+        "holding_costs_total": "12000.00",
+        "holding_costs_monthly": "1000.00",
+        "origination_at_close": "2850.00",
+        "origination_at_payoff": "2850.00"
+      },
+      "ledger": {
+        "rows": 13,
+        "first_net": "-133150.00",
+        "last_net": "194750.00",
+        "total_funding": "-136000.00",
+        "total_draws": "-54000.00",
+        "total_interest": "20100.00",
+        "total_fees": "5700.00",
+        "total_payoff": "190000.00",
+        "total_profit": "25800.00",
+        "irr": "0.16582414"
+      },
+      "flip": {
+        "status": "EVALUATED",
+        "broker_costs": "12000.00",
+        "total_costs": "284800.00",
+        "net_profit": "3200.00",
+        "profit_yield": "0.011236"
+      },
+      "rental": {
+        "status": "EVALUATED",
+        "expenses": "840.00",
+        "net_monthly_income": "560.00",
+        "debt_service_monthly": "1200.93",
+        "dscr": "0.466306",
+        "passed": false
+      },
+      "take_back": {
+        "status": "EVALUATED",
+        "lost_interest": "5700.00",
+        "total_cost": "200700.00",
+        "debt_service_monthly": "2064.43",
+        "net_monthly_income": "560.00",
+        "dscr": "0.271262",
+        "passed": false
+      },
+      "flags": [
+        {
+          "code": "DSCR_BELOW_FLOOR",
+          "severity": "SOFT"
+        },
+        {
+          "code": "TAKE_BACK_DSCR_BELOW_FLOOR",
+          "severity": "HARD"
+        }
+      ]
+    }
+  }
+}

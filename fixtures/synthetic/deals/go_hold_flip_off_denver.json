@@ -1,0 +1,124 @@
+{
+  "name": "go_hold_flip_off_denver",
+  "description": "A 2-4 unit hold in Denver on an 18-month term, which infers HOLD - so the Flip analysis is off and the Rental analysis is on by default. $210,000 at 10% for 18 months, IRR 11.894%. The rent carries both tests: rental DSCR 1.68 and take-back DSCR 1.15. No flags at all.",
+  "inputs": {
+    "deal": {
+      "product": "NO_DRAW",
+      "purchase_price": "300000.00",
+      "rehab_costs": "0.00",
+      "loan_requested": "210000.00",
+      "as_is_value": "320000.00",
+      "estimated_sale_price": "340000.00"
+    },
+    "state": "CO",
+    "borrower": {
+      "credit_range_self_reported": "T1",
+      "experience_bucket_self_reported": "6_PLUS",
+      "repeat_borrower_self_reported": false
+    },
+    "court_records": {
+      "as_of": "2026-09-09"
+    }
+  },
+  "expected": {
+    "verdict": "GO",
+    "flags": [],
+    "credit_tranche": "T1",
+    "experience_tier": "E3",
+    "repeat_borrower_override_applied": false,
+    "all_pass": true,
+    "commitment": "210000.00",
+    "funded_at_close": "210000.00",
+    "total_cost": "301000.00",
+    "rehab_adj": "0.00",
+    "metrics": {
+      "LTC": "PASS",
+      "LTV_AS_IS": "PASS",
+      "LTARV": "PASS"
+    },
+    "reasons_contain": [],
+    "reply_contains": [
+      "fit on first pass"
+    ]
+  },
+  "underwrite": {
+    "inputs": {
+      "deal": {
+        "product": "NO_DRAW",
+        "purchase_price": "300000.00",
+        "rehab_costs": "0.00",
+        "loan_requested": "210000.00",
+        "as_is_value": "320000.00",
+        "estimated_sale_price": "340000.00"
+      },
+      "state": "CO",
+      "borrower": {
+        "credit_range_self_reported": "T1",
+        "experience_bucket_self_reported": "6_PLUS",
+        "repeat_borrower_self_reported": false
+      },
+      "closing_date": "2027-05-01",
+      "term_months": 18,
+      "interest_rate": "0.10",
+      "court_records": {
+        "as_of": "2026-09-09"
+      },
+      "holding_costs_total_usd": "9000.00",
+      "monthly_rent": "4200.00",
+      "asset_type": "UNITS_2_4",
+      "loan_purpose": "REFINANCE"
+    },
+    "expected": {
+      "payoff_date": "2028-11-01",
+      "rehab_months": 15,
+      "commitment": "210000.00",
+      "funded_at_close": "210000.00",
+      "economics": {
+        "rehab_adj": "0.00",
+        "contingency": "0.00",
+        "closing_costs": "1000.00",
+        "holding_costs_total": "9000.00",
+        "holding_costs_monthly": "500.00",
+        "origination_at_close": "2100.00",
+        "origination_at_payoff": "2100.00"
+      },
+      "ledger": {
+        "rows": 19,
+        "first_net": "-207900.00",
+        "last_net": "213850.00",
+        "total_funding": "-210000.00",
+        "total_draws": "0.00",
+        "total_interest": "31500.00",
+        "total_fees": "4200.00",
+        "total_payoff": "210000.00",
+        "total_profit": "35700.00",
+        "irr": "0.11893828"
+      },
+      "flip": {
+        "status": "OFF",
+        "broker_costs": null,
+        "total_costs": "345700.00",
+        "net_profit": null,
+        "profit_yield": null
+      },
+      "rental": {
+        "status": "EVALUATED",
+        "expenses": "1470.00",
+        "net_monthly_income": "2230.00",
+        "debt_service_monthly": "1327.34",
+        "dscr": "1.680048",
+        "passed": true
+      },
+      "take_back": {
+        "status": "EVALUATED",
+        "lost_interest": "5250.00",
+        "total_cost": "220250.00",
+        "debt_service_monthly": "1932.85",
+        "net_monthly_income": "2230.00",
+        "dscr": "1.153736",
+        "passed": true
+      },
+      "flags": []
+    }
+  }
+}

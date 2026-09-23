@@ -3,6 +3,10 @@
 {% import "_fields.html" as fields %}
 {% block title %}{{ heading }} — GLENWOOD{% endblock %}
 
+{# The three groups below are the SPEC §8.1 input groups, in the order §9 shows a run back:
+   Overview, Property Overview, Deal Economics. The two blocks after them are the interim
+   team sources (SPEC §6.1) — the valuation, the rent, and the court search. #}
+
 {% block content %}
 <h1>{{ heading }}</h1>
 <p class="lede">{{ intro }}</p>
@@ -10,49 +14,86 @@
 <form class="stack" method="post" action="{{ action }}">
   {{ csrf.field(csrf_token) }}
   <section class="panel">
-    <h2>Borrower</h2>
+    <h2>Overview</h2>
+    <p class="small muted">
+      Enter either a term in months or a payoff date and the other one derives: the payoff
+      date is the closing date plus the term, to the day (SPEC §8.1). A payoff date that is
+      not a whole number of months after closing is refused by name — the ledger's rows are
+      months. The term bucket is the borrower's own answer to how long they need the loan;
+      it seeds the term and does not fix it.
+    </p>
     <div class="grid3">
-      {{ fields.text_box("borrower_name", "Name", form.borrower_name, required=true) }}
+      {{ fields.text_box("borrower_name", "Borrower Name", form.borrower_name, required=true) }}
       {{ fields.text_box("borrower_phone", "Phone — the borrower match key", form.borrower_phone,
                          required=true, mode="tel") }}
       {{ fields.text_box("borrower_email", "Email", form.borrower_email, kind="email") }}
       {{ fields.text_box("entity_name", "Entity", form.entity_name) }}
-      {{ fields.tranche_box("credit_range", "Credit range (self-reported)", enums.tranche,
-                            form.credit_range, required=true) }}
+      {{ fields.text_box("guarantor_name", "Guarantor Name", form.guarantor_name) }}
+      {{ fields.tranche_box("credit_range", "Credit Range (self-reported)", enums.tranche,
+                            form.credit_range) }}
       {{ fields.experience_box("experience_bucket", "Deals in the last 36 months",
                                enums.experience_bucket, form.experience_bucket, required=true) }}
       {{ fields.yes_no_box("repeat_borrower", "Repeat borrower", form.repeat_borrower,
                            required=true) }}
+      {{ fields.select_box("loan_purpose", "Loan Purpose", enums.loan_purpose,
+                           form.loan_purpose) }}
+      {{ fields.select_box("product", "Loan Type — blank is inferred from the rehab costs",
+                           enums.product, form.product) }}
+      {{ fields.text_box("closing_date", "Closing Date — month 0 of the ledger",
+                         form.closing_date, required=true, kind="date") }}
+      {{ fields.select_box("term_bucket", "Term (the borrower's ask)", enums.term_bucket,
+                           form.term_bucket, required=true) }}
+      {{ fields.text_box("term_months", "Term (months) — what the deal is priced on",
+                         form.term_months, mark="Required for a 12+ term", mode="numeric") }}
+      {{ fields.text_box("payoff_date", "Payoff Date — blank derives it from the term",
+                         form.payoff_date, kind="date") }}
     </div>
   </section>
 
   <section class="panel">
-    <h2>Property</h2>
+    <h2>Property Overview</h2>
+    <p class="small muted">
+      Everything but the address is descriptive: it is stored, it is shown on the deal page
+      and in the credit memo, and no part of the math reads it (SPEC §8.1).
+    </p>
     <div class="grid3">
       {{ fields.text_box("address", "Address", form.address, required=true) }}
       {{ fields.text_box("listing_url",
                          "Listing or auction link — the address is read off the URL",
                          form.listing_url) }}
+      {{ fields.text_box("city", "City", form.city) }}
       {{ fields.text_box("county", "County", form.county) }}
       {{ fields.select_box("state", "State — blank is inferred from the address", enums.state,
                            form.state) }}
+      {{ fields.text_box("units", "Units", form.units, mode="numeric") }}
+      {{ fields.text_box("structures", "Structures", form.structures, mode="numeric") }}
+      {{ fields.text_box("sf", "SF", form.sf, mode="numeric") }}
+      {{ fields.text_box("year_built", "Year Built", form.year_built, mode="numeric") }}
+      {{ fields.text_box("year_renovated", "Year Renovated", form.year_renovated,
+                         mode="numeric") }}
+      {{ fields.text_box("beds", "Beds", form.beds, mode="numeric") }}
+      {{ fields.text_box("baths", "Baths", form.baths, mode="decimal") }}
+      {{ fields.text_box("garage_spaces", "Garage Spaces", form.garage_spaces, mode="numeric") }}
+      {{ fields.select_box("asset_type", "Asset type", enums.asset_type, form.asset_type) }}
+      {{ fields.select_box("stated_exit", "Stated exit", enums.stated_exit, form.stated_exit) }}
     </div>
   </section>
 
   <section class="panel">
-    <h2>Deal</h2>
+    <h2>Deal Economics</h2>
     <p class="small muted">
       A SPLIT_DRAW or SPLIT_PRINCIPAL loan is advanced in two parts, so both portions are
       required and have to add up to the loan requested (SPEC §8.2). A NO_DRAW or WHOLETAIL
-      loan is one advance and carries neither. Every term bucket but 12+ names its own number
-      of months, so that box fills itself; 12+ names none and the team sets it (SPEC §8.1).
+      loan is one advance and carries neither. The four boxes marked with a default are the
+      config stand-in when left blank; the interest rate has none and the ledger cannot be
+      laid out without it.
     </p>
     <div class="grid3">
-      {{ fields.text_box("purchase_price", "Purchase price", form.purchase_price,
+      {{ fields.text_box("purchase_price", "Purchase Price", form.purchase_price,
                          required=true, mode="decimal") }}
-      {{ fields.text_box("rehab_budget", "Rehab budget — 0 is a NO_DRAW", form.rehab_budget,
+      {{ fields.text_box("rehab_costs", "Rehab Costs — 0 is a NO_DRAW", form.rehab_costs,
                          required=true, mode="decimal") }}
-      {{ fields.text_box("loan_requested", "Loan requested", form.loan_requested,
+      {{ fields.text_box("loan_requested", "Loan Requested", form.loan_requested,
                          required=true, mode="decimal") }}
       {{ fields.text_box("loan_purchase_portion",
                          "Purchase portion — the Principal Note on SPLIT_PRINCIPAL",
@@ -60,35 +101,41 @@
       {{ fields.text_box("loan_rehab_portion",
                          "Rehab portion — the holdback, or Tranche A",
                          form.loan_rehab_portion, mark="Required for a split", mode="decimal") }}
-      {{ fields.select_box("term_bucket", "Term", enums.term_bucket, form.term_bucket,
-                           required=true) }}
-      {#- Read-only wherever the bucket names the number: there is nothing to decide, and
-          the normalizer re-derives it on the way in either way. A blank bucket leaves it
-          editable, because a person picking 12+ next has nowhere else to type one. -#}
-      {{ fields.text_box("term_months", "Term in months", form.term_months,
-                         mark="Required for a 12+ term", mode="numeric",
-                         readonly=form.term_bucket not in ("", "12_PLUS")) }}
-      {{ fields.select_box("product", "Product — blank is inferred from the rehab budget",
-                           enums.product, form.product) }}
-      {{ fields.select_box("asset_type", "Asset type", enums.asset_type, form.asset_type) }}
-      {{ fields.select_box("stated_exit", "Stated exit", enums.stated_exit, form.stated_exit) }}
+      {{ fields.text_box("interest_rate", "Interest Rate — annual, as a fraction (0.12 = 12%)",
+                         form.interest_rate, required=true, mode="decimal") }}
+      {{ fields.text_box("contingency_pct", "Contingency — blank uses the config default",
+                         form.contingency_pct, mode="decimal") }}
+      {{ fields.text_box("closing_costs_usd", "Closing Costs — blank uses the config default",
+                         form.closing_costs_usd, mode="decimal") }}
+      {{ fields.text_box("holding_costs_total_usd",
+                         "Holding Costs (total over the hold) — blank uses the config default",
+                         form.holding_costs_total_usd, mode="decimal") }}
+      {{ fields.text_box("origination_fee_pct",
+                         "Origination Fee — blank uses the config default",
+                         form.origination_fee_pct, mode="decimal") }}
     </div>
   </section>
 
   <section class="panel">
-    <h2>Team entry <span class="muted small">(SPEC §6.1 — until the adapters land)</span></h2>
+    <h2>Valuation, rent and analyses
+      <span class="muted small">(SPEC §6.1 — until the adapters land)</span></h2>
+    <p class="small muted">
+      The estimated sale price is what the Flip analysis sells at and what LTARV is computed
+      on. Without a monthly rent the Rental and Take-Back analyses are not evaluated — nothing
+      stands in for what a property lets for. Both toggles blank take the default the §3 exit
+      implies: flip on for a resale, rental on for a hold or whenever a rent is entered.
+    </p>
     <div class="grid3">
-      {{ fields.text_box("as_is_value_team", "As-is value", form.as_is_value_team,
+      {{ fields.text_box("as_is_value_team", "As-is value — LTV only", form.as_is_value_team,
                          mode="decimal") }}
-      {{ fields.text_box("arv_team", "ARV", form.arv_team, mode="decimal") }}
-      {{ fields.text_box("actual_annual_taxes_usd", "Annual taxes", form.actual_annual_taxes_usd,
+      {{ fields.text_box("estimated_sale_price_team", "Estimated Sale Price",
+                         form.estimated_sale_price_team, mode="decimal") }}
+      {{ fields.text_box("monthly_rent", "Monthly Rent — no default", form.monthly_rent,
                          mode="decimal") }}
-      {{ fields.text_box("actual_annual_insurance_usd", "Annual insurance",
-                         form.actual_annual_insurance_usd, mode="decimal") }}
-      {{ fields.text_box("actual_annual_utilities_usd", "Annual utilities",
-                         form.actual_annual_utilities_usd, mode="decimal") }}
-      {{ fields.text_box("market_rent_monthly", "Market rent (monthly)",
-                         form.market_rent_monthly, mode="decimal") }}
+      {{ fields.yes_no_box("flip_analysis", "Flip analysis — blank takes the §3 default",
+                           form.flip_analysis) }}
+      {{ fields.yes_no_box("rental_analysis", "Rental analysis — blank takes the §3 default",
+                           form.rental_analysis) }}
       {{ fields.select_box("court_records_status", "Court search — NOT_CHECKED is not CLEAN",
                            enums.court_records_status, form.court_records_status) }}
       {{ fields.text_box("court_records_as_of", "Searched on", form.court_records_as_of,

@@ -79,6 +79,13 @@ it.
 to the front of `startCommand`; it is idempotent, but it then runs on every boot and two
 instances can race it, so treat that as a stopgap.
 
+**Migration `0010` deletes rows.** The Phase 5 underwrite (SPEC §8, engine `1.0.0`) shares no
+result shape with the one before it, and no ledger could be reconstructed from a row that
+never had one, so `0010` deletes every `screens` and `underwrites` row written before it. The
+deals themselves keep their intake, their team entry, their status and their whole audit
+trail; re-screening and re-pricing one is two buttons. Take a dump first if the deployed
+database holds runs anybody wants to read again.
+
 ### Creating the first user against the deployed database
 
 The deployed app has no users and no way to make one through the browser. Two routes, and the

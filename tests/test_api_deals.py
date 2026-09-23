@@ -21,11 +21,11 @@ MISSING_UUID = "00000000-0000-0000-0000-000000000000"
 
 UNDERWRITE_BODY: dict[str, Any] = {
     "as_is_value": "230000.00",
-    "arv": "260000.00",
+    "estimated_sale_price": "260000.00",
     "verified_credit_score": 715,
     "verified_deals_36mo": 4,
-    "market_rent_monthly": "1800.00",
-    "annual_utilities_usd": "720.00",
+    "monthly_rent": "1800.00",
+    "holding_costs_total_usd": "3600.00",
 }
 
 
@@ -40,8 +40,9 @@ def test_screen_route_stores_a_row_and_returns_the_result(
     assert body["reasons"] and len(body["reasons"]) == len(body["flags"])
     assert body["suggested_reply"]
     # money and rates cross the wire as exact decimal strings, not floats
-    assert body["sizing"]["commitment"] == "190000.00"
-    assert D(body["sizing"]["buy_closing"]) == D("5550.00")  # 3% of the 185,000 price
+    assert body["sizing"]["commitment"] == "195000.00"
+    # the lender's own closing costs, entered on the deal; not a percentage of the price
+    assert D(body["sizing"]["closing_costs"]) == D("1500.00")
 
     row = db_session.scalar(select(Screen).where(Screen.deal_id == stored_deal.id))
     assert row is not None and row.verdict.value == body["verdict"]
@@ -65,18 +66,21 @@ def test_underwrite_route_takes_the_spec_8_1_inputs(
     response = client.post(f"/deals/{stored_deal.id}/underwrite", json=UNDERWRITE_BODY)
     assert response.status_code == 201, response.text
     body = response.json()
-    assert body["term_months"] == 9  # from the deal's term bucket
-    assert body["rehab_months"] == 6
+    assert body["term_months"] == 6  # from the deal's term bucket
+    assert body["rehab_months"] == 3
     assert body["engine_version"] == ENGINE_VERSION
-    # no stated exit on this deal: 9 months on an SFR infers a resale (SPEC §3)
-    assert body["exit"]["type"] == "FLIP" and body["exit"]["exit_source"] == "INFERRED"
-    assert body["grid_lender"]["rows"]
-    assert D(body["lender_yield_at_solve"]).quantize(D("0.000001")) == D("0.175000")
+    # no stated exit on this deal: 6 months on an SFR resells, and the product is WHOLETAIL
+    assert body["exit"]["type"] == "WHOLETAIL" and body["exit"]["exit_source"] == "INFERRED"
+    # the ledger runs closing to payoff, one row a month
+    assert len(body["return_overview"]["entries"]) == body["term_months"] + 1
+    assert body["closing_date"] and body["payoff_date"]
+    assert D(body["return_overview"]["irr"]) > 0
 
     row = db_session.scalar(select(Underwrite).where(Underwrite.deal_id == stored_deal.id))
     assert row is not None
-    assert row.solved_rate == D(body["solved_rate"]).quantize(D("0.00001"))
-    assert "grid_borrower" not in row.__table__.columns  # dropped in migration 0004
+    assert row.irr == D(body["return_overview"]["irr"]).quantize(D("0.00001"))
+    for gone in ("grid_lender", "grid_borrower", "solved_rate"):
+        assert gone not in row.__table__.columns  # dropped in migrations 0004 and 0010
 
 
 def test_underwrite_route_rejects_a_body_it_does_not_recognise(
@@ -91,14 +95,15 @@ def test_underwrite_route_rejects_a_body_it_does_not_recognise(
 def test_underwrite_route_requires_a_valuation(
     client: TestClient, db_session: Session, stored_deal: Deal
 ) -> None:
-    """Past the screen gate, a deal with no ARV anywhere is a 422 naming it."""
+    """Past the screen gate, a flip deal with no sale price anywhere is a 422 naming it."""
     stored_deal.status = Status.SCREENED
     db_session.flush()
-    body = {key: value for key, value in UNDERWRITE_BODY.items() if key != "arv"}
+    body = {key: value for key, value in UNDERWRITE_BODY.items() if key != "estimated_sale_price"}
     response = client.post(f"/deals/{stored_deal.id}/underwrite", json=body)
     assert response.status_code == 422
     assert response.json()["detail"]["missing"] == [
-        "arv (no adapter value, none on the request, none on the deal)"
+        "estimated_sale_price (the Flip analysis sells at it (SPEC §8.4); "
+        "turn the toggle off to run without)"
     ]
 
 
@@ -113,15 +118,18 @@ def test_read_deal_returns_the_deal_with_its_latest_screen_and_underwrite(
     assert body["status"] == "NEW"
     assert body["asset_type"] == "SFR"
     assert body["stated_exit"] is None  # the exit is inferred, not stated (SPEC §3)
-    assert body["term_bucket"] == "9"
-    assert body["product"] == "SPLIT_DRAW" and body["product_source"] == "INFERRED"
-    assert body["borrower"]["phone"] == "+19185550188"
-    assert body["borrower"]["entities"] == ["Ellery Property Group LLC"]
+    assert body["term_bucket"] == "6"
+    assert body["term_months"] == 6
+    assert body["payoff_date"] == "2027-08-01"  # derived: closing plus the term
+    assert body["product"] == "WHOLETAIL" and body["product_source"] == "ENTERED"
+    assert body["borrower"]["phone"] == "+19185550147"
+    assert body["borrower"]["entities"] == ["Whitlock Homes LLC"]
     assert body["property"]["state"] == "OK"
+    assert body["property"]["city"] == "Tulsa" and body["property"]["sf"] == 1420
     assert body["missing_fields"] == []
     # the team's own entries are on the read model, so the queue can show what a Go rests on
-    assert D(body["as_is_value_team"]) == D("250000.00")
-    assert D(body["arv_team"]) == D("295000.00")
+    assert D(body["as_is_value_team"]) == D("175000.00")
+    assert D(body["estimated_sale_price_team"]) == D("200000.00")
     assert body["court_records_status"] == "CLEAN"
     assert body["court_records_as_of"] == "2026-09-16"
     assert body["court_records_team"] == []
@@ -143,12 +151,12 @@ def test_read_deal_shows_the_latest_of_each_run(
     deal_id = deal_with_overrides.id
     client.post(f"/deals/{deal_id}/screen")
     second = client.post(
-        f"/deals/{deal_id}/underwrite", json={**UNDERWRITE_BODY, "term_months": 6}
+        f"/deals/{deal_id}/underwrite", json={**UNDERWRITE_BODY, "term_months": 9}
     ).json()
     third = client.post(
         f"/deals/{deal_id}/underwrite", json={**UNDERWRITE_BODY, "term_months": 15}
     ).json()
-    assert second["term_months"] == 6 and third["term_months"] == 15
+    assert second["term_months"] == 9 and third["term_months"] == 15
 
     body = client.get(f"/deals/{deal_id}").json()
     assert body["underwrite"]["result"]["term_months"] == 15
@@ -210,15 +218,18 @@ def test_underwriting_a_closed_deal_is_409_not_422(
 def test_the_underwrite_route_falls_back_to_the_teams_valuation(
     client: TestClient, deal_with_overrides: Deal
 ) -> None:
-    """A request with no as-is value and no ARV still underwrites off the deal's own."""
+    """A request with no valuation at all still underwrites off the deal's own."""
     body = {
-        key: value for key, value in UNDERWRITE_BODY.items() if key not in {"as_is_value", "arv"}
+        key: value
+        for key, value in UNDERWRITE_BODY.items()
+        if key not in {"as_is_value", "estimated_sale_price"}
     }
     response = client.post(f"/deals/{deal_with_overrides.id}/underwrite", json=body)
     assert response.status_code == 201, response.text
     sizing = response.json()["sizing"]
-    assert D(sizing["metrics"]["LTV_AS_IS"]["actual"]) == D("185000.00") / D("250000.00")
-    assert sizing["as_is_value_source"] == "TEAM" and sizing["arv_source"] == "TEAM"
+    assert D(sizing["metrics"]["LTV_AS_IS"]["actual"]) == D("120000.00") / D("175000.00")
+    assert sizing["as_is_value_source"] == "TEAM"
+    assert sizing["estimated_sale_price_source"] == "TEAM"
 
 
 def test_the_underwrite_route_screens_an_unscreened_deal_first(

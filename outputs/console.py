@@ -1,29 +1,37 @@
-"""Render a screen and an underwrite as plain text for the terminal.  # SPEC §9.1
+"""Render a screen and an underwrite as plain text for the terminal.  # SPEC §9.1, §9.6
 
 For manual verification of the math, not a client deliverable: every number the engine
 produced is shown at the precision it was computed to, next to the threshold it was tested
 against. Pure - text in, text out, no I/O - so the CLI stays a thin wrapper and the layout
 can be asserted in a test.
+
+The underwrite prints the SPEC §9 sections in order - Deal Economics, Return Overview, Flip,
+Rental, Take-Back, Flags - which is the same order the deal page shows and the workbook
+writes, so a person checking one against another reads down the same list.
 """
 
 from __future__ import annotations
 
 import textwrap
+from datetime import date
 from decimal import Decimal
 
 from config.config import Config
 from schema.models import (
     SPLIT_PRODUCTS,
+    AnalysisStatus,
+    FlipAnalysis,
     LeverageMetric,
     Product,
+    RentalAnalysis,
+    ReturnOverview,
     ScreenComponents,
     ScreenResult,
     SizingResult,
-    TakeoutStatus,
+    TakeBackAnalysis,
     UnderwriteResult,
     ValueBasis,
     ValueSource,
-    YieldGrid,
 )
 
 WIDTH = 92
@@ -36,21 +44,25 @@ _METRIC_LABEL = {
 
 
 def money(amount: Decimal | None) -> str:
-    """``$1,234.56``; ``n/a`` for a figure that was not computed (SPEC §8.6)."""
+    """``$1,234.56``; ``n/a`` for a figure that was not computed (SPEC §8.4-§8.6)."""
     return "n/a" if amount is None else f"${amount:,.2f}"
 
 
-def pct1(value: Decimal) -> str:
-    return f"{value:.1%}"
+def pct1(value: Decimal | None) -> str:
+    return "n/a" if value is None else f"{value:.1%}"
 
 
-def pct4(value: Decimal) -> str:
-    """A rate at four decimal places of a percent: r* is exact, not rounded for display."""
-    return f"{value * 100:.4f}%"
+def pct4(value: Decimal | None) -> str:
+    """A rate at four decimal places of a percent: an IRR is a solve, not a round number."""
+    return "n/a" if value is None else f"{value * 100:.4f}%"
 
 
-def ratio2(value: Decimal) -> str:
-    return f"{value:.2f}x"
+def ratio2(value: Decimal | None) -> str:
+    return "n/a" if value is None else f"{value:.2f}x"
+
+
+def day(value: date | None) -> str:
+    return "n/a" if value is None else value.isoformat()
 
 
 def row(label: str, value: str, note: str = "") -> str:
@@ -73,21 +85,18 @@ def banner(title: str, subtitle: str) -> list[str]:
 
 def render_sizing(sizing: SizingResult, config: Config, title: str = "SIZING") -> list[str]:
     """Cost stack, commitment and split, then each metric against its cap.  # SPEC §7.4, §8.2"""
+    del config  # every figure below is on the result itself
     cell = f"{sizing.product.value}  {sizing.credit_tranche.value}/{sizing.experience_tier.value}"
     lines = heading(title, cell)
-    price = sizing.total_cost - sizing.rehab_adj - sizing.buy_closing
     lines += [
-        row("Purchase price", money(price)),
+        row("Purchase price", money(sizing.purchase_price)),
+        row("Rehab costs", money(sizing.rehab_costs)),
         row(
-            "Rehab budget + contingency",
+            "Rehab + contingency",
             money(sizing.rehab_adj),
-            f"{pct1(config.fees.contingency_pct)} contingency, lender funded",
+            f"{pct1(sizing.contingency_pct)} contingency, lender funded",
         ),
-        row(
-            "Buy-side closing",
-            money(sizing.buy_closing),
-            f"{pct1(config.fees.borrower_closing_pct_of_price)} of price, borrower cash",
-        ),
+        row("Closing costs", money(sizing.closing_costs), "the lender's, in the LTC denominator"),
         row("Total cost", money(sizing.total_cost)),
         row("Loan requested", money(sizing.loan_requested)),
         row("Commitment", money(sizing.commitment)),
@@ -112,7 +121,7 @@ def render_sizing(sizing: SizingResult, config: Config, title: str = "SIZING") -
         lines.append(row("  Loan split", "not entered", "sized on the loan requested"))
     lines += ["", f"  {'Metric':<16}{'Actual':>10}{'Cap':>10}{'Limit':>10}   Status"]
     for metric, check in sizing.metrics.items():
-        actual = pct1(check.actual) if check.actual is not None else "n/a"
+        actual = pct1(check.actual)
         limit = pct1(check.cap + check.tolerance_band)
         label = _METRIC_LABEL[metric]
         if check.basis is ValueBasis.PURCHASE_PRICE:
@@ -139,8 +148,9 @@ def render_provenance(sizing: SizingResult, components: ScreenComponents) -> lis
     """
     return [
         row(
-            "As-is value / ARV from",
-            f"{source_label(sizing.as_is_value_source)} / {source_label(sizing.arv_source)}",
+            "As-is / sale price from",
+            f"{source_label(sizing.as_is_value_source)} / "
+            f"{source_label(sizing.estimated_sale_price_source)}",
             "team = entered by hand; an adapter value wins",
         ),
         row(
@@ -182,158 +192,166 @@ def render_screen(result: ScreenResult, config: Config) -> list[str]:
     return lines
 
 
-def commitment_note(sizing: SizingResult) -> str:
-    """The commitment and, on a split product, how it divides.  # SPEC §8.2
-
-    On the grid heading because every cell in it is a yield on that commitment: a reader
-    comparing two grids is comparing two loan shapes, and the shape belongs beside them.
-    """
-    if sizing.split is None:
-        return money(sizing.commitment)
-    halves = (
-        "Principal Note / Tranche A"
-        if sizing.product is Product.SPLIT_PRINCIPAL
-        else "at close / holdback"
+def render_economics(result: UnderwriteResult) -> list[str]:
+    """The §8.1 Deal Economics, as the run resolved them."""
+    economics = result.economics
+    lines = heading(
+        "DEAL ECONOMICS",
+        f"{result.term_months} mo ({result.rehab_months} rehab), "
+        f"{day(result.closing_date)} to {day(result.payoff_date)}",
     )
-    return (
-        f"{money(sizing.commitment)} = {money(sizing.split.purchase_portion)}"
-        f" + {money(sizing.split.rehab_portion)} ({halves})"
+    lines += [
+        row("Purchase price", money(economics.purchase_price)),
+        row("Rehab costs", money(economics.rehab_costs)),
+        row(
+            "Contingency",
+            money(economics.contingency),
+            f"{pct1(economics.contingency_pct)} of rehab",
+        ),
+        row("Closing costs", money(economics.closing_costs)),
+        row(
+            "Holding costs (total)",
+            money(economics.holding_costs_total),
+            f"{money(economics.holding_costs_monthly)}/mo over the term",
+        ),
+        row(
+            "Origination fee",
+            pct1(economics.origination_fee_pct),
+            f"{money(economics.origination_at_close)} at close, "
+            f"{money(economics.origination_at_payoff)} at payoff",
+        ),
+        row("Interest rate", pct1(economics.interest_rate), "annual"),
+        row("Commitment", money(economics.commitment)),
+        row("Funded at close", money(economics.funded_at_close)),
+    ]
+    return lines
+
+
+def render_return_overview(overview: ReturnOverview) -> list[str]:
+    """The lender's monthly ledger and its XIRR.  # SPEC §8.3"""
+    lines = heading("RETURN OVERVIEW", f"IRR (XIRR on actual dates): {pct4(overview.irr)}")
+    header = (
+        f"  {'Date':<12}{'Mo':>4}{'Funding':>14}{'Draws':>14}"
+        f"{'Interest':>12}{'Fees':>11}{'Payoff':>14}{'Net':>14}"
     )
-
-
-def render_grid(grid: YieldGrid, sizing: SizingResult) -> list[str]:
-    """The lender-yield grid: rates across, payoff months down.  # SPEC §8.5
-
-    ``*`` marks a cell at or above the target; the r* column is marked in the header, so a
-    solved rate below the configured grid shows up as the first column rather than hiding.
-    """
-    lines = heading("GRID", f"on {commitment_note(sizing)}; * meets {pct1(grid.target)}")
-    header = "  month "
-    for rate in grid.rates:
-        mark = "*" if rate == grid.solved_rate else " "
-        header += f"{pct4(rate) + mark:>11}"
     lines.append(header)
-    for grid_row in grid.rows:
-        line = f"  {grid_row.month:>5} "
-        for cell in grid_row.cells:
-            mark = "*" if cell.meets_target else " "
-            line += f"{pct1(cell.annualized_yield) + mark:>11}"
-        lines.append(line)
-    solved = "inserted" if grid.solved_rate_inserted else "already a grid column"
-    lines.append(f"  r* = {pct4(grid.solved_rate)} ({solved})")
-    return lines
-
-
-def render_lender(result: UnderwriteResult, config: Config) -> list[str]:
-    """Interest, fees, average outstanding and the yield the solve targets.  # SPEC §8.4"""
-    lender = result.lender_at_solve
-    fees = lender.fees
-    lines = heading(
-        "LENDER",
-        f"term {result.term_months} mo, rehab {result.rehab_months} mo, "
-        f"target {pct1(config.returns.target_irr)}",
+    for entry in overview.entries:
+        lines.append(
+            f"  {entry.date.isoformat():<12}{entry.month:>4}"
+            f"{entry.funding:>14,.2f}{entry.draws:>14,.2f}"
+            f"{entry.interest:>12,.2f}{entry.fees:>11,.2f}"
+            f"{entry.payoff:>14,.2f}{entry.net:>14,.2f}"
+        )
+    lines.append(
+        f"  {'Total':<12}{'':>4}"
+        f"{overview.total_funding:>14,.2f}{overview.total_draws:>14,.2f}"
+        f"{overview.total_interest:>12,.2f}{overview.total_fees:>11,.2f}"
+        f"{overview.total_payoff:>14,.2f}{overview.total_profit:>14,.2f}"
     )
     lines += [
-        row("Solved rate r*", pct4(result.solved_rate)),
-        row("Average outstanding", money(lender.avg_outstanding), "over the term"),
-        row("Interest at r*", money(lender.interest)),
-        row("Origination at close", money(fees.origination_at_close)),
-        row("Origination at payoff", money(fees.origination_at_payoff)),
-        row("Extension fee", money(fees.extension), "charged only past the term"),
-        row("Fees total", money(fees.total)),
-        row("Yield at (term, r*)", pct4(result.lender_yield_at_solve), "= target by construction"),
+        "",
+        row("Total interest", money(overview.total_interest)),
+        row("Total fees", money(overview.total_fees), "both origination halves"),
+        row("Total profit", money(overview.total_profit), "the sum of the net column"),
+        row("IRR", pct4(overview.irr), "annualized, compounded"),
     ]
     return lines
 
 
-def render_borrower(result: UnderwriteResult) -> list[str]:
-    """The borrower's project, at (term, r*). Information only: no floor, no flag."""
-    borrower = result.borrower_at_solve
-    lines = heading(
-        "BORROWER",
-        f"at ({borrower.month} mo, {pct4(borrower.rate)}) - information only",
+def _status_note(status: AnalysisStatus, off: str, missing: str) -> str:
+    if status is AnalysisStatus.OFF:
+        return off
+    if status is AnalysisStatus.NOT_EVALUATED:
+        return missing
+    return ""
+
+
+def render_flip(flip: FlipAnalysis) -> list[str]:
+    """The project's margin if the property is sold.  # SPEC §8.4"""
+    lines = heading("FLIP ANALYSIS", flip.status.value)
+    note = _status_note(
+        flip.status,
+        "  OFF: the exit is not a resale, so the flip was not asked for.",
+        "  NOT EVALUATED: no estimated sale price, so there is nothing to sell at.",
     )
-    coc = pct1(borrower.cash_on_cash) if borrower.cash_on_cash is not None else "n/a (cash_in <= 0)"
+    if note:
+        lines.append(note)
     lines += [
-        row("Purchase price", money(borrower.purchase_price)),
-        row("Rehab + contingency", money(borrower.rehab_adj)),
-        row("Buy-side closing", money(borrower.buy_closing)),
-        row("Total project cost", money(borrower.total_project_cost)),
-        row("Interest paid", money(borrower.interest_paid)),
-        row("Fees paid", money(borrower.fees_paid)),
-        row("Holding costs", money(borrower.holding_costs)),
-        row("Exit price", money(borrower.exit_price)),
-        row("Exit net of selling costs", money(borrower.exit_net)),
-        row("Profit", money(borrower.profit)),
-        row("Cash in", money(borrower.cash_in)),
-        row("Cash on cash", coc),
+        row("Estimated sale price", money(flip.estimated_sale_price)),
+        row("Broker selling costs", money(flip.broker_costs), pct1(flip.broker_selling_pct)),
+        row("Purchase price", money(flip.purchase_price)),
+        row("Closing costs", money(flip.closing_costs)),
+        row("Holding costs", money(flip.holding_costs_total)),
+        row("Rehab costs", money(flip.rehab_costs)),
+        row("Contingency", money(flip.contingency)),
+        row("Financing costs", money(flip.financing_costs), "interest + origination"),
+        row("Total costs", money(flip.total_costs)),
+        row("Net profit", money(flip.net_profit)),
+        row("Yield (Profit / Costs)", pct1(flip.profit_yield), "a project margin, not an IRR"),
     ]
     return lines
 
 
-def _covers(refi_covers: bool | None) -> str:
-    """``yes`` / ``NO`` / ``unknown``: None is a takeout nobody could run (SPEC §8.6)."""
-    if refi_covers is None:
-        return "unknown"
-    return "yes" if refi_covers else "NO"
+def _passed(passed: bool | None) -> str:
+    if passed is None:
+        return "not tested"
+    return "PASS" if passed else "FAIL"
 
 
-def render_exit(result: UnderwriteResult, config: Config) -> list[str]:
-    """DSCR takeout; runs on every deal whatever the exit.  # SPEC §8.6"""
-    exit_result = result.exit
-    lines = heading(
-        "EXIT",
-        f"{exit_result.type.value} ({exit_result.exit_source.value}); DSCR takeout runs regardless",
+def render_rental(rental: RentalAnalysis) -> list[str]:
+    """Whether the rent carries a takeout loan on the commitment.  # SPEC §8.5"""
+    lines = heading("RENTAL ANALYSIS", rental.status.value)
+    note = _status_note(
+        rental.status,
+        "  OFF: the exit is not a hold and no rent was entered.",
+        "  NOT EVALUATED: no monthly rent, so there is no net monthly income.",
     )
-    dscr = ratio2(exit_result.dscr_at_payoff) if exit_result.dscr_at_payoff is not None else "n/a"
-    takeout = config.takeout
-    if exit_result.status is TakeoutStatus.NOT_EVALUATED:
-        lines.append("  NOT EVALUATED: no market rent, so there is no NOI to size against")
+    if note:
+        lines.append(note)
     lines += [
-        row("Gross rent (annual)", money(exit_result.gross_rent_annual)),
+        row("Monthly rent", money(rental.monthly_rent)),
+        row("Expenses", money(rental.expenses), f"{pct1(rental.expenses_pct)} of rent"),
+        row("Monthly holding costs", money(rental.holding_costs_monthly)),
+        row("Net monthly income", money(rental.net_monthly_income)),
         row(
-            "Annual taxes",
-            money(exit_result.annual_taxes),
-            exit_result.annual_taxes_source.value.lower(),
+            "Debt service (monthly)",
+            money(rental.debt_service_monthly),
+            f"{money(rental.loan_amount)} at {pct1(rental.takeout_rate)}, "
+            f"{rental.amortization_years}-yr",
         ),
         row(
-            "Annual insurance",
-            money(exit_result.annual_insurance),
-            exit_result.annual_insurance_source.value.lower(),
+            "DSCR",
+            ratio2(rental.dscr),
+            f"floor {ratio2(rental.dscr_floor)}; {_passed(rental.passed)}",
         ),
-        row("Opex (annual)", money(exit_result.opex_annual)),
-        row("NOI (annual)", money(exit_result.noi_annual)),
-        row(f"ARV x {pct1(takeout.ltv)} LTV", money(exit_result.ltv_takeout)),
-        row(f"Loan at {takeout.dscr_floor:.2f}x DSCR", money(exit_result.dscr_takeout)),
-        row("Max takeout", money(exit_result.max_takeout), "lesser of the two"),
-        row("Payoff due", money(exit_result.payoff_due), "commitment + payoff fees"),
-        row("DSCR at payoff due", dscr),
-        row("Refi covers", _covers(exit_result.refi_covers)),
-        row("Shortfall", money(exit_result.shortfall)),
     ]
     return lines
 
 
-def render_downside(result: UnderwriteResult) -> list[str]:
-    """REO recovery against exposure; runs on every deal.  # SPEC §8.6"""
-    downside = result.downside
-    lines = heading("DOWNSIDE", "REO: no income or cap-rate valuation")
+def render_take_back(take_back: TakeBackAnalysis) -> list[str]:
+    """Whether the rent carries what the loan cost GLENWOOD.  # SPEC §8.6"""
+    lines = heading("TAKE-BACK ANALYSIS", take_back.status.value)
+    if take_back.status is AnalysisStatus.NOT_EVALUATED:
+        lines.append("  NOT EVALUATED: no monthly rent, so there is no DSCR to test.")
     lines += [
-        row("Recovery basis", money(downside.recovery_basis), "min(as-is + rehab_adj, ARV)"),
-        row("Liquidation after haircut", money(downside.liquidation)),
-        row("Selling costs", money(downside.selling_costs)),
-        row("Foreclosure cost", money(downside.foreclosure_cost)),
+        row("Loan amount", money(take_back.loan_amount), "the commitment"),
         row(
-            "Holding through foreclosure",
-            money(downside.holding_through_foreclosure),
-            f"{downside.foreclosure_months} mo x {money(downside.monthly_holding_cost)}",
+            "Lost interest",
+            money(take_back.lost_interest),
+            f"{take_back.lost_interest_months} mo at {pct1(take_back.interest_rate)}",
         ),
-        row("Recovery", money(downside.recovery)),
-        row("Exposure", money(downside.exposure), "commitment + unpaid fees"),
+        row("Legal costs", money(take_back.legal_costs)),
+        row("Total cost", money(take_back.total_cost)),
         row(
-            "Cover",
-            ratio2(downside.cover),
-            f"floor {ratio2(downside.cover_floor)}; {'PASS' if downside.passed else 'FAIL'}",
+            "Debt service (monthly)",
+            money(take_back.debt_service_monthly),
+            f"on the total cost, {take_back.amortization_years}-yr",
+        ),
+        row("Net monthly income", money(take_back.net_monthly_income)),
+        row(
+            "DSCR at loan cost",
+            ratio2(take_back.dscr),
+            f"floor {ratio2(take_back.dscr_floor)}; {_passed(take_back.passed)}",
         ),
     ]
     return lines
@@ -352,11 +370,11 @@ def render_flags(result: UnderwriteResult) -> list[str]:
 def render_underwrite(
     result: UnderwriteResult, config: Config, screen_sizing: SizingResult | None = None
 ) -> list[str]:
-    """Everything the underwrite produced, in the order the math runs.  # SPEC §8
+    """Everything the underwrite produced, in the SPEC §9 order.  # SPEC §8
 
     The sizing is repeated only when the verified values moved it: on a fixture that
-    already carried the as-is value and the ARV it is the same table twice, so instead the
-    report says so in one line.
+    already carried the valuation it is the same table twice, so instead the report says so
+    in one line.
     """
     sizing: list[str]
     if screen_sizing is not None and screen_sizing == result.sizing:
@@ -366,13 +384,20 @@ def render_underwrite(
         ]
     else:
         sizing = render_sizing(result.sizing, config, title="SIZING (underwrite: verified)")
+    exit_note = (
+        f"exit {result.exit.type.value} ({result.exit.exit_source.value}); "
+        f"flip {'on' if result.exit.flip_analysis else 'off'}, "
+        f"rental {'on' if result.exit.rental_analysis else 'off'}"
+    )
     return [
         *sizing,
-        *render_lender(result, config),
-        *render_grid(result.grid_lender, result.sizing),
-        *render_borrower(result),
-        *render_exit(result, config),
-        *render_downside(result),
+        *heading("EXIT", exit_note),
+        "  Informational: all it does is default the two analysis toggles (SPEC §3).",
+        *render_economics(result),
+        *render_return_overview(result.return_overview),
+        *render_flip(result.flip),
+        *render_rental(result.rental),
+        *render_take_back(result.take_back),
         *render_flags(result),
     ]
 

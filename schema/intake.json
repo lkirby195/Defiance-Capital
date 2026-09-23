@@ -139,76 +139,8 @@
     },
     "DealInfo": {
       "additionalProperties": false,
-      "description": "Deal terms as requested by the borrower.  # SPEC \u00a74.5",
+      "description": "Deal terms as requested by the borrower, plus the team's own \u00a78.1 economics.\n\nGrouped as SPEC \u00a78.1 groups them: Overview, then Deal Economics, then the valuation and\nrent the adapters will eventually supply.\n\nThe four economics with a config default (``contingency_pct``, ``closing_costs_usd``,\n``holding_costs_total_usd``, ``origination_fee_pct``) are None until somebody overrides\nthem, and None is what tells the engine to use the config default rather than a number\nsomebody chose. ``interest_rate`` has no default and is required to price a deal.\n\n``payoff_date`` is deliberately not here. It is ``closing_date`` plus ``term_months``\n(``schema/dates.py``), so storing it would be storing the same fact twice and inviting\nthe two to disagree; the team-entry form and the queue's override block take one as an\nalternative way to say the other, and both derive the term before they get here.",
       "properties": {
-        "actual_annual_insurance_usd": {
-          "anyOf": [
-            {
-              "minimum": 0.0,
-              "type": "number"
-            },
-            {
-              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Actual Annual Insurance Usd"
-        },
-        "actual_annual_taxes_usd": {
-          "anyOf": [
-            {
-              "minimum": 0.0,
-              "type": "number"
-            },
-            {
-              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Actual Annual Taxes Usd"
-        },
-        "actual_annual_utilities_usd": {
-          "anyOf": [
-            {
-              "minimum": 0.0,
-              "type": "number"
-            },
-            {
-              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Actual Annual Utilities Usd"
-        },
-        "arv_team": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0.0,
-              "type": "number"
-            },
-            {
-              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Arv Team"
-        },
         "as_is_value_team": {
           "anyOf": [
             {
@@ -236,6 +168,54 @@
             }
           ],
           "default": null
+        },
+        "closing_costs_usd": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Closing Costs Usd"
+        },
+        "closing_date": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Closing Date"
+        },
+        "contingency_pct": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contingency Pct"
         },
         "court_records_as_of": {
           "anyOf": [
@@ -268,6 +248,82 @@
           "title": "Court Records Team",
           "type": "array"
         },
+        "estimated_sale_price_team": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Estimated Sale Price Team"
+        },
+        "flip_analysis": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Flip Analysis"
+        },
+        "guarantor_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Guarantor Name"
+        },
+        "holding_costs_total_usd": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Holding Costs Total Usd"
+        },
+        "interest_rate": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interest Rate"
+        },
         "loan_purchase_portion": {
           "anyOf": [
             {
@@ -284,6 +340,17 @@
           ],
           "default": null,
           "title": "Loan Purchase Portion"
+        },
+        "loan_purpose": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoanPurpose"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "loan_rehab_portion": {
           "anyOf": [
@@ -319,7 +386,7 @@
           "default": null,
           "title": "Loan Requested"
         },
-        "market_rent_monthly": {
+        "monthly_rent": {
           "anyOf": [
             {
               "minimum": 0.0,
@@ -334,7 +401,25 @@
             }
           ],
           "default": null,
-          "title": "Market Rent Monthly"
+          "title": "Monthly Rent"
+        },
+        "origination_fee_pct": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Origination Fee Pct"
         },
         "product": {
           "anyOf": [
@@ -375,7 +460,7 @@
           "default": null,
           "title": "Purchase Price"
         },
-        "rehab_budget": {
+        "rehab_costs": {
           "anyOf": [
             {
               "minimum": 0.0,
@@ -390,7 +475,19 @@
             }
           ],
           "default": null,
-          "title": "Rehab Budget"
+          "title": "Rehab Costs"
+        },
+        "rental_analysis": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rental Analysis"
         },
         "stated_exit": {
           "anyOf": [
@@ -452,6 +549,17 @@
       "title": "LienKind",
       "type": "string"
     },
+    "LoanPurpose": {
+      "description": "What the borrower is doing with the money; team-selected.  # SPEC \u00a78.1\n\nRecorded and reported, and nothing in the math reads it. It is here because a credit\nmemo and an LOI both name it and a person deciding on a deal wants it in the Overview\nbeside the product, not because any number depends on it.",
+      "enum": [
+        "PURCHASE",
+        "REFINANCE",
+        "CASH_OUT",
+        "CONSTRUCTION"
+      ],
+      "title": "LoanPurpose",
+      "type": "string"
+    },
     "Product": {
       "description": "Loan products.  # SPEC \u00a73",
       "enum": [
@@ -474,7 +582,7 @@
     },
     "PropertyInfo": {
       "additionalProperties": false,
-      "description": "Subject property; address or listing URL satisfies the minimum.  # SPEC \u00a74.5",
+      "description": "Subject property; address or listing URL satisfies the minimum.  # SPEC \u00a74.5, \u00a78.1\n\nEverything below ``state`` is the SPEC \u00a78.1 Property Overview: descriptive facts a\nperson reads on the deal page and in the credit memo. No math reads any of them, so none\nis required to screen or to price a deal - they are captured because a reader wants to\nknow what the property is, not because a number depends on it.",
       "properties": {
         "address_normalized": {
           "anyOf": [
@@ -500,6 +608,48 @@
           "default": null,
           "title": "Address Raw"
         },
+        "baths": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,3}|(?=[\\d.]{1,5}0*$)\\d{0,3}\\.\\d{0,1}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Baths"
+        },
+        "beds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Beds"
+        },
+        "city": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "City"
+        },
         "county": {
           "anyOf": [
             {
@@ -511,6 +661,19 @@
           ],
           "default": null,
           "title": "County"
+        },
+        "garage_spaces": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Garage Spaces"
         },
         "listing_url": {
           "anyOf": [
@@ -524,6 +687,19 @@
           "default": null,
           "title": "Listing Url"
         },
+        "sf": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sf"
+        },
         "state": {
           "$ref": "#/$defs/State",
           "default": "OTHER"
@@ -531,6 +707,60 @@
         "state_source": {
           "$ref": "#/$defs/StateSource",
           "default": "INFERRED"
+        },
+        "structures": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Structures"
+        },
+        "units": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Units"
+        },
+        "year_built": {
+          "anyOf": [
+            {
+              "maximum": 2200,
+              "minimum": 1600,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Year Built"
+        },
+        "year_renovated": {
+          "anyOf": [
+            {
+              "maximum": 2200,
+              "minimum": 1600,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Year Renovated"
         }
       },
       "title": "PropertyInfo",

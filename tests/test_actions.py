@@ -43,6 +43,7 @@ from services import (
     run_screen,
     save_overrides,
 )
+from services.actions import OVERRIDE_FIELDS
 from tests.conftest import ACTOR, requires_db
 
 pytestmark = requires_db
@@ -254,45 +255,53 @@ def test_an_empty_note_is_refused(db_session: Session, deal_with_overrides: Deal
 # --- team overrides ------------------------------------------------------------------------------
 
 
+def current_block(deal: Deal, **changes: object) -> TeamOverrides:
+    """The deal's override block exactly as the page renders it, with any changes applied.
+
+    Keyed off ``OVERRIDE_FIELDS`` so a field added to the block is carried here too: a save
+    is a replacement, and a test that quietly drops a field would be testing a clear rather
+    than an edit.
+    """
+    values: dict[str, object] = {}
+    for field in OVERRIDE_FIELDS:
+        value = getattr(deal, field)
+        if field == "court_records_team":
+            value = [TeamCourtRecord.model_validate(matter) for matter in value]
+        values[field] = value
+    values["term_months"] = deal.term_months
+    return TeamOverrides(**{**values, **changes})  # type: ignore[arg-type]
+
+
 def test_saving_overrides_replaces_the_block_and_records_only_what_moved(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    before_arv = deal_with_overrides.arv_team
+    before_sale_price = deal_with_overrides.estimated_sale_price_team
     save_overrides(
         db_session,
         deal_with_overrides.id,
-        TeamOverrides(
-            as_is_value_team=deal_with_overrides.as_is_value_team,
-            arv_team=before_arv,
-            asset_type=deal_with_overrides.asset_type,
-            stated_exit=deal_with_overrides.stated_exit,
-            market_rent_monthly=Decimal("2600.00"),
-            actual_annual_utilities_usd=Decimal("900.00"),
-            court_records_status=deal_with_overrides.court_records_status,
-            court_records_as_of=deal_with_overrides.court_records_as_of,
-            court_records_team=[
-                TeamCourtRecord.model_validate(matter)
-                for matter in deal_with_overrides.court_records_team
-            ],
+        current_block(
+            deal_with_overrides,
+            monthly_rent=Decimal("2600.00"),
+            holding_costs_total_usd=Decimal("3600.00"),
         ),
         actor=ACTOR,
     )
     db_session.commit()
 
-    assert deal_with_overrides.market_rent_monthly is not None
-    assert deal_with_overrides.arv_team == before_arv
+    assert deal_with_overrides.monthly_rent == Decimal("2600.00")
+    assert deal_with_overrides.estimated_sale_price_team == before_sale_price
     recorded = rows(db_session, deal_with_overrides, AuditAction.OVERRIDES_SAVED)
     assert len(recorded) == 1
-    assert set(recorded[0].after or {}) == {"market_rent_monthly", "actual_annual_utilities_usd"}
-    assert "arv_team" not in (recorded[0].after or {})
+    assert set(recorded[0].after or {}) == {"monthly_rent", "holding_costs_total_usd"}
+    assert "estimated_sale_price_team" not in (recorded[0].after or {})
 
 
 def test_a_blank_clears_a_value(db_session: Session, deal_with_overrides: Deal) -> None:
     """The form is rendered with the current values in it, so a blank is a deliberate empty."""
-    assert deal_with_overrides.arv_team is not None
+    assert deal_with_overrides.estimated_sale_price_team is not None
     save_overrides(db_session, deal_with_overrides.id, TeamOverrides(), actor=ACTOR)
     db_session.commit()
-    assert deal_with_overrides.arv_team is None
+    assert deal_with_overrides.estimated_sale_price_team is None
     assert deal_with_overrides.as_is_value_team is None
     assert deal_with_overrides.court_records_status is None
     assert deal_with_overrides.court_records_team == []
@@ -301,53 +310,42 @@ def test_a_blank_clears_a_value(db_session: Session, deal_with_overrides: Deal) 
 def test_a_save_that_changes_nothing_records_nothing(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    current = TeamOverrides(
-        as_is_value_team=deal_with_overrides.as_is_value_team,
-        arv_team=deal_with_overrides.arv_team,
-        actual_annual_taxes_usd=deal_with_overrides.actual_annual_taxes_usd,
-        actual_annual_insurance_usd=deal_with_overrides.actual_annual_insurance_usd,
-        actual_annual_utilities_usd=deal_with_overrides.actual_annual_utilities_usd,
-        market_rent_monthly=deal_with_overrides.market_rent_monthly,
-        asset_type=deal_with_overrides.asset_type,
-        stated_exit=deal_with_overrides.stated_exit,
-        court_records_status=deal_with_overrides.court_records_status,
-        court_records_as_of=deal_with_overrides.court_records_as_of,
-        court_records_team=[
-            matter
-            for matter in deal_with_overrides.court_records_team  # type: ignore[misc]
-        ],
-    )
+    current = current_block(deal_with_overrides)
     save_overrides(db_session, deal_with_overrides.id, current, actor=ACTOR)
     db_session.commit()
     assert rows(db_session, deal_with_overrides, AuditAction.OVERRIDES_SAVED) == []
 
 
 def test_resaving_the_same_product_does_not_relabel_an_inferred_one(
-    db_session: Session, deal_with_overrides: Deal
+    db_session: Session, stored_deal: Deal
 ) -> None:
-    """``product_source`` says who decided; a round trip through the form must not lie."""
-    assert deal_with_overrides.product_source is ProductSource.INFERRED
-    inferred = deal_with_overrides.product
-    save_overrides(db_session, deal_with_overrides.id, TeamOverrides(product=inferred), actor=ACTOR)
+    """``product_source`` says who decided; a round trip through the form must not lie.
+
+    ``stored_deal`` is the complete team entry, whose product the normalizer inferred from
+    the rehab costs - which is the state this rule exists to protect.
+    """
+    assert stored_deal.product_source is ProductSource.INFERRED
+    inferred = stored_deal.product
+    save_overrides(db_session, stored_deal.id, TeamOverrides(product=inferred), actor=ACTOR)
     db_session.commit()
-    assert deal_with_overrides.product_source is ProductSource.INFERRED
+    assert stored_deal.product_source is ProductSource.INFERRED
 
     save_overrides(
-        db_session, deal_with_overrides.id, TeamOverrides(product=Product.WHOLETAIL), actor=ACTOR
+        db_session, stored_deal.id, TeamOverrides(product=Product.WHOLETAIL), actor=ACTOR
     )
     db_session.commit()
-    assert deal_with_overrides.product is Product.WHOLETAIL
-    assert deal_with_overrides.product_source is ProductSource.ENTERED
+    assert stored_deal.product is Product.WHOLETAIL
+    assert stored_deal.product_source is ProductSource.ENTERED
 
 
 def test_a_blank_product_leaves_the_inferred_one_alone(
-    db_session: Session, deal_with_overrides: Deal
+    db_session: Session, stored_deal: Deal
 ) -> None:
-    inferred = deal_with_overrides.product
-    save_overrides(db_session, deal_with_overrides.id, TeamOverrides(), actor=ACTOR)
+    inferred = stored_deal.product
+    save_overrides(db_session, stored_deal.id, TeamOverrides(), actor=ACTOR)
     db_session.commit()
-    assert deal_with_overrides.product is inferred
-    assert deal_with_overrides.product_source is ProductSource.INFERRED
+    assert stored_deal.product is inferred
+    assert stored_deal.product_source is ProductSource.INFERRED
 
 
 def test_an_incoherent_court_block_is_refused_at_the_model() -> None:
@@ -424,9 +422,9 @@ def test_the_override_form_posts_and_saves(
         f"/queue/deals/{deal_with_overrides.id}/overrides",
         data={
             "as_is_value_team": "250000.00",
-            "arv_team": "295000.00",
-            "market_rent_monthly": "2400.00",
-            "actual_annual_utilities_usd": "840.00",
+            "estimated_sale_price_team": "295000.00",
+            "monthly_rent": "2400.00",
+            "holding_costs_total_usd": "840.00",
             "court_records_status": "CLEAN",
             "court_records_as_of": "2026-09-16",
             "matter_code": ["", "", ""],
@@ -443,7 +441,7 @@ def test_the_override_form_posts_and_saves(
     db_session.expire_all()
     deal = db_session.get(Deal, deal_with_overrides.id)
     assert deal is not None
-    assert deal.market_rent_monthly is not None
+    assert deal.monthly_rent is not None
     assert deal.court_records_status is CourtRecordsStatus.CLEAN
     assert deal.court_records_team == []
 
@@ -485,7 +483,7 @@ def test_a_bad_override_comes_back_with_the_values_still_in_the_form(
         f"/queue/deals/{deal_with_overrides.id}/overrides",
         data={
             "as_is_value_team": "250000.00",
-            "arv_team": "not a number",
+            "estimated_sale_price_team": "not a number",
             "matter_code": [""],
             "matter_occurred_on": [""],
             "matter_amount_usd": [""],
@@ -496,5 +494,5 @@ def test_a_bad_override_comes_back_with_the_values_still_in_the_form(
         },
     )
     assert response.status_code == 422
-    assert "arv_team" in response.text
+    assert "estimated_sale_price_team" in response.text
     assert 'value="250000.00"' in response.text

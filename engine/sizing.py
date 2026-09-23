@@ -28,26 +28,32 @@ ZERO = Decimal(0)
 ONE = Decimal(1)
 
 
-def rehab_adjusted(rehab_budget: Decimal, config: Config) -> Decimal:
-    """rehab_adj = rehab_budget x (1 + contingency_pct).  # SPEC §7.4"""
-    return rehab_budget * (ONE + config.fees.contingency_pct)
+def contingency_pct(inputs: SizingInputs, config: Config) -> Decimal:
+    """The contingency in force: the team's own, else the config default.  # SPEC §8.1"""
+    if inputs.contingency_pct is not None:
+        return inputs.contingency_pct
+    return config.fees.contingency_default_pct
 
 
-def buy_closing(purchase_price: Decimal, config: Config) -> Decimal:
-    """buy_closing = purchase_price x borrower_closing_pct_of_price.  # SPEC §7.4, §8.6
+def closing_costs(inputs: SizingInputs, config: Config) -> Decimal:
+    """The lender's closing costs in force: the team's own, else the config default.
 
-    One number for both stages: it sits inside ``total_cost`` for the screen's LTC and is
-    the borrower's cash at close in the underwrite (``engine.calc.borrower``). The lender
-    does not fund it.
+    # SPEC §8.1, §8.2. It is a dollar amount, not a percentage of the price: the 3%-of-price
+    borrower closing assumption the LTC denominator used to carry is gone.
     """
-    return purchase_price * config.fees.borrower_closing_pct_of_price
+    if inputs.closing_costs_usd is not None:
+        return inputs.closing_costs_usd
+    return config.fees.closing_costs_default_usd
 
 
-def total_cost(purchase_price: Decimal, rehab_budget: Decimal, config: Config) -> Decimal:
-    """total_cost = purchase_price + rehab_adj + buy_closing.  # SPEC §7.4"""
-    return (
-        purchase_price + rehab_adjusted(rehab_budget, config) + buy_closing(purchase_price, config)
-    )
+def rehab_adjusted(rehab_costs: Decimal, pct: Decimal) -> Decimal:
+    """rehab_adj = rehab_costs x (1 + contingency_pct).  # SPEC §7.4, §8.2"""
+    return rehab_costs * (ONE + pct)
+
+
+def total_cost(purchase_price: Decimal, rehab_adj: Decimal, closing: Decimal) -> Decimal:
+    """total_cost = purchase_price + rehab_adj + closing_costs_usd.  # SPEC §7.4, §8.2"""
+    return purchase_price + rehab_adj + closing
 
 
 def commitment_split(
@@ -151,20 +157,21 @@ def size_deal(
     LTC    = commitment / total_cost
     LTV    = commitment / as_is_value, or / purchase_price with basis PURCHASE_PRICE when the
              as-is value is unavailable
-    LTARV  = commitment / arv, or NOT_AVAILABLE when the ARV is unavailable
+    LTARV  = commitment / estimated_sale_price, or NOT_AVAILABLE when there is no price
 
-    Where each valuation came from (``as_is_value_source`` / ``arv_source``) travels through
-    onto the result, so a stored screen says whether the numbers it sized on were pulled or
-    entered by hand.
+    Where each valuation came from (``as_is_value_source`` / ``estimated_sale_price_source``)
+    travels through onto the result, so a stored screen says whether the numbers it sized on
+    were pulled or entered by hand.
 
     ``commitment`` equals ``loan_requested`` for every product unless a SPLIT_PRINCIPAL rehab
     portion is capped at ``rehab_adj`` and leaves part of the request unallocated (see
-    ``commitment_split``). The screen turns the fallback and the missing ARV into flags
-    (SPEC §7.4, §7.5).
+    ``commitment_split``). The screen turns the fallback and the missing estimated sale
+    price into flags (SPEC §7.4, §7.5).
     """
-    rehab_adj = rehab_adjusted(inputs.rehab_budget, config)
-    closing = buy_closing(inputs.purchase_price, config)
-    cost = inputs.purchase_price + rehab_adj + closing
+    pct = contingency_pct(inputs, config)
+    rehab_adj = rehab_adjusted(inputs.rehab_costs, pct)
+    closing = closing_costs(inputs, config)
+    cost = total_cost(inputs.purchase_price, rehab_adj, closing)
     commitment, split = commitment_split(inputs, rehab_adj)
     caps = caps_for(config, inputs.product, tranche, tier)
     band = config.screen.tolerance_band
@@ -173,7 +180,8 @@ def size_deal(
         ltv_basis, ltv_denominator = ValueBasis.AS_IS_VALUE, inputs.as_is_value
     else:
         ltv_basis, ltv_denominator = ValueBasis.PURCHASE_PRICE, inputs.purchase_price
-    ltarv = ratio(commitment, inputs.arv) if inputs.arv is not None else None
+    sale_price = inputs.estimated_sale_price
+    ltarv = ratio(commitment, sale_price) if sale_price is not None else None
 
     metrics = {
         LeverageMetric.LTC: check_metric(
@@ -192,8 +200,11 @@ def size_deal(
         product=inputs.product,
         credit_tranche=tranche,
         experience_tier=tier,
+        purchase_price=inputs.purchase_price,
+        rehab_costs=inputs.rehab_costs,
+        contingency_pct=pct,
         rehab_adj=rehab_adj,
-        buy_closing=closing,
+        closing_costs=closing,
         total_cost=cost,
         loan_requested=inputs.loan_requested,
         commitment=commitment,
@@ -201,7 +212,7 @@ def size_deal(
         split=split,
         ltv_basis=ltv_basis,
         as_is_value_source=inputs.as_is_value_source,
-        arv_source=inputs.arv_source,
+        estimated_sale_price_source=inputs.estimated_sale_price_source,
         metrics=metrics,
         all_pass=all(check.passed for check in metrics.values()),
     )

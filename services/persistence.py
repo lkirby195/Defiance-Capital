@@ -7,8 +7,9 @@ only where the table already has a column for a piece of it - so a stored row re
 exact ``ScreenResult`` / ``UnderwriteResult`` that produced it.
 
 Dumping in JSON mode writes every ``Decimal`` as its own digits (a string), not a float, so
-the round trip is exact to the last place. ``underwrites.solved_rate`` is a NUMERIC(7,5)
-copy of r* for querying and is deliberately lossy; the JSONB keeps the precise value.
+the round trip is exact to the last place. ``underwrites.irr`` is a NUMERIC(7,5) copy of the
+ledger's XIRR for querying and is deliberately lossy; the JSONB keeps the precise value, and
+it is NULL on the degenerate ledger that has no rate at all (SPEC §8.3).
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from schema.models import (
     UnderwriteResult,
 )
 
-RATE_PLACES = Decimal("0.00001")  # underwrites.solved_rate is NUMERIC(7,5)
+RATE_PLACES = Decimal("0.00001")  # underwrites.irr is NUMERIC(7,5)
 
 # ScreenResult fields that have a column of their own; everything else goes to JSONB.
 _SCREEN_COLUMNS = frozenset(
@@ -83,9 +84,12 @@ def record_underwrite(
         engine_version=result.engine_version,
         config_hash=result.config_hash,
         inputs=_json(inputs),
-        outputs=result.model_dump(mode="json", exclude={"grid_lender"}),
-        grid_lender=_json(result.grid_lender),
-        solved_rate=result.solved_rate.quantize(RATE_PLACES),
+        outputs=_json(result),
+        irr=(
+            None
+            if result.return_overview.irr is None
+            else result.return_overview.irr.quantize(RATE_PLACES)
+        ),
     )
     session.add(row)
     session.flush()
@@ -93,8 +97,8 @@ def record_underwrite(
 
 
 def underwrite_result(row: Underwrite) -> UnderwriteResult:
-    """Rebuild the ``UnderwriteResult`` a row was written from (grid included)."""
-    return UnderwriteResult.model_validate({**row.outputs, "grid_lender": row.grid_lender})
+    """Rebuild the ``UnderwriteResult`` a row was written from, ledger included."""
+    return UnderwriteResult.model_validate(row.outputs)
 
 
 def latest_screen(session: Session, deal_id: UUID) -> Screen | None:

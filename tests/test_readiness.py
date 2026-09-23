@@ -45,13 +45,19 @@ def rows(deal: Deal, adapters: AdapterValues | None = None) -> dict[str, Any]:
 def test_every_spec_8_1_input_has_a_row(deal_with_overrides: Deal) -> None:
     keys = set(rows(deal_with_overrides))
     assert {
-        "as_is_value",
-        "arv",
+        "deal.closing_date",
         "deal.term_months",
-        "market_rent_monthly",
-        "annual_taxes_usd",
-        "annual_insurance_usd",
-        "annual_utilities_usd",
+        "payoff_date",
+        "deal.interest_rate",
+        "estimated_sale_price",
+        "as_is_value",
+        "monthly_rent",
+        "contingency_pct",
+        "closing_costs_usd",
+        "holding_costs_total_usd",
+        "origination_fee_pct",
+        "flip_analysis",
+        "rental_analysis",
         "verified_credit_score",
         "court_records",
         "asset_type",
@@ -63,7 +69,8 @@ def test_a_hand_entered_value_says_team(deal_with_overrides: Deal) -> None:
     row = rows(deal_with_overrides)["as_is_value"]
     assert row.source is InputSource.TEAM
     assert row.value == deal_with_overrides.as_is_value_team
-    assert row.required is True
+    # optional now: LTV falls back to the purchase price with a flag (SPEC §7.4)
+    assert row.required is False
 
 
 def test_an_adapter_value_beats_the_team_and_says_so(deal_with_overrides: Deal) -> None:
@@ -74,27 +81,61 @@ def test_an_adapter_value_beats_the_team_and_says_so(deal_with_overrides: Deal) 
     assert row.value == D("999000.00")
 
 
-def test_an_opex_line_nobody_entered_says_default_and_shows_the_number(
+def test_an_economics_input_nobody_entered_says_default_and_shows_the_number(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    deal_with_overrides.actual_annual_utilities_usd = None
+    deal_with_overrides.holding_costs_total_usd = None
     db_session.commit()
-    row = rows(deal_with_overrides)["annual_utilities_usd"]
+    row = rows(deal_with_overrides)["holding_costs_total_usd"]
     assert row.source is InputSource.DEFAULT
     assert row.required is False
-    assert row.value == deal_with_overrides.as_is_value_team * D("0.004")
+    cost = deal_with_overrides.purchase_price + deal_with_overrides.rehab_costs
+    assert row.value == cost * D("0.02")
     assert "config default" in row.note
 
 
-def test_the_market_rent_has_no_default_and_says_what_it_costs(
+def test_a_percentage_input_is_rendered_as_a_percentage(deal_with_overrides: Deal) -> None:
+    """The rate and the two fee percentages are not money; the money filter would show 2p."""
+    by_key = rows(deal_with_overrides)
+    assert by_key["deal.interest_rate"].fmt == "pct"
+    assert by_key["contingency_pct"].fmt == "pct"
+    assert by_key["origination_fee_pct"].fmt == "pct"
+    assert by_key["closing_costs_usd"].fmt == "money"
+
+
+def test_the_monthly_rent_has_no_default_and_says_what_it_costs(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    deal_with_overrides.market_rent_monthly = None
+    deal_with_overrides.monthly_rent = None
     db_session.commit()
-    row = rows(deal_with_overrides)["market_rent_monthly"]
+    row = rows(deal_with_overrides)["monthly_rent"]
     assert row.source is InputSource.MISSING
-    assert row.required is False, "optional: the run goes ahead without a takeout"
-    assert "DSCR takeout is not evaluated" in row.note
+    assert row.required is False, "optional: the run goes ahead without either DSCR"
+    assert "Rental and Take-Back analyses are not evaluated" in row.note
+
+
+def test_the_payoff_date_is_derived_and_never_turns_the_button_off(
+    deal_with_overrides: Deal,
+) -> None:
+    row = rows(deal_with_overrides)["payoff_date"]
+    assert row.required is False
+    assert row.source is InputSource.DEFAULT
+    assert "derived" in row.note
+
+
+def test_the_sale_price_is_required_only_while_the_flip_is_on(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """SPEC §8.1: the flip sells at it, so a flip-off deal can run without one."""
+    deal_with_overrides.flip_analysis = True
+    db_session.commit()
+    assert rows(deal_with_overrides)["estimated_sale_price"].required is True
+
+    deal_with_overrides.flip_analysis = False
+    db_session.commit()
+    row = rows(deal_with_overrides)["estimated_sale_price"]
+    assert row.required is False
+    assert "LTARV is not computed" in row.note
 
 
 def test_a_split_product_lists_its_two_portions_by_their_real_names(
@@ -142,9 +183,10 @@ def test_a_complete_deal_is_ready(deal_with_overrides: Deal) -> None:
 @pytest.mark.parametrize(
     "clear,expected",
     [
-        (["as_is_value_team"], "As-is value"),
-        (["arv_team"], "ARV"),
-        (["loan_purchase_portion", "loan_rehab_portion"], "Purchase portion"),
+        (["closing_date"], "Closing date"),
+        (["interest_rate"], "Interest rate"),
+        (["term_months"], "Term (months)"),
+        (["estimated_sale_price_team"], "Estimated sale price"),
     ],
 )
 def test_a_required_input_that_is_absent_turns_the_button_off(
@@ -161,12 +203,22 @@ def test_a_required_input_that_is_absent_turns_the_button_off(
 def test_a_term_the_bucket_names_says_so_and_is_not_a_team_entry(
     deal_with_overrides: Deal,
 ) -> None:
-    """Nobody chose 9 months on a 9-month bucket; the bucket did.  # SPEC §8.1"""
+    """Nobody chose 6 months on a 6-month bucket; the bucket seeded it.  # SPEC §8.1"""
     row = rows(deal_with_overrides)["deal.term_months"]
-    assert row.value == 9
+    assert row.value == 6
     assert row.source is InputSource.DEFAULT
     assert row.required is True
-    assert "9-month bucket names it" in row.note
+    assert "seeded by the 6-month bucket" in row.note
+
+
+def test_a_term_repriced_off_its_bucket_says_team(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    deal_with_overrides.term_months = 12  # a 6-month ask, priced at 12
+    db_session.commit()
+    row = rows(deal_with_overrides)["deal.term_months"]
+    assert row.source is InputSource.TEAM
+    assert "the 6-month bucket was the ask" in row.note
 
 
 def test_a_twelve_plus_term_the_team_set_says_team(
@@ -202,9 +254,9 @@ def test_an_intake_gap_is_named_the_way_the_refusal_names_it(
 @pytest.mark.parametrize(
     "clear",
     [
-        ["as_is_value_team"],
-        ["arv_team"],
-        ["loan_purchase_portion", "loan_rehab_portion"],
+        ["closing_date"],
+        ["interest_rate"],
+        ["estimated_sale_price_team"],
         ["term_months"],
         ["purchase_price"],
     ],
@@ -226,7 +278,9 @@ def test_a_deal_the_page_calls_ready_actually_assembles(deal_with_overrides: Dea
     """The other half: ready has to mean the run goes through."""
     assert underwrite_readiness(deal_with_overrides).ready is True
     assembled = underwrite_inputs(deal_with_overrides, UnderwriteRequest())
-    assert assembled.deal.as_is_value is not None and assembled.deal.arv is not None
+    assert assembled.deal.as_is_value is not None
+    assert assembled.deal.estimated_sale_price is not None
+    assert assembled.interest_rate is not None
 
 
 # --- the page ------------------------------------------------------------------------------------
@@ -241,7 +295,14 @@ def page(client: TestClient, deal: Deal) -> str:
 def test_the_deal_page_shows_the_checklist(client: TestClient, deal_with_overrides: Deal) -> None:
     body = page(client, deal_with_overrides)
     assert "Underwrite inputs" in body
-    for label in ("As-is value", "ARV", "Market rent (monthly)", "Annual utilities"):
+    for label in (
+        "As-is value",
+        "Estimated sale price",
+        "Monthly rent",
+        "Holding costs (total)",
+        "Interest rate",
+        "Payoff date",
+    ):
         assert label in body, label
     assert "TEAM" in body
 
@@ -256,9 +317,9 @@ def test_the_button_is_live_on_a_ready_deal(client: TestClient, deal_with_overri
 def test_the_button_is_off_and_the_page_says_why(
     client: TestClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    deal_with_overrides.arv_team = None
+    deal_with_overrides.interest_rate = None
     db_session.commit()
     body = page(client, deal_with_overrides)
     assert "disabled>Run underwrite</button>" in body
     assert "Run underwrite is off until these are entered" in body
-    assert "ARV" in body
+    assert "Interest rate" in body

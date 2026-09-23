@@ -1,16 +1,17 @@
 {
   "name": "go_split_draw_denver",
-  "description": "SPLIT_DRAW flip in Denver, CO; T1 / 6+ deals; LTC 77.2%, LTV 74.1%, LTARV 60.6% all under cap; clean records. Go. Underwrite (verified 760 / 7 deals, term 9): interest on the full commitment from close, r* 14.83%; profit $19,350 at r*; DSCR takeout covers; downside cover 1.23x (CO: 4 foreclosure months). No flags.",
+  "description": "SPLIT_DRAW flip in Denver, CO; T1 / 6+ deals; all three metrics under cap. Go. Underwrite: 9 months at 12% on a $195,000 commitment, $147,000 at close and six $8,000 draws over the rehab period, interest on the full commitment throughout; IRR 17.631%. Flip nets $36,850 on $279,950 of costs. Both DSCRs fall short.",
   "inputs": {
     "deal": {
       "product": "SPLIT_DRAW",
       "purchase_price": "200000.00",
-      "rehab_budget": "50000.00",
-      "loan_requested": "200000.00",
+      "rehab_costs": "48000.00",
+      "loan_requested": "195000.00",
+      "closing_costs_usd": "1500.00",
       "as_is_value": "270000.00",
-      "arv": "330000.00",
-      "loan_purchase_portion": "145000.00",
-      "loan_rehab_portion": "55000.00"
+      "estimated_sale_price": "330000.00",
+      "loan_purchase_portion": "147000.00",
+      "loan_rehab_portion": "48000.00"
     },
     "state": "CO",
     "borrower": {
@@ -29,12 +30,10 @@
     "experience_tier": "E3",
     "repeat_borrower_override_applied": false,
     "all_pass": true,
-    "commitment": "200000.00",
-    "funded_at_close": "145000.00",
-    "split": {
-      "purchase_portion": "145000.00",
-      "rehab_portion": "55000.00"
-    },
+    "commitment": "195000.00",
+    "funded_at_close": "147000.00",
+    "total_cost": "249500.00",
+    "rehab_adj": "48000.00",
     "metrics": {
       "LTC": "PASS",
       "LTV_AS_IS": "PASS",
@@ -42,21 +41,25 @@
     },
     "reasons_contain": [],
     "reply_contains": [
-      "fit on first pass",
-      "credit authorization"
-    ]
+      "fit on first pass"
+    ],
+    "split": {
+      "purchase_portion": "147000.00",
+      "rehab_portion": "48000.00"
+    }
   },
   "underwrite": {
     "inputs": {
       "deal": {
         "product": "SPLIT_DRAW",
         "purchase_price": "200000.00",
-        "rehab_budget": "50000.00",
-        "loan_requested": "200000.00",
+        "rehab_costs": "48000.00",
+        "loan_requested": "195000.00",
+        "closing_costs_usd": "1500.00",
         "as_is_value": "270000.00",
-        "arv": "330000.00",
-        "loan_purchase_portion": "145000.00",
-        "loan_rehab_portion": "55000.00"
+        "estimated_sale_price": "330000.00",
+        "loan_purchase_portion": "147000.00",
+        "loan_rehab_portion": "48000.00"
       },
       "state": "CO",
       "borrower": {
@@ -66,60 +69,77 @@
         "verified_credit_score": 760,
         "verified_deals_36mo": 7
       },
+      "closing_date": "2026-10-01",
       "term_months": 9,
-      "market_rent_monthly": "2800.00",
-      "annual_taxes_usd": "2400.00",
-      "annual_insurance_usd": "1500.00",
-      "annual_utilities_usd": "900.00",
-      "stated_exit": "FLIP",
+      "interest_rate": "0.12",
       "court_records": {
         "as_of": "2026-09-09"
-      }
+      },
+      "holding_costs_total_usd": "9000.00",
+      "monthly_rent": "2800.00",
+      "asset_type": "SFR",
+      "loan_purpose": "PURCHASE"
     },
     "expected": {
+      "payoff_date": "2027-07-01",
       "rehab_months": 6,
-      "commitment": "200000.00",
-      "solved_rate": "0.148333",
-      "lender_yield_at_solve": "0.175000",
-      "interest_at_solve": "22250.00",
-      "fees_at_solve": "4000.00",
-      "avg_outstanding_at_term": "200000.00",
-      "grid": {
-        "columns": 12,
-        "rows": 7,
-        "solved_rate_inserted": true,
-        "term_row_cells_meeting_target": 2
+      "commitment": "195000.00",
+      "funded_at_close": "147000.00",
+      "economics": {
+        "rehab_adj": "48000.00",
+        "contingency": "0.00",
+        "closing_costs": "1500.00",
+        "holding_costs_total": "9000.00",
+        "holding_costs_monthly": "1000.00",
+        "origination_at_close": "1950.00",
+        "origination_at_payoff": "1950.00"
       },
-      "borrower": {
-        "total_project_cost": "261000.00",
-        "holding_costs": "3600.00",
-        "exit_net": "310200.00",
-        "profit": "19350.00",
-        "cash_in": "90850.00",
-        "cash_on_cash": "0.212988"
+      "ledger": {
+        "rows": 10,
+        "first_net": "-145050.00",
+        "last_net": "198900.00",
+        "total_funding": "-147000.00",
+        "total_draws": "-48000.00",
+        "total_interest": "17550.00",
+        "total_fees": "3900.00",
+        "total_payoff": "195000.00",
+        "total_profit": "21450.00",
+        "irr": "0.17631235"
       },
-      "exit": {
-        "type": "FLIP",
-        "exit_source": "STATED",
-        "noi_annual": "23652.00",
-        "ltv_takeout": "247500.00",
-        "dscr_takeout": "234906.45",
-        "max_takeout": "234906.45",
-        "payoff_due": "202000.00",
-        "dscr_at_payoff": "1.395",
-        "refi_covers": true,
-        "shortfall": "0.00"
+      "flip": {
+        "status": "EVALUATED",
+        "broker_costs": "13200.00",
+        "total_costs": "279950.00",
+        "net_profit": "36850.00",
+        "profit_yield": "0.131631"
       },
-      "downside": {
-        "recovery_basis": "325000.00",
-        "liquidation": "276250.00",
-        "foreclosure_months": 4,
-        "recovery": "248075.00",
-        "exposure": "202000.00",
-        "cover": "1.228094",
-        "passed": true
+      "rental": {
+        "status": "EVALUATED",
+        "expenses": "980.00",
+        "net_monthly_income": "820.00",
+        "debt_service_monthly": "1232.53",
+        "dscr": "0.665297",
+        "passed": false
       },
-      "flags": []
+      "take_back": {
+        "status": "EVALUATED",
+        "lost_interest": "5850.00",
+        "total_cost": "205850.00",
+        "debt_service_monthly": "2117.40",
+        "net_monthly_income": "820.00",
+        "dscr": "0.387268",
+        "passed": false
+      },
+      "flags": [
+        {
+          "code": "DSCR_BELOW_FLOOR",
+          "severity": "SOFT"
+        },
+        {
+          "code": "TAKE_BACK_DSCR_BELOW_FLOOR",
+          "severity": "HARD"
+        }
+      ]
     }
   }
 }

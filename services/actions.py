@@ -28,7 +28,6 @@ from schema.models import (
     AuditAction,
     ProductSource,
     Status,
-    months_for_bucket,
 )
 from services.audit import DEALS, jsonable, record_audit
 from services.errors import ActionNotAllowed, ReasonRequired
@@ -49,14 +48,20 @@ REOPEN_FROM: frozenset[Status] = frozenset({Status.DECLINED})
 # The fields the queue's override block owns, in the order the form shows them. ``product``
 # is not here: it carries a source column and is handled on its own (SPEC §3).
 OVERRIDE_FIELDS: tuple[str, ...] = (
+    "loan_purpose",
+    "closing_date",
+    "interest_rate",
+    "contingency_pct",
+    "closing_costs_usd",
+    "holding_costs_total_usd",
+    "origination_fee_pct",
     "as_is_value_team",
-    "arv_team",
-    "actual_annual_taxes_usd",
-    "actual_annual_insurance_usd",
-    "actual_annual_utilities_usd",
-    "market_rent_monthly",
+    "estimated_sale_price_team",
+    "monthly_rent",
     "asset_type",
     "stated_exit",
+    "flip_analysis",
+    "rental_analysis",
     "court_records_status",
     "court_records_as_of",
     "court_records_team",
@@ -261,18 +266,18 @@ def save_overrides(
 def _apply_term_months(
     deal: Deal, overrides: TeamOverrides, before: dict[str, Any], after: dict[str, Any]
 ) -> None:
-    """Set the term only where the bucket does not already name one.  # SPEC §8.1
+    """Set the term the deal is priced on, however the team said it.  # SPEC §8.1
 
-    ``term_months`` is not an override for most deals: every bucket but ``12_PLUS`` names a
-    number, the page renders it read-only, and what comes back is whatever it was rendered
-    with. So the bucket's own number is re-derived here rather than trusted - a tampered
-    read-only box is a no-op instead of a row the database would reject.
+    The block takes a term in months or a payoff date and ``TeamOverrides`` turns the second
+    into the first, so there is one number to store and one column to store it in. The bucket
+    does not come into it any more: it is the borrower's answer to "how long do you need the
+    loan?", it seeded this at intake, and a deal repriced to 7 months on a 6-month ask is a
+    real thing rather than a row to reject.
 
-    On ``12_PLUS`` there is nothing to derive, and this block is the only place in the queue
-    a team member can set one: the Run underwrite button posts no form of its own.
+    This block is the only place in the queue a team member can set one: the Run underwrite
+    button posts no form of its own.
     """
-    named = months_for_bucket(deal.term_bucket)
-    wanted = named if named is not None else overrides.term_months
+    wanted = overrides.requested_term_months
     if wanted == deal.term_months:
         return
     before["term_months"] = deal.term_months

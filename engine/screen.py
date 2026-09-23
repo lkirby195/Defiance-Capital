@@ -7,7 +7,8 @@ court-flag severities, and caps come from config. The verdict rules are SPEC §7
                floor tranche, or a leverage metric above its cap by more than the
                tolerance band
 * Conditional  no HARD flag and any SOFT flag: a SOFT court/filing flag, leverage
-               within the tolerance band above its cap, missing ARV or as-is value,
+               within the tolerance band above its cap, a missing estimated sale price
+               or as-is value,
                a self-reported vs. verified mismatch, or state = OTHER
 * Go           neither
 
@@ -93,7 +94,9 @@ _REPLY_GO = (
     "purchase contract when you have it?"
 )
 _ASK_BY_FLAG: dict[ScreenFlag, str] = {
-    ScreenFlag.ARV_MISSING: "an after-repair value or comps for the property",
+    ScreenFlag.ESTIMATED_SALE_PRICE_MISSING: (
+        "an estimated sale price after the work, or comps for the property"
+    ),
     ScreenFlag.AS_IS_VALUE_MISSING: "a current as-is value or a recent appraisal",
     ScreenFlag.STATE_NOT_SERVED: "the full property address (we lend in {served})",
     ScreenFlag.LTC_OVER_CAP: "whether you can work with a somewhat lower loan amount",
@@ -497,7 +500,7 @@ def leverage_flags(sizing: SizingResult) -> list[Flag]:
                 message=(
                     f"{sizing.product.value} rehab portion "
                     f"{money(split.rehab_portion_requested)} exceeds the "
-                    f"contingency-adjusted rehab budget {money(sizing.rehab_adj)}; "
+                    f"contingency-adjusted rehab cost {money(sizing.rehab_adj)}; "
                     f"{consequence}."
                 ),
             )
@@ -516,7 +519,7 @@ def leverage_flags(sizing: SizingResult) -> list[Flag]:
                 message=(
                     f"SPLIT_PRINCIPAL commitment {money(sizing.commitment)}{notes} is below the "
                     f"{money(sizing.loan_requested)} requested: the entered rehab portion is "
-                    f"capped at the contingency-adjusted rehab budget {money(sizing.rehab_adj)}."
+                    f"capped at the contingency-adjusted rehab cost {money(sizing.rehab_adj)}."
                 ),
             )
         )
@@ -525,10 +528,10 @@ def leverage_flags(sizing: SizingResult) -> list[Flag]:
             if metric is LeverageMetric.LTARV:
                 flags.append(
                     Flag(
-                        code=ScreenFlag.ARV_MISSING,
+                        code=ScreenFlag.ESTIMATED_SALE_PRICE_MISSING,
                         severity=Severity.SOFT,
                         message=(
-                            f"ARV unavailable; LTARV not computed "
+                            f"Estimated sale price unavailable; LTARV not computed "
                             f"(cap {pct(check.cap)} for {cell})."
                         ),
                     )
@@ -576,7 +579,7 @@ def team_sourced_flags(sizing: SizingResult, court_records: CourtRecordInputs | 
         label
         for label, source in (
             ("as-is value", sizing.as_is_value_source),
-            ("ARV", sizing.arv_source),
+            ("estimated sale price", sizing.estimated_sale_price_source),
             ("court records", court_records.source if court_records is not None else None),
         )
         if source is ValueSource.TEAM

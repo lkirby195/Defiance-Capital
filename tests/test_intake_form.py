@@ -100,10 +100,10 @@ def test_the_repeat_borrower_question_does_not_say_glenwood(client: QueueClient)
 def test_the_deal_page_reads_the_same_way(client: QueueClient, stored_deal: Deal) -> None:
     """A tranche and a bucket are labelled the same wherever they are shown."""
     body = form_page(client, f"/queue/deals/{stored_deal.id}")
-    assert "700–739" in body  # the fixture's T2
-    assert "3–5 deals in 36 months" in body  # its 3_5
+    assert "740+" in body  # the fixture's T1
+    assert "6+ deals in 36 months" in body  # its 6_PLUS
     assert "Repeat GLENWOOD borrower" not in body
-    assert ">T2<" not in body
+    assert ">T1<" not in body
 
 
 def test_a_screened_deal_names_the_range_in_its_flags_and_caps_cell(
@@ -160,19 +160,26 @@ def test_the_browser_is_asked_to_hold_the_same_line(client: QueueClient) -> None
 
 
 def test_the_required_list_is_the_minimum_viable_intake() -> None:
-    """SPEC §4.1 and nothing else: the form does not invent a requirement of its own."""
+    """What an engine run cannot proceed without, and nothing else (SPEC §4.1, §8.1).
+
+    The credit range is not on the list: a person on the phone often does not have it yet,
+    and the screen names it by hand rather than the form refusing to submit. The three that
+    joined it are the ones the ledger has no stand-in for.
+    """
     assert REQUIRED_NAMES == {
         "borrower_name",
         "borrower_phone",
-        "credit_range",
         "experience_bucket",
         "repeat_borrower",
+        "closing_date",
+        "term_bucket",
         "address",
         "purchase_price",
-        "rehab_budget",
+        "rehab_costs",
         "loan_requested",
-        "term_bucket",
+        "interest_rate",
     }
+    assert "credit_range" not in REQUIRED_NAMES
     assert [name for name, _ in REQUIRED_FIELDS] == [
         name for name in TEAM_ENTRY_FIELDS if name in REQUIRED_NAMES
     ]
@@ -210,7 +217,7 @@ def test_a_form_post_missing_a_required_box_is_refused_by_name(
     # and nothing was stored
     assert db_session.scalar(select(func.count()).select_from(Deal)) == 0
     # the rest of what was typed is still in the boxes
-    assert 'value="Dana Whitfield"' in response.text
+    assert 'value="Rafael Ortiz"' in response.text
 
 
 def test_a_complete_form_post_goes_through(
@@ -257,20 +264,29 @@ def test_the_deal_fills_in_every_box_the_form_renders(stored_deal: Deal) -> None
 
 def test_the_filled_form_carries_what_was_entered(stored_deal: Deal) -> None:
     values = intake_form_values(stored_deal)
-    assert values["borrower_name"] == "Dana Whitfield"
-    assert values["borrower_phone"] == "+19185550142"  # normalized, as stored
-    assert values["entity_name"] == "Whitfield Holdings LLC"
-    assert values["credit_range"] == "T2"
-    assert values["experience_bucket"] == "3_5"
+    assert values["borrower_name"] == "Rafael Ortiz"
+    assert values["borrower_phone"] == "+17205550192"  # normalized, as stored
+    assert values["entity_name"] == "Ortiz Builds LLC"
+    assert values["credit_range"] == "T1"
+    assert values["experience_bucket"] == "6_PLUS"
     assert values["repeat_borrower"] == "false"
-    assert values["purchase_price"] == "185000.00"
-    assert values["address"] == "1412 S Cheyenne Ave, Tulsa, OK 74119"
+    assert values["purchase_price"] == "200000.00"
+    assert values["address"] == "3320 Meade St, Denver, CO 80211"
+    assert values["interest_rate"] == "0.12000"  # NUMERIC(7,5), as stored
+    assert values["closing_date"] == "2026-10-01"
+
+
+def test_the_payoff_date_box_comes_back_blank(stored_deal: Deal) -> None:
+    """It is not a column: it is the closing date plus the term (SPEC §8.1), so the box is
+    an alternative way of saying the term rather than a value to edit."""
+    assert stored_deal.closing_date is not None and stored_deal.term_months is not None
+    assert intake_form_values(stored_deal)["payoff_date"] == ""
 
 
 def test_an_inferred_state_and_product_come_back_blank(stored_deal: Deal) -> None:
     """Both carry a source column; rendering the inference would record it as a choice."""
     values = intake_form_values(stored_deal)
-    assert stored_deal.property is not None and stored_deal.property.state.value == "OK"
+    assert stored_deal.property is not None and stored_deal.property.state.value == "CO"
     assert values["state"] == ""
     assert stored_deal.product is not None
     assert values["product"] == ""
