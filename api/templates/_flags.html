@@ -49,8 +49,12 @@
     <dt>Product</dt><dd>{{ sizing.product | plain }}</dd>
     <dt>Caps cell</dt>
     <dd>{{ sizing.credit_tranche | tranche }} × {{ sizing.experience_tier | plain }}</dd>
-    <dt>Rehab + contingency</dt><dd>{{ sizing.rehab_adj | money }}</dd>
-    <dt>Buy-side closing (borrower cash)</dt><dd>{{ sizing.buy_closing | money }}</dd>
+    <dt>Purchase price</dt><dd>{{ sizing.purchase_price | money }}</dd>
+    <dt>Rehab costs</dt><dd>{{ sizing.rehab_costs | money }}</dd>
+    <dt>Rehab + contingency</dt>
+    <dd>{{ sizing.rehab_adj | money }}
+      <span class="small muted">({{ sizing.contingency_pct | pct }} contingency)</span></dd>
+    <dt>Closing costs (lender)</dt><dd>{{ sizing.closing_costs | money }}</dd>
     <dt>Total cost</dt><dd>{{ sizing.total_cost | money }}</dd>
     <dt>Loan requested</dt><dd>{{ sizing.loan_requested | money }}</dd>
     <dt>Commitment</dt><dd>{{ sizing.commitment | money }}</dd>
@@ -64,12 +68,13 @@
         {% if sizing.split.rehab_portion_capped %}
           <span class="small muted">(entered
             {{ sizing.split.rehab_portion_requested | money }}, capped at the
-            contingency-adjusted rehab budget)</span>{% endif %}</dd>
+            contingency-adjusted rehab cost)</span>{% endif %}</dd>
     {% elif sizing.product | plain in ("SPLIT_DRAW", "SPLIT_PRINCIPAL") %}
       <dt>Loan split</dt>
       <dd class="muted">not entered — sized on the loan requested (SPEC §8.2)</dd>
     {% endif %}
     <dt>As-is value from</dt><dd>{{ sizing.as_is_value_source | plain }}</dd>
-    <dt>ARV from</dt><dd>{{ sizing.arv_source | plain }}</dd>
+    <dt>Estimated sale price from</dt>
+    <dd>{{ sizing.estimated_sale_price_source | plain }}</dd>
   </dl>
 {% endmacro %}

@@ -60,6 +60,11 @@ def payload(**overrides: Any) -> dict[str, Any]:
     return {key: value for key, value in data.items() if value is not None}
 
 
+def split_entry() -> dict[str, Any]:
+    """The complete team entry: a SPLIT_DRAW with its two portions on it."""
+    return payload()
+
+
 def form_post(client: TestClient, data: dict[str, Any]) -> Any:
     body = {
         key: ("true" if value is True else "false" if value is False else str(value))
@@ -74,7 +79,7 @@ def form_post(client: TestClient, data: dict[str, Any]) -> Any:
 def test_the_two_portions_have_to_add_up_to_the_loan() -> None:
     """A split is a division of the request, not a second opinion about its size."""
     with pytest.raises(ValidationError, match="must add up to the loan requested"):
-        TeamEntryForm(**payload(loan_purchase_portion="143800.00", loan_rehab_portion="46200.01"))
+        TeamEntryForm(**payload(loan_purchase_portion="147000.00", loan_rehab_portion="48000.01"))
 
 
 def test_one_portion_without_the_other_is_refused() -> None:
@@ -89,9 +94,9 @@ def test_a_single_note_product_cannot_carry_a_split(product: str) -> None:
 
 
 def test_the_rule_is_tested_against_the_inferred_product_too() -> None:
-    """The product box may be blank; the normalizer infers one from the rehab budget."""
+    """The product box may be blank; the normalizer infers one from the rehab costs."""
     with pytest.raises(ValidationError, match="not NO_DRAW"):
-        TeamEntryForm(**payload(rehab_budget="0"))  # inferred NO_DRAW, split still attached
+        TeamEntryForm(**payload(rehab_costs="0"))  # inferred NO_DRAW, split still attached
 
 
 def test_a_split_product_with_no_split_is_coherent() -> None:
@@ -126,8 +131,8 @@ def test_the_form_requires_both_portions_on_a_split_product(client: TestClient) 
 def test_the_form_takes_a_split_that_adds_up(client: TestClient, db_session: Session) -> None:
     assert form_post(client, payload()).status_code == 303
     deal = db_session.query(Deal).one()
-    assert deal.loan_purchase_portion == D("143800.00")
-    assert deal.loan_rehab_portion == D("46200.00")
+    assert deal.loan_purchase_portion == D("147000.00")
+    assert deal.loan_rehab_portion == D("48000.00")
 
 
 def test_the_form_says_so_when_a_split_does_not_add_up(client: TestClient) -> None:
@@ -189,14 +194,8 @@ def test_a_split_on_a_deal_with_no_product_is_refused_by_the_database(db_session
 
 
 def undivided(session: Session) -> Deal:
-    fixture = json.loads(
-        (Path(__file__).resolve().parents[1] / "fixtures/synthetic/deals")
-        .joinpath("go_team_overrides_tulsa.json")
-        .read_text(encoding="utf-8")
-    )
-    entry = dict(fixture["team_entry"])
-    entry.pop("loan_purchase_portion", None)
-    entry.pop("loan_rehab_portion", None)
+    """The SPLIT_DRAW team entry with its two portions taken off: a borrower-channel deal."""
+    entry = payload(loan_purchase_portion=None, loan_rehab_portion=None)
     return store_deal(session, entry)
 
 
@@ -218,20 +217,14 @@ def test_an_undivided_deal_is_refused_an_underwrite_by_name(db_session: Session)
     assert "advanced in two parts" in named
 
 
-def test_moving_off_a_split_product_takes_the_split_with_it(
-    db_session: Session, deal_with_overrides: Deal
-) -> None:
+def test_moving_off_a_split_product_takes_the_split_with_it(db_session: Session) -> None:
     """A WHOLETAIL loan has no division, and the database would refuse a stale one."""
-    assert deal_with_overrides.loan_purchase_portion is not None
-    save_overrides(
-        db_session,
-        deal_with_overrides.id,
-        TeamOverrides(product=Product.WHOLETAIL),
-        actor=ACTOR,
-    )
+    split = store_deal(db_session, split_entry())
+    assert split.loan_purchase_portion is not None
+    save_overrides(db_session, split.id, TeamOverrides(product=Product.WHOLETAIL), actor=ACTOR)
     db_session.commit()
     db_session.expire_all()
-    deal = db_session.get(Deal, deal_with_overrides.id)
+    deal = db_session.get(Deal, split.id)
     assert deal is not None
     assert deal.product is Product.WHOLETAIL
     assert deal.loan_purchase_portion is None and deal.loan_rehab_portion is None
@@ -240,54 +233,58 @@ def test_moving_off_a_split_product_takes_the_split_with_it(
 # --- and it is shown wherever the commitment is -------------------------------------------------
 
 
-def test_the_deal_page_shows_the_split(client: TestClient, deal_with_overrides: Deal) -> None:
-    body = client.get(f"/queue/deals/{deal_with_overrides.id}").text
+def test_the_deal_page_shows_the_split(client: TestClient, db_session: Session) -> None:
+    deal = store_deal(db_session, split_entry())
+    body = client.get(f"/queue/deals/{deal.id}").text
     assert "Loan split" in body
-    assert "$138,800.00 purchase" in body
+    assert "$147,000.00 purchase" in body
 
 
-def test_the_sizing_table_and_grid_header_name_the_portions(
-    client: TestClient, db_session: Session, deal_with_overrides: Deal
-) -> None:
-    client.post(f"/queue/deals/{deal_with_overrides.id}/underwrite", follow_redirects=False)
-    body = client.get(f"/queue/deals/{deal_with_overrides.id}").text
+def test_the_sizing_table_names_the_portions(client: TestClient, db_session: Session) -> None:
+    deal = store_deal(db_session, split_entry())
+    client.post(f"/queue/deals/{deal.id}/underwrite", follow_redirects=False)
+    body = client.get(f"/queue/deals/{deal.id}").text
     assert "Rehab holdback" in body  # SPLIT_DRAW names, not SPLIT_PRINCIPAL's
-    assert "advanced at close + holdback" in body
-    del db_session
+    assert "$48,000.00 rehab" in body
 
 
-def test_the_console_report_names_the_two_portions_and_the_grid_says_the_shape() -> None:
+def test_the_console_report_names_the_two_portions() -> None:
     """The CLI is where the math is checked by hand, so the shape belongs beside it."""
     fixtures = Path(__file__).resolve().parents[1] / "fixtures/synthetic/deals"
-    run = run_fixture(fixtures / "go_split_principal_repeat_override.json", CONFIG, True)
+    run = run_fixture(fixtures / "go_split_principal_okc.json", CONFIG, True)
     assert run.underwrite_result is not None
     text = "\n".join(render_underwrite(run.underwrite_result, CONFIG))
     assert "Principal Note" in text and "Tranche A" in text
-    assert "Principal Note / Tranche A" in text  # the grid heading
-    assert "$104,000.00 + $66,000.00" in text
+    assert "$136,000.00" in text and "$54,000.00" in text
 
 
-def test_a_pre_0_8_0_stored_split_still_rebuilds() -> None:
-    """``purchase_portion_overridden`` is gone; a row written under it is not.
-
-    ``screens`` and ``underwrites`` are append-only (SPEC §5) and a stored result has to
-    rebuild into the model that produced it. The retired field is dropped on the way in and
-    the two that replaced it take the values the old row's numbers already describe.
-    """
-    old_row = {
-        "purchase_portion": "104000.00",
-        "rehab_portion": "66000.00",
-        "purchase_portion_overridden": True,
+def test_a_stored_split_rebuilds_exactly() -> None:
+    """``screens`` and ``underwrites`` are append-only (SPEC §5), so a stored result has to
+    rebuild into the model that produced it."""
+    row = {
+        "purchase_portion": "136000.00",
+        "rehab_portion": "54000.00",
+        "rehab_portion_requested": "54000.00",
+        "rehab_portion_capped": False,
     }
-    split = CommitmentSplit.model_validate(old_row)
-    assert split.purchase_portion == D("104000.00")
-    assert split.rehab_portion == D("66000.00")
-    assert split.rehab_portion_requested == D("66000.00")
+    split = CommitmentSplit.model_validate(row)
+    assert split.purchase_portion == D("136000.00")
+    assert split.rehab_portion == D("54000.00")
     assert split.rehab_portion_capped is False
-    assert not hasattr(split, "purchase_portion_overridden")
 
 
-def test_a_current_row_still_has_to_carry_the_new_fields() -> None:
-    """The shim is for old rows only; it does not make the new fields optional."""
+def test_a_row_has_to_carry_every_field() -> None:
+    """The v0.2 ``purchase_portion_overridden`` shim is gone with the rows it was for:
+    migration 0010 deletes every pre-1.0.0 screen and underwrite (SPEC §5)."""
     with pytest.raises(ValidationError):
         CommitmentSplit.model_validate({"purchase_portion": "1.00", "rehab_portion": "2.00"})
+    with pytest.raises(ValidationError):
+        CommitmentSplit.model_validate(
+            {
+                "purchase_portion": "1.00",
+                "rehab_portion": "2.00",
+                "rehab_portion_requested": "2.00",
+                "rehab_portion_capped": False,
+                "purchase_portion_overridden": True,
+            }
+        )

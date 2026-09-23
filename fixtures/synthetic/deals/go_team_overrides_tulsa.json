@@ -1,29 +1,42 @@
 {
   "name": "go_team_overrides_tulsa",
-  "description": "Team-entered SPLIT_DRAW in Tulsa, screened through the same assembly the API uses. The enrichment adapters are Phase 3, so everything behind the screen is the team's own work: a hand-entered as-is value and ARV (source TEAM) and a court search recorded CLEAN as of 2026-09-16. With them the deal reaches Go on the first pass -- LTC 78.1%, LTV 74.0%, LTARV 62.7%, no court flag, nothing missing. Without them the same deal would be Conditional at best: no valuation and no court record. The underwrite request names no valuation at all, so it falls back to the same two team numbers; taxes and insurance default off the as-is value (3,000 / 1,250), and a 9-month term on an SFR with no stated exit infers FLIP. Both the screen and the underwrite carry TEAM_SOURCED_VALUES, naming what was entered by hand; it is INFO, so the verdict is still Go.",
+  "description": "WHOLETAIL in Tulsa, entered on the team form and assembled the way the API assembles a stored deal: the valuation, the rent and the court search are all the team's own, so TEAM_SOURCED_VALUES is raised and the Go rests on hand-entered numbers. $120,000 at 13% for 6 months, the whole commitment at close; IRR 18.599%.",
   "team_entry": {
-    "borrower_name": "Marcus Ellery",
-    "borrower_phone": "(918) 555-0188",
-    "borrower_email": "marcus@example.com",
-    "entity_name": "Ellery Property Group LLC",
-    "credit_range": "T2",
-    "experience_bucket": "3_5",
+    "borrower_name": "Dana Whitlock",
+    "borrower_phone": "918-555-0147",
+    "borrower_email": "dana@whitlockhomes.example",
+    "entity_name": "Whitlock Homes LLC",
+    "guarantor_name": "Dana Whitlock",
+    "credit_range": "T1",
+    "experience_bucket": "6_PLUS",
     "repeat_borrower": false,
-    "address": "2210 E 15th St, Tulsa, OK 74104",
+    "loan_purpose": "PURCHASE",
+    "product": "WHOLETAIL",
+    "closing_date": "2027-02-01",
+    "term_bucket": "6",
+    "address": "1412 S Trenton Ave, Tulsa, OK 74120",
+    "city": "Tulsa",
     "county": "Tulsa",
-    "purchase_price": "185000.00",
-    "rehab_budget": "42000.00",
-    "loan_requested": "185000.00",
-    "term_bucket": "9",
+    "state": "OK",
+    "units": 1,
+    "structures": 1,
+    "sf": 1420,
+    "year_built": 1948,
+    "year_renovated": 2019,
+    "beds": 3,
+    "baths": "2.0",
+    "garage_spaces": 1,
     "asset_type": "SFR",
-    "as_is_value_team": "250000.00",
-    "arv_team": "295000.00",
-    "actual_annual_utilities_usd": "840.00",
-    "market_rent_monthly": "2400.00",
+    "purchase_price": "150000.00",
+    "rehab_costs": "5000.00",
+    "loan_requested": "120000.00",
+    "interest_rate": "0.13",
+    "holding_costs_total_usd": "3000.00",
+    "as_is_value_team": "175000.00",
+    "estimated_sale_price_team": "200000.00",
+    "monthly_rent": "1800.00",
     "court_records_status": "CLEAN",
-    "court_records_as_of": "2026-09-16",
-    "loan_purchase_portion": "138800.00",
-    "loan_rehab_portion": "46200.00"
+    "court_records_as_of": "2026-09-16"
   },
   "expected": {
     "verdict": "GO",
@@ -33,98 +46,97 @@
         "severity": "INFO"
       }
     ],
-    "credit_tranche": "T2",
-    "experience_tier": "E2",
+    "credit_tranche": "T1",
+    "experience_tier": "E3",
     "repeat_borrower_override_applied": false,
     "all_pass": true,
-    "commitment": "185000.00",
-    "funded_at_close": "138800.00",
-    "split": {
-      "purchase_portion": "138800.00",
-      "rehab_portion": "46200.00"
-    },
+    "commitment": "120000.00",
+    "funded_at_close": "120000.00",
+    "total_cost": "156000.00",
+    "rehab_adj": "5000.00",
     "metrics": {
       "LTC": "PASS",
       "LTV_AS_IS": "PASS",
       "LTARV": "PASS"
     },
-    "sources": {
-      "as_is_value": "TEAM",
-      "arv": "TEAM",
-      "court_records": "TEAM"
-    },
-    "status_after_screen": "SCREENED",
     "reasons_contain": [
-      "As-is value, ARV, and court records came from the team"
+      "entered by hand"
     ],
     "reply_contains": [
-      "fit on first pass",
-      "credit authorization"
-    ]
+      "fit on first pass"
+    ],
+    "sources": {
+      "as_is_value": "TEAM",
+      "estimated_sale_price": "TEAM",
+      "court_records": "TEAM"
+    }
   },
   "underwrite": {
-    "request": {
-      "verified_credit_score": 705,
-      "verified_deals_36mo": 4,
-      "market_rent_monthly": "2400.00",
-      "annual_utilities_usd": "840.00"
-    },
+    "request": {},
     "expected": {
-      "rehab_months": 6,
-      "commitment": "185000.00",
-      "solved_rate": "0.148333",
-      "lender_yield_at_solve": "0.175000",
-      "interest_at_solve": "20581.25",
-      "fees_at_solve": "3700.00",
-      "avg_outstanding_at_term": "185000.00",
-      "opex_defaults": {
-        "annual_taxes": "3000.00",
-        "annual_taxes_source": "DEFAULT",
-        "annual_insurance": "1250.00",
-        "annual_insurance_source": "DEFAULT"
+      "payoff_date": "2027-08-01",
+      "rehab_months": 3,
+      "commitment": "120000.00",
+      "funded_at_close": "120000.00",
+      "economics": {
+        "rehab_adj": "5000.00",
+        "contingency": "0.00",
+        "closing_costs": "1000.00",
+        "holding_costs_total": "3000.00",
+        "holding_costs_monthly": "500.00",
+        "origination_at_close": "1200.00",
+        "origination_at_payoff": "1200.00"
       },
-      "grid": {
-        "columns": 12,
+      "ledger": {
         "rows": 7,
-        "solved_rate_inserted": true,
-        "term_row_cells_meeting_target": 2
+        "first_net": "-118800.00",
+        "last_net": "122500.00",
+        "total_funding": "-120000.00",
+        "total_draws": "0.00",
+        "total_interest": "7800.00",
+        "total_fees": "2400.00",
+        "total_payoff": "120000.00",
+        "total_profit": "10200.00",
+        "irr": "0.18599010"
       },
-      "borrower": {
-        "total_project_cost": "236750.00",
-        "holding_costs": "3817.50",
-        "exit_net": "277300.00",
-        "profit": "12451.25",
-        "cash_in": "79848.75",
-        "cash_on_cash": "0.155935"
+      "flip": {
+        "status": "EVALUATED",
+        "broker_costs": "8000.00",
+        "total_costs": "169200.00",
+        "net_profit": "22800.00",
+        "profit_yield": "0.134752"
       },
-      "exit": {
-        "type": "FLIP",
-        "exit_source": "INFERRED",
-        "noi_annual": "19366.00",
-        "ltv_takeout": "221250.00",
-        "dscr_takeout": "192338.85",
-        "max_takeout": "192338.85",
-        "payoff_due": "186850.00",
-        "dscr_at_payoff": "1.235",
-        "refi_covers": true,
-        "shortfall": "0.00"
+      "rental": {
+        "status": "EVALUATED",
+        "expenses": "630.00",
+        "net_monthly_income": "670.00",
+        "debt_service_monthly": "758.48",
+        "dscr": "0.883344",
+        "passed": false
       },
-      "downside": {
-        "recovery_basis": "295000.00",
-        "liquidation": "250750.00",
-        "foreclosure_months": 8,
-        "recovery": "222311.67",
-        "exposure": "186850.00",
-        "cover": "1.189787",
-        "passed": true
+      "take_back": {
+        "status": "EVALUATED",
+        "lost_interest": "3900.00",
+        "total_cost": "128900.00",
+        "debt_service_monthly": "1425.89",
+        "net_monthly_income": "670.00",
+        "dscr": "0.469882",
+        "passed": false
       },
       "flags": [
+        {
+          "code": "DSCR_BELOW_FLOOR",
+          "severity": "SOFT"
+        },
+        {
+          "code": "TAKE_BACK_DSCR_BELOW_FLOOR",
+          "severity": "HARD"
+        },
         {
           "code": "TEAM_SOURCED_VALUES",
           "severity": "INFO"
         }
-      ],
-      "status_after_underwrite": "UNDERWRITING"
+      ]
     }
   }
 }

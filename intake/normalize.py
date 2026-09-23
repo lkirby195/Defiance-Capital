@@ -9,7 +9,8 @@ Normalization here is deliberately light: the phone goes to E.164 for NANP
 numbers so it works as the borrower match key (SPEC §5), the address gets
 whitespace/case cleanup, and the state is inferred from the address text unless a
 person entered it (``state_source`` records which). The product is inferred from the
-rehab budget unless the team entered it (``product_source`` records which).
+rehab costs unless the team entered it (``product_source`` records which). The term is the
+team's own when they set one and the bucket's number otherwise (SPEC §8.1).
 Parcel, county, and USPS-form addresses come from enrichment (SPEC §6).
 """
 
@@ -39,7 +40,7 @@ from schema.models import (
 MINIMUM_FIELDS: tuple[str, ...] = (
     "property.address_raw",
     "deal.purchase_price",
-    "deal.rehab_budget",
+    "deal.rehab_costs",
     "deal.loan_requested",
     "deal.term_bucket",
     "borrower.name",
@@ -116,24 +117,24 @@ def infer_state(address: str | None) -> State:
 
 
 def infer_term_months(bucket: TermBucket | None, entered: int | None) -> int | None:
-    """The months the bucket names; the team's own number when it names none.  # SPEC §8.1
+    """The team's own term; the months the bucket names when nobody has set one.  # SPEC §8.1
 
-    Every bucket but ``12_PLUS`` names a number, so there is nothing for a person to decide
-    and nothing for one to get wrong: the derived value wins over whatever the read-only box
-    posted back. ``12_PLUS`` names none, so the team's number is all there is.
+    The bucket is the borrower's answer to "how long do you need the loan?", so it seeds the
+    term and does not fix it: the deal is priced on the team's number - typed, or implied by
+    a payoff date - and a deal repriced to 7 months on a 6-month ask is a real thing. Without
+    one, the bucket's own number stands, and ``12_PLUS`` names none at all.
     """
-    named = months_for_bucket(bucket)
-    return named if named is not None else entered
+    return entered if entered is not None else months_for_bucket(bucket)
 
 
-def infer_product(rehab_budget: Decimal | None) -> Product | None:
-    """NO_DRAW when there is no rehab budget, else SPLIT_DRAW; None until the budget is known.
+def infer_product(rehab_costs: Decimal | None) -> Product | None:
+    """NO_DRAW when there are no rehab costs, else SPLIT_DRAW; None until they are known.
 
     WHOLETAIL and SPLIT_PRINCIPAL are never inferred; the team sets them.  # SPEC §3
     """
-    if rehab_budget is None:
+    if rehab_costs is None:
         return None
-    return Product.NO_DRAW if rehab_budget == 0 else Product.SPLIT_DRAW
+    return Product.NO_DRAW if rehab_costs == 0 else Product.SPLIT_DRAW
 
 
 def missing_fields(borrower: BorrowerInfo, prop: PropertyInfo, deal: DealInfo) -> list[str]:
@@ -142,7 +143,7 @@ def missing_fields(borrower: BorrowerInfo, prop: PropertyInfo, deal: DealInfo) -
         # A listing/auction link satisfies the property requirement (SPEC §4.1 row 1).
         "property.address_raw": bool(prop.address_raw or prop.listing_url),
         "deal.purchase_price": deal.purchase_price is not None,
-        "deal.rehab_budget": deal.rehab_budget is not None,  # 0 is allowed
+        "deal.rehab_costs": deal.rehab_costs is not None,  # 0 is allowed
         "deal.loan_requested": deal.loan_requested is not None,
         "deal.term_bucket": deal.term_bucket is not None,
         "borrower.name": bool(borrower.name),
@@ -178,6 +179,7 @@ def normalize(
             "address_normalized": parsed.property.address_normalized
             or normalize_address(address_raw),
             "listing_url": clean_text(parsed.property.listing_url),
+            "city": clean_text(parsed.property.city),
             "county": clean_text(parsed.property.county),
             "state": state,
             "state_source": state_source,
@@ -188,7 +190,7 @@ def normalize(
     if term != deal.term_months:
         deal = deal.model_copy(update={"term_months": term})
     if deal.product is None:
-        inferred = infer_product(deal.rehab_budget)
+        inferred = infer_product(deal.rehab_costs)
         if inferred is not None:
             deal = deal.model_copy(
                 update={"product": inferred, "product_source": ProductSource.INFERRED}

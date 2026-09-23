@@ -1,0 +1,145 @@
+{
+  "name": "conditional_no_rent_no_draw",
+  "description": "NO_DRAW with no as-is value and no monthly rent. The screen falls back to the purchase price for LTV, which lands 80% - over the 75% cap and inside the 5-point band - so Conditional. The underwrite runs: the flip sells at $140,000 for $25,000 of profit, and neither DSCR is tested (MONTHLY_RENT_MISSING). Closing 31 March on a 6-month term pays off 30 September.",
+  "inputs": {
+    "deal": {
+      "product": "NO_DRAW",
+      "purchase_price": "100000.00",
+      "rehab_costs": "0.00",
+      "loan_requested": "80000.00",
+      "estimated_sale_price": "140000.00"
+    },
+    "state": "OK",
+    "borrower": {
+      "credit_range_self_reported": "T1",
+      "experience_bucket_self_reported": "6_PLUS",
+      "repeat_borrower_self_reported": false
+    },
+    "court_records": {
+      "as_of": "2026-09-09"
+    }
+  },
+  "expected": {
+    "verdict": "CONDITIONAL",
+    "flags": [
+      {
+        "code": "AS_IS_VALUE_MISSING",
+        "severity": "SOFT"
+      },
+      {
+        "code": "LTV_AS_IS_OVER_CAP",
+        "severity": "SOFT"
+      }
+    ],
+    "credit_tranche": "T1",
+    "experience_tier": "E3",
+    "repeat_borrower_override_applied": false,
+    "all_pass": false,
+    "commitment": "80000.00",
+    "funded_at_close": "80000.00",
+    "total_cost": "101000.00",
+    "rehab_adj": "0.00",
+    "metrics": {
+      "LTC": "PASS",
+      "LTV_AS_IS": "WITHIN_TOLERANCE",
+      "LTARV": "PASS"
+    },
+    "reasons_contain": [
+      "As-is value unavailable",
+      "LTV (on purchase price)"
+    ],
+    "reply_contains": [
+      "a current as-is value"
+    ]
+  },
+  "underwrite": {
+    "inputs": {
+      "deal": {
+        "product": "NO_DRAW",
+        "purchase_price": "100000.00",
+        "rehab_costs": "0.00",
+        "loan_requested": "80000.00",
+        "estimated_sale_price": "140000.00"
+      },
+      "state": "OK",
+      "borrower": {
+        "credit_range_self_reported": "T1",
+        "experience_bucket_self_reported": "6_PLUS",
+        "repeat_borrower_self_reported": false
+      },
+      "closing_date": "2027-03-31",
+      "term_months": 6,
+      "interest_rate": "0.12",
+      "court_records": {
+        "as_of": "2026-09-09"
+      },
+      "asset_type": "SFR",
+      "loan_purpose": "PURCHASE"
+    },
+    "expected": {
+      "payoff_date": "2027-09-30",
+      "rehab_months": 3,
+      "commitment": "80000.00",
+      "funded_at_close": "80000.00",
+      "economics": {
+        "rehab_adj": "0.00",
+        "contingency": "0.00",
+        "closing_costs": "1000.00",
+        "holding_costs_total": "2000.00",
+        "holding_costs_monthly": "333.33",
+        "origination_at_close": "800.00",
+        "origination_at_payoff": "800.00"
+      },
+      "ledger": {
+        "rows": 7,
+        "first_net": "-79200.00",
+        "last_net": "81600.00",
+        "total_funding": "-80000.00",
+        "total_draws": "0.00",
+        "total_interest": "4800.00",
+        "total_fees": "1600.00",
+        "total_payoff": "80000.00",
+        "total_profit": "6400.00",
+        "irr": "0.17209911"
+      },
+      "flip": {
+        "status": "EVALUATED",
+        "broker_costs": "5600.00",
+        "total_costs": "109400.00",
+        "net_profit": "25000.00",
+        "profit_yield": "0.228519"
+      },
+      "rental": {
+        "status": "OFF",
+        "expenses": null,
+        "net_monthly_income": null,
+        "debt_service_monthly": "505.65",
+        "dscr": null,
+        "passed": null
+      },
+      "take_back": {
+        "status": "NOT_EVALUATED",
+        "lost_interest": "2400.00",
+        "total_cost": "87400.00",
+        "debt_service_monthly": "899.01",
+        "net_monthly_income": null,
+        "dscr": null,
+        "passed": null
+      },
+      "flags": [
+        {
+          "code": "AS_IS_VALUE_MISSING",
+          "severity": "SOFT"
+        },
+        {
+          "code": "LTV_AS_IS_OVER_CAP",
+          "severity": "SOFT"
+        },
+        {
+          "code": "MONTHLY_RENT_MISSING",
+          "severity": "INFO"
+        }
+      ]
+    }
+  }
+}

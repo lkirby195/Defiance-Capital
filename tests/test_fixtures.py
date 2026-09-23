@@ -7,6 +7,10 @@ the API assembles a stored deal (``cli/fixtures.py``). Both go through the same 
 CLI uses, so a fixture cannot pass here and behave differently under ``glenwood run``.
 Fixtures that also carry an ``underwrite`` block run the underwrite too; at least one per
 product does. Adding a fixture adds a test case.
+
+Every number in an ``expected`` block was computed from the SPEC §8 formulas independently of
+the engine before it was written down, so these are not recordings of what the engine said -
+a change in the engine that moves one of them is a change somebody has to defend.
 """
 
 from __future__ import annotations
@@ -21,13 +25,14 @@ import pytest
 
 from cli.fixtures import run_fixture
 from config.config import Config
+from engine.calc.irr import NPV_TOLERANCE, xnpv
 from engine.version import ENGINE_VERSION
 from schema.models import (
+    AnalysisStatus,
     CapStatus,
     LeverageMetric,
     Product,
     ScreenResult,
-    TakeoutStatus,
     UnderwriteResult,
     ValueSource,
     Verdict,
@@ -55,6 +60,18 @@ def rate(value: Decimal) -> Decimal:
     return value.quantize(D("0.000001"))
 
 
+def maybe_cents(value: Decimal | None) -> Decimal | None:
+    return None if value is None else cents(value)
+
+
+def maybe_rate(value: Decimal | None) -> Decimal | None:
+    return None if value is None else rate(value)
+
+
+def want_money(value: str | None) -> Decimal | None:
+    return None if value is None else D(value)
+
+
 def run(path: Path) -> tuple[dict[str, Any], ScreenResult]:
     return load(path), run_fixture(path, CONFIG, with_underwrite=False).screen_result
 
@@ -74,11 +91,11 @@ def test_every_fixture_states_where_its_valuation_came_from() -> None:
         want = fixture["expected"].get("sources")
         sizing = result.sizing
         if want is None:
-            for source in (sizing.as_is_value_source, sizing.arv_source):
+            for source in (sizing.as_is_value_source, sizing.estimated_sale_price_source):
                 assert source in (None, ValueSource.ADAPTER), path.stem
             continue
         assert sizing.as_is_value_source == ValueSource(want["as_is_value"]), path.stem
-        assert sizing.arv_source == ValueSource(want["arv"]), path.stem
+        assert sizing.estimated_sale_price_source == ValueSource(want["estimated_sale_price"])
         assert result.components.court_records_source == ValueSource(want["court_records"])
 
 
@@ -111,12 +128,14 @@ def test_fixture_components_and_sizing(path: Path) -> None:
         components.repeat_borrower_override_applied is expected["repeat_borrower_override_applied"]
     )
     assert sizing.all_pass is expected["all_pass"]
-    assert sizing.commitment == Decimal(expected["commitment"])
-    assert sizing.funded_at_close == Decimal(expected["funded_at_close"])
+    assert cents(sizing.commitment) == D(expected["commitment"])
+    assert cents(sizing.funded_at_close) == D(expected["funded_at_close"])
+    assert cents(sizing.total_cost) == D(expected["total_cost"])
+    assert cents(sizing.rehab_adj) == D(expected["rehab_adj"])
     if "split" in expected:
         assert sizing.split is not None
-        assert sizing.split.purchase_portion == Decimal(expected["split"]["purchase_portion"])
-        assert sizing.split.rehab_portion == Decimal(expected["split"]["rehab_portion"])
+        assert cents(sizing.split.purchase_portion) == D(expected["split"]["purchase_portion"])
+        assert cents(sizing.split.rehab_portion) == D(expected["split"]["rehab_portion"])
     else:
         assert sizing.split is None
     for name, status in expected["metrics"].items():
@@ -151,93 +170,103 @@ def test_underwrite_fixtures_cover_every_product() -> None:
     assert products == set(Product)
 
 
+def test_the_fixture_set_covers_every_analysis_status() -> None:
+    """One deal with no rent, one with the flip toggled off, and the ordinary case."""
+    statuses = {
+        (result.flip.status, result.rental.status, result.take_back.status)
+        for _, result in (run_underwrite(p) for p in UNDERWRITE_FILES)
+    }
+    flip = {status[0] for status in statuses}
+    rental = {status[1] for status in statuses}
+    take_back = {status[2] for status in statuses}
+    assert AnalysisStatus.EVALUATED in flip and AnalysisStatus.OFF in flip
+    assert AnalysisStatus.EVALUATED in rental and AnalysisStatus.OFF in rental
+    assert take_back == {AnalysisStatus.EVALUATED, AnalysisStatus.NOT_EVALUATED}
+
+
 @pytest.mark.parametrize("path", UNDERWRITE_FILES, ids=[p.stem for p in UNDERWRITE_FILES])
-def test_fixture_underwrite_solve_and_grid(path: Path) -> None:
+def test_fixture_underwrite_term_and_economics(path: Path) -> None:
     expected, result = run_underwrite(path)
+    assert result.payoff_date.isoformat() == expected["payoff_date"]
     assert result.rehab_months == expected["rehab_months"]
     assert cents(result.sizing.commitment) == D(expected["commitment"])
-    assert rate(result.solved_rate) == D(expected["solved_rate"])
-    assert rate(result.lender_yield_at_solve) == D(expected["lender_yield_at_solve"])
-    assert rate(result.lender_yield_at_solve) == CONFIG.returns.target_irr
-    lender = result.lender_at_solve
-    assert cents(lender.interest) == D(expected["interest_at_solve"])
-    assert cents(lender.fees.total) == D(expected["fees_at_solve"])
-    assert cents(lender.avg_outstanding) == D(expected["avg_outstanding_at_term"])
-    # independent check: at r*, interest + fees equal target x commitment x term / 12 to the cent
-    target_income = CONFIG.returns.target_irr * result.sizing.commitment * result.term_months / 12
-    assert cents(lender.interest + lender.fees.total) == cents(target_income)
-    grid = result.grid_lender
-    assert len(grid.rates) == expected["grid"]["columns"]
-    assert len(grid.rows) == expected["grid"]["rows"]
-    assert grid.solved_rate_inserted is expected["grid"]["solved_rate_inserted"]
-    assert grid.months[0] == result.term_months
-    assert grid.months[-1] == result.term_months + CONFIG.returns.month_window.after_term
-    term_row = grid.rows[0]
+    assert cents(result.economics.funded_at_close) == D(expected["funded_at_close"])
+
+    economics, want = result.economics, expected["economics"]
+    assert cents(economics.rehab_adj) == D(want["rehab_adj"])
+    assert cents(economics.contingency) == D(want["contingency"])
+    assert cents(economics.closing_costs) == D(want["closing_costs"])
+    assert cents(economics.holding_costs_total) == D(want["holding_costs_total"])
+    assert cents(economics.holding_costs_monthly) == D(want["holding_costs_monthly"])
+    assert cents(economics.origination_at_close) == D(want["origination_at_close"])
+    assert cents(economics.origination_at_payoff) == D(want["origination_at_payoff"])
+    # the two halves are exactly that, whatever the fee is
+    assert economics.origination_at_close == economics.origination_at_payoff
     assert (
-        sum(c.meets_target for c in term_row.cells)
-        == (expected["grid"]["term_row_cells_meeting_target"])
+        economics.origination_at_close + economics.origination_at_payoff
+        == economics.commitment * economics.origination_fee_pct
     )
-    assert [c.is_solved_rate for c in term_row.cells].count(True) == 1
 
 
 @pytest.mark.parametrize("path", UNDERWRITE_FILES, ids=[p.stem for p in UNDERWRITE_FILES])
-def test_fixture_underwrite_borrower_exit_downside(path: Path) -> None:
+def test_fixture_underwrite_ledger_and_irr(path: Path) -> None:
     expected, result = run_underwrite(path)
-    borrower, want = result.borrower_at_solve, expected["borrower"]
-    assert cents(borrower.total_project_cost) == D(want["total_project_cost"])
-    assert cents(borrower.holding_costs) == D(want["holding_costs"])
-    assert cents(borrower.exit_net) == D(want["exit_net"])
-    assert cents(borrower.profit) == D(want["profit"])
-    assert cents(borrower.cash_in) == D(want["cash_in"])
-    if want["cash_on_cash"] is None:
-        assert borrower.cash_on_cash is None
-    else:
-        assert borrower.cash_on_cash is not None
-        assert rate(borrower.cash_on_cash) == D(want["cash_on_cash"])
+    overview, want = result.return_overview, expected["ledger"]
+    assert len(overview.entries) == want["rows"] == result.term_months + 1
+    assert cents(overview.entries[0].net) == D(want["first_net"])
+    assert cents(overview.entries[-1].net) == D(want["last_net"])
+    for name in ("funding", "draws", "interest", "fees", "payoff"):
+        assert cents(getattr(overview, f"total_{name}")) == D(want[f"total_{name}"]), name
+    assert cents(overview.total_profit) == D(want["total_profit"])
 
-    exit_result, want = result.exit, expected["exit"]
-    assert exit_result.type.value == want["type"]
-    assert exit_result.exit_source.value == want["exit_source"]
-    assert exit_result.status.value == want.get("status", "EVALUATED")
-    assert cents(exit_result.ltv_takeout) == D(want["ltv_takeout"])
-    assert cents(exit_result.payoff_due) == D(want["payoff_due"])
-    if exit_result.status is TakeoutStatus.NOT_EVALUATED:
-        # no rent, so nothing the rent feeds exists; refi_covers is unknown, not false
-        assert want["refi_covers"] is None
-        for name in ("noi_annual", "dscr_takeout", "max_takeout", "shortfall"):
-            assert want[name] is None and getattr(exit_result, name) is None, name
-        assert exit_result.dscr_at_payoff is None and exit_result.refi_covers is None
-    else:
-        assert cents(exit_result.noi_annual) == D(want["noi_annual"])
-        assert cents(exit_result.dscr_takeout) == D(want["dscr_takeout"])
-        assert cents(exit_result.max_takeout) == D(want["max_takeout"])
-        assert exit_result.dscr_at_payoff is not None
-        assert exit_result.dscr_at_payoff.quantize(D("0.001")) == D(want["dscr_at_payoff"])
-        assert exit_result.refi_covers is want["refi_covers"]
-        assert cents(exit_result.shortfall) == D(want["shortfall"])
+    # the two identities the ledger rests on (SPEC §8.3)
+    assert overview.total_profit == overview.total_interest + overview.total_fees
+    assert -(overview.total_funding + overview.total_draws) == overview.total_payoff
 
-    downside, want = result.downside, expected["downside"]
-    assert cents(downside.recovery_basis) == D(want["recovery_basis"])
-    assert cents(downside.liquidation) == D(want["liquidation"])
-    assert downside.foreclosure_months == want["foreclosure_months"]
-    assert cents(downside.recovery) == D(want["recovery"])
-    assert cents(downside.exposure) == D(want["exposure"])
-    assert rate(downside.cover) == D(want["cover"])
-    assert downside.passed is want["passed"]
+    assert overview.irr is not None
+    assert abs(overview.irr - D(want["irr"])) < D("1e-6")
+    # ...and the rate really does zero the column it was solved on
+    flows = [(entry.date, entry.net) for entry in overview.entries]
+    assert abs(xnpv(overview.irr, flows)) < NPV_TOLERANCE
 
 
 @pytest.mark.parametrize("path", UNDERWRITE_FILES, ids=[p.stem for p in UNDERWRITE_FILES])
-def test_fixture_underwrite_opex_sources(path: Path) -> None:
-    """Where a fixture names the opex defaults, they come off the as-is value.  # SPEC §8.6"""
+def test_fixture_underwrite_dates_run_month_by_month(path: Path) -> None:
+    _, result = run_underwrite(path)
+    entries = result.return_overview.entries
+    assert entries[0].date == result.closing_date
+    assert entries[-1].date == result.payoff_date
+    assert [e.month for e in entries] == list(range(result.term_months + 1))
+    assert all(a.date < b.date for a, b in zip(entries, entries[1:], strict=False))
+
+
+@pytest.mark.parametrize("path", UNDERWRITE_FILES, ids=[p.stem for p in UNDERWRITE_FILES])
+def test_fixture_underwrite_flip_rental_and_take_back(path: Path) -> None:
     expected, result = run_underwrite(path)
-    want = expected.get("opex_defaults")
-    if want is None:
-        return
-    exit_result = result.exit
-    assert cents(exit_result.annual_taxes) == D(want["annual_taxes"])
-    assert exit_result.annual_taxes_source.value == want["annual_taxes_source"]
-    assert cents(exit_result.annual_insurance) == D(want["annual_insurance"])
-    assert exit_result.annual_insurance_source.value == want["annual_insurance_source"]
+
+    flip, want = result.flip, expected["flip"]
+    assert flip.status.value == want["status"]
+    assert cents(flip.total_costs) == D(want["total_costs"])
+    assert maybe_cents(flip.broker_costs) == want_money(want["broker_costs"])
+    assert maybe_cents(flip.net_profit) == want_money(want["net_profit"])
+    assert maybe_rate(flip.profit_yield) == want_money(want["profit_yield"])
+
+    rental, want = result.rental, expected["rental"]
+    assert rental.status.value == want["status"]
+    assert cents(rental.debt_service_monthly) == D(want["debt_service_monthly"])
+    assert maybe_cents(rental.expenses) == want_money(want["expenses"])
+    assert maybe_cents(rental.net_monthly_income) == want_money(want["net_monthly_income"])
+    assert maybe_rate(rental.dscr) == want_money(want["dscr"])
+    assert rental.passed is want["passed"]
+
+    take_back, want = result.take_back, expected["take_back"]
+    assert take_back.status.value == want["status"]
+    assert cents(take_back.lost_interest) == D(want["lost_interest"])
+    assert cents(take_back.total_cost) == D(want["total_cost"])
+    assert cents(take_back.debt_service_monthly) == D(want["debt_service_monthly"])
+    assert maybe_cents(take_back.net_monthly_income) == want_money(want["net_monthly_income"])
+    assert maybe_rate(take_back.dscr) == want_money(want["dscr"])
+    assert take_back.passed is want["passed"]
 
 
 @pytest.mark.parametrize("path", UNDERWRITE_FILES, ids=[p.stem for p in UNDERWRITE_FILES])

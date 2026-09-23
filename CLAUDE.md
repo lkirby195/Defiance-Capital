@@ -35,9 +35,8 @@ glenwood-uw/
   engine/
     sizing.py              # LTV / LTC / LTARV, product-specific commitment split
     screen.py              # score components + verdict + reasons
-    calc/                  # v1 simple model: outstanding.py, lender.py, borrower.py, exit.py, downside.py
-    grids.py               # sensitivity grids
-    solve.py               # rate solve for target yield
+    calc/                  # the v0.3 ledger model: terms.py, ledger.py, irr.py,
+                           #   flip.py, rental.py, exit.py
     version.py             # ENGINE_VERSION string, bump on any math change
   adapters/
     base.py                # Adapter Protocol + AdapterResult
@@ -112,11 +111,13 @@ inputs checklist from the same rules `services/assemble.py` raises `DealNotReady
 page that calls a deal ready and a run that then refuses it cannot both exist. A new required
 input goes in one place and both readers pick it up.
 
-**A missing input is not a failing one.** Where an input has a defensible stand-in, use it and
-record the source as `DEFAULT` (`takeout.opex_defaults`). Where it has none - the market rent
-is the example - report the thing it feeds as not evaluated, with the figure `None` rather
-than `False` or `0`. A DSCR takeout nobody could compute has not fallen short, and a zero
-would manufacture a shortfall on every deal whose rent nobody looked up.
+**A missing input is not a failing one.** Where an input has a defensible stand-in, use it
+and record the source as `DEFAULT` (the four SPEC §8.1 economics with a config default).
+Where it has none - the monthly rent is the example - report the thing it feeds as
+`NOT_EVALUATED`, with the figure `None` rather than `False` or `0`. A DSCR nobody could
+compute has not fallen short, and a zero would manufacture a shortfall on every deal whose
+rent nobody looked up. The three the ledger cannot run without at all - the closing date, the
+term and the interest rate - are named by the readiness checklist and refused by name.
 
 **Record everything.** Every enrichment call writes an `enrichment_runs` row with the raw response. Every screen and underwrite records `ENGINE_VERSION` and the config hash. Nothing is overwritten; re-runs create new rows.
 
@@ -173,4 +174,4 @@ uv run glenwood export fixtures/synthetic/deals/go_split_draw_denver.json denver
 
 ## When unsure
 
-Ask. In particular, do not guess at: leverage caps, fee treatment, draw-curve constants, DSCR takeout assumptions, or anything in a SPEC section marked **[v1 — revisit in mechanics walkthrough]**. Use the placeholder in config and flag it.
+Ask. In particular, do not guess at: leverage caps, fee treatment, the listing period, the rental takeout assumptions, or the take-back's lost-interest months and legal costs. Use the placeholder in config and flag it.

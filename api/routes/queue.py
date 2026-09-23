@@ -38,12 +38,14 @@ from api.render import page, redirect
 from api.security import PageUser, require_csrf
 from db.models import Deal
 from db.session import get_session
+from schema.dates import payoff_date_for
 from schema.models import (
     AssetType,
     CourtFlag,
     CourtRecordsStatus,
     ExperienceBucket,
     LienKind,
+    LoanPurpose,
     Product,
     State,
     StatedExit,
@@ -111,6 +113,7 @@ def enum_values() -> dict[str, list[str]]:
         "court_records_status": [member.value for member in CourtRecordsStatus],
         "experience_bucket": [member.value for member in ExperienceBucket],
         "lien_kind": [member.value for member in LienKind],
+        "loan_purpose": [member.value for member in LoanPurpose],
         "product": [member.value for member in Product],
         "state": [member.value for member in State],
         "stated_exit": [member.value for member in StatedExit],
@@ -122,20 +125,29 @@ def enum_values() -> dict[str, list[str]]:
 def override_form(deal: Deal) -> dict[str, str]:
     """The override block as form values, so the page renders what the deal currently says."""
     names = (
-        "as_is_value_team",
-        "arv_team",
-        "actual_annual_taxes_usd",
-        "actual_annual_insurance_usd",
-        "actual_annual_utilities_usd",
-        "market_rent_monthly",
-        "asset_type",
+        "loan_purpose",
         "product",
-        "stated_exit",
+        "closing_date",
         "term_months",
+        "interest_rate",
+        "contingency_pct",
+        "closing_costs_usd",
+        "holding_costs_total_usd",
+        "origination_fee_pct",
+        "as_is_value_team",
+        "estimated_sale_price_team",
+        "monthly_rent",
+        "asset_type",
+        "stated_exit",
+        "flip_analysis",
+        "rental_analysis",
         "court_records_status",
         "court_records_as_of",
     )
-    return {name: text_value(getattr(deal, name)) for name in names}
+    # ``payoff_date`` is rendered blank on purpose: it is not a column, it is the closing
+    # date plus the term (SPEC §8.1), and the box is an alternative way of saying the term
+    # rather than a value to edit. The derived date is shown beside it as a hint.
+    return {**{name: text_value(getattr(deal, name)) for name in names}, "payoff_date": ""}
 
 
 def blank_matter() -> dict[str, str]:
@@ -208,6 +220,12 @@ def render_deal(
         "deal.html",
         {
             "deal": deal,
+            # Derived, not stored (SPEC §8.1): the page shows it beside the term it comes from.
+            "payoff_date": (
+                None
+                if deal.closing_date is None or deal.term_months is None
+                else payoff_date_for(deal.closing_date, deal.term_months)
+            ),
             "allowed": _allowed(deal),
             "enums": enum_values(),
             # Not "re-screen it": whether an edited intake is worth another Stage 1 run is a
@@ -400,7 +418,11 @@ def underwrite_action(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
     session.commit()
-    return redirect(deal_path(deal_id), f"Underwrite recorded at r* {result.solved_rate:.4%}.")
+    irr = result.return_overview.irr
+    recorded = "Underwrite recorded" + (
+        "; the ledger has no IRR." if irr is None else f" at an IRR of {irr:.4%}."
+    )
+    return redirect(deal_path(deal_id), recorded)
 
 
 # --- the intake, edited (SPEC §4.1) ---------------------------------------------------------------

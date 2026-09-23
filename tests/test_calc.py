@@ -1,609 +1,588 @@
-"""engine/calc: outstanding, lender, borrower, exit, downside.  # SPEC §8.3-8.6
+"""The v0.3 calc layer: the ledger, the three analyses, and the exit that toggles two of them.
 
-Expected numbers are worked by hand in the comments so the tests are independent of the
-engine's own arithmetic.
+# SPEC §8.3-§8.6
+
+Every figure below is one a person can check: the commitments are round, the rates divide
+into twelve, and the draw schedules divide into their rehab months. Where an arrangement does
+not divide evenly the test says what the remainder does instead of rounding past it.
 """
 
 from __future__ import annotations
 
-import copy
+from datetime import date
 from decimal import Decimal
-from typing import Any
 
 import pytest
-from pydantic import ValidationError
 
-from config.config import DEFAULT_PATH, Config, load_yaml
-from engine.calc.borrower import (
-    borrower_economics,
-    exit_net,
-    monthly_holding_cost,
-    resolve_annual_insurance,
-    resolve_annual_taxes,
-    resolve_exit_price,
+from config.config import Config
+from engine.calc.exit import exit_inference, flip_default, infer_exit, rental_default
+from engine.calc.flip import financing_costs, flip_analysis
+from engine.calc.ledger import (
+    build_ledger,
+    draw_schedule,
+    drawn_by,
+    interest_balance,
+    return_overview,
 )
-from engine.calc.downside import liquidation_value, recovery_basis, reo_downside
-from engine.calc.exit import (
-    annual_opex,
-    dscr_at,
-    dscr_loan,
-    dscr_takeout,
-    infer_exit,
-    loan_for_payment,
+from engine.calc.rental import (
     monthly_payment,
-    payoff_due,
+    net_monthly_income,
+    rental_analysis,
+    take_back_analysis,
 )
-from engine.calc.lender import (
-    annualized_yield,
-    fee_schedule,
-    interest,
-    lender_return,
-    payoff_fees,
-)
-from engine.calc.outstanding import (
+from engine.calc.terms import (
     LoanTerms,
-    average_outstanding,
-    dollar_months,
+    holding_costs_total,
     loan_terms,
+    origination_fee_pct,
     rehab_months,
-    tranche_a_dollar_months,
 )
-from engine.sizing import buy_closing, size_deal
+from engine.sizing import size_deal
 from schema.models import (
+    AnalysisStatus,
     AssetType,
     BorrowerInputs,
     ExitSource,
     ExperienceBucket,
     ExperienceTier,
-    OpexSource,
     Product,
     SizingInputs,
-    State,
     StatedExit,
     Tranche,
     UnderwriteInputs,
-    ValueSource,
 )
 
 CONFIG = Config.load()
 D = Decimal
-CENT = D("0.01")
+CLOSING = date(2027, 1, 1)
 
-
-def config_with(**sections: dict[str, Any]) -> Config:
-    data = copy.deepcopy(load_yaml(DEFAULT_PATH.read_text(encoding="utf-8")))
-    for section, values in sections.items():
-        for key, value in values.items():
-            data[section][key] = value
-    return Config.from_dict(data)
-
-
-def borrower(**overrides: Any) -> BorrowerInputs:
-    base: dict[str, Any] = {
-        "credit_range_self_reported": Tranche.T2,
-        "experience_bucket_self_reported": ExperienceBucket.THREE_TO_FIVE,
-        "repeat_borrower_self_reported": False,
-    }
-    base.update(overrides)
-    return BorrowerInputs(**base)
-
-
-# go_no_draw: NO_DRAW, price 150,000, loan 105,000, as-is 160,000, ARV 165,000, term 9
-NO_DRAW_DEAL = SizingInputs(
-    product=Product.NO_DRAW,
-    purchase_price=D("150000.00"),
-    rehab_budget=D("0.00"),
-    loan_requested=D("105000.00"),
-    as_is_value=D("160000.00"),
-    arv=D("165000.00"),
-)
-# go_split_principal_repeat_override: price 150,000, rehab 60,000 (rehab_adj 66,000),
-# loan 170,000 -> Principal Note 104,000 + Tranche A 66,000; as-is 230,000, ARV 290,000
-SPLIT_PRINCIPAL_DEAL = SizingInputs(
-    product=Product.SPLIT_PRINCIPAL,
-    purchase_price=D("150000.00"),
-    rehab_budget=D("60000.00"),
-    loan_requested=D("170000.00"),
-    loan_purchase_portion=D("104000.00"),
-    loan_rehab_portion=D("66000.00"),
-    as_is_value=D("230000.00"),
-    arv=D("290000.00"),
+BORROWER = BorrowerInputs(
+    credit_range_self_reported=Tranche.T1,
+    experience_bucket_self_reported=ExperienceBucket.SIX_PLUS,
+    repeat_borrower_self_reported=False,
 )
 
 
-def sized(deal: SizingInputs, config: Config = CONFIG) -> Any:
-    return size_deal(deal, Tranche.T2, ExperienceTier.E2, config)
+def inputs(
+    *,
+    product: Product = Product.NO_DRAW,
+    purchase_price: str = "200000",
+    rehab_costs: str = "0",
+    loan_requested: str = "150000",
+    purchase_portion: str | None = None,
+    rehab_portion: str | None = None,
+    term_months: int = 12,
+    interest_rate: str = "0.12",
+    closing_date: date = CLOSING,
+    monthly_rent: str | None = "2000",
+    estimated_sale_price: str | None = "260000",
+    as_is_value: str | None = "250000",
+    contingency_pct: Decimal | None = None,
+    closing_costs_usd: Decimal | None = None,
+    **extra: object,
+) -> UnderwriteInputs:
+    """One deal, with every knob the §8 math reads and sensible round defaults."""
+    return UnderwriteInputs(
+        deal=SizingInputs(
+            product=product,
+            purchase_price=D(purchase_price),
+            rehab_costs=D(rehab_costs),
+            loan_requested=D(loan_requested),
+            contingency_pct=contingency_pct,
+            closing_costs_usd=closing_costs_usd,
+            as_is_value=None if as_is_value is None else D(as_is_value),
+            estimated_sale_price=(
+                None if estimated_sale_price is None else D(estimated_sale_price)
+            ),
+            loan_purchase_portion=None if purchase_portion is None else D(purchase_portion),
+            loan_rehab_portion=None if rehab_portion is None else D(rehab_portion),
+        ),
+        state="OK",  # type: ignore[arg-type]
+        borrower=BORROWER,
+        closing_date=closing_date,
+        term_months=term_months,
+        interest_rate=D(interest_rate),
+        monthly_rent=None if monthly_rent is None else D(monthly_rent),
+        **extra,  # type: ignore[arg-type]
+    )
 
 
-def loan(
-    deal: SizingInputs = NO_DRAW_DEAL,
-    term: int = 9,
-    extension: Decimal | None = None,
-    config: Config = CONFIG,
-) -> LoanTerms:
-    return loan_terms(sized(deal, config), term, extension, config)
+def terms(deal: UnderwriteInputs, config: Config = CONFIG) -> LoanTerms:
+    sizing = size_deal(deal.deal, Tranche.T1, ExperienceTier.E3, config)
+    return loan_terms(sizing, deal, config)
 
 
-def inputs(deal: SizingInputs = NO_DRAW_DEAL, **overrides: Any) -> UnderwriteInputs:
-    base: dict[str, Any] = {
-        "deal": deal,
-        "state": State.OK,
-        "borrower": borrower(),
-        "term_months": 9,
-        "market_rent_monthly": D("1500.00"),
-        "annual_taxes_usd": D("1800.00"),
-        "annual_insurance_usd": D("1200.00"),
-        "annual_utilities_usd": D("600.00"),
-    }
-    base.update(overrides)
-    return UnderwriteInputs(**base)
+# --- the term facts (SPEC §8.1, §8.3) ------------------------------------------------------------
 
 
-# --- §8.3 outstanding ----------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("term, expected", [(12, 9), (9, 6), (6, 3), (3, 0), (2, 0), (1, 0)])
-def test_rehab_months_is_term_less_listing_months_floored_at_zero(term: int, expected: int) -> None:
-    assert CONFIG.draws.listing_months == 3
+@pytest.mark.parametrize(("term", "expected"), [(12, 9), (9, 6), (4, 1), (3, 0), (2, 0), (1, 0)])
+def test_rehab_months_is_the_term_less_the_listing_period(term: int, expected: int) -> None:
     assert rehab_months(term, CONFIG) == expected
 
 
-def test_rehab_months_uses_config() -> None:
-    assert rehab_months(12, config_with(draws={"listing_months": 2})) == 10
+def test_rehab_months_refuses_a_term_of_no_months() -> None:
     with pytest.raises(ValueError, match="at least 1"):
         rehab_months(0, CONFIG)
 
 
-def test_loan_terms_bundles_term_rehab_and_extension_default() -> None:
-    terms = loan(term=12)
-    assert terms.term_months == 12 and terms.rehab_months == 9
-    assert terms.extension_fee_pct == CONFIG.fees.extension_default_pct == 0
-    assert terms.commitment == D("105000.00") and terms.product is Product.NO_DRAW
-    assert loan(extension=D("0.01")).extension_fee_pct == D("0.01")
+def test_the_origination_fee_falls_back_to_config_and_splits_in_half() -> None:
+    loan = terms(inputs())
+    assert loan.origination_fee_pct == CONFIG.fees.origination_default_pct
+    # 2% of a 150,000 commitment is 3,000, half either end.
+    assert loan.origination_at_close == D("1500.00")
+    assert loan.origination_at_payoff == D("1500.00")
+    assert origination_fee_pct(inputs(origination_fee_pct=D("0.03")), CONFIG) == D("0.03")
 
 
-def test_tranche_a_dollar_months_straight_line_then_fully_drawn() -> None:
-    # 66,000 x (9 x 0.5 + (12 - 9)) = 66,000 x 7.5 = 495,000
-    assert tranche_a_dollar_months(D("66000"), 12, 9, CONFIG) == D("495000.0")
-    # at rehab completion: 66,000 x 4.5 = 297,000
-    assert tranche_a_dollar_months(D("66000"), 9, 9, CONFIG) == D("297000.0")
-    # rehab_months 0: fully drawn from close
-    assert tranche_a_dollar_months(D("66000"), 6, 0, CONFIG) == D("396000")
+def test_the_holding_cost_falls_back_to_a_percentage_of_price_plus_rehab() -> None:
+    """2% of 200,000 + 50,000 is 5,000 over the hold, not per month."""
+    deal = inputs(rehab_costs="50000")
+    assert holding_costs_total(deal, CONFIG) == D("5000.00")
+    entered = inputs(holding_costs_total_usd=D("9000.00"))
+    assert holding_costs_total(entered, CONFIG) == D("9000.00")
+    assert terms(entered).holding_costs_monthly == D("750")  # 9,000 over 12 months
 
 
-def test_tranche_a_average_utilization_comes_from_config() -> None:
-    cfg = config_with(draws={"draw_avg_utilization": D("0.60")})
-    # 66,000 x (9 x 0.6 + 3) = 66,000 x 8.4 = 554,400
-    assert tranche_a_dollar_months(D("66000"), 12, 9, cfg) == D("554400.0")
-
-
-def test_payoff_before_rehab_completion_is_rejected() -> None:
-    with pytest.raises(ValueError, match="no early payoff"):
-        tranche_a_dollar_months(D("66000"), 8, 9, CONFIG)
-
-
-@pytest.mark.parametrize("product", [Product.NO_DRAW, Product.WHOLETAIL, Product.SPLIT_DRAW])
-def test_single_note_and_split_draw_are_fully_funded_from_close(product: Product) -> None:
-    deal = SizingInputs(
-        product=product,
-        purchase_price=D("150000.00"),
-        rehab_budget=D("20000.00"),
-        loan_requested=D("120000.00"),
-        as_is_value=D("160000.00"),
-        arv=D("200000.00"),
+def test_a_deal_with_no_commitment_cannot_be_priced() -> None:
+    """Every §8 figure divides by the commitment, so a zero is refused by name, not by
+    ZeroDivisionError three modules later."""
+    deal = inputs(
+        product=Product.SPLIT_PRINCIPAL,
+        rehab_costs="0",
+        loan_requested="100000",
+        purchase_portion="0",
+        rehab_portion="100000",
     )
-    terms = loan(deal, term=9)
-    assert dollar_months(terms, 9, CONFIG) == D("120000.00") * 9
-    assert average_outstanding(terms, 9, CONFIG) == D("120000.00")
-    assert average_outstanding(terms, 15, CONFIG) == D("120000.00")
+    with pytest.raises(ValueError, match="no commitment cannot be priced"):
+        terms(deal)
 
 
-def test_split_principal_average_outstanding() -> None:
-    terms = loan(SPLIT_PRINCIPAL_DEAL, term=12)
-    # 104,000 x 12 + 495,000 = 1,743,000; / 12 = 145,250
-    assert dollar_months(terms, 12, CONFIG) == D("1743000.0")
-    assert average_outstanding(terms, 12, CONFIG) == D("145250")
-    # month 13: 104,000 x 13 + 66,000 x (4.5 + 4) = 1,352,000 + 561,000 = 1,913,000
-    assert dollar_months(terms, 13, CONFIG) == D("1913000.0")
+# --- the draw schedule (SPEC §8.3) ---------------------------------------------------------------
 
 
-def test_dollar_months_rejects_month_below_one() -> None:
+def test_the_rehab_portion_is_drawn_straight_line_over_the_rehab_period() -> None:
+    loan = terms(
+        inputs(
+            product=Product.SPLIT_PRINCIPAL,
+            rehab_costs="54000",
+            loan_requested="190000",
+            purchase_portion="136000",
+            rehab_portion="54000",
+        )
+    )
+    schedule = draw_schedule(loan)
+    assert loan.rehab_months == 9
+    assert list(schedule) == list(range(1, 10))
+    assert set(schedule.values()) == {D("6000.00")}
+    assert sum(schedule.values()) == D("54000.00")
+
+
+def test_an_uneven_draw_puts_the_remainder_in_the_last_month() -> None:
+    """50,000 over six months is 8,333.33 with two cents left; the last draw carries them.
+
+    The alternative is a schedule that funds 49,999.98 of a 50,000 portion, and a payoff row
+    that is not the commitment.
+    """
+    loan = terms(
+        inputs(
+            product=Product.SPLIT_DRAW,
+            rehab_costs="50000",
+            loan_requested="200000",
+            purchase_portion="150000",
+            rehab_portion="50000",
+            term_months=9,
+        )
+    )
+    schedule = draw_schedule(loan)
+    assert [schedule[m] for m in range(1, 7)] == [D("8333.33")] * 5 + [D("8333.35")]
+    assert sum(schedule.values()) == D("50000")
+
+
+def test_no_rehab_period_means_no_draws_and_the_money_goes_out_at_close() -> None:
+    loan = terms(
+        inputs(
+            product=Product.SPLIT_PRINCIPAL,
+            rehab_costs="30000",
+            loan_requested="110000",
+            purchase_portion="85000",
+            rehab_portion="25000",
+            term_months=3,
+        )
+    )
+    assert loan.rehab_months == 0
+    assert draw_schedule(loan) == {}
+    assert loan.sizing.funded_at_close == D("85000")  # what the sizing says
+    assert loan.funded_at_close == D("110000")  # what actually leaves on the day
+    # ...and interest runs on all of it from month 1, not on the Principal Note alone.
+    assert interest_balance(loan, {}, 1) == D("110000")
+
+
+def test_a_product_with_no_rehab_portion_draws_nothing() -> None:
+    loan = terms(inputs(product=Product.NO_DRAW))
+    assert loan.rehab_portion == 0
+    assert draw_schedule(loan) == {}
+    assert loan.funded_at_close == loan.commitment
+
+
+# --- the interest balance (SPEC §3, §8.3) --------------------------------------------------------
+
+
+@pytest.mark.parametrize("product", [Product.NO_DRAW, Product.WHOLETAIL])
+def test_a_single_note_accrues_on_the_whole_commitment(product: Product) -> None:
+    loan = terms(inputs(product=product))
+    for month in range(1, loan.term_months + 1):
+        assert interest_balance(loan, {}, month) == D("150000")
+
+
+def test_split_draw_accrues_on_the_full_commitment_though_the_holdback_is_not_out() -> None:
+    """The product, not an approximation: SPLIT_DRAW pays on money it has not received."""
+    loan = terms(
+        inputs(
+            product=Product.SPLIT_DRAW,
+            rehab_costs="48000",
+            loan_requested="195000",
+            purchase_portion="147000",
+            rehab_portion="48000",
+            term_months=9,
+        )
+    )
+    schedule = draw_schedule(loan)
+    assert loan.funded_at_close == D("147000")
+    assert all(interest_balance(loan, schedule, m) == D("195000") for m in range(1, 10))
+
+
+def test_split_principal_accrues_on_the_balance_standing_at_the_start_of_the_month() -> None:
+    """A draw taken in month k first earns in month k + 1."""
+    loan = terms(
+        inputs(
+            product=Product.SPLIT_PRINCIPAL,
+            rehab_costs="54000",
+            loan_requested="190000",
+            purchase_portion="136000",
+            rehab_portion="54000",
+        )
+    )
+    schedule = draw_schedule(loan)
+    assert interest_balance(loan, schedule, 1) == D("136000")  # nothing drawn yet
+    assert interest_balance(loan, schedule, 2) == D("142000")  # one draw in
+    assert interest_balance(loan, schedule, 10) == D("190000")  # fully drawn
+    assert interest_balance(loan, schedule, 12) == D("190000")
+    assert drawn_by(schedule, 0) == 0
+    assert drawn_by(schedule, 9) == D("54000.00")
+
+
+# --- the ledger (SPEC §8.3) ----------------------------------------------------------------------
+
+
+def test_the_ledger_has_a_row_for_every_month_from_closing_to_payoff() -> None:
+    loan = terms(inputs(term_months=12))
+    entries = build_ledger(loan)
+    assert [e.month for e in entries] == list(range(13))
+    assert entries[0].date == CLOSING
+    assert entries[-1].date == date(2028, 1, 1)
+    assert loan.payoff_date == date(2028, 1, 1)
+
+
+def test_month_zero_is_the_money_out_and_the_close_half_of_the_fee() -> None:
+    entries = build_ledger(terms(inputs()))
+    first = entries[0]
+    assert first.funding == D("-150000")
+    assert first.draws == 0
+    assert first.interest == 0
+    assert first.fees == D("1500.00")
+    assert first.payoff == 0
+    assert first.net == D("-148500.00")
+
+
+def test_the_payoff_month_returns_the_principal_and_the_payoff_half() -> None:
+    entries = build_ledger(terms(inputs()))
+    last = entries[-1]
+    assert last.payoff == D("150000")
+    assert last.interest == D("1500.00")
+    assert last.fees == D("1500.00")
+    assert last.net == D("153000.00")
+
+
+def test_every_dollar_funded_comes_back_in_the_payoff() -> None:
+    """The identity that makes total_profit equal interest + fees.  # SPEC §8.3"""
+    loan = terms(
+        inputs(
+            product=Product.SPLIT_DRAW,
+            rehab_costs="50000",
+            loan_requested="200000",
+            purchase_portion="150000",
+            rehab_portion="50000",
+            term_months=9,
+        )
+    )
+    overview = return_overview(loan)
+    assert -(overview.total_funding + overview.total_draws) == overview.total_payoff
+    assert overview.total_payoff == loan.commitment
+    assert overview.total_profit == overview.total_interest + overview.total_fees
+
+
+def test_the_totals_are_the_columns_added_up() -> None:
+    overview = return_overview(terms(inputs()))
+    assert overview.total_interest == D("18000.00")  # 12 x 1,500
+    assert overview.total_fees == D("3000.00")  # 2% of 150,000
+    assert overview.total_profit == D("21000.00")
+    assert overview.irr is not None
+    assert D("0.149") < overview.irr < D("0.150")
+
+
+def test_the_irr_is_the_rate_that_zeroes_the_net_column() -> None:
+    from engine.calc.irr import NPV_TOLERANCE, xnpv
+
+    overview = return_overview(terms(inputs()))
+    assert overview.irr is not None
+    assert abs(xnpv(overview.irr, [(e.date, e.net) for e in overview.entries])) < NPV_TOLERANCE
+
+
+def test_an_earlier_payoff_at_the_same_rate_earns_a_higher_irr() -> None:
+    """The fees are the same either way, so a shorter term spreads them over less time."""
+    short = return_overview(terms(inputs(term_months=6)))
+    long = return_overview(terms(inputs(term_months=24)))
+    assert short.irr is not None and long.irr is not None
+    assert short.irr > long.irr
+
+
+# --- flip (SPEC §8.4) ----------------------------------------------------------------------------
+
+
+def flip_for(deal: UnderwriteInputs, on: bool = True) -> object:
+    loan = terms(deal)
+    return flip_analysis(deal, loan, return_overview(loan), on, CONFIG)
+
+
+def test_the_flip_nets_the_sale_price_of_the_broker_and_the_whole_cost_stack() -> None:
+    deal = inputs()
+    loan = terms(deal)
+    overview = return_overview(loan)
+    flip = flip_analysis(deal, loan, overview, True, CONFIG)
+    assert flip.status is AnalysisStatus.EVALUATED
+    # 200,000 price + 1,000 closing + 4,000 holding + 0 rehab + 0 contingency + 21,000 financing
+    assert flip.total_costs == D("226000.00")
+    assert flip.financing_costs == D("21000.00") == financing_costs(overview)
+    assert flip.broker_costs == D("10400.00")  # 4% of 260,000
+    assert flip.net_profit == D("23600.00")
+    assert flip.profit_yield == D("23600.00") / D("226000.00")
+
+
+def test_the_broker_cut_comes_off_the_price_and_is_not_a_project_cost() -> None:
+    """Deliberate (SPEC §8.4): it is what selling costs, not what the project costs."""
+    flip = flip_for(inputs())
+    assert flip.broker_costs not in (None,)
+    assert flip.total_costs == D("226000.00")  # the broker's 10,400 is not in it
+
+
+def test_a_flip_that_is_off_still_reports_the_cost_stack() -> None:
+    flip = flip_for(inputs(), on=False)
+    assert flip.status is AnalysisStatus.OFF
+    assert flip.total_costs == D("226000.00")
+    assert flip.estimated_sale_price is None
+    assert flip.net_profit is None and flip.profit_yield is None
+
+
+def test_a_flip_with_no_sale_price_is_not_evaluated() -> None:
+    flip = flip_for(inputs(estimated_sale_price=None))
+    assert flip.status is AnalysisStatus.NOT_EVALUATED
+    assert flip.net_profit is None
+    assert flip.total_costs == D("226000.00")
+
+
+def test_the_contingency_is_a_flip_cost_of_its_own() -> None:
+    """rehab_costs and the contingency on them are two lines, not one (SPEC §8.4)."""
+    plain = flip_for(inputs(rehab_costs="50000"))
+    assert plain.rehab_costs == D("50000")
+    assert plain.contingency == 0  # the config default is 0.00
+
+    padded = inputs(rehab_costs="50000", contingency_pct=D("0.10"))
+    flip = flip_for(padded)
+    assert flip.rehab_costs == D("50000")
+    assert flip.contingency == D("5000.00")
+
+
+# --- rental and take-back (SPEC §8.5, §8.6) ------------------------------------------------------
+
+
+def test_a_level_payment_amortizes_the_loan() -> None:
+    """A 30-year 6.5% loan of 150,000 costs about $948 a month; the zero-rate case is P/n."""
+    payment = monthly_payment(D("150000"), D("0.065"), 30)
+    assert D("948.10") < payment < D("948.11")
+    assert monthly_payment(D("360000"), D("0"), 30) == D("1000")
     with pytest.raises(ValueError, match="at least 1"):
-        dollar_months(loan(), 0, CONFIG)
+        monthly_payment(D("100"), D("0.05"), 0)
 
 
-# --- §8.4 lender ---------------------------------------------------------------------------------
+def test_net_monthly_income_is_rent_less_expenses_less_the_monthly_carry() -> None:
+    deal = inputs(monthly_rent="2000", holding_costs_total_usd=D("4800.00"))
+    loan = terms(deal)
+    # 2,000 - 35% of 2,000 - 4,800/12 = 2,000 - 700 - 400
+    assert net_monthly_income(D("2000"), loan, CONFIG) == D("900.00")
 
 
-def test_fee_schedule_origination_split_on_total_commitment() -> None:
-    fees = fee_schedule(loan(SPLIT_PRINCIPAL_DEAL, term=12), 12, CONFIG)
-    assert fees.origination_at_close == D("1700.00")
-    assert fees.origination_at_payoff == D("1700.00")
-    assert fees.extension == 0
-    assert fees.total == D("3400.00")
-    assert payoff_fees(loan(SPLIT_PRINCIPAL_DEAL, term=12), CONFIG) == D("1700.00")
+def test_the_rental_dscr_is_income_over_a_takeout_payment_on_the_commitment() -> None:
+    deal = inputs(monthly_rent="2000", holding_costs_total_usd=D("4800.00"))
+    loan = terms(deal)
+    rental = rental_analysis(deal, loan, True, CONFIG)
+    assert rental.status is AnalysisStatus.EVALUATED
+    assert rental.loan_amount == D("150000")
+    assert rental.takeout_rate == CONFIG.rental.takeout_rate
+    assert rental.expenses == D("700.00")
+    assert rental.net_monthly_income == D("900.00")
+    assert rental.dscr == D("900.00") / rental.debt_service_monthly
+    assert rental.passed is False  # 0.95x, under the 1.20 floor
 
 
-def test_extension_fee_only_past_term_and_from_the_loan() -> None:
-    terms = loan(SPLIT_PRINCIPAL_DEAL, term=12, extension=D("0.01"))
-    assert fee_schedule(terms, 12, CONFIG).extension == 0
-    assert fee_schedule(terms, 13, CONFIG).extension == D("1700.00")
-    assert fee_schedule(terms, 13, CONFIG).total == D("5100.00")
-    assert fee_schedule(loan(SPLIT_PRINCIPAL_DEAL, term=12), 13, CONFIG).extension == 0  # default 0
+def test_a_rental_that_clears_the_floor_passes() -> None:
+    deal = inputs(monthly_rent="6000", holding_costs_total_usd=D("4800.00"))
+    rental = rental_analysis(deal, terms(deal), True, CONFIG)
+    assert rental.dscr is not None and rental.dscr > CONFIG.rental.dscr_floor
+    assert rental.passed is True
 
 
-def test_interest_is_dollar_months_times_rate_over_twelve() -> None:
-    # NO_DRAW: 105,000 x 0.12 x 9 / 12 = 9,450
-    assert interest(loan(), 9, D("0.12"), CONFIG) == D("9450.0000")
-    # SPLIT_PRINCIPAL: 1,743,000 x 0.12 / 12 = 17,430
-    assert interest(loan(SPLIT_PRINCIPAL_DEAL, term=12), 12, D("0.12"), CONFIG) == D("17430.000")
+def test_a_rental_that_is_off_still_reports_the_debt_service() -> None:
+    deal = inputs()
+    rental = rental_analysis(deal, terms(deal), False, CONFIG)
+    assert rental.status is AnalysisStatus.OFF
+    assert rental.debt_service_monthly > 0
+    assert rental.monthly_rent is None and rental.dscr is None and rental.passed is None
 
 
-def test_annualized_yield_denominator_is_full_commitment() -> None:
-    # (9,450 + 2,100) / 105,000 x 12 / 9 = 0.14666...
-    result = annualized_yield(D("9450"), D("2100"), D("105000"), 9)
-    assert result.quantize(D("0.000001")) == D("0.146667")
-    with pytest.raises(ValueError, match="commitment"):
-        annualized_yield(D("1"), D("1"), D("0"), 9)
-    with pytest.raises(ValueError, match="month"):
-        annualized_yield(D("1"), D("1"), D("1"), 0)
+def test_a_rental_with_no_rent_is_not_evaluated() -> None:
+    deal = inputs(monthly_rent=None)
+    rental = rental_analysis(deal, terms(deal), True, CONFIG)
+    assert rental.status is AnalysisStatus.NOT_EVALUATED
+    assert rental.dscr is None and rental.passed is None
 
 
-def test_lender_return_assembles_everything() -> None:
-    result = lender_return(loan(), 9, D("0.12"), CONFIG)
-    assert result.month == 9 and result.rate == D("0.12")
-    assert result.avg_outstanding == D("105000.00")
-    assert result.interest == D("9450.0000")
-    assert result.fees.total == D("2100.00")
-    assert result.annualized_yield.quantize(D("0.000001")) == D("0.146667")
+def test_the_take_back_costs_the_loan_plus_lost_interest_plus_the_legal_bill() -> None:
+    deal = inputs(monthly_rent="2000", holding_costs_total_usd=D("4800.00"))
+    loan = terms(deal)
+    take_back = take_back_analysis(deal, loan, CONFIG)
+    assert take_back.loan_amount == D("150000")
+    # three months of 12% on 150,000 is 4,500
+    assert take_back.lost_interest == D("4500.00")
+    assert take_back.legal_costs == D("5000.00")
+    assert take_back.total_cost == D("159500.00")
+    assert take_back.interest_rate == D("0.12")  # the deal's own rate, not a takeout rate
+    assert take_back.dscr == D("900.00") / take_back.debt_service_monthly
 
 
-def test_lender_yield_falls_as_payoff_slides_without_extension_fee() -> None:
-    terms = loan()
-    yields = [lender_return(terms, m, D("0.12"), CONFIG).annualized_yield for m in (9, 12, 15)]
-    assert yields[0] > yields[1] > yields[2]
+def test_the_take_back_runs_whatever_the_rental_toggle_says() -> None:
+    """It is not a toggle: a flip deal with a rent on it still gets one.  # SPEC §8.6"""
+    deal = inputs(rental_analysis=False, monthly_rent="2000")
+    loan = terms(deal)
+    assert rental_analysis(deal, loan, False, CONFIG).status is AnalysisStatus.OFF
+    assert take_back_analysis(deal, loan, CONFIG).status is AnalysisStatus.EVALUATED
 
 
-# --- §8.6 borrower -------------------------------------------------------------------------------
+def test_a_take_back_with_no_rent_is_not_evaluated_but_still_costs_what_it_costs() -> None:
+    deal = inputs(monthly_rent=None)
+    take_back = take_back_analysis(deal, terms(deal), CONFIG)
+    assert take_back.status is AnalysisStatus.NOT_EVALUATED
+    assert take_back.total_cost == D("159500.00")
+    assert take_back.debt_service_monthly > 0
+    assert take_back.net_monthly_income is None and take_back.dscr is None
 
 
-def test_taxes_and_insurance_actual_or_default_pct_of_as_is_value() -> None:
-    actual = inputs()
-    assert resolve_annual_taxes(actual, CONFIG) == (D("1800.00"), OpexSource.ACTUAL)
-    assert resolve_annual_insurance(actual, CONFIG) == (D("1200.00"), OpexSource.ACTUAL)
-    defaulted = inputs(annual_taxes_usd=None, annual_insurance_usd=None)
-    # SPEC §8.6: the defaults are a percentage of the as-is value, not the ARV.
-    # as-is 160,000 x 1.2% = 1,920; x 0.5% = 800 (the ARV 165,000 would give 1,980 / 825)
-    assert resolve_annual_taxes(defaulted, CONFIG) == (D("1920.000"), OpexSource.DEFAULT)
-    assert resolve_annual_insurance(defaulted, CONFIG) == (D("800.000"), OpexSource.DEFAULT)
+def test_both_analyses_share_one_net_monthly_income() -> None:
+    deal = inputs(monthly_rent="2000", holding_costs_total_usd=D("4800.00"))
+    loan = terms(deal)
+    rental = rental_analysis(deal, loan, True, CONFIG)
+    take_back = take_back_analysis(deal, loan, CONFIG)
+    assert rental.net_monthly_income == take_back.net_monthly_income
 
 
-def test_opex_defaults_track_the_as_is_value_not_the_arv() -> None:
-    """Moving the ARV alone leaves the defaults alone; moving the as-is value moves them."""
-    base = inputs(annual_taxes_usd=None, annual_insurance_usd=None)
-    richer_arv = base.model_copy(
-        update={"deal": base.deal.model_copy(update={"arv": D("400000.00")})}
-    )
-    assert resolve_annual_taxes(richer_arv, CONFIG) == resolve_annual_taxes(base, CONFIG)
-    richer_as_is = base.model_copy(
-        update={"deal": base.deal.model_copy(update={"as_is_value": D("320000.00")})}
-    )
-    # 320,000 x 1.2% = 3,840, exactly double the 160,000 case
-    assert resolve_annual_taxes(richer_as_is, CONFIG)[0] == D("3840.000")
+# --- the exit inference and the toggles it defaults (SPEC §3, §8.1) ------------------------------
 
 
-def test_monthly_holding_cost() -> None:
-    # (1,800 + 1,200 + 600) / 12 = 300
-    assert monthly_holding_cost(inputs(), CONFIG) == D("300")
+@pytest.mark.parametrize(
+    ("stated", "asset", "term", "product", "expected", "source"),
+    [
+        (StatedExit.HOLD, AssetType.SFR, 6, Product.NO_DRAW, StatedExit.HOLD, ExitSource.STATED),
+        (
+            StatedExit.UNKNOWN,
+            AssetType.SFR,
+            6,
+            Product.NO_DRAW,
+            StatedExit.FLIP,
+            ExitSource.INFERRED,
+        ),
+        (
+            StatedExit.UNKNOWN,
+            AssetType.SFR,
+            6,
+            Product.WHOLETAIL,
+            StatedExit.WHOLETAIL,
+            ExitSource.INFERRED,
+        ),
+        (
+            StatedExit.UNKNOWN,
+            AssetType.SFR,
+            12,
+            Product.NO_DRAW,
+            StatedExit.HOLD,
+            ExitSource.INFERRED,
+        ),
+        (
+            StatedExit.UNKNOWN,
+            AssetType.SFR,
+            10,
+            Product.NO_DRAW,
+            StatedExit.UNKNOWN,
+            ExitSource.INFERRED,
+        ),
+        (
+            StatedExit.UNKNOWN,
+            AssetType.UNITS_5_PLUS,
+            6,
+            Product.NO_DRAW,
+            StatedExit.UNKNOWN,
+            ExitSource.INFERRED,
+        ),
+        (StatedExit.UNKNOWN, None, 6, Product.NO_DRAW, StatedExit.UNKNOWN, ExitSource.INFERRED),
+    ],
+)
+def test_the_exit_is_stated_or_inferred_from_term_and_asset_type(
+    stated: StatedExit,
+    asset: AssetType | None,
+    term: int,
+    product: Product,
+    expected: StatedExit,
+    source: ExitSource,
+) -> None:
+    assert infer_exit(stated, asset, term, product, CONFIG) == (expected, source)
 
 
-def test_buy_closing_and_exit_net_from_config() -> None:
-    assert buy_closing(D("150000"), CONFIG) == D("4500.00")  # 3%
-    assert exit_net(D("165000"), CONFIG) == D("155100.00")  # x 0.94
-    cfg = config_with(
-        fees={"borrower_closing_pct_of_price": D("0.04"), "selling_cost_pct": D("0.05")}
-    )
-    assert buy_closing(D("150000"), cfg) == D("6000.00")
-    assert exit_net(D("165000"), cfg) == D("156750.00")
+def test_a_resale_exit_defaults_the_flip_on_and_a_hold_defaults_the_rental_on() -> None:
+    assert flip_default(StatedExit.FLIP) is True
+    assert flip_default(StatedExit.WHOLETAIL) is True
+    assert flip_default(StatedExit.HOLD) is False
+    assert flip_default(StatedExit.UNKNOWN) is False
+    assert rental_default(StatedExit.HOLD, None) is True
+    assert rental_default(StatedExit.FLIP, None) is False
+    # a rent the team went and looked up turns the rental on whatever the exit says
+    assert rental_default(StatedExit.FLIP, D("2000")) is True
 
 
-def test_exit_price_defaults_to_arv_unless_team_sets_it() -> None:
-    assert resolve_exit_price(inputs()) == D("165000.00")
-    assert resolve_exit_price(inputs(exit_price=D("170000.00"))) == D("170000.00")
+def test_a_toggle_set_by_hand_wins_over_the_exit_in_either_direction() -> None:
+    hold = inputs(term_months=12, asset_type=AssetType.SFR, monthly_rent=None)
+    derived = exit_inference(hold, CONFIG)
+    assert derived.type is StatedExit.HOLD
+    assert (derived.flip_analysis, derived.rental_analysis) == (False, True)
+    assert (derived.flip_analysis_default, derived.rental_analysis_default) == (False, True)
 
-
-def test_borrower_economics_at_term_and_solved_rate() -> None:
-    # r* for a single-note 9-month loan = 0.175 - 0.02 x 12 / 9 = 0.148333...; interest 11,681.25
-    result = borrower_economics(inputs(), loan(), 9, D("11681.25") / D("78750"), CONFIG)
-    assert result.total_project_cost == D("154500.00")  # 150,000 + 0 + 4,500
-    assert result.interest_paid.quantize(CENT) == D("11681.25")
-    assert result.fees_paid == D("2100.00")
-    assert result.holding_costs == D("2700")  # 300 x 9
-    assert result.exit_price == D("165000.00")
-    assert result.exit_net == D("155100.00")
-    # 155,100 - 154,500 - 11,681.25 - 2,100 - 2,700 = -15,881.25
-    assert result.profit.quantize(CENT) == D("-15881.25")
-    # 154,500 + 11,681.25 + 2,100 + 2,700 - 105,000 = 65,981.25
-    assert result.cash_in.quantize(CENT) == D("65981.25")
-    assert result.cash_on_cash is not None
-    assert result.cash_on_cash.quantize(D("0.0001")) == D("-0.2407")
-
-
-def test_borrower_economics_uses_rehab_adj_as_the_rehab_cost() -> None:
-    result = borrower_economics(
-        inputs(SPLIT_PRINCIPAL_DEAL, term_months=12),
-        loan(SPLIT_PRINCIPAL_DEAL, term=12),
-        12,
-        D("0.12"),
+    forced = exit_inference(
+        inputs(
+            term_months=12,
+            asset_type=AssetType.SFR,
+            monthly_rent=None,
+            flip_analysis=True,
+            rental_analysis=False,
+        ),
         CONFIG,
     )
-    assert result.rehab_adj == D("66000.0000")
-    assert result.total_project_cost == D("220500.0000")  # 150,000 + 66,000 + 4,500
-
-
-def test_cash_on_cash_is_none_when_no_cash_in() -> None:
-    # loan the whole project and more: cash_in <= 0
-    deal = SizingInputs(
-        product=Product.NO_DRAW,
-        purchase_price=D("100000.00"),
-        rehab_budget=D("0.00"),
-        loan_requested=D("140000.00"),
-        as_is_value=D("200000.00"),
-        arv=D("200000.00"),
-    )
-    result = borrower_economics(inputs(deal), loan(deal), 9, D("0.10"), CONFIG)
-    assert result.cash_in < 0
-    assert result.cash_on_cash is None
-
-
-# --- §8.6 DSCR takeout ---------------------------------------------------------------------------
-
-
-def test_monthly_payment_matches_the_mortgage_table() -> None:
-    # $100,000 at 7.5% over 30 years is $699.21 / month
-    assert monthly_payment(D("100000"), D("0.075"), 30).quantize(CENT) == D("699.21")
-    assert monthly_payment(D("120000"), D("0"), 30) == D("333.3333333333333333333333333")
-
-
-def test_loan_for_payment_inverts_monthly_payment() -> None:
-    principal = loan_for_payment(D("699.21"), D("0.075"), 30)
-    assert abs(principal - D("100000")) < 1  # 699.21 is the payment rounded to the cent
-    assert monthly_payment(principal, D("0.075"), 30).quantize(CENT) == D("699.21")
-    assert loan_for_payment(D("100"), D("0"), 30) == D("36000")
-
-
-def test_annual_opex_pct_lines_on_gross_rent_plus_taxes_and_insurance() -> None:
-    # 18,000 x (0.05 + 0.08 + 0.05) + 1,800 + 1,200 = 3,240 + 3,000 = 6,240
-    assert annual_opex(D("18000"), D("1800"), D("1200"), CONFIG) == D("6240.00")
-
-
-def test_dscr_loan_is_the_loan_whose_service_is_noi_over_floor() -> None:
-    by_dscr = dscr_loan(D("11760"), CONFIG)
-    service = monthly_payment(by_dscr, CONFIG.takeout.rate, CONFIG.takeout.amortization_years) * 12
-    assert (service * CONFIG.takeout.dscr_floor).quantize(CENT) == D("11760.00")
-    assert dscr_loan(D("0"), CONFIG) == 0 and dscr_loan(D("-500"), CONFIG) == 0
-
-
-def test_payoff_due_and_dscr_at() -> None:
-    assert payoff_due(loan(), CONFIG) == D("106050.00")  # 105,000 + 1%
-    assert dscr_at(D("0"), D("11760"), CONFIG) is None
-    ratio = dscr_at(D("106050"), D("11760"), CONFIG)
-    assert ratio is not None and ratio.quantize(D("0.001")) == D("1.322")
-
-
-def test_dscr_takeout_covers_when_max_takeout_meets_payoff() -> None:
-    result = dscr_takeout(inputs(stated_exit=StatedExit.HOLD), loan(), CONFIG)
-    assert result.type is StatedExit.HOLD
-    assert result.gross_rent_annual == D("18000.00")
-    assert result.annual_taxes_source is OpexSource.ACTUAL
-    assert result.opex_annual == D("6240.00") and result.noi_annual == D("11760.00")
-    assert result.ltv_takeout == D("123750.0000")  # 165,000 x 0.75
-    assert result.dscr_takeout.quantize(CENT) == D("116797.73")
-    assert result.max_takeout == result.dscr_takeout  # the DSCR loan binds here
-    assert result.payoff_due == D("106050.00")
-    assert result.refi_covers is True and result.shortfall == 0
-    assert result.dscr_at_payoff is not None and result.dscr_at_payoff > CONFIG.takeout.dscr_floor
-
-
-def test_dscr_takeout_reports_the_shortfall() -> None:
-    # rent 900: gross 10,800; opex 1,944 + 3,000 = 4,944; NOI 5,856 -> DSCR loan ~58,160
-    result = dscr_takeout(inputs(market_rent_monthly=D("900.00")), loan(), CONFIG)
-    assert result.noi_annual == D("5856.00")
-    assert result.max_takeout == result.dscr_takeout < result.ltv_takeout
-    assert result.refi_covers is False
-    assert result.shortfall == result.payoff_due - result.max_takeout > 0
-
-
-def test_dscr_takeout_ltv_binds_when_rent_is_high() -> None:
-    result = dscr_takeout(inputs(market_rent_monthly=D("5000.00")), loan(), CONFIG)
-    assert result.max_takeout == result.ltv_takeout == D("123750.0000")
-
-
-def test_takeout_assumptions_come_from_config() -> None:
-    cfg = config_with(takeout={"ltv": D("0.70"), "dscr_floor": D("1.0")})
-    result = dscr_takeout(inputs(), loan(config=cfg), cfg)
-    assert result.ltv_takeout == D("115500.0000")  # 165,000 x 0.70
-    assert result.dscr_takeout > dscr_loan(D("11760"), CONFIG)  # looser floor -> larger loan
-
-
-# --- §8.6 REO downside ---------------------------------------------------------------------------
-
-
-def test_recovery_basis_and_liquidation() -> None:
-    assert recovery_basis(D("160000"), D("0"), D("165000")) == D("160000")
-    assert recovery_basis(D("230000"), D("66000"), D("290000")) == D("290000")  # capped at ARV
-    assert liquidation_value(D("160000"), CONFIG) == D("136000.00")  # x 0.85
-
-
-def test_reo_downside_numbers() -> None:
-    result = reo_downside(inputs(), loan(), CONFIG)
-    assert result.recovery_basis == D("160000.00")
-    assert result.liquidation == D("136000.0000")
-    assert result.selling_costs == D("8160.000000")  # 6%
-    assert result.foreclosure_cost == D("10000")
-    assert result.foreclosure_months == 8  # OK
-    assert result.monthly_holding_cost == D("300")
-    assert result.holding_through_foreclosure == D("2400")
-    # 136,000 - 8,160 - 10,000 - 2,400 = 115,440
-    assert result.recovery == D("115440.000000")
-    assert result.unpaid_fees == D("1050.00") and result.exposure == D("106050.00")
-    assert result.cover.quantize(D("0.0001")) == D("1.0885")
-    assert result.cover_floor == D("1.0") and result.passed is True
-
-
-def test_foreclosure_months_by_state() -> None:
-    ok = reo_downside(inputs(state=State.OK), loan(), CONFIG)
-    co = reo_downside(inputs(state=State.CO), loan(), CONFIG)
-    assert (ok.foreclosure_months, co.foreclosure_months) == (8, 4)
-    assert co.recovery - ok.recovery == D("300") * 4
-
-
-def test_downside_fails_below_the_cover_floor() -> None:
-    # small deal: 60,000 loan on an 85,000 house; fixed foreclosure cost sinks the cover
-    deal = SizingInputs(
-        product=Product.NO_DRAW,
-        purchase_price=D("80000.00"),
-        rehab_budget=D("0.00"),
-        loan_requested=D("60000.00"),
-        as_is_value=D("85000.00"),
-        arv=D("95000.00"),
-    )
-    small = inputs(
-        deal,
-        annual_taxes_usd=D("1000.00"),
-        annual_insurance_usd=D("800.00"),
-        annual_utilities_usd=D("600.00"),
-    )
-    result = reo_downside(small, loan(deal), CONFIG)
-    # 85,000 x 0.85 = 72,250; x 0.94 = 67,915; - 10,000 - 8 x 200 = 56,315 vs 60,600
-    assert result.recovery == D("56315.000000")
-    assert result.exposure == D("60600.00")
-    assert result.passed is False
-    assert reo_downside(small, loan(deal), config_with(downside={"cover_floor": D("0.9")})).passed
-
-
-def test_downside_assumptions_come_from_config() -> None:
-    cfg = config_with(downside={"reo_haircut": D("0.20"), "foreclosure_cost_usd": D("5000")})
-    result = reo_downside(inputs(), loan(config=cfg), cfg)
-    assert result.liquidation == D("128000.0000")
-    assert result.foreclosure_cost == D("5000")
-
-
-# --- inputs --------------------------------------------------------------------------------------
-
-
-def test_underwrite_inputs_require_valuation() -> None:
-    without = {**NO_DRAW_DEAL.model_dump(), "arv": None, "arv_source": None}
-    with pytest.raises(ValidationError, match="as_is_value and arv"):
-        inputs(SizingInputs(**without))
-    without = {**NO_DRAW_DEAL.model_dump(), "as_is_value": None, "as_is_value_source": None}
-    with pytest.raises(ValidationError, match="as_is_value and arv"):
-        inputs(SizingInputs(**without))
-
-
-def test_a_valuation_source_cannot_stand_without_its_value() -> None:
-    """A source with no value would claim provenance for a number that is not there."""
-    with pytest.raises(ValidationError, match="source cannot be recorded without its value"):
-        SizingInputs(**{**NO_DRAW_DEAL.model_dump(), "arv": None})
-
-
-def test_an_unstated_valuation_source_reads_as_an_adapter_value() -> None:
-    """Fixtures predate the team overrides; their valuations stand in for enrichment."""
-    assert NO_DRAW_DEAL.as_is_value_source is ValueSource.ADAPTER
-    assert NO_DRAW_DEAL.arv_source is ValueSource.ADAPTER
-    team = SizingInputs(
-        **{
-            **NO_DRAW_DEAL.model_dump(),
-            "as_is_value_source": ValueSource.TEAM,
-            "arv_source": ValueSource.TEAM,
-        }
-    )
-    assert team.as_is_value_source is ValueSource.TEAM
-    sized = size_deal(team, Tranche.T2, ExperienceTier.E2, CONFIG)
-    assert sized.as_is_value_source is ValueSource.TEAM
-    assert sized.arv_source is ValueSource.TEAM
-
-
-def test_underwrite_inputs_bounds() -> None:
-    with pytest.raises(ValidationError):
-        inputs(term_months=0)
-    with pytest.raises(ValidationError):
-        inputs(annual_utilities_usd=D("-1"))
-    with pytest.raises(ValidationError):
-        inputs(extension_fee_pct=D("1.5"))
-    assert inputs().stated_exit is StatedExit.UNKNOWN
-    assert inputs().arv == D("165000.00") and inputs().as_is_value == D("160000.00")
-
-
-# --- §3 exit inference ---------------------------------------------------------------------------
-
-
-def infer(
-    stated: StatedExit = StatedExit.UNKNOWN,
-    asset_type: AssetType | None = AssetType.SFR,
-    term: int = 6,
-    product: Product = Product.NO_DRAW,
-    config: Config = CONFIG,
-) -> tuple[StatedExit, ExitSource]:
-    return infer_exit(stated, asset_type, term, product, config)
-
-
-def test_a_team_stated_exit_always_wins() -> None:
-    # a stated FLIP survives a 24-month term that would otherwise infer a hold
-    assert infer(stated=StatedExit.FLIP, term=24) == (StatedExit.FLIP, ExitSource.STATED)
-    # and a stated HOLD survives a 3-month term on a house
-    assert infer(stated=StatedExit.HOLD, term=3) == (StatedExit.HOLD, ExitSource.STATED)
-    assert infer(stated=StatedExit.WHOLETAIL, term=12) == (
-        StatedExit.WHOLETAIL,
-        ExitSource.STATED,
-    )
-
-
-def test_short_term_on_a_house_or_a_two_to_four_infers_a_resale() -> None:
-    assert infer(term=9, asset_type=AssetType.SFR) == (StatedExit.FLIP, ExitSource.INFERRED)
-    assert infer(term=3, asset_type=AssetType.UNITS_2_4) == (StatedExit.FLIP, ExitSource.INFERRED)
-    # the resale is a wholetail when that is the product (SPEC §3)
-    assert infer(term=6, product=Product.WHOLETAIL) == (
-        StatedExit.WHOLETAIL,
-        ExitSource.INFERRED,
-    )
-
-
-def test_long_term_infers_a_hold_whatever_the_asset_type() -> None:
-    for asset in (AssetType.SFR, AssetType.UNITS_2_4, AssetType.UNITS_5_PLUS, AssetType.OTHER):
-        assert infer(term=12, asset_type=asset) == (StatedExit.HOLD, ExitSource.INFERRED)
-    assert infer(term=24, asset_type=None) == (StatedExit.HOLD, ExitSource.INFERRED)
-
-
-def test_nothing_is_inferred_between_the_two_boundaries_or_on_larger_assets() -> None:
-    # 10 and 11 months are past the resale rule and short of the hold rule
-    for term in (10, 11):
-        assert infer(term=term) == (StatedExit.UNKNOWN, ExitSource.INFERRED)
-    # a short term on 5+ units or an unknown asset type reaches neither rule
-    assert infer(term=9, asset_type=AssetType.UNITS_5_PLUS) == (
-        StatedExit.UNKNOWN,
-        ExitSource.INFERRED,
-    )
-    assert infer(term=9, asset_type=AssetType.OTHER) == (StatedExit.UNKNOWN, ExitSource.INFERRED)
-    assert infer(term=9, asset_type=None) == (StatedExit.UNKNOWN, ExitSource.INFERRED)
-
-
-def test_the_term_boundaries_come_from_config_not_code() -> None:
-    assert CONFIG.exit.resale_max_term_months == 9
-    assert CONFIG.exit.hold_min_term_months == 12
-    cfg = config_with(exit={"resale_max_term_months": 6, "hold_min_term_months": 9})
-    assert infer(term=9) == (StatedExit.FLIP, ExitSource.INFERRED)  # resale on the defaults
-    assert infer(term=9, config=cfg) == (StatedExit.HOLD, ExitSource.INFERRED)
-    assert infer(term=6, config=cfg) == (StatedExit.FLIP, ExitSource.INFERRED)
-
-
-def test_dscr_takeout_carries_the_inference_onto_the_result() -> None:
-    stated = dscr_takeout(inputs(stated_exit=StatedExit.FLIP), loan(), CONFIG)
-    assert (stated.type, stated.exit_source) == (StatedExit.FLIP, ExitSource.STATED)
-    inferred = dscr_takeout(
-        inputs(stated_exit=StatedExit.UNKNOWN, asset_type=AssetType.SFR), loan(), CONFIG
-    )
-    assert (inferred.type, inferred.exit_source) == (StatedExit.FLIP, ExitSource.INFERRED)
-    # the takeout numbers do not move with the exit type: it runs on every deal (SPEC §8.6)
-    assert inferred.max_takeout == stated.max_takeout
-    assert inferred.payoff_due == stated.payoff_due
+    assert (forced.flip_analysis, forced.rental_analysis) == (True, False)
+    # the defaults are still reported, so a reader can see what was overridden
+    assert (forced.flip_analysis_default, forced.rental_analysis_default) == (False, True)

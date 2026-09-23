@@ -45,7 +45,7 @@ def complete_form(**overrides: object) -> TeamEntryForm:
     payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
     payload.update(overrides)
     chosen = payload.get("product")
-    budget = payload.get("rehab_budget")
+    budget = payload.get("rehab_costs")
     product = (
         Product(chosen)
         if chosen is not None
@@ -63,13 +63,13 @@ def test_complete_team_entry_is_new_with_nothing_missing() -> None:
     assert record.missing_fields == []
     assert record.status is Status.NEW
     assert record.channel is Channel.TEAM
-    assert record.borrower.phone == "+19185550142"
-    assert record.borrower.entity_name == "Whitfield Holdings LLC"
-    assert record.property.address_raw == "1412 S Cheyenne Ave, Tulsa, OK 74119"
-    assert record.property.address_normalized == "1412 S CHEYENNE AVE, TULSA, OK 74119"
-    assert record.property.state is State.OK
-    assert record.deal.purchase_price == Decimal("185000.00")
-    assert record.deal.rehab_budget == Decimal("42000.00")
+    assert record.borrower.phone == "+17205550192"
+    assert record.borrower.entity_name == "Ortiz Builds LLC"
+    assert record.property.address_raw == "3320 Meade St, Denver, CO 80211"
+    assert record.property.address_normalized == "3320 MEADE ST, DENVER, CO 80211"
+    assert record.property.state is State.CO
+    assert record.deal.purchase_price == Decimal("200000.00")
+    assert record.deal.rehab_costs == Decimal("48000.00")
     assert record.raw_payload == form.model_dump(mode="json")
 
 
@@ -78,7 +78,7 @@ def test_partial_entry_lists_missing_fields_in_asking_order() -> None:
     record = normalize(parse_team_form(form), Channel.TEAM, {})
     assert record.status is Status.NEEDS_INFO
     assert record.missing_fields == [
-        "deal.rehab_budget",
+        "deal.rehab_costs",
         "deal.loan_requested",
         "deal.term_bucket",
         "borrower.name",
@@ -97,11 +97,11 @@ def test_empty_entry_is_missing_everything() -> None:
     assert record.property.state is State.OTHER
 
 
-def test_rehab_budget_zero_counts_as_answered() -> None:
-    form = complete_form(rehab_budget="0")
+def test_rehab_costs_zero_counts_as_answered() -> None:
+    form = complete_form(rehab_costs="0")
     record = normalize(parse_team_form(form), Channel.TEAM, {})
-    assert "deal.rehab_budget" not in record.missing_fields
-    assert record.deal.rehab_budget == 0
+    assert "deal.rehab_costs" not in record.missing_fields
+    assert record.deal.rehab_costs == 0
 
 
 def test_listing_url_satisfies_the_property_requirement() -> None:
@@ -202,12 +202,12 @@ def test_state_entered_by_the_team_is_recorded_as_entered() -> None:
 
 def test_state_inferred_from_the_address_is_recorded_as_inferred() -> None:
     record = normalize(parse_team_form(complete_form()), Channel.TEAM, {})
-    assert record.property.state is State.OK
+    assert record.property.state is State.CO
     assert record.property.state_source is StateSource.INFERRED
 
 
 def test_entered_other_is_not_overridden_by_the_address() -> None:
-    form = complete_form(state="OTHER")  # address says OK
+    form = complete_form(state="OTHER")  # address says CO
     record = normalize(parse_team_form(form), Channel.TEAM, {})
     assert record.property.state is State.OTHER
     assert record.property.state_source is StateSource.ENTERED
@@ -232,12 +232,12 @@ def test_prenormalized_inferred_state_is_re_inferred_from_the_address() -> None:
 
 
 def test_actual_opex_pass_through_the_team_form() -> None:
-    form = complete_form(actual_annual_taxes_usd="2400.00", actual_annual_insurance_usd="900.00")
+    form = complete_form(holding_costs_total_usd="9600.00", monthly_rent="2500.00")
     record = normalize(parse_team_form(form), Channel.TEAM, {})
-    assert record.deal.actual_annual_taxes_usd == Decimal("2400.00")
-    assert record.deal.actual_annual_insurance_usd == Decimal("900.00")
+    assert record.deal.holding_costs_total_usd == Decimal("9600.00")
+    assert record.deal.monthly_rent == Decimal("2500.00")
     assert (
-        normalize(parse_team_form(complete_form()), Channel.TEAM, {}).deal.actual_annual_taxes_usd
+        normalize(parse_team_form(complete_form()), Channel.TEAM, {}).deal.origination_fee_pct
         is None
     )
 
@@ -245,7 +245,7 @@ def test_actual_opex_pass_through_the_team_form() -> None:
 # --- product inference (review decision) -------------------------------------------------------
 
 
-def test_product_is_inferred_from_the_rehab_budget() -> None:
+def test_product_is_inferred_from_the_rehab_costs() -> None:
     assert infer_product(Decimal("0")) is Product.NO_DRAW
     assert infer_product(Decimal("0.00")) is Product.NO_DRAW
     assert infer_product(Decimal("0.01")) is Product.SPLIT_DRAW
@@ -259,10 +259,10 @@ def test_wholetail_and_split_principal_are_never_inferred() -> None:
 
 
 def test_inferred_product_is_recorded_as_inferred() -> None:
-    record = normalize(parse_team_form(complete_form()), Channel.TEAM, {})  # rehab 42,000
+    record = normalize(parse_team_form(complete_form()), Channel.TEAM, {})  # rehab 48,000
     assert record.deal.product is Product.SPLIT_DRAW
     assert record.deal.product_source is ProductSource.INFERRED
-    record = normalize(parse_team_form(complete_form(rehab_budget="0")), Channel.TEAM, {})
+    record = normalize(parse_team_form(complete_form(rehab_costs="0")), Channel.TEAM, {})
     assert record.deal.product is Product.NO_DRAW
     assert record.deal.product_source is ProductSource.INFERRED
 
@@ -271,14 +271,14 @@ def test_entered_product_wins_and_is_recorded_as_entered() -> None:
     record = normalize(parse_team_form(complete_form(product="WHOLETAIL")), Channel.TEAM, {})
     assert record.deal.product is Product.WHOLETAIL
     assert record.deal.product_source is ProductSource.ENTERED
-    form = complete_form(rehab_budget="0", product="SPLIT_PRINCIPAL")
+    form = complete_form(rehab_costs="0", product="SPLIT_PRINCIPAL")
     record = normalize(parse_team_form(form), Channel.TEAM, {})
     assert record.deal.product is Product.SPLIT_PRINCIPAL  # inference does not override
 
 
-def test_product_stays_unset_until_the_rehab_budget_is_known() -> None:
+def test_product_stays_unset_until_the_rehab_costs_is_known() -> None:
     form = TeamEntryForm(address="12 Elm St, Denver, CO 80202", purchase_price=Decimal("100000"))
     record = normalize(parse_team_form(form), Channel.TEAM, {})
     assert record.deal.product is None
     assert record.deal.product_source is None
-    assert "deal.rehab_budget" in record.missing_fields
+    assert "deal.rehab_costs" in record.missing_fields

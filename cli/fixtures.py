@@ -129,8 +129,8 @@ def run_fixture(path: Path, config: Config, with_underwrite: bool) -> FixtureRun
     if with_underwrite:
         if not has_underwrite(fixture):
             raise FixtureError(
-                f"{path.name} has no 'underwrite' block: it carries no verified as-is value "
-                "or ARV, and SPEC §8.1 requires both to underwrite"
+                f"{path.name} has no 'underwrite' block: it names no closing date, term or "
+                "interest rate, and SPEC §8.1 requires all three to lay out the ledger"
             )
         underwrite_inputs_used = underwrite_inputs_for(fixture, deal, path)
         underwrite_result = underwrite(underwrite_inputs_used, config)

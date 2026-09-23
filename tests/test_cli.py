@@ -49,16 +49,24 @@ def test_run_underwrite_prints_every_section(
 ) -> None:
     assert main(["run", str(path), "--underwrite"]) == 0
     out = capsys.readouterr().out
-    for section in ("LENDER", "GRID", "BORROWER", "EXIT", "DOWNSIDE", "FLAGS"):
+    for section in (
+        "DEAL ECONOMICS",
+        "RETURN OVERVIEW",
+        "FLIP ANALYSIS",
+        "RENTAL ANALYSIS",
+        "TAKE-BACK ANALYSIS",
+        "FLAGS",
+    ):
         assert section in out, section
     expected = load(path)["underwrite"]["expected"]
-    assert "Solved rate r*" in out
-    assert "Cover" in out and "DSCR at payoff due" in out
+    assert "IRR" in out and "Yield (Profit / Costs)" in out
+    assert "DSCR at loan cost" in out
     # the numbers on the page are the numbers the fixture pins
     plain = out.replace("$", "").replace(",", "")
-    assert expected["borrower"]["profit"] in plain
-    assert expected["exit"]["payoff_due"] in plain
-    assert expected["downside"]["recovery"] in plain
+    assert expected["ledger"]["total_interest"] in plain
+    assert expected["ledger"]["total_profit"] in plain
+    assert expected["take_back"]["total_cost"] in plain
+    assert expected["payoff_date"] in out
     for flag in expected["flags"]:
         assert flag["code"] in out
 
@@ -97,21 +105,38 @@ def test_a_missing_or_unreadable_file_is_reported_not_traced(
     assert "not a deal fixture" in capsys.readouterr().err
 
 
-def test_the_solved_rate_is_printed_at_full_precision(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """r* is what the pricing hangs on, so it is not rounded to a whole basis point."""
+def test_the_irr_is_printed_at_full_precision(capsys: pytest.CaptureFixture[str]) -> None:
+    """The IRR is a solve, so it is not rounded to a whole basis point."""
     denver = FIXTURE_DIR / "go_split_draw_denver.json"
     assert main(["run", str(denver), "--underwrite"]) == 0
-    assert "14.8333%" in capsys.readouterr().out
+    assert "17.6312%" in capsys.readouterr().out
 
 
-def test_a_below_grid_solved_rate_is_shown_in_place(capsys: pytest.CaptureFixture[str]) -> None:
+def test_the_ledger_prints_a_row_for_every_month(capsys: pytest.CaptureFixture[str]) -> None:
+    denver = FIXTURE_DIR / "go_split_draw_denver.json"
+    assert main(["run", str(denver), "--underwrite"]) == 0
+    out = capsys.readouterr().out
+    assert "2026-10-01" in out and "2027-07-01" in out  # closing and payoff
+    for month in range(10):
+        assert f"  {month:>3}" in out or f"{month} 20" in out
+    assert "Total" in out
+
+
+def test_a_term_with_no_rehab_period_says_so(capsys: pytest.CaptureFixture[str]) -> None:
     short = FIXTURE_DIR / "go_split_principal_no_rehab_period_okc.json"
     assert main(["run", str(short), "--underwrite"]) == 0
     out = capsys.readouterr().out
-    assert "9.5000%" in out
-    assert "SOLVED_RATE_BELOW_GRID" in out and "NO_REHAB_PERIOD" in out
+    assert "NO_REHAB_PERIOD" in out
+    assert "advanced at close rather than drawn" in out
+
+
+def test_an_analysis_that_did_not_run_says_why(capsys: pytest.CaptureFixture[str]) -> None:
+    no_rent = FIXTURE_DIR / "conditional_no_rent_no_draw.json"
+    assert main(["run", str(no_rent), "--underwrite"]) == 0
+    out = capsys.readouterr().out
+    assert "RENTAL ANALYSIS" in out and "OFF" in out
+    assert "NOT EVALUATED: no monthly rent" in out
+    assert "MONTHLY_RENT_MISSING" in out
 
 
 def test_run_fixture_refuses_an_underwrite_it_was_not_given(tmp_path: Path) -> None:
@@ -161,11 +186,11 @@ def test_the_team_override_fixture_screens_go_and_says_where_its_numbers_came_fr
     assert main(["run", str(team), "--underwrite"]) == 0
     out = capsys.readouterr().out
     assert "verdict: GO" in out
-    assert "As-is value / ARV from" in out and "team / team" in out
+    assert "As-is / sale price from" in out and "team / team" in out
     assert "Court records from" in out
     # the underwrite request names no valuation, so the deal's own team numbers carry it
-    assert "250,000" not in out  # the as-is value is not printed, but its effect is
-    assert "Recovery basis" in out and "295,000.00" in out
+    assert "Estimated sale price" in out and "200,000.00" in out
+    assert "TEAM_SOURCED_VALUES" in out
 
 
 def test_a_team_entry_fixture_needs_a_request_not_an_inputs_block(tmp_path: Path) -> None:

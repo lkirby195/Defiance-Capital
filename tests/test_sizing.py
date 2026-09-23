@@ -13,11 +13,12 @@ from pydantic import ValidationError
 
 from config.config import DEFAULT_PATH, Config, ConfigError, load_yaml
 from engine.sizing import (
-    buy_closing,
     cap_status,
     caps_for,
     check_metric,
+    closing_costs,
     commitment_split,
+    contingency_pct,
     funded_at_close,
     ratio,
     rehab_adjusted,
@@ -49,16 +50,16 @@ def inputs(product: Product = Product.SPLIT_DRAW, **overrides: Any) -> SizingInp
     base: dict[str, Any] = {
         "product": product,
         "purchase_price": D("100000.00"),
-        "rehab_budget": D("40000.00"),
-        "loan_requested": D("120000.00"),
+        "rehab_costs": D("40000.00"),
+        "loan_requested": D("115000.00"),
         "as_is_value": D("150000.00"),
-        "arv": D("200000.00"),
+        "estimated_sale_price": D("200000.00"),
     }
     base.update(overrides)
     if product in SPLIT_PRODUCTS and "loan_purchase_portion" not in base:
         loan = D(base["loan_requested"])
         # two places, like a real entry; hypothesis pushes cents through here
-        rehab = min(loan, (D(base["rehab_budget"]) * D("1.10")).quantize(D("0.01")))
+        rehab = min(loan, D(base["rehab_costs"]))
         base["loan_purchase_portion"] = loan - rehab
         base["loan_rehab_portion"] = rehab
     return SizingInputs(**base)
@@ -72,36 +73,43 @@ def split_inputs(product: Product, purchase: str, rehab: str) -> SizingInputs:
 # --- §7.4 building blocks ----------------------------------------------------------------------
 
 
-def test_rehab_adjusted_applies_contingency() -> None:
-    assert CONFIG.fees.contingency_pct == D("0.10")
-    assert rehab_adjusted(D("40000.00"), CONFIG) == D("44000.0000")
-    assert rehab_adjusted(D("0"), CONFIG) == 0
+def test_rehab_adjusted_applies_the_contingency_in_force() -> None:
+    """The contingency is a SPEC §8.1 input now, and its config default is 0.00."""
+    assert CONFIG.fees.contingency_default_pct == D("0.00")
+    assert contingency_pct(inputs(), CONFIG) == D("0.00")
+    assert contingency_pct(inputs(contingency_pct=D("0.10")), CONFIG) == D("0.10")
+    assert rehab_adjusted(D("40000.00"), D("0.10")) == D("44000.0000")
+    assert rehab_adjusted(D("40000.00"), D("0.00")) == D("40000.00")
+    assert rehab_adjusted(D("0"), D("0.10")) == 0
 
 
-def test_buy_closing_is_pct_of_price() -> None:
-    # SPEC §7.4, §8.6: one buy-side closing number, 3% of price, for screen and underwrite
-    assert CONFIG.fees.borrower_closing_pct_of_price == D("0.03")
-    assert buy_closing(D("100000.00"), CONFIG) == D("3000.0000")
+def test_closing_costs_is_a_dollar_amount_from_config_or_the_deal() -> None:
+    # SPEC §8.1, §8.2: the lender's own closing costs, not a percentage of the price
+    assert CONFIG.fees.closing_costs_default_usd == D("1000.00")
+    assert closing_costs(inputs(), CONFIG) == D("1000.00")
+    assert closing_costs(inputs(closing_costs_usd=D("1500.00")), CONFIG) == D("1500.00")
 
 
 def test_total_cost_is_price_plus_rehab_adj_plus_closing() -> None:
-    assert total_cost(D("100000.00"), D("40000.00"), CONFIG) == D("147000.0000")
+    assert total_cost(D("100000.00"), D("44000.00"), D("1000.00")) == D("145000.00")
 
 
 def test_thresholds_come_from_config_not_code() -> None:
     data = copy.deepcopy(load_yaml(DEFAULT_PATH.read_text(encoding="utf-8")))
-    data["fees"]["contingency_pct"] = D("0.20")
-    data["fees"]["borrower_closing_pct_of_price"] = D("0.05")
+    data["fees"]["contingency_default_pct"] = D("0.20")
+    data["fees"]["closing_costs_default_usd"] = D("2500.00")
     cfg = Config.from_dict(data)
-    assert rehab_adjusted(D("1000"), cfg) == D("1200.00")
-    assert buy_closing(D("1000"), cfg) == D("50.00")
+    assert contingency_pct(inputs(), cfg) == D("0.20")
+    assert closing_costs(inputs(), cfg) == D("2500.00")
 
 
-def test_config_rejects_the_retired_screen_closing_key() -> None:
-    """The 2% screen estimate is gone; one 3% buy-side number does both jobs (SPEC §7.4)."""
+def test_config_rejects_the_retired_buy_side_closing_key() -> None:
+    """The 3%-of-price borrower closing assumption is gone: the lender's own dollar amount
+    is the LTC denominator now, and a stale yaml is refused rather than half-read
+    (SPEC §8.1, §10)."""
     data = copy.deepcopy(load_yaml(DEFAULT_PATH.read_text(encoding="utf-8")))
-    data["fees"]["est_closing_pct_of_price"] = D("0.02")
-    with pytest.raises(ConfigError, match="est_closing_pct_of_price"):
+    data["fees"]["borrower_closing_pct_of_price"] = D("0.03")
+    with pytest.raises(ConfigError, match="borrower_closing_pct_of_price"):
         Config.from_dict(data)
 
 
@@ -152,53 +160,53 @@ def test_caps_for_reads_the_grid_cell() -> None:
 
 @pytest.mark.parametrize("product", [Product.NO_DRAW, Product.WHOLETAIL])
 def test_single_note_products_have_no_split(product: Product) -> None:
-    commitment, split = commitment_split(inputs(product), D("44000"))
-    assert commitment == D("120000.00")
+    commitment, split = commitment_split(inputs(product), D("40000"))
+    assert commitment == D("115000.00")
     assert split is None
     assert funded_at_close(product, commitment, split) == commitment
 
 
 def test_split_draw_holds_back_the_entered_rehab_portion() -> None:
-    commitment, split = commitment_split(inputs(Product.SPLIT_DRAW), D("44000"))
-    assert commitment == D("120000.00")  # SPLIT_DRAW commitment is the loan requested
+    commitment, split = commitment_split(inputs(Product.SPLIT_DRAW), D("40000"))
+    assert commitment == D("115000.00")  # SPLIT_DRAW commitment is the loan requested
     assert split is not None
-    assert split.purchase_portion == D("76000.00")
-    assert split.rehab_portion == D("44000")  # the holdback, as entered
+    assert split.purchase_portion == D("75000.00")
+    assert split.rehab_portion == D("40000")  # the holdback, as entered
     assert split.rehab_portion_capped is False
-    assert funded_at_close(Product.SPLIT_DRAW, commitment, split) == D("76000.00")
+    assert funded_at_close(Product.SPLIT_DRAW, commitment, split) == D("75000.00")
 
 
 def test_a_split_draw_rehab_portion_above_rehab_adj_is_advanced_at_close() -> None:
     """One note, so the cap moves money from the holdback to close, not off the loan."""
     commitment, split = commitment_split(
-        split_inputs(Product.SPLIT_DRAW, "60000.00", "60000.00"), D("44000")
+        split_inputs(Product.SPLIT_DRAW, "55000.00", "60000.00"), D("40000")
     )
-    assert commitment == D("120000.00")
+    assert commitment == D("115000.00")
     assert split is not None
-    assert split.rehab_portion == D("44000")  # capped at rehab_adj
+    assert split.rehab_portion == D("40000")  # capped at rehab_adj
     assert split.rehab_portion_requested == D("60000.00")
     assert split.rehab_portion_capped is True
-    assert funded_at_close(Product.SPLIT_DRAW, commitment, split) == D("76000.00")
+    assert funded_at_close(Product.SPLIT_DRAW, commitment, split) == D("75000.00")
 
 
 def test_split_principal_notes_are_the_two_entered_portions() -> None:
-    commitment, split = commitment_split(inputs(Product.SPLIT_PRINCIPAL), D("44000"))
+    commitment, split = commitment_split(inputs(Product.SPLIT_PRINCIPAL), D("40000"))
     assert split is not None
-    assert split.purchase_portion == D("76000.00")  # Principal Note
-    assert split.rehab_portion == D("44000")  # Tranche A
-    assert commitment == split.purchase_portion + split.rehab_portion == D("120000.00")
-    assert funded_at_close(Product.SPLIT_PRINCIPAL, commitment, split) == D("76000.00")
+    assert split.purchase_portion == D("75000.00")  # Principal Note
+    assert split.rehab_portion == D("40000")  # Tranche A
+    assert commitment == split.purchase_portion + split.rehab_portion == D("115000.00")
+    assert funded_at_close(Product.SPLIT_PRINCIPAL, commitment, split) == D("75000.00")
 
 
 def test_split_principal_commitment_falls_when_tranche_a_is_capped() -> None:
     commitment, split = commitment_split(
-        split_inputs(Product.SPLIT_PRINCIPAL, "50000.00", "70000.00"), D("44000")
+        split_inputs(Product.SPLIT_PRINCIPAL, "45000.00", "70000.00"), D("44000")
     )
     assert split is not None
-    assert split.purchase_portion == D("50000.00")
+    assert split.purchase_portion == D("45000.00")
     assert split.rehab_portion == D("44000")  # Tranche A, capped at rehab_adj
-    assert commitment == D("94000.00")  # Principal Note + Tranche A, SPEC §8.2
-    assert funded_at_close(Product.SPLIT_PRINCIPAL, commitment, split) == D("50000.00")
+    assert commitment == D("89000.00")  # Principal Note + Tranche A, SPEC §8.2
+    assert funded_at_close(Product.SPLIT_PRINCIPAL, commitment, split) == D("45000.00")
 
 
 @pytest.mark.parametrize("product", sorted(SPLIT_PRODUCTS))
@@ -206,7 +214,7 @@ def test_a_split_product_with_no_split_entered_is_sized_on_the_request(product: 
     """A borrower-channel intake nobody has divided: the screen runs, with no split."""
     data = inputs(product, loan_purchase_portion=None, loan_rehab_portion=None)
     commitment, split = commitment_split(data, D("44000"))
-    assert commitment == D("120000.00")
+    assert commitment == D("115000.00")
     assert split is None
     assert funded_at_close(product, commitment, split) == commitment
 
@@ -229,7 +237,12 @@ def test_half_a_split_is_rejected() -> None:
 
 @pytest.mark.parametrize(
     "field, value",
-    [("purchase_price", "0"), ("loan_requested", "0"), ("rehab_budget", "-1"), ("arv", "0")],
+    [
+        ("purchase_price", "0"),
+        ("loan_requested", "0"),
+        ("rehab_costs", "-1"),
+        ("estimated_sale_price", "0"),
+    ],
 )
 def test_money_inputs_validated_at_the_boundary(field: str, value: str) -> None:
     with pytest.raises(ValidationError):
@@ -243,25 +256,26 @@ def test_size_deal_metrics_caps_and_pass() -> None:
     result = size_deal(inputs(Product.SPLIT_DRAW), Tranche.T2, ExperienceTier.E2, CONFIG)
     assert result.product is Product.SPLIT_DRAW
     assert result.credit_tranche is Tranche.T2 and result.experience_tier is ExperienceTier.E2
-    assert result.rehab_adj == D("44000.0000")
-    assert result.buy_closing == D("3000.0000")  # 3% of 100,000
-    assert result.total_cost == D("147000.0000")
-    assert result.commitment == D("120000.00")
+    assert result.rehab_adj == D("40000.00")  # the config contingency default is 0.00
+    assert result.closing_costs == D("1000.00")  # the config default, not a % of price
+    assert result.total_cost == D("141000.00")
+    assert result.commitment == D("115000.00")
     assert result.ltv_basis is ValueBasis.AS_IS_VALUE
 
     ltc = result.metrics[LeverageMetric.LTC]
     ltv = result.metrics[LeverageMetric.LTV_AS_IS]
     ltarv = result.metrics[LeverageMetric.LTARV]
-    assert ltc.actual == D("120000.00") / D("147000.0000")
-    assert ltc.status is CapStatus.WITHIN_TOLERANCE  # 81.63% is over 80% but under 85%
-    assert ltv.actual == D("0.8") and ltv.basis is ValueBasis.AS_IS_VALUE
-    assert ltarv.actual == D("0.6")
+    assert ltc.actual == D("115000.00") / D("141000.00")
+    assert ltc.status is CapStatus.WITHIN_TOLERANCE  # 81.56% is over 80% but under 85%
+    assert ltv.actual == D("115000.00") / D("150000.00")
+    assert ltv.basis is ValueBasis.AS_IS_VALUE
+    assert ltarv.actual == D("0.575")
     assert ltc.cap == D("0.80") and ltv.cap == D("0.75") and ltarv.cap == D("0.70")
     assert result.all_pass is False
 
 
 def test_size_deal_status_per_metric() -> None:
-    # LTC 120000/147000 = 81.63% -> within band; LTV 80% -> within band; LTARV 60% -> pass
+    # LTC 115000/141000 = 81.56% -> within band; LTV 76.7% -> within band; LTARV 57.5% -> pass
     result = size_deal(inputs(Product.SPLIT_DRAW), Tranche.T2, ExperienceTier.E2, CONFIG)
     assert result.metrics[LeverageMetric.LTC].status is CapStatus.WITHIN_TOLERANCE
     assert result.metrics[LeverageMetric.LTV_AS_IS].status is CapStatus.WITHIN_TOLERANCE
@@ -273,12 +287,12 @@ def test_ltv_falls_back_to_purchase_price_when_as_is_missing() -> None:
     ltv = result.metrics[LeverageMetric.LTV_AS_IS]
     assert result.ltv_basis is ValueBasis.PURCHASE_PRICE
     assert ltv.basis is ValueBasis.PURCHASE_PRICE
-    assert ltv.actual == D("1.2")  # 120000 / 100000
+    assert ltv.actual == D("1.15")  # 115000 / 100000
     assert ltv.status is CapStatus.FAIL
 
 
-def test_ltarv_not_available_when_arv_missing() -> None:
-    result = size_deal(inputs(arv=None), Tranche.T2, ExperienceTier.E2, CONFIG)
+def test_ltarv_not_available_when_the_sale_price_is_missing() -> None:
+    result = size_deal(inputs(estimated_sale_price=None), Tranche.T2, ExperienceTier.E2, CONFIG)
     ltarv = result.metrics[LeverageMetric.LTARV]
     assert ltarv.actual is None
     assert ltarv.status is CapStatus.NOT_AVAILABLE
@@ -288,18 +302,18 @@ def test_ltarv_not_available_when_arv_missing() -> None:
 
 def test_a_capped_tranche_a_changes_the_leverage_numerator() -> None:
     result = size_deal(
-        split_inputs(Product.SPLIT_PRINCIPAL, "50000.00", "70000.00"),
+        split_inputs(Product.SPLIT_PRINCIPAL, "45000.00", "70000.00"),
         Tranche.T1,
         ExperienceTier.E3,
         CONFIG,
     )
-    assert result.commitment == D("94000.00")
-    assert result.metrics[LeverageMetric.LTV_AS_IS].actual == D("94000.00") / D("150000.00")
+    assert result.commitment == D("85000.00")  # 45,000 note + Tranche A capped at 40,000
+    assert result.metrics[LeverageMetric.LTV_AS_IS].actual == D("85000.00") / D("150000.00")
 
 
 def test_every_number_in_the_result_is_decimal() -> None:
     result = size_deal(inputs(), Tranche.T2, ExperienceTier.E2, CONFIG)
-    for name in ("rehab_adj", "buy_closing", "total_cost", "commitment", "funded_at_close"):
+    for name in ("rehab_adj", "closing_costs", "total_cost", "commitment", "funded_at_close"):
         assert isinstance(getattr(result, name), Decimal), name
     assert result.split is not None
     assert isinstance(result.split.purchase_portion, Decimal)
@@ -317,7 +331,7 @@ budget = st.decimals(min_value=D("0"), max_value=D("2000000"), places=2)
 def test_split_invariants_hold_for_any_deal(
     product: Product, price: Decimal, rehab: Decimal, loan: Decimal
 ) -> None:
-    data = inputs(product, purchase_price=price, rehab_budget=rehab, loan_requested=loan)
+    data = inputs(product, purchase_price=price, rehab_costs=rehab, loan_requested=loan)
     result = size_deal(data, Tranche.T3, ExperienceTier.E1, CONFIG)
     assert 0 <= result.funded_at_close <= result.commitment
     if result.split is None:
@@ -340,16 +354,16 @@ def test_split_invariants_hold_for_any_deal(
 
 def test_result_carries_loan_requested() -> None:
     result = size_deal(inputs(), Tranche.T2, ExperienceTier.E2, CONFIG)
-    assert result.loan_requested == D("120000.00")
+    assert result.loan_requested == D("115000.00")
     assert isinstance(result.loan_requested, Decimal)
 
 
 def test_split_principal_tranche_a_never_exceeds_rehab_adj() -> None:
     # the team put 110,000 on the rehab side; Tranche A stays capped at rehab_adj = 44,000
     commitment, split = commitment_split(
-        split_inputs(Product.SPLIT_PRINCIPAL, "10000.00", "110000.00"), D("44000")
+        split_inputs(Product.SPLIT_PRINCIPAL, "5000.00", "110000.00"), D("44000")
     )
     assert split is not None
     assert split.rehab_portion == D("44000")
-    assert commitment == D("54000.00")  # below the 120,000 requested; the screen reports it
-    assert funded_at_close(Product.SPLIT_PRINCIPAL, commitment, split) == D("10000.00")
+    assert commitment == D("49000.00")  # below the 120,000 requested; the screen reports it
+    assert funded_at_close(Product.SPLIT_PRINCIPAL, commitment, split) == D("5000.00")

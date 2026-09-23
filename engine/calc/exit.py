@@ -1,58 +1,34 @@
-"""Exit inference and the DSCR takeout, run on every deal regardless of exit.  # SPEC §3, §8.6
+"""The §3 exit inference, and the two analysis toggles it defaults.  # SPEC §3, §8.1
 
-The exit type is informational; it never gates the takeout or the downside. It is what the
-team stated, else what the term and the asset type imply (SPEC §3):
+The exit type gates nothing and flags nothing. All it decides is which of the two optional
+analyses a deal gets by default: a resale exit means somebody is going to sell the house, so
+the Flip analysis is the one worth running; a hold exit means somebody is going to let it, so
+the Rental analysis is. A rent entered on the deal turns Rental on whatever the exit says -
+if the team has looked a rent up, they want to see what it does.
 
-    stated exit (anything but UNKNOWN)          -> as stated, STATED
-    term <= resale_max_term and SFR / 2-4       -> WHOLETAIL product: WHOLETAIL, else FLIP, INFERRED
-    term >= hold_min_term                       -> HOLD, INFERRED
-    neither (a 10-month term, 5+ units, ...)    -> UNKNOWN, INFERRED
-
-
-    gross_rent   = market_rent x 12
-    opex         = gross_rent x (vacancy + management + maintenance)
-                   + annual_taxes + annual_insurance
-    noi          = gross_rent - opex
-    dscr_loan    = loan whose annual debt service at takeout.rate (takeout.amortization_years,
-                   level payment) equals noi / takeout.dscr_floor
-    max_takeout  = min(arv x takeout.ltv, dscr_loan)
-    payoff_due   = commitment + payoff fees
-    refi_covers  = max_takeout >= payoff_due
-    shortfall    = max(0, payoff_due - max_takeout)
-
-The percentage opex lines apply to gross rent. Taxes and insurance are team actuals or the
-config defaults as a percentage of the as-is value (``engine.calc.borrower``).
-
-Without a market rent none of that exists and the result is NOT_EVALUATED with
-``refi_covers`` None (SPEC §8.1, §8.6). Not False: a takeout nobody could compute has not
-failed, and a zero rent would fabricate a shortfall on every deal whose rent nobody happened
-to look up.
+A team member can turn either toggle on or off by hand, and that wins over the default in
+both directions. The Take-Back analysis is not a toggle: it runs on every deal (SPEC §8.6).
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
 
 from config.config import Config
-from engine.calc.borrower import resolve_annual_insurance, resolve_annual_taxes
-from engine.calc.lender import TWELVE, payoff_fees
-from engine.calc.outstanding import LoanTerms
 from schema.models import (
     AssetType,
-    ExitResult,
+    ExitInference,
     ExitSource,
     Product,
     StatedExit,
-    TakeoutStatus,
     UnderwriteInputs,
 )
 
-ZERO = Decimal(0)
-ONE = Decimal(1)
-
 # Asset types that resell as a flip or a wholetail on a short term.  # SPEC §3
 RESALE_ASSET_TYPES = frozenset({AssetType.SFR, AssetType.UNITS_2_4})
+
+# The exits that mean somebody sells the property at the end.  # SPEC §8.1
+RESALE_EXITS = frozenset({StatedExit.FLIP, StatedExit.WHOLETAIL})
 
 
 def infer_exit(
@@ -80,117 +56,28 @@ def infer_exit(
     return StatedExit.UNKNOWN, ExitSource.INFERRED
 
 
-def _periodic(annual_rate: Decimal, years: int) -> tuple[Decimal, int]:
-    if years < 1:
-        raise ValueError(f"amortization years must be at least 1, got {years}")
-    return annual_rate / TWELVE, years * 12
+def flip_default(exit_type: StatedExit) -> bool:
+    """The Flip analysis is on by default for a resale exit.  # SPEC §8.1"""
+    return exit_type in RESALE_EXITS
 
 
-def monthly_payment(principal: Decimal, annual_rate: Decimal, years: int) -> Decimal:
-    """Level payment on a fully amortizing loan: P x i / (1 - (1 + i)^-n), i = rate / 12."""
-    i, n = _periodic(annual_rate, years)
-    if i == ZERO:
-        return principal / Decimal(n)
-    return principal * i / (ONE - (ONE + i) ** -n)
+def rental_default(exit_type: StatedExit, monthly_rent: Decimal | None) -> bool:
+    """On by default for a hold exit, or when a rent has been entered.  # SPEC §8.1"""
+    return exit_type is StatedExit.HOLD or monthly_rent is not None
 
 
-def loan_for_payment(payment: Decimal, annual_rate: Decimal, years: int) -> Decimal:
-    """Principal a level monthly ``payment`` amortizes: payment x (1 - (1 + i)^-n) / i."""
-    i, n = _periodic(annual_rate, years)
-    if i == ZERO:
-        return payment * Decimal(n)
-    return payment * (ONE - (ONE + i) ** -n) / i
-
-
-def annual_opex(
-    gross_rent: Decimal, annual_taxes: Decimal, annual_insurance: Decimal, config: Config
-) -> Decimal:
-    """gross_rent x (vacancy + management + maintenance) + taxes + insurance.  # SPEC §8.6"""
-    defaults = config.takeout.opex_defaults
-    rent_pct = (
-        defaults.vacancy_pct_of_rent
-        + defaults.management_pct_of_rent
-        + defaults.maintenance_pct_of_rent
+def exit_inference(inputs: UnderwriteInputs, config: Config) -> ExitInference:
+    """The exit, and the state of both toggles - defaulted, then overridden by hand."""
+    exit_type, source = infer_exit(
+        inputs.stated_exit, inputs.asset_type, inputs.term_months, inputs.deal.product, config
     )
-    return gross_rent * rent_pct + annual_taxes + annual_insurance
-
-
-def dscr_loan(noi_annual: Decimal, config: Config) -> Decimal:
-    """Loan whose annual debt service at the takeout rate is noi / dscr_floor; 0 when noi <= 0."""
-    if noi_annual <= ZERO:
-        return ZERO
-    payment = noi_annual / config.takeout.dscr_floor / TWELVE
-    return loan_for_payment(payment, config.takeout.rate, config.takeout.amortization_years)
-
-
-def payoff_due(loan: LoanTerms, config: Config) -> Decimal:
-    """commitment + payoff fees (the origination portion due at payoff).  # SPEC §8.6"""
-    return loan.commitment + payoff_fees(loan, config)
-
-
-def dscr_at(loan_amount: Decimal, noi_annual: Decimal, config: Config) -> Decimal | None:
-    """noi / annual debt service on ``loan_amount``; None when the loan amount is zero."""
-    if loan_amount <= ZERO:
-        return None
-    service = (
-        monthly_payment(loan_amount, config.takeout.rate, config.takeout.amortization_years)
-        * TWELVE
-    )
-    return noi_annual / service
-
-
-def dscr_takeout(inputs: UnderwriteInputs, loan: LoanTerms, config: Config) -> ExitResult:
-    """Max takeout loan, whether it covers the payoff, and the shortfall.  # SPEC §8.6
-
-    With no market rent on the deal there is no NOI, so there is no takeout to test and the
-    result says NOT_EVALUATED (SPEC §8.1). Everything that does not depend on the rent - the
-    exit type, the two opex figures, the LTV takeout and the payoff due - is reported
-    anyway, because those are real and a reader still wants them.
-    """
-    exit_type, exit_source = infer_exit(
-        inputs.stated_exit, inputs.asset_type, loan.term_months, loan.product, config
-    )
-    taxes, taxes_source = resolve_annual_taxes(inputs, config)
-    insurance, insurance_source = resolve_annual_insurance(inputs, config)
-    ltv_takeout = inputs.arv * config.takeout.ltv
-    due = payoff_due(loan, config)
-    common: dict[str, Any] = {
-        "type": exit_type,
-        "exit_source": exit_source,
-        "annual_taxes": taxes,
-        "annual_taxes_source": taxes_source,
-        "annual_insurance": insurance,
-        "annual_insurance_source": insurance_source,
-        "ltv_takeout": ltv_takeout,
-        "payoff_due": due,
-    }
-    if inputs.market_rent_monthly is None:
-        return ExitResult(
-            status=TakeoutStatus.NOT_EVALUATED,
-            gross_rent_annual=None,
-            opex_annual=None,
-            noi_annual=None,
-            dscr_takeout=None,
-            max_takeout=None,
-            dscr_at_payoff=None,
-            refi_covers=None,
-            shortfall=None,
-            **common,
-        )
-    gross_rent = inputs.market_rent_monthly * TWELVE
-    opex = annual_opex(gross_rent, taxes, insurance, config)
-    noi = gross_rent - opex
-    by_dscr = dscr_loan(noi, config)
-    max_takeout = min(ltv_takeout, by_dscr)
-    return ExitResult(
-        status=TakeoutStatus.EVALUATED,
-        gross_rent_annual=gross_rent,
-        opex_annual=opex,
-        noi_annual=noi,
-        dscr_takeout=by_dscr,
-        max_takeout=max_takeout,
-        dscr_at_payoff=dscr_at(due, noi, config),
-        refi_covers=max_takeout >= due,
-        shortfall=max(ZERO, due - max_takeout),
-        **common,
+    flip_on = flip_default(exit_type)
+    rental_on = rental_default(exit_type, inputs.monthly_rent)
+    return ExitInference(
+        type=exit_type,
+        exit_source=source,
+        flip_analysis=flip_on if inputs.flip_analysis is None else inputs.flip_analysis,
+        rental_analysis=rental_on if inputs.rental_analysis is None else inputs.rental_analysis,
+        flip_analysis_default=flip_on,
+        rental_analysis_default=rental_on,
     )

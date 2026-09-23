@@ -38,8 +38,8 @@ D = Decimal
 
 def request(**overrides: Any) -> UnderwriteRequest:
     base: dict[str, Any] = {
-        "market_rent_monthly": D("2400.00"),
-        "annual_utilities_usd": D("840.00"),
+        "monthly_rent": D("2400.00"),
+        "holding_costs_total_usd": D("3600.00"),
     }
     base.update(overrides)
     return UnderwriteRequest(**base)
@@ -169,7 +169,7 @@ def test_a_declined_screen_then_blocks_the_underwrite(
         run_underwrite(
             db_session,
             stored_deal.id,
-            request(as_is_value=D("250000"), arv=D("295000")),
+            request(as_is_value=D("250000"), estimated_sale_price=D("295000")),
             CONFIG,
             actor=ACTOR,
         )
@@ -247,7 +247,7 @@ def test_an_underwrite_on_a_new_deal_screens_it_first_and_proceeds(
     # the screen really ran: its row is there, with its own verdict
     row = latest_screen(db_session, deal_with_overrides.id)
     assert row is not None and row.verdict is Verdict.GO
-    assert result.term_months == 9
+    assert result.term_months == 6
     assert deal_with_overrides.status is Status.UNDERWRITING
 
 
@@ -260,7 +260,7 @@ def test_an_underwrite_on_a_new_deal_stops_when_that_screen_declines(
         run_underwrite(
             db_session,
             stored_deal.id,
-            request(as_is_value=D("250000.00"), arv=D("295000.00")),
+            request(as_is_value=D("250000.00"), estimated_sale_price=D("295000.00")),
             CONFIG,
             actor=ACTOR,
         )
@@ -298,16 +298,16 @@ def test_an_underwrite_on_a_screened_deal_does_not_screen_it_again(
 def test_the_fixture_states_the_statuses_its_deal_ends_in(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    """The Go fixture names both statuses; this is what keeps that data honest."""
+    """The Go fixture reaches the two statuses SPEC §4.6 says it should."""
     fixture = json.loads(TEAM_ENTRY_WITH_OVERRIDES.read_text(encoding="utf-8"))
+    assert fixture["expected"]["verdict"] == "GO"
 
     run_screen(db_session, deal_with_overrides.id, CONFIG, actor=ACTOR)
-    assert deal_with_overrides.status.value == fixture["expected"]["status_after_screen"]
+    assert deal_with_overrides.status is Status.SCREENED
 
     run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
     db_session.commit()
-    expected = fixture["underwrite"]["expected"]["status_after_underwrite"]
-    assert deal_with_overrides.status.value == expected
+    assert deal_with_overrides.status is Status.UNDERWRITING
 
 
 # --- an intake the team is still chasing (SPEC §4.1, §4.6) ---------------------------------------

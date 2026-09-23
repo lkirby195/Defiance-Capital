@@ -22,6 +22,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from schema.dates import payoff_date_for
+
 
 class Product(StrEnum):
     """Loan products.  # SPEC §3"""
@@ -30,6 +32,20 @@ class Product(StrEnum):
     SPLIT_DRAW = "SPLIT_DRAW"
     SPLIT_PRINCIPAL = "SPLIT_PRINCIPAL"
     WHOLETAIL = "WHOLETAIL"
+
+
+class LoanPurpose(StrEnum):
+    """What the borrower is doing with the money; team-selected.  # SPEC §8.1
+
+    Recorded and reported, and nothing in the math reads it. It is here because a credit
+    memo and an LOI both name it and a person deciding on a deal wants it in the Overview
+    beside the product, not because any number depends on it.
+    """
+
+    PURCHASE = "PURCHASE"
+    REFINANCE = "REFINANCE"
+    CASH_OUT = "CASH_OUT"
+    CONSTRUCTION = "CONSTRUCTION"
 
 
 class Tranche(StrEnum):
@@ -398,27 +414,6 @@ def validate_loan_split(
         )
 
 
-def validate_term_months(term_bucket: TermBucket | None, term_months: int | None) -> None:
-    """A term in months is the bucket's own number, or the team's for 12_PLUS.  # SPEC §8.1
-
-    Shared by ``DealInfo`` and the team-entry form. Two rules, and neither is about presence:
-    a term with no bucket behind it is a number nobody asked for, and a term that disagrees
-    with the bucket it came from is one of the two being wrong. Which one is absent is the
-    form's business (``api/intake_form.py``) and the underwrite's (SPEC §8.1) - a partial
-    intake has neither yet.
-    """
-    if term_months is None:
-        return
-    if term_bucket is None:
-        raise ValueError("term_months needs the term_bucket it came from")
-    named = months_for_bucket(term_bucket)
-    if named is not None and term_months != named:
-        raise ValueError(
-            f"term_bucket {term_bucket.value} names {named} months, not {term_months}; "
-            "only the 12_PLUS bucket leaves the number to the team"
-        )
-
-
 def _now_utc() -> datetime:
     return datetime.now(UTC)
 
@@ -438,25 +433,59 @@ class BorrowerInfo(BaseModel):
 
 
 class PropertyInfo(BaseModel):
-    """Subject property; address or listing URL satisfies the minimum.  # SPEC §4.5"""
+    """Subject property; address or listing URL satisfies the minimum.  # SPEC §4.5, §8.1
+
+    Everything below ``state`` is the SPEC §8.1 Property Overview: descriptive facts a
+    person reads on the deal page and in the credit memo. No math reads any of them, so none
+    is required to screen or to price a deal - they are captured because a reader wants to
+    know what the property is, not because a number depends on it.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     address_raw: str | None = None
     address_normalized: str | None = None
     listing_url: str | None = None
+    city: str | None = None
     county: str | None = None
     state: State = State.OTHER
     state_source: StateSource = StateSource.INFERRED
+    units: int | None = Field(default=None, ge=0)
+    structures: int | None = Field(default=None, ge=0)
+    sf: int | None = Field(default=None, ge=0)
+    year_built: int | None = Field(default=None, ge=1600, le=2200)
+    year_renovated: int | None = Field(default=None, ge=1600, le=2200)
+    beds: int | None = Field(default=None, ge=0)
+    baths: Decimal | None = Field(default=None, ge=0, max_digits=4, decimal_places=1)
+    garage_spaces: int | None = Field(default=None, ge=0)
 
 
 class DealInfo(BaseModel):
-    """Deal terms as requested by the borrower.  # SPEC §4.5"""
+    """Deal terms as requested by the borrower, plus the team's own §8.1 economics.
+
+    Grouped as SPEC §8.1 groups them: Overview, then Deal Economics, then the valuation and
+    rent the adapters will eventually supply.
+
+    The four economics with a config default (``contingency_pct``, ``closing_costs_usd``,
+    ``holding_costs_total_usd``, ``origination_fee_pct``) are None until somebody overrides
+    them, and None is what tells the engine to use the config default rather than a number
+    somebody chose. ``interest_rate`` has no default and is required to price a deal.
+
+    ``payoff_date`` is deliberately not here. It is ``closing_date`` plus ``term_months``
+    (``schema/dates.py``), so storing it would be storing the same fact twice and inviting
+    the two to disagree; the team-entry form and the queue's override block take one as an
+    alternative way to say the other, and both derive the term before they get here.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    # Overview (SPEC §8.1)
+    guarantor_name: str | None = None
+    loan_purpose: LoanPurpose | None = None
+    closing_date: date | None = None  # month 0 of the ledger (SPEC §8.3)
+    # Deal economics (SPEC §8.1)
     purchase_price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
-    rehab_budget: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    rehab_costs: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     loan_requested: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     # How the loan requested divides between the purchase advance and the rehab money, for
     # the two split products only (SPEC §8.2). A team entry: a borrower-channel intake
@@ -467,37 +496,39 @@ class DealInfo(BaseModel):
     )
     loan_rehab_portion: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     term_bucket: TermBucket | None = None
-    # The term the deal is priced on (SPEC §8.1). Derived from the bucket for every bucket
-    # that names a number; entered by the team for 12_PLUS, which names none.
+    # The term the deal is priced on (SPEC §8.1). Seeded from the bucket at intake for every
+    # bucket that names a number; the team's own number - or the one their payoff date
+    # implies - wins over it, and is allowed to differ from the bucket the borrower picked.
     term_months: int | None = Field(default=None, ge=1, le=60)
+    interest_rate: Decimal | None = Field(default=None, ge=0, le=1)  # annual; required to price
+    contingency_pct: Decimal | None = Field(default=None, ge=0, le=1)
+    closing_costs_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    holding_costs_total_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
     # Asset type from intake; with the term it drives the exit inference (SPEC §3). None
     # means unknown, which only ever leaves the exit UNKNOWN - it never forces one.
     asset_type: AssetType | None = None
     stated_exit: StatedExit | None = None
-    # Product: entered by the team, or inferred by the normalizer (NO_DRAW when rehab_budget
+    # Product: entered by the team, or inferred by the normalizer (NO_DRAW when rehab_costs
     # is 0, else SPLIT_DRAW). WHOLETAIL and SPLIT_PRINCIPAL are never inferred.  # SPEC §3
     product: Product | None = None
     product_source: ProductSource | None = None
-    # Team-supplied actuals (annual USD) that override the %-of-as-is-value opex defaults
-    # in config when present; the underwrite reads them via UnderwriteInputs.  # SPEC §8.1, §8.6
-    actual_annual_taxes_usd: Decimal | None = Field(
-        default=None, ge=0, max_digits=14, decimal_places=2
-    )
-    actual_annual_insurance_usd: Decimal | None = Field(
-        default=None, ge=0, max_digits=14, decimal_places=2
-    )
-    # The other two SPEC §8.1 team inputs: annual utilities (holding costs and the REO carry)
-    # and the monthly market rent the DSCR takeout is computed on. Neither has a config
-    # default or an adapter behind it, so the team enters them once and the underwrite reads
-    # them off the deal unless an UnderwriteRequest carries a newer number.
-    actual_annual_utilities_usd: Decimal | None = Field(
-        default=None, ge=0, max_digits=14, decimal_places=2
-    )
-    market_rent_monthly: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    # The two analysis toggles (SPEC §8.1). None leaves the §3-derived default in force; a
+    # team member turning one on or off by hand wins over it, in either direction.
+    flip_analysis: bool | None = None
+    rental_analysis: bool | None = None
+    # The monthly rent the Rental and Take-Back analyses are computed on (SPEC §8.5, §8.6).
+    # No config default and no adapter behind it: nothing stands in for what a property
+    # lets for, so without one both analyses are NOT_EVALUATED rather than run on a zero.
+    monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     # Team-supplied valuation, used when no adapter has produced one (SPEC §6). An adapter
     # value always wins; these stay on the deal either way, for audit.
     as_is_value_team: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
-    arv_team: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    estimated_sale_price_team: Decimal | None = Field(
+        default=None, gt=0, max_digits=14, decimal_places=2
+    )
     # Team court search (SPEC §7.2): the outcome, the date it was searched (the engine has
     # no clock, so the lookbacks are measured from it), and one typed entry per matter.
     court_records_status: CourtRecordsStatus | None = None
@@ -508,11 +539,6 @@ class DealInfo(BaseModel):
     def _product_and_source_together(self) -> DealInfo:
         if (self.product is None) != (self.product_source is None):
             raise ValueError("product and product_source must be set together")
-        return self
-
-    @model_validator(mode="after")
-    def _term_is_coherent(self) -> DealInfo:
-        validate_term_months(self.term_bucket, self.term_months)
         return self
 
     @model_validator(mode="after")
@@ -528,6 +554,13 @@ class DealInfo(BaseModel):
             self.court_records_status, self.court_records_as_of, self.court_records_team
         )
         return self
+
+    @property
+    def payoff_date(self) -> date | None:
+        """``closing_date`` + ``term_months``, or None until both are known.  # SPEC §8.1"""
+        if self.closing_date is None or self.term_months is None:
+            return None
+        return payoff_date_for(self.closing_date, self.term_months)
 
 
 class IntakeRecord(BaseModel):
@@ -561,7 +594,7 @@ class ScreenFlag(StrEnum):
     LTV_AS_IS_OVER_CAP = "LTV_AS_IS_OVER_CAP"
     LTARV_OVER_CAP = "LTARV_OVER_CAP"
     AS_IS_VALUE_MISSING = "AS_IS_VALUE_MISSING"  # SOFT, SPEC §7.4
-    ARV_MISSING = "ARV_MISSING"  # SOFT, SPEC §7.4
+    ESTIMATED_SALE_PRICE_MISSING = "ESTIMATED_SALE_PRICE_MISSING"  # SOFT, SPEC §7.4
     STATE_NOT_SERVED = "STATE_NOT_SERVED"  # SOFT, SPEC §7.5
     CREDIT_MISMATCH = "CREDIT_MISMATCH"  # SOFT, SPEC §7.5
     EXPERIENCE_MISMATCH = "EXPERIENCE_MISMATCH"  # SOFT, SPEC §6, §7.5
@@ -578,21 +611,20 @@ class ScreenFlag(StrEnum):
 class UnderwriteFlag(StrEnum):
     """Stable codes for flags the underwrite raises.  # SPEC §8.6, §8.7
 
-    The two credit codes take their severity from ``flags.underwrite_severities``; the two
+    The two DSCR codes take their severity from ``flags.underwrite_severities``; the two
     informational codes are fixed INFO in code and config must not grade them.
     """
 
-    REFI_SHORTFALL = "REFI_SHORTFALL"  # DSCR takeout does not cover commitment + payoff fees
-    DOWNSIDE_COVER_BELOW_FLOOR = "DOWNSIDE_COVER_BELOW_FLOOR"  # REO recovery / exposure
-    NO_REHAB_PERIOD = "NO_REHAB_PERIOD"  # INFO, SPEC §8.3: SPLIT_PRINCIPAL, term <= listing_months
-    SOLVED_RATE_BELOW_GRID = "SOLVED_RATE_BELOW_GRID"  # INFO, SPEC §8.4: r* under rate_grid.min
-    MARKET_RENT_MISSING = "MARKET_RENT_MISSING"  # INFO, SPEC §8.1: no DSCR takeout to compute
+    DSCR_BELOW_FLOOR = "DSCR_BELOW_FLOOR"  # SPEC §8.5: rental DSCR under rental.dscr_floor
+    TAKE_BACK_DSCR_BELOW_FLOOR = "TAKE_BACK_DSCR_BELOW_FLOOR"  # SPEC §8.6: under take_back floor
+    MONTHLY_RENT_MISSING = "MONTHLY_RENT_MISSING"  # INFO, SPEC §8.5, §8.6: no rent to run either on
+    NO_REHAB_PERIOD = "NO_REHAB_PERIOD"  # INFO, SPEC §8.3: no rehab period, so no draw schedule
 
 
 # Underwrite codes whose severity is a config decision; every other code is fixed INFO
 # in code (SPEC §8.7) and ``flags.underwrite_severities`` rejects it.
 GRADED_UNDERWRITE_FLAGS: frozenset[UnderwriteFlag] = frozenset(
-    {UnderwriteFlag.REFI_SHORTFALL, UnderwriteFlag.DOWNSIDE_COVER_BELOW_FLOOR}
+    {UnderwriteFlag.DSCR_BELOW_FLOOR, UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR}
 )
 
 
@@ -679,7 +711,14 @@ class CourtRecordInputs(BaseModel):
 class SizingInputs(BaseModel):
     """Deal numbers for implied leverage and the commitment split.  # SPEC §7.4, §8.2
 
-    ``as_is_value`` / ``arv`` are None when enrichment or valuation has not supplied them.
+    ``as_is_value`` / ``estimated_sale_price`` are None when enrichment or valuation has not
+    supplied them. Neither stops a screen; the estimated sale price is what the Flip analysis
+    sells at and what LTARV is computed on, so the underwrite needs one while that toggle is
+    on (SPEC §8.1).
+
+    ``contingency_pct`` and ``closing_costs_usd`` are SPEC §8.1 inputs with config defaults,
+    and they are here rather than read straight from config because both stages size on the
+    same two numbers: ``rehab_adj`` and the LTC denominator. None means the config default.
 
     ``loan_purchase_portion`` / ``loan_rehab_portion`` are the team's own division of the
     loan requested, for the split products only (SPEC §8.2). Both None means the split has
@@ -691,12 +730,16 @@ class SizingInputs(BaseModel):
 
     product: Product
     purchase_price: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
-    rehab_budget: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    rehab_costs: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
     loan_requested: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    contingency_pct: Decimal | None = Field(default=None, ge=0, le=1)
+    closing_costs_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     as_is_value: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
-    arv: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    estimated_sale_price: Decimal | None = Field(
+        default=None, gt=0, max_digits=14, decimal_places=2
+    )
     as_is_value_source: ValueSource | None = None
-    arv_source: ValueSource | None = None
+    estimated_sale_price_source: ValueSource | None = None
     loan_purchase_portion: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
@@ -708,7 +751,10 @@ class SizingInputs(BaseModel):
         """A valuation with no stated source came from enrichment; the team names itself."""
         if not isinstance(data, dict):
             return data
-        for value, source in (("as_is_value", "as_is_value_source"), ("arv", "arv_source")):
+        for value, source in (
+            ("as_is_value", "as_is_value_source"),
+            ("estimated_sale_price", "estimated_sale_price_source"),
+        ):
             if data.get(value) is not None and data.get(source) is None:
                 data = {**data, source: ValueSource.ADAPTER}
         return data
@@ -717,7 +763,7 @@ class SizingInputs(BaseModel):
     def _source_needs_a_value(self) -> SizingInputs:
         for value, source in (
             (self.as_is_value, self.as_is_value_source),
-            (self.arv, self.arv_source),
+            (self.estimated_sale_price, self.estimated_sale_price_source),
         ):
             if source is not None and value is None:
                 raise ValueError("a valuation source cannot be recorded without its value")
@@ -762,7 +808,7 @@ class ScreenInputs(BaseModel):
     court_records: CourtRecordInputs | None = None
 
 
-# --- Engine outputs (SPEC §7.5, §8.2, §8.7) ---------------------------------------------------
+# --- Engine outputs (SPEC §7.5, §8.2) ---------------------------------------------------------
 
 
 class MetricCheck(BaseModel):
@@ -786,7 +832,7 @@ class CommitmentSplit(BaseModel):
     SPLIT_PRINCIPAL: ``purchase_portion`` is the Principal Note, ``rehab_portion`` Tranche A.
 
     ``rehab_portion`` is what the lender actually funds, which is the entered portion capped
-    at the contingency-adjusted rehab budget (``engine.sizing.commitment_split``);
+    at the contingency-adjusted rehab cost (``engine.sizing.commitment_split``);
     ``rehab_portion_capped`` says whether that cap bit.
     """
 
@@ -797,28 +843,6 @@ class CommitmentSplit(BaseModel):
     rehab_portion_requested: Decimal
     rehab_portion_capped: bool
 
-    @model_validator(mode="before")
-    @classmethod
-    def _drop_the_retired_override_flag(cls, data: Any) -> Any:
-        """Rebuild a row written before 0.8.0, when the split was a derived override.
-
-        ``purchase_portion_overridden`` said whether the team had overridden a purchase
-        portion the engine derived. There is no derivation left to override - the team enters
-        both halves - so the field is gone, and a stored ``screens`` / ``underwrites`` row
-        from before the change would otherwise fail to rebuild against ``extra="forbid"``.
-        The two fields it did not have default to the entered portion, uncapped, which is
-        what a pre-0.8.0 row's numbers already describe.
-        """
-        if not isinstance(data, dict) or "purchase_portion_overridden" not in data:
-            return data
-        rehab = data.get("rehab_portion")
-        return {
-            key: value for key, value in data.items() if key != "purchase_portion_overridden"
-        } | {
-            "rehab_portion_requested": data.get("rehab_portion_requested", rehab),
-            "rehab_portion_capped": data.get("rehab_portion_capped", False),
-        }
-
 
 class SizingResult(BaseModel):
     """Implied leverage and commitment for one caps cell.  # SPEC §7.4, §8.2"""
@@ -828,8 +852,11 @@ class SizingResult(BaseModel):
     product: Product
     credit_tranche: Tranche
     experience_tier: ExperienceTier
-    rehab_adj: Decimal
-    buy_closing: Decimal  # purchase_price x borrower_closing_pct_of_price, borrower cash
+    purchase_price: Decimal
+    rehab_costs: Decimal
+    contingency_pct: Decimal  # the input in force, or the config default
+    rehab_adj: Decimal  # rehab_costs x (1 + contingency_pct)
+    closing_costs: Decimal  # the lender's closing costs, inside the LTC denominator
     total_cost: Decimal
     loan_requested: Decimal
     commitment: Decimal
@@ -837,7 +864,7 @@ class SizingResult(BaseModel):
     split: CommitmentSplit | None
     ltv_basis: ValueBasis
     as_is_value_source: ValueSource | None  # None when no as-is value was available
-    arv_source: ValueSource | None
+    estimated_sale_price_source: ValueSource | None
     metrics: dict[LeverageMetric, MetricCheck]
     all_pass: bool
 
@@ -873,22 +900,28 @@ class ScreenResult(BaseModel):
     sizing: SizingResult
 
 
-# --- Underwrite inputs and outputs (SPEC §8.1, §8.3-8.7) ---------------------------------------
+# --- Underwrite inputs (SPEC §8.1) -------------------------------------------------------------
 
 
 class UnderwriteInputs(BaseModel):
     """Everything the underwrite needs; the caller assembles it from deal + enrichment.  # SPEC §8.1
 
-    ``deal`` carries the verified ``as_is_value`` and ``arv`` (both required here, unlike the
-    screen) and, on a split product, the team's purchase / rehab split. ``borrower`` carries
-    the verified credit score and deal count when known; the underwrite derives the caps cell
-    from them exactly as the screen does. Annual taxes, insurance and utilities are team
-    actuals; ``None`` falls back to the config defaults as a percentage of the as-is value.
-    ``market_rent_monthly`` has no such default - nothing stands in for what a property lets
-    for - so ``None`` leaves the DSCR takeout NOT_EVALUATED (SPEC §8.6) rather than computed
-    on a zero. ``exit_price`` defaults to the ARV (flip); the team sets a retail price for
-    wholetail. ``extension_fee_pct`` defaults to the config default. ``asset_type`` and
-    ``stated_exit`` drive the SPEC §3 exit inference.
+    ``deal`` carries the valuation and, on a split product, the team's purchase / rehab
+    split. ``borrower`` carries the verified credit score and deal count when known; the
+    underwrite derives the caps cell from them exactly as the screen does.
+
+    ``closing_date``, ``term_months`` and ``interest_rate`` are the three the ledger cannot
+    be laid out without, and all three are required here. ``payoff_date`` is not a field: it
+    is ``closing_date`` plus the term (``schema/dates.py``), and the property below is the
+    single place it is worked out.
+
+    ``origination_fee_pct`` and ``holding_costs_total_usd`` are SPEC §8.1 inputs with config
+    defaults, so ``None`` means "use the default" rather than "zero". ``monthly_rent`` has no
+    default - nothing stands in for what a property lets for - so ``None`` leaves the Rental
+    and Take-Back analyses NOT_EVALUATED (SPEC §8.5, §8.6) rather than computed on a zero.
+
+    ``flip_analysis`` and ``rental_analysis`` are the SPEC §8.1 toggles. ``None`` leaves the
+    default the §3 exit implies; a bool is the team overriding it either way.
 
     ``court_records`` is the latest source in force at underwrite time, adapter over team,
     exactly as at the screen (SPEC §6.1, §8.1). The underwrite re-runs the SPEC §7.2 tests on
@@ -903,35 +936,29 @@ class UnderwriteInputs(BaseModel):
     deal: SizingInputs
     state: State
     borrower: BorrowerInputs
+    closing_date: date
     term_months: int = Field(ge=1, le=60)
-    market_rent_monthly: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
-    annual_taxes_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
-    annual_insurance_usd: Decimal | None = Field(
+    interest_rate: Decimal = Field(ge=0, le=1)
+    origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
+    holding_costs_total_usd: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
-    annual_utilities_usd: Decimal | None = Field(
-        default=None, ge=0, max_digits=14, decimal_places=2
-    )
-    extension_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
-    exit_price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    flip_analysis: bool | None = None
+    rental_analysis: bool | None = None
+    loan_purpose: LoanPurpose | None = None
     asset_type: AssetType | None = None
     stated_exit: StatedExit = StatedExit.UNKNOWN
     court_records: CourtRecordInputs | None = None
-
-    @model_validator(mode="after")
-    def _valuation_is_complete(self) -> UnderwriteInputs:
-        if self.deal.as_is_value is None or self.deal.arv is None:
-            raise ValueError("underwrite requires both as_is_value and arv on the deal")
-        return self
 
     @model_validator(mode="after")
     def _a_split_product_carries_its_split(self) -> UnderwriteInputs:
         """SPEC §8.2 prices the two portions; a split product without them cannot be priced.
 
         The screen can size one: it reports the commitment and no split. The underwrite
-        cannot - SPLIT_PRINCIPAL's whole draw curve is the two notes (SPEC §8.3), and a
-        SPLIT_DRAW holdback decides what is advanced at close - so the team enters the split
-        before a deal is priced.
+        cannot - the ledger's draw schedule is the rehab portion (SPEC §8.3), and what is
+        advanced at close is the purchase portion - so the team enters the split before a
+        deal is priced.
         """
         if self.deal.product in SPLIT_PRODUCTS and self.deal.loan_split is None:
             raise ValueError(
@@ -941,202 +968,234 @@ class UnderwriteInputs(BaseModel):
         return self
 
     @property
-    def as_is_value(self) -> Decimal:
-        """The verified as-is value (validated present)."""
-        if self.deal.as_is_value is None:  # pragma: no cover - guarded by the validator
-            raise ValueError("as_is_value is required")
-        return self.deal.as_is_value
-
-    @property
-    def arv(self) -> Decimal:
-        """The verified ARV (validated present)."""
-        if self.deal.arv is None:  # pragma: no cover - guarded by the validator
-            raise ValueError("arv is required")
-        return self.deal.arv
+    def payoff_date(self) -> date:
+        """``closing_date`` + ``term_months`` calendar months.  # SPEC §8.1"""
+        return payoff_date_for(self.closing_date, self.term_months)
 
 
-class OpexSource(StrEnum):
-    """Where an annual taxes / insurance / utilities figure came from.  # SPEC §8.6"""
-
-    ACTUAL = "ACTUAL"  # team-supplied
-    DEFAULT = "DEFAULT"  # config percentage of the as-is value
+# --- Underwrite outputs (SPEC §8.3-8.8) --------------------------------------------------------
 
 
-class TakeoutStatus(StrEnum):
-    """Whether the DSCR takeout could be computed at all.  # SPEC §8.1, §8.6
+class AnalysisStatus(StrEnum):
+    """Whether one of the three §8 analyses produced numbers, and why not.  # SPEC §8.4-§8.6
 
-    The takeout runs on a market rent, and the market rent has no config default and no
-    adapter behind it: there is no percentage of anything that stands in for what a property
-    lets for. So a deal with no rent is underwritten without a takeout rather than with one
-    computed on a zero, which would report a DSCR shortfall the deal has not been shown to
-    have. ``refi_covers`` is None in that case, not False.
+    ``OFF`` is a team decision: the toggle is off, so the analysis was not asked for.
+    ``NOT_EVALUATED`` is a missing input: the Rental and Take-Back analyses are computed on a
+    monthly rent, and nothing stands in for what a property lets for, so a deal without one
+    gets no DSCR rather than a DSCR of zero - which would report a shortfall the deal has not
+    been shown to have. Everything a figure depends on is null in both cases, and the cost
+    side, which depends on neither, is reported regardless.
     """
 
     EVALUATED = "EVALUATED"
-    NOT_EVALUATED = "NOT_EVALUATED"  # no market rent on the deal (MARKET_RENT_MISSING)
+    NOT_EVALUATED = "NOT_EVALUATED"
+    OFF = "OFF"
 
 
-class FeeSchedule(BaseModel):
-    """Lender fees for a payoff at one month, all on the total commitment.  # SPEC §3, §8.4"""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    origination_at_close: Decimal
-    origination_at_payoff: Decimal
-    extension: Decimal  # zero unless the payoff month is past the term
-    total: Decimal
-
-
-class LenderReturn(BaseModel):
-    """Lender economics for a payoff at ``month`` and note rate ``rate``.  # SPEC §8.4"""
+class ExitInference(BaseModel):
+    """The §3 exit and the two analysis toggles it defaulted.  # SPEC §3, §8.1"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    month: int
-    rate: Decimal
-    avg_outstanding: Decimal
-    interest: Decimal
-    fees: FeeSchedule
-    annualized_yield: Decimal  # (interest + fees) / commitment x 12 / month
+    type: StatedExit  # stated by the team, else inferred from term x asset type
+    exit_source: ExitSource  # STATED when the team set it, INFERRED when the engine did
+    flip_analysis: bool  # the toggle in force
+    rental_analysis: bool
+    flip_analysis_default: bool  # what the exit implied, before any team override
+    rental_analysis_default: bool
 
 
-class GridCell(BaseModel):
-    """One cell of the lender yield grid.  # SPEC §8.5"""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    month: int
-    rate: Decimal
-    annualized_yield: Decimal
-    meets_target: bool  # annualized_yield >= target_irr
-    is_solved_rate: bool  # this column is r*
-
-
-class GridRow(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    month: int
-    cells: list[GridCell]
-
-
-class YieldGrid(BaseModel):
-    """lender_yield(m, r) over the rate grid (plus r*) and the month window.  # SPEC §8.5"""
+class DealEconomics(BaseModel):
+    """The §8.1 Deal Economics group, resolved: inputs in force and what they imply."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    target: Decimal
-    solved_rate: Decimal
-    solved_rate_inserted: bool  # False when r* already sat on the configured grid
-    rates: list[Decimal]  # columns, ascending
-    months: list[int]  # rows, term .. term + after_term
-    rows: list[GridRow]
-
-
-class BorrowerEconomics(BaseModel):
-    """Borrower profit and cash-on-cash at one (month, rate); information only.  # SPEC §8.6"""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    month: int
-    rate: Decimal
     purchase_price: Decimal
-    rehab_adj: Decimal
-    buy_closing: Decimal
-    total_project_cost: Decimal
-    interest_paid: Decimal
-    fees_paid: Decimal
-    holding_costs: Decimal
-    exit_price: Decimal
-    exit_net: Decimal
-    profit: Decimal
-    cash_in: Decimal
-    cash_on_cash: Decimal | None  # None when cash_in <= 0
+    rehab_costs: Decimal
+    contingency_pct: Decimal
+    contingency: Decimal  # rehab_costs x contingency_pct
+    rehab_adj: Decimal  # rehab_costs + contingency
+    closing_costs: Decimal
+    holding_costs_total: Decimal
+    holding_costs_monthly: Decimal  # holding_costs_total / term_months
+    origination_fee_pct: Decimal
+    origination_at_close: Decimal  # half the fee, on the commitment
+    origination_at_payoff: Decimal
+    interest_rate: Decimal
+    loan_requested: Decimal
+    commitment: Decimal
+    funded_at_close: Decimal
+    loan_purchase_portion: Decimal | None
+    loan_rehab_portion: Decimal | None
 
 
-class ExitResult(BaseModel):
-    """DSCR takeout, run on every deal that has a market rent.  # SPEC §8.1, §8.6
+class LedgerEntry(BaseModel):
+    """One month of the lender's cash flows.  # SPEC §8.3
 
-    The exit type, the two opex figures, the LTV takeout and the payoff due stand on their
-    own and are reported either way. Everything the rent feeds - the NOI and both loans
-    tested against it - is None when ``status`` is NOT_EVALUATED, ``refi_covers`` included:
-    a takeout nobody could compute has not failed.
+    Signs are the lender's: ``funding`` and ``draws`` are money out and are negative or zero;
+    ``interest``, ``fees`` and ``payoff`` are money in and are zero or positive. ``net`` is
+    their sum, and it is the column the XIRR runs on.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    type: StatedExit  # stated by the team, else inferred from term x asset type (SPEC §3)
-    exit_source: ExitSource  # STATED when the team set it, INFERRED when the engine did
-    status: TakeoutStatus = TakeoutStatus.EVALUATED
-    gross_rent_annual: Decimal | None
-    annual_taxes: Decimal
-    annual_taxes_source: OpexSource
-    annual_insurance: Decimal
-    annual_insurance_source: OpexSource
-    opex_annual: Decimal | None
-    noi_annual: Decimal | None
-    ltv_takeout: Decimal  # arv x takeout ltv
-    dscr_takeout: Decimal | None  # loan whose debt service = noi / dscr_floor (0 when noi <= 0)
-    max_takeout: Decimal | None  # min of the two
-    payoff_due: Decimal  # commitment + payoff fees
-    dscr_at_payoff: Decimal | None  # noi / debt service on payoff_due
-    refi_covers: bool | None  # None when the takeout was not evaluated
-    shortfall: Decimal | None  # max(0, payoff_due - max_takeout)
-
-    @model_validator(mode="after")
-    def _evaluated_means_every_rent_figure_is_there(self) -> ExitResult:
-        """The status and the numbers cannot disagree about whether a takeout happened."""
-        rent_derived = (
-            self.gross_rent_annual,
-            self.opex_annual,
-            self.noi_annual,
-            self.dscr_takeout,
-            self.max_takeout,
-            self.refi_covers,
-            self.shortfall,
-        )
-        evaluated = self.status is TakeoutStatus.EVALUATED
-        if evaluated and any(value is None for value in rent_derived):
-            raise ValueError("an EVALUATED takeout carries every figure the rent feeds")
-        if not evaluated and any(value is not None for value in rent_derived):
-            raise ValueError("a NOT_EVALUATED takeout carries none of the figures the rent feeds")
-        return self
+    month: int
+    date: date
+    funding: Decimal
+    draws: Decimal
+    interest: Decimal
+    fees: Decimal
+    payoff: Decimal
+    net: Decimal
 
 
-class DownsideResult(BaseModel):
-    """REO downside, run on every deal.  # SPEC §8.6"""
+class ReturnOverview(BaseModel):
+    """The lender's dated monthly ledger and its XIRR.  # SPEC §8.3
+
+    ``total_profit`` is the sum of the ``net`` column, which is also ``total_interest +
+    total_fees``: every dollar funded comes back in the payoff, so the two cancel.
+
+    ``irr`` is None only on a ledger with no sign change, which a positive amount funded at
+    close makes unreachable in practice; it is None rather than zero because a rate that does
+    not exist is not a rate of zero.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    recovery_basis: Decimal  # min(as_is_value + rehab_adj, arv)
-    liquidation: Decimal  # recovery_basis x (1 - reo_haircut)
-    selling_costs: Decimal
-    foreclosure_cost: Decimal
-    foreclosure_months: int
-    monthly_holding_cost: Decimal
-    holding_through_foreclosure: Decimal
-    recovery: Decimal
-    unpaid_fees: Decimal
-    exposure: Decimal  # commitment + unpaid fees
-    cover: Decimal  # recovery / exposure
-    cover_floor: Decimal
-    passed: bool  # cover >= cover_floor
+    entries: list[LedgerEntry]
+    total_funding: Decimal  # negative
+    total_draws: Decimal  # negative
+    total_interest: Decimal
+    total_fees: Decimal
+    total_payoff: Decimal
+    total_profit: Decimal
+    irr: Decimal | None
+
+
+class FlipAnalysis(BaseModel):
+    """The project's margin if the property is sold.  # SPEC §8.4
+
+    The cost stack does not depend on the sale price, so it is reported whatever the status.
+    ``profit_yield`` is profit over costs - a project margin, not an annualized return - and
+    is labelled "Yield (Profit / Costs)" wherever it is shown.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: AnalysisStatus
+    purchase_price: Decimal
+    closing_costs: Decimal
+    holding_costs_total: Decimal
+    rehab_costs: Decimal
+    contingency: Decimal
+    financing_costs: Decimal  # total interest + both origination halves
+    total_costs: Decimal
+    broker_selling_pct: Decimal
+    estimated_sale_price: Decimal | None
+    broker_costs: Decimal | None
+    net_profit: Decimal | None
+    profit_yield: Decimal | None
+
+    @model_validator(mode="after")
+    def _evaluated_means_every_sale_figure_is_there(self) -> FlipAnalysis:
+        return _status_agrees_with_figures(
+            self.status,
+            (self.estimated_sale_price, self.broker_costs, self.net_profit, self.profit_yield),
+            "the estimated sale price feeds",
+            self,
+        )
+
+
+class RentalAnalysis(BaseModel):
+    """Whether the rent carries a takeout loan on the commitment.  # SPEC §8.5"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: AnalysisStatus
+    expenses_pct: Decimal
+    holding_costs_monthly: Decimal
+    loan_amount: Decimal  # the commitment
+    takeout_rate: Decimal
+    amortization_years: int
+    debt_service_monthly: Decimal
+    dscr_floor: Decimal
+    monthly_rent: Decimal | None
+    expenses: Decimal | None
+    net_monthly_income: Decimal | None
+    dscr: Decimal | None
+    passed: bool | None  # None when there was no DSCR to test
+
+    @model_validator(mode="after")
+    def _evaluated_means_every_rent_figure_is_there(self) -> RentalAnalysis:
+        return _status_agrees_with_figures(
+            self.status,
+            (self.monthly_rent, self.expenses, self.net_monthly_income, self.dscr, self.passed),
+            "the monthly rent feeds",
+            self,
+        )
+
+
+class TakeBackAnalysis(BaseModel):
+    """Whether the rent carries what the loan cost GLENWOOD, if it takes the property back.
+
+    # SPEC §8.6. Always run: it is not a toggle, and the Rental toggle does not gate it.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: AnalysisStatus
+    loan_amount: Decimal  # the commitment
+    interest_rate: Decimal
+    lost_interest_months: int
+    lost_interest: Decimal
+    legal_costs: Decimal
+    total_cost: Decimal  # loan_amount + lost_interest + legal_costs
+    amortization_years: int
+    debt_service_monthly: Decimal  # on total_cost, at the deal's own rate
+    dscr_floor: Decimal
+    net_monthly_income: Decimal | None
+    dscr: Decimal | None  # dscr_at_loan_cost
+    passed: bool | None
+
+    @model_validator(mode="after")
+    def _evaluated_means_every_rent_figure_is_there(self) -> TakeBackAnalysis:
+        return _status_agrees_with_figures(
+            self.status,
+            (self.net_monthly_income, self.dscr, self.passed),
+            "the monthly rent feeds",
+            self,
+        )
+
+
+def _status_agrees_with_figures[T](
+    status: AnalysisStatus, figures: tuple[object | None, ...], what: str, model: T
+) -> T:
+    """An analysis and its numbers cannot disagree about whether it was computed."""
+    evaluated = status is AnalysisStatus.EVALUATED
+    if evaluated and any(figure is None for figure in figures):
+        raise ValueError(f"an EVALUATED analysis carries every figure {what}")
+    if not evaluated and any(figure is not None for figure in figures):
+        raise ValueError(f"a {status.value} analysis carries none of the figures {what}")
+    return model
 
 
 class UnderwriteResult(BaseModel):
-    """Full underwrite output; stored on ``underwrites`` with the grid as JSONB.  # SPEC §8.7"""
+    """Full underwrite output; stored whole on ``underwrites.outputs``.  # SPEC §8.7"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     engine_version: str
     config_hash: str
+    loan_purpose: LoanPurpose | None
+    closing_date: date
+    payoff_date: date
     term_months: int
     rehab_months: int
+    exit: ExitInference
     sizing: SizingResult
-    solved_rate: Decimal
-    lender_yield_at_solve: Decimal
-    lender_at_solve: LenderReturn
-    grid_lender: YieldGrid
-    borrower_at_solve: BorrowerEconomics
-    exit: ExitResult
-    downside: DownsideResult
+    economics: DealEconomics
+    return_overview: ReturnOverview
+    flip: FlipAnalysis
+    rental: RentalAnalysis
+    take_back: TakeBackAnalysis
     flags: list[Flag]

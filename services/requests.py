@@ -8,24 +8,31 @@ advance a deal: it is not intake, so most of it is not on ``deals``. Each option
 resolves the same way - this request, then what intake already stored on the deal, then the
 engine default:
 
-    as_is_value / arv     request -> deal.as_is_value_team / arv_team -> not ready (SPEC §8.1)
-    annual taxes          request -> deal.actual_annual_taxes_usd -> % of as-is (SPEC §8.6)
-    annual insurance      request -> deal.actual_annual_insurance_usd -> % of as-is
-    annual utilities      request -> deal.actual_annual_utilities_usd -> % of as-is (SPEC §8.6)
-    market rent           request -> deal.market_rent_monthly -> no DSCR takeout (SPEC §8.6)
-    asset type, exit      request -> deal -> unknown (SPEC §3)
-    term months          request -> deal.term_months -> not ready (SPEC §8.1)
+    as_is_value                   request -> deal.as_is_value_team -> LTV on the price (§7.4)
+    estimated_sale_price          request -> deal.estimated_sale_price_team -> no flip (§8.4)
+    closing_date                  request -> deal.closing_date -> not ready (§8.1)
+    term months / payoff date     request -> deal.term_months -> not ready (§8.1)
+    interest_rate                 request -> deal.interest_rate -> not ready (§8.1)
+    contingency / closing costs   request -> deal -> the config default (§8.1)
+    holding costs / origination   request -> deal -> the config default (§8.1)
+    monthly_rent                  request -> deal.monthly_rent -> no DSCR at all (§8.5, §8.6)
+    flip / rental toggles         request -> deal -> what the §3 exit implies (§8.1)
+    loan purpose, asset type, exit   request -> deal -> unknown (§3)
 
-Market rent is the one with no third step. A percentage of a value stands in for a cost the
-property incurs whatever it is worth - taxes, insurance, the utilities on a vacant house -
-but nothing stands in for what it lets for, and a zero rent would not be neutral: it would
-fabricate a DSCR shortfall on every deal whose rent nobody happened to look up. So a deal
-without one is underwritten with the takeout NOT_EVALUATED and an INFO flag saying so,
-rather than priced on a guess or refused outright.
+Three have no third step and stop the run: the closing date, the term and the interest rate.
+The ledger is dated months of interest (SPEC §8.3) and there is no defensible stand-in for
+any of them - a deal priced at a rate nobody chose is not a priced deal.
 
-The loan split is not here at all. It used to be (``purchase_portion_override``, a single
-number typed at run time); it is now two columns on the deal, entered on the team-entry form
-(SPEC §8.2), so there is one place it lives and one place it is edited.
+The monthly rent is the one with a third step that is deliberately *nothing*. A percentage of
+a value stands in for a cost the property incurs whatever it is worth, but nothing stands in
+for what it lets for, and a zero rent would not be neutral: it would report a DSCR shortfall
+on every deal whose rent nobody happened to look up. So a deal without one is underwritten
+with the Rental and Take-Back analyses NOT_EVALUATED and an INFO flag saying so.
+
+The loan split is not here at all. It is two columns on the deal, entered on the team-entry
+form (SPEC §8.2), so there is one place it lives and one place it is edited. Nor is the
+payoff date a column: it is the closing date plus the term (``schema/dates.py``), and both
+models below take one as an alternative way of saying the other.
 
 An adapter value, when one exists, wins over every step of that (``services/enrichment.py``).
 """
@@ -37,9 +44,11 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from schema.dates import term_from_dates
 from schema.models import (
     AssetType,
     CourtRecordsStatus,
+    LoanPurpose,
     Product,
     RepeatBorrowerStatus,
     StatedExit,
@@ -54,40 +63,58 @@ class UnderwriteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # Valuation (RicherValues or team override). Optional here because the team may
-    # already have entered one on the deal; the underwrite still needs both halves from
-    # somewhere (SPEC §8.1) and says so by name when it has neither.
+    # already have entered one on the deal.
     as_is_value: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
-    arv: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    estimated_sale_price: Decimal | None = Field(
+        default=None, gt=0, max_digits=14, decimal_places=2
+    )
     # Verified borrower facts; they replace the self-reported tranche and bucket.
     verified_credit_score: int | None = Field(default=None, ge=300, le=850)
     verified_deals_36mo: int | None = Field(default=None, ge=0)
     repeat_borrower_verified: RepeatBorrowerStatus | None = None
-    # Term: from the bucket when the bucket names a number; the team sets it for 12_PLUS.
+    # The ledger's dates and rate (SPEC §8.3). Optional here because the team may already
+    # have entered them on the deal; the underwrite still needs all three from somewhere.
+    closing_date: date | None = None
     term_months: int | None = Field(default=None, ge=1, le=60)
-    # Holding costs and the DSCR takeout. Optional here because the team may already have
-    # entered them on the deal; the underwrite still needs both from somewhere.
-    market_rent_monthly: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
-    annual_taxes_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
-    annual_insurance_usd: Decimal | None = Field(
+    payoff_date: date | None = None
+    interest_rate: Decimal | None = Field(default=None, ge=0, le=1)
+    # The §8.1 economics that carry a config default.
+    contingency_pct: Decimal | None = Field(default=None, ge=0, le=1)
+    closing_costs_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    holding_costs_total_usd: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
-    annual_utilities_usd: Decimal | None = Field(
-        default=None, ge=0, max_digits=14, decimal_places=2
-    )
-    # Pricing and exit.
-    extension_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
-    exit_price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
+    # The Rental and Take-Back analyses (SPEC §8.5, §8.6).
+    monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     # Overrides of what intake captured; None leaves the deal's own value in force.
+    flip_analysis: bool | None = None
+    rental_analysis: bool | None = None
+    loan_purpose: LoanPurpose | None = None
     asset_type: AssetType | None = None
     stated_exit: StatedExit | None = None
+
+    @model_validator(mode="after")
+    def _term_and_payoff_agree(self) -> UnderwriteRequest:
+        """A payoff date that is not a whole number of months after closing says so here."""
+        if self.payoff_date is not None:
+            term_from_dates(self.closing_date, self.term_months, self.payoff_date)
+        return self
+
+    @property
+    def requested_term_months(self) -> int | None:
+        """The term this request names: the one typed, else the payoff date's.  # SPEC §8.1"""
+        return term_from_dates(self.closing_date, self.term_months, self.payoff_date)
 
 
 class TeamOverrides(BaseModel):
     """What the review queue lets a team member enter by hand on a deal.  # SPEC §6.1, §8.1
 
-    The interim source. Until the Phase 3 adapters land the team is where the valuation and
-    the court search come from, and utilities and market rent have no adapter planned at all;
-    the queue's override block is where all of it is typed.
+    The interim source, and the standing one. Until the Phase 3 adapters land the team is
+    where the valuation and the court search come from; the rent, the rate, the dates and the
+    §8.1 economics have no adapter planned at all, and the queue's override block is where
+    all of it is typed. What it does not carry is the Property Overview and the borrower's
+    own details - those are intake, and they are edited on the intake form.
 
     A submission replaces the whole block rather than patching it: the form is rendered with
     the deal's current values in it, so what comes back is the state the team means the deal
@@ -103,28 +130,34 @@ class TeamOverrides(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # Valuation (SPEC §6.1); an adapter value still wins over either of these.
+    # Overview (SPEC §8.1)
+    loan_purpose: LoanPurpose | None = None
+    product: Product | None = None
+    closing_date: date | None = None
+    # Enter either; the other derives. ``payoff_date`` is never stored (``schema/dates.py``).
+    term_months: int | None = Field(default=None, ge=1, le=60)
+    payoff_date: date | None = None
+    # Deal economics (SPEC §8.1). Blank means the config default, except the rate, which has
+    # none and without which the deal cannot be priced at all.
+    interest_rate: Decimal | None = Field(default=None, ge=0, le=1)
+    contingency_pct: Decimal | None = Field(default=None, ge=0, le=1)
+    closing_costs_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    holding_costs_total_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
+    # Valuation and rent (SPEC §6.1); an adapter value still wins over any of these.
     as_is_value_team: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
-    arv_team: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
-    # Opex and the DSCR takeout (SPEC §8.1, §8.6), all annual USD but the rent.
-    actual_annual_taxes_usd: Decimal | None = Field(
-        default=None, ge=0, max_digits=14, decimal_places=2
+    estimated_sale_price_team: Decimal | None = Field(
+        default=None, gt=0, max_digits=14, decimal_places=2
     )
-    actual_annual_insurance_usd: Decimal | None = Field(
-        default=None, ge=0, max_digits=14, decimal_places=2
-    )
-    actual_annual_utilities_usd: Decimal | None = Field(
-        default=None, ge=0, max_digits=14, decimal_places=2
-    )
-    market_rent_monthly: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
-    # Structure (SPEC §3): asset type and the stated exit drive the exit inference.
+    monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    # Structure (SPEC §3): asset type and the stated exit drive the exit inference, which
+    # defaults the two analysis toggles beside them.
     asset_type: AssetType | None = None
     stated_exit: StatedExit | None = None
-    product: Product | None = None
-    # The term the deal is priced on (SPEC §8.1). Read-only on the page for every bucket
-    # that names a number, and ``save_overrides`` re-derives it there rather than trusting
-    # what came back; on 12_PLUS it is the one place the team can set one from the queue.
-    term_months: int | None = Field(default=None, ge=1, le=60)
+    flip_analysis: bool | None = None
+    rental_analysis: bool | None = None
     # The team's own court search (SPEC §7.2), one typed matter per entry.
     court_records_status: CourtRecordsStatus | None = None
     court_records_as_of: date | None = None
@@ -137,3 +170,14 @@ class TeamOverrides(BaseModel):
             self.court_records_status, self.court_records_as_of, self.court_records_team
         )
         return self
+
+    @model_validator(mode="after")
+    def _term_and_payoff_agree(self) -> TeamOverrides:
+        """A payoff date that cannot be a whole number of months says so at the door."""
+        _ = self.requested_term_months
+        return self
+
+    @property
+    def requested_term_months(self) -> int | None:
+        """The term this block names: the one typed, else the payoff date's.  # SPEC §8.1"""
+        return term_from_dates(self.closing_date, self.term_months, self.payoff_date)

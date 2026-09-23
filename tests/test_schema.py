@@ -75,7 +75,7 @@ def test_json_round_trip() -> None:
         raw_payload={"address": "1 Main St"},
         borrower={"name": "A", "phone": "+19185550100", "credit_range": "T2"},
         property={"address_raw": "1 Main St", "state": "OK"},
-        deal={"purchase_price": "150000.00", "rehab_budget": 0, "term_bucket": "12_PLUS"},
+        deal={"purchase_price": "150000.00", "rehab_costs": 0, "term_bucket": "12_PLUS"},
         missing_fields=["deal.loan_requested"],
     )
     again = IntakeRecord.model_validate_json(record.model_dump_json())
@@ -91,7 +91,7 @@ def test_json_round_trip() -> None:
         ("purchase_price", "0"),
         ("purchase_price", "-1"),
         ("loan_requested", "0"),
-        ("rehab_budget", "-0.01"),
+        ("rehab_costs", "-0.01"),
         ("purchase_price", "100.123"),
         ("loan_requested", "1000000000000.00"),
     ],
@@ -101,8 +101,8 @@ def test_money_bounds_and_precision(field: str, value: str) -> None:
         DealInfo(**{field: Decimal(value)})
 
 
-def test_rehab_budget_zero_allowed() -> None:
-    assert DealInfo(rehab_budget=Decimal("0")).rehab_budget == 0
+def test_rehab_costs_zero_allowed() -> None:
+    assert DealInfo(rehab_costs=Decimal("0")).rehab_costs == 0
 
 
 def test_unknown_fields_rejected() -> None:
@@ -127,24 +127,32 @@ def test_flag_codes_are_stable_and_do_not_collide() -> None:
     assert {m.value for m in ScreenFlag}.isdisjoint({m.value for m in CourtFlag})
 
 
-def test_actual_opex_fields_are_optional_annual_money() -> None:
-    assert DealInfo().actual_annual_taxes_usd is None
-    assert DealInfo().actual_annual_insurance_usd is None
-    deal = DealInfo(actual_annual_taxes_usd="2400.50", actual_annual_insurance_usd=0)
-    assert deal.actual_annual_taxes_usd == Decimal("2400.50")
-    assert deal.actual_annual_insurance_usd == 0
+def test_the_new_economics_fields_are_optional_money() -> None:
+    assert DealInfo().holding_costs_total_usd is None
+    assert DealInfo().monthly_rent is None
+    deal = DealInfo(holding_costs_total_usd="2400.50", monthly_rent=0)
+    assert deal.holding_costs_total_usd == Decimal("2400.50")
+    assert deal.monthly_rent == 0
     with pytest.raises(ValidationError):
-        DealInfo(actual_annual_insurance_usd=Decimal("-1"))
+        DealInfo(holding_costs_total_usd=Decimal("-1"))
     with pytest.raises(ValidationError):
-        DealInfo(actual_annual_taxes_usd=Decimal("1.005"))
+        DealInfo(monthly_rent=Decimal("1.005"))
 
 
 def test_committed_intake_json_carries_the_new_fields() -> None:
     schema = json.loads(INTAKE_JSON.read_text(encoding="utf-8"))
     assert "state_source" in schema["$defs"]["PropertyInfo"]["properties"]
-    assert "actual_annual_taxes_usd" in schema["$defs"]["DealInfo"]["properties"]
-    assert "actual_annual_insurance_usd" in schema["$defs"]["DealInfo"]["properties"]
+    for name in ("closing_date", "interest_rate", "holding_costs_total_usd", "monthly_rent"):
+        assert name in schema["$defs"]["DealInfo"]["properties"], name
+    for name in ("city", "units", "sf", "beds", "baths", "garage_spaces"):
+        assert name in schema["$defs"]["PropertyInfo"]["properties"], name
     assert schema["$defs"]["StateSource"]["enum"] == ["ENTERED", "INFERRED"]
+    assert schema["$defs"]["LoanPurpose"]["enum"] == [
+        "PURCHASE",
+        "REFINANCE",
+        "CASH_OUT",
+        "CONSTRUCTION",
+    ]
 
 
 def test_product_source_enum_and_pairing() -> None:

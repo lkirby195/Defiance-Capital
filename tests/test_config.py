@@ -21,14 +21,19 @@ def data() -> dict[str, Any]:
 def test_placeholder_yaml_loads() -> None:
     cfg = Config.load()
     assert cfg.credit.floor_tranche is Tranche.T4
-    assert cfg.fees.origination_pct == Decimal("0.02")
-    assert cfg.returns.target_irr == Decimal("0.175")
-    assert cfg.draws.draw_avg_utilization == Decimal("0.50")
+    assert cfg.fees.origination_default_pct == Decimal("0.02")
+    assert cfg.fees.contingency_default_pct == Decimal("0.00")
+    assert cfg.fees.closing_costs_default_usd == Decimal("1000.00")
+    assert cfg.fees.holding_costs_default_pct_of_cost == Decimal("0.02")
+    assert cfg.fees.broker_selling_pct == Decimal("0.04")
     assert cfg.draws.listing_months == 3
-    assert cfg.fees.borrower_closing_pct_of_price == Decimal("0.03")
-    assert cfg.downside.foreclosure_months == {State.OK: 8, State.CO: 4, State.OTHER: 8}
-    assert cfg.downside.cover_floor == Decimal("1.0")
-    assert cfg.returns.month_window.after_term == 6
+    assert cfg.rental.expenses_pct_of_rent == Decimal("0.35")
+    assert cfg.rental.takeout_rate == Decimal("0.065")
+    assert cfg.rental.amortization_years == 30
+    assert cfg.rental.dscr_floor == Decimal("1.20")
+    assert cfg.take_back.lost_interest_months == 3
+    assert cfg.take_back.legal_costs_usd == Decimal("5000.00")
+    assert cfg.take_back.dscr_floor == Decimal("1.00")
     assert cfg.states.served == [State.OK, State.CO]
     assert cfg.leverage_caps[Product.SPLIT_PRINCIPAL][Tranche.T5][ExperienceTier.E3].ltarv <= 1
 
@@ -51,19 +56,19 @@ def test_hash_is_stable_and_ignores_comments_and_order(tmp_path: Path) -> None:
 
 
 def test_hash_changes_when_a_value_changes(data: dict[str, Any]) -> None:
-    data["fees"]["selling_cost_pct"] = Decimal("0.07")
+    data["fees"]["broker_selling_pct"] = Decimal("0.07")
     assert Config.from_dict(data).config_hash != Config.load().config_hash
 
 
 def test_missing_key_fails(data: dict[str, Any]) -> None:
-    del data["fees"]["selling_cost_pct"]
-    with pytest.raises(ConfigError, match="selling_cost_pct"):
+    del data["fees"]["broker_selling_pct"]
+    with pytest.raises(ConfigError, match="broker_selling_pct"):
         Config.from_dict(data)
 
 
 def test_missing_section_fails(data: dict[str, Any]) -> None:
-    del data["downside"]
-    with pytest.raises(ConfigError, match="downside"):
+    del data["take_back"]
+    with pytest.raises(ConfigError, match="take_back"):
         Config.from_dict(data)
 
 
@@ -79,16 +84,16 @@ def test_unknown_key_fails(data: dict[str, Any]) -> None:
         (("screen", "tolerance_band"), Decimal("1.5")),
         (("screen", "tolerance_band"), Decimal("-0.01")),
         (("credit", "tranche_cutoffs", "T1"), 900),
-        (("takeout", "amortization_years"), 0),
-        (("takeout", "dscr_floor"), Decimal("0")),
-        (("downside", "foreclosure_cost_usd"), Decimal("-5")),
-        (("downside", "foreclosure_months", "OK"), 61),
-        (("downside", "cover_floor"), Decimal("0")),
-        (("fees", "borrower_closing_pct_of_price"), Decimal("1.5")),
+        (("rental", "amortization_years"), 0),
+        (("rental", "dscr_floor"), Decimal("0")),
+        (("rental", "expenses_pct_of_rent"), Decimal("1.01")),
+        (("take_back", "legal_costs_usd"), Decimal("-5")),
+        (("take_back", "lost_interest_months"), 61),
+        (("take_back", "dscr_floor"), Decimal("0")),
+        (("fees", "broker_selling_pct"), Decimal("1.5")),
+        (("fees", "closing_costs_default_usd"), Decimal("-1")),
         (("flags", "thresholds", "unsatisfied_judgments_aggregate_usd"), Decimal("-0.01")),
-        (("returns", "rate_grid", "step"), Decimal("0")),
         (("draws", "listing_months"), 61),
-        (("draws", "draw_avg_utilization"), Decimal("1.01")),
     ],
 )
 def test_out_of_range_fails(data: dict[str, Any], path: tuple[str, ...], value: Any) -> None:
@@ -112,16 +117,14 @@ def test_missing_product_in_caps_grid_fails(data: dict[str, Any]) -> None:
         Config.from_dict(data)
 
 
-def test_origination_split_must_sum(data: dict[str, Any]) -> None:
-    data["fees"]["origination_at_close_pct"] = Decimal("0.015")
-    with pytest.raises(ConfigError, match="must equal origination_pct"):
-        Config.from_dict(data)
-
-
-def test_rate_grid_step_must_divide(data: dict[str, Any]) -> None:
-    data["returns"]["rate_grid"]["step"] = Decimal("0.003")
-    with pytest.raises(ConfigError, match="divide"):
-        Config.from_dict(data)
+def test_the_origination_split_is_no_longer_a_tunable(data: dict[str, Any]) -> None:
+    """Half at close and half at payoff is fixed in code (SPEC §3), so the two halves that
+    used to be config are rejected rather than quietly ignored."""
+    for key in ("origination_at_close_pct", "origination_at_payoff_pct"):
+        stale = copy.deepcopy(data)
+        stale["fees"][key] = Decimal("0.01")
+        with pytest.raises(ConfigError, match=key):
+            Config.from_dict(stale)
 
 
 def test_tranche_cutoffs_must_descend(data: dict[str, Any]) -> None:
@@ -181,29 +184,41 @@ def test_config_is_immutable() -> None:
 # --- mechanics decisions (2026-09-10): keys added, renamed, and removed -----------------------
 
 
-def test_every_state_needs_foreclosure_months(data: dict[str, Any]) -> None:
-    del data["downside"]["foreclosure_months"]["OTHER"]
-    with pytest.raises(ConfigError, match="foreclosure_months is missing: OTHER"):
-        Config.from_dict(data)
+def test_the_take_back_replaced_the_reo_downside_entirely(data: dict[str, Any]) -> None:
+    """No haircut, no foreclosure cost, no foreclosure months by state, no cover floor."""
+    assert "downside" not in data
+    for key, value in (
+        ("reo_haircut", Decimal("0.15")),
+        ("foreclosure_cost_usd", Decimal("10000")),
+        ("cover_floor", Decimal("1.0")),
+    ):
+        stale = copy.deepcopy(data)
+        stale["take_back"][key] = value
+        with pytest.raises(ConfigError, match=key):
+            Config.from_dict(stale)
 
 
 def test_underwrite_severities_required_and_complete(data: dict[str, Any]) -> None:
     severities = Config.load().flags.underwrite_severities
-    assert severities[UnderwriteFlag.REFI_SHORTFALL] is Severity.SOFT
-    assert severities[UnderwriteFlag.DOWNSIDE_COVER_BELOW_FLOOR] is Severity.HARD
-    del data["flags"]["underwrite_severities"]["REFI_SHORTFALL"]
-    with pytest.raises(ConfigError, match="underwrite_severities is missing: REFI_SHORTFALL"):
+    assert severities[UnderwriteFlag.DSCR_BELOW_FLOOR] is Severity.SOFT
+    assert severities[UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR] is Severity.HARD
+    del data["flags"]["underwrite_severities"]["DSCR_BELOW_FLOOR"]
+    with pytest.raises(ConfigError, match="underwrite_severities is missing: DSCR_BELOW_FLOOR"):
         Config.from_dict(data)
 
 
 @pytest.mark.parametrize(
     "section, key, value",
     [
-        ("returns", "coc_floor", Decimal("0.20")),
+        # gone with the v0.2 §8: the rate solve, the grid, the draw-curve constant, the
+        # extension fee, the DSCR takeout and the borrower's buy-side closing percentage
+        ("fees", "extension_default_pct", Decimal("0.0")),
+        ("fees", "selling_cost_pct", Decimal("0.06")),
+        ("fees", "contingency_pct", Decimal("0.10")),
+        ("fees", "borrower_closing_pct_of_price", Decimal("0.03")),
+        ("draws", "draw_avg_utilization", Decimal("0.50")),
         ("draws", "s_curve_avg_utilization", Decimal("0.50")),
-        ("draws", "default_rehab_months", {"NO_DRAW": 0}),
-        ("downside", "cap_rates", {"OK": {"default": Decimal("0.08"), "metros": {}}}),
-        ("downside", "foreclosure_costs_usd", Decimal("10000")),
+        ("rental", "ltv", Decimal("0.75")),
         ("flags", "underwrite_flag_floor", Decimal("1")),
     ],
 )
@@ -215,9 +230,13 @@ def test_removed_keys_are_rejected(
         Config.from_dict(data)
 
 
-def test_month_window_before_term_is_rejected(data: dict[str, Any]) -> None:
-    data["returns"]["month_window"]["before_term"] = 1
-    with pytest.raises(ConfigError, match="before_term"):
+@pytest.mark.parametrize("section", ["returns", "takeout", "downside"])
+def test_a_whole_retired_section_is_rejected(data: dict[str, Any], section: str) -> None:
+    """A stale yaml still carrying the rate grid, the DSCR takeout or the REO downside does
+    not start the service (SPEC §10)."""
+    assert section not in data
+    data[section] = {"anything": 1}
+    with pytest.raises(ConfigError, match=section):
         Config.from_dict(data)
 
 
@@ -254,34 +273,40 @@ def test_retired_screen_closing_key_is_rejected(data: dict[str, Any]) -> None:
         Config.from_dict(data)
 
 
-def test_opex_defaults_are_named_for_the_as_is_value(data: dict[str, Any]) -> None:
-    """Renamed with the basis change so a stale yaml fails loudly rather than silently."""
+def test_one_holding_cost_replaced_the_three_itemized_opex_lines(data: dict[str, Any]) -> None:
+    """Taxes, insurance and utilities are one ``holding_costs_total_usd`` input now, so the
+    percentages that stood in for them are gone from config entirely (SPEC §8.1)."""
     cfg = Config.from_dict(data)
-    assert cfg.takeout.opex_defaults.taxes_pct_of_as_is_value == Decimal("0.012")
-    assert cfg.takeout.opex_defaults.insurance_pct_of_as_is_value == Decimal("0.005")
-    stale = copy.deepcopy(data)
-    stale["takeout"]["opex_defaults"]["taxes_pct_of_value"] = stale["takeout"]["opex_defaults"].pop(
-        "taxes_pct_of_as_is_value"
-    )
-    with pytest.raises(ConfigError, match="taxes_pct_of_value"):
-        Config.from_dict(stale)
+    assert cfg.fees.holding_costs_default_pct_of_cost == Decimal("0.02")
+    for key in (
+        "taxes_pct_of_as_is_value",
+        "insurance_pct_of_as_is_value",
+        "utilities_pct_of_as_is_value",
+        "vacancy_pct_of_rent",
+    ):
+        stale = copy.deepcopy(data)
+        stale["fees"][key] = Decimal("0.01")
+        with pytest.raises(ConfigError, match=key):
+            Config.from_dict(stale)
 
 
 def test_underwrite_severities_cover_the_graded_codes_only(data: dict[str, Any]) -> None:
-    graded = {UnderwriteFlag.REFI_SHORTFALL, UnderwriteFlag.DOWNSIDE_COVER_BELOW_FLOOR}
+    graded = {UnderwriteFlag.DSCR_BELOW_FLOOR, UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR}
     assert set(Config.from_dict(data).flags.underwrite_severities) == graded
 
 
 def test_config_cannot_grade_an_informational_underwrite_flag(data: dict[str, Any]) -> None:
-    """NO_REHAB_PERIOD and SOLVED_RATE_BELOW_GRID are fixed Info in code (SPEC §8.7)."""
-    data["flags"]["underwrite_severities"]["NO_REHAB_PERIOD"] = "HARD"
-    with pytest.raises(ConfigError, match="NO_REHAB_PERIOD"):
-        Config.from_dict(data)
+    """NO_REHAB_PERIOD and MONTHLY_RENT_MISSING are fixed Info in code (SPEC §8.8)."""
+    for code in ("NO_REHAB_PERIOD", "MONTHLY_RENT_MISSING"):
+        stale = copy.deepcopy(data)
+        stale["flags"]["underwrite_severities"][code] = "HARD"
+        with pytest.raises(ConfigError, match=code):
+            Config.from_dict(stale)
 
 
 def test_missing_graded_severity_still_fails(data: dict[str, Any]) -> None:
-    del data["flags"]["underwrite_severities"]["REFI_SHORTFALL"]
-    with pytest.raises(ConfigError, match="REFI_SHORTFALL"):
+    del data["flags"]["underwrite_severities"]["TAKE_BACK_DSCR_BELOW_FLOOR"]
+    with pytest.raises(ConfigError, match="TAKE_BACK_DSCR_BELOW_FLOOR"):
         Config.from_dict(data)
 
 

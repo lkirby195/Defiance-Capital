@@ -41,6 +41,7 @@ from schema.models import (
     CourtRecordsStatus,
     DocumentKind,
     ExperienceBucket,
+    LoanPurpose,
     Product,
     ProductSource,
     State,
@@ -149,11 +150,21 @@ class Property(Base):
     address_normalized: Mapped[str | None] = mapped_column(Text, unique=True)
     listing_url: Mapped[str | None] = mapped_column(Text)
     parcel_id: Mapped[str | None] = mapped_column(String(64))
+    city: Mapped[str | None] = mapped_column(String(100))
     county: Mapped[str | None] = mapped_column(String(100))
     state: Mapped[State] = mapped_column(_enum(State, "state_code"), nullable=False)
     state_source: Mapped[StateSource] = mapped_column(
         _enum(StateSource, "state_source"), nullable=False
     )
+    # The SPEC §8.1 Property Overview: descriptive, read by a person, read by no math.
+    units: Mapped[int | None] = mapped_column(Integer)
+    structures: Mapped[int | None] = mapped_column(Integer)
+    sf: Mapped[int | None] = mapped_column(Integer)
+    year_built: Mapped[int | None] = mapped_column(Integer)
+    year_renovated: Mapped[int | None] = mapped_column(Integer)
+    beds: Mapped[int | None] = mapped_column(Integer)
+    baths: Mapped[Decimal | None] = mapped_column(Numeric(4, 1))
+    garage_spaces: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = _created_at()
 
 
@@ -203,15 +214,10 @@ class Deal(Base):
             "OR (product IS NOT NULL AND product IN ('SPLIT_DRAW', 'SPLIT_PRINCIPAL'))",
             name="ck_deals_loan_split_only_on_split_products",
         ),
-        # A term in months is the bucket's own number, or the team's for 12_PLUS (SPEC §8.1).
-        # Spelled out rather than cast, so the mapping a reader checks is the one the
-        # database enforces.
-        CheckConstraint(
-            "term_months IS NULL OR (term_bucket IS NOT NULL AND ("
-            "term_bucket = '12_PLUS' OR term_months = CASE term_bucket "
-            "WHEN '3' THEN 3 WHEN '6' THEN 6 WHEN '9' THEN 9 WHEN '12' THEN 12 END))",
-            name="ck_deals_term_months_matches_bucket",
-        ),
+        # The term does not have to match the bucket. The bucket is the borrower's answer to
+        # "how long do you need the loan?" and it seeds term_months at intake; the team's own
+        # term - or the one their payoff date implies - is what the deal is priced on, and a
+        # deal repriced to 7 months on a 6-month ask is a real thing (SPEC §8.1).
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -234,8 +240,13 @@ class Deal(Base):
         _enum(ExperienceBucket, "experience_bucket")
     )
     repeat_borrower_self_reported: Mapped[bool | None] = mapped_column(Boolean)
+    guarantor_name: Mapped[str | None] = mapped_column(String(200))
+    loan_purpose: Mapped[LoanPurpose | None] = mapped_column(_enum(LoanPurpose, "loan_purpose"))
+    # Month 0 of the ledger (SPEC §8.3). The payoff date is this plus term_months and is
+    # derived wherever it is shown, never stored: one fact, one column.
+    closing_date: Mapped[date | None] = mapped_column(Date)
     purchase_price: Mapped[Decimal | None] = mapped_column(MONEY)
-    rehab_budget: Mapped[Decimal | None] = mapped_column(MONEY)
+    rehab_costs: Mapped[Decimal | None] = mapped_column(MONEY)
     loan_requested: Mapped[Decimal | None] = mapped_column(MONEY)
     # How the loan requested divides between the purchase advance and the rehab money, on
     # the two split products (SPEC §8.2). A team entry: a borrower-channel intake carries
@@ -243,26 +254,32 @@ class Deal(Base):
     loan_purchase_portion: Mapped[Decimal | None] = mapped_column(MONEY)
     loan_rehab_portion: Mapped[Decimal | None] = mapped_column(MONEY)
     term_bucket: Mapped[TermBucket | None] = mapped_column(_enum(TermBucket, "term_bucket"))
-    # The term the deal is priced on (SPEC §8.1): the bucket's own number for every bucket
-    # that names one, the team's for 12_PLUS. Stored rather than derived on every read, so
-    # the readiness checklist and the underwrite refusal both have one thing to point at.
+    # The term the deal is priced on (SPEC §8.1). Seeded from the bucket at intake, then
+    # the team's own - typed, or implied by a payoff date - and free to differ from it.
     term_months: Mapped[int | None] = mapped_column(Integer)
+    # The rest of the SPEC §8.1 Deal Economics. Each but the rate has a config default, and
+    # NULL is what says "use it" rather than "zero"; the rate has none and is required to
+    # price a deal, which the readiness checklist says by name.
+    interest_rate: Mapped[Decimal | None] = mapped_column(RATE)
+    contingency_pct: Mapped[Decimal | None] = mapped_column(RATE)
+    closing_costs_usd: Mapped[Decimal | None] = mapped_column(MONEY)
+    holding_costs_total_usd: Mapped[Decimal | None] = mapped_column(MONEY)
+    origination_fee_pct: Mapped[Decimal | None] = mapped_column(RATE)
+    # The two SPEC §8.1 analysis toggles. NULL leaves the default the §3 exit implies.
+    flip_analysis: Mapped[bool | None] = mapped_column(Boolean)
+    rental_analysis: Mapped[bool | None] = mapped_column(Boolean)
     # Asset type from intake; with the term it drives the exit inference (SPEC §3).
     asset_type: Mapped[AssetType | None] = mapped_column(_enum(AssetType, "asset_type"))
     stated_exit: Mapped[StatedExit | None] = mapped_column(_enum(StatedExit, "stated_exit"))
-    # Team-supplied actuals overriding the %-of-value opex defaults (SPEC §8.6); annual USD.
-    actual_annual_taxes_usd: Mapped[Decimal | None] = mapped_column(MONEY)
-    actual_annual_insurance_usd: Mapped[Decimal | None] = mapped_column(MONEY)
-    # The two remaining SPEC §8.1 team inputs. They have no config default and no adapter
-    # behind them, so the queue collects them once on the deal rather than asking for them
-    # again on every run; an UnderwriteRequest still outranks what is stored here.
-    actual_annual_utilities_usd: Mapped[Decimal | None] = mapped_column(MONEY)
-    market_rent_monthly: Mapped[Decimal | None] = mapped_column(MONEY)
+    # The monthly rent the Rental and Take-Back analyses run on (SPEC §8.5, §8.6). No
+    # config default and no adapter behind it, so the queue collects it once on the deal
+    # rather than asking again on every run; an UnderwriteRequest still outranks it.
+    monthly_rent: Mapped[Decimal | None] = mapped_column(MONEY)
     # Team-supplied valuation and court search, used until the Phase 3 adapters land
     # (SPEC §6). An adapter value always wins; these are never overwritten, so a later
     # reader can see what was entered by hand and what superseded it.
     as_is_value_team: Mapped[Decimal | None] = mapped_column(MONEY)
-    arv_team: Mapped[Decimal | None] = mapped_column(MONEY)
+    estimated_sale_price_team: Mapped[Decimal | None] = mapped_column(MONEY)
     court_records_status: Mapped[CourtRecordsStatus | None] = mapped_column(
         _enum(CourtRecordsStatus, "court_records_status")
     )
@@ -328,12 +345,12 @@ class Screen(Base):
 
 
 class Underwrite(Base):
-    """Full underwrite inputs, outputs, and the sensitivity grid.  # SPEC §5, §8
+    """Full underwrite inputs and outputs, the monthly ledger included.  # SPEC §5, §8
 
-    ``outputs`` is the whole ``UnderwriteResult`` less ``grid_lender``, which has its own
-    column; together they rebuild the result exactly. ``solved_rate`` is a NUMERIC(7,5) copy
-    of r* for querying - the JSONB keeps full precision. There is one grid (SPEC §8.5): the
-    borrower grid was removed in Phase 2b and its column dropped in migration 0004.
+    ``outputs`` is the whole ``UnderwriteResult``, so a stored row rebuilds it exactly.
+    ``irr`` is a NUMERIC(7,5) copy of the ledger's XIRR for querying and is deliberately
+    lossy; the JSONB keeps full precision. There is no grid column any more - there is no
+    grid (SPEC §8.3) - and no ``solved_rate``, because nothing is solved for.
     """
 
     __tablename__ = "underwrites"
@@ -346,8 +363,7 @@ class Underwrite(Base):
     config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     inputs: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     outputs: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    grid_lender: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    solved_rate: Mapped[Decimal | None] = mapped_column(RATE)
+    irr: Mapped[Decimal | None] = mapped_column(RATE)
     created_at: Mapped[datetime] = _event_at()
 
 

@@ -132,7 +132,7 @@ def run_underwrite(
         after={
             "status": deal.status.value,
             "underwrite_id": str(row.id),
-            "solved_rate": str(result.solved_rate),
+            "irr": None if result.return_overview.irr is None else str(result.return_overview.irr),
             "engine_version": result.engine_version,
         },
     )

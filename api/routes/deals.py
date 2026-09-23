@@ -27,11 +27,13 @@ from sqlalchemy.orm import Session
 from api.security import ApiUser
 from db.models import Deal
 from db.session import get_session
+from schema.dates import payoff_date_for
 from schema.models import (
     AssetType,
     Channel,
     CourtRecordsStatus,
     ExperienceBucket,
+    LoanPurpose,
     Product,
     ProductSource,
     ScreenResult,
@@ -79,8 +81,18 @@ class PropertyView(BaseModel):
     address_raw: str | None = None
     address_normalized: str | None = None
     listing_url: str | None = None
+    city: str | None = None
     county: str | None = None
     state: State
+    # The SPEC §8.1 Property Overview; descriptive, and no math reads any of it.
+    units: int | None = None
+    structures: int | None = None
+    sf: int | None = None
+    year_built: int | None = None
+    year_renovated: int | None = None
+    beds: int | None = None
+    baths: Decimal | None = None
+    garage_spaces: int | None = None
 
 
 class ScreenRecord(BaseModel):
@@ -115,23 +127,34 @@ class DealView(BaseModel):
     status: Status
     missing_fields: list[str]
     credit_authorization_signed: bool
+    guarantor_name: str | None
+    loan_purpose: LoanPurpose | None
     product: Product | None
     product_source: ProductSource | None
-    purchase_price: Decimal | None
-    rehab_budget: Decimal | None
-    loan_requested: Decimal | None
+    closing_date: date | None
     term_bucket: TermBucket | None
+    term_months: int | None
+    payoff_date: date | None  # derived: closing_date + term_months (SPEC §8.1)
+    purchase_price: Decimal | None
+    rehab_costs: Decimal | None
+    loan_requested: Decimal | None
+    loan_purchase_portion: Decimal | None
+    loan_rehab_portion: Decimal | None
+    interest_rate: Decimal | None
+    contingency_pct: Decimal | None
+    closing_costs_usd: Decimal | None
+    holding_costs_total_usd: Decimal | None
+    origination_fee_pct: Decimal | None
     asset_type: AssetType | None
     stated_exit: StatedExit | None
+    flip_analysis: bool | None
+    rental_analysis: bool | None
     credit_range_self_reported: Tranche | None
     experience_bucket_self_reported: ExperienceBucket | None
     repeat_borrower_self_reported: bool | None
-    actual_annual_taxes_usd: Decimal | None
-    actual_annual_insurance_usd: Decimal | None
-    actual_annual_utilities_usd: Decimal | None
-    market_rent_monthly: Decimal | None
+    monthly_rent: Decimal | None
     as_is_value_team: Decimal | None
-    arv_team: Decimal | None
+    estimated_sale_price_team: Decimal | None
     court_records_status: CourtRecordsStatus | None
     court_records_as_of: date | None
     court_records_team: list[TeamCourtRecord]
@@ -211,6 +234,13 @@ def _borrower_view(deal: Deal) -> BorrowerView | None:
     )
 
 
+def _payoff_date(deal: Deal) -> date | None:
+    """The last row of the ledger, derived rather than stored (SPEC §8.1)."""
+    if deal.closing_date is None or deal.term_months is None:
+        return None
+    return payoff_date_for(deal.closing_date, deal.term_months)
+
+
 def _property_view(deal: Deal) -> PropertyView | None:
     if deal.property is None:
         return None
@@ -218,8 +248,17 @@ def _property_view(deal: Deal) -> PropertyView | None:
         address_raw=deal.property.address_raw,
         address_normalized=deal.property.address_normalized,
         listing_url=deal.property.listing_url,
+        city=deal.property.city,
         county=deal.property.county,
         state=deal.property.state,
+        units=deal.property.units,
+        structures=deal.property.structures,
+        sf=deal.property.sf,
+        year_built=deal.property.year_built,
+        year_renovated=deal.property.year_renovated,
+        beds=deal.property.beds,
+        baths=deal.property.baths,
+        garage_spaces=deal.property.garage_spaces,
     )
 
 
@@ -235,23 +274,34 @@ def deal_view(deal: Deal, session: Session) -> DealView:
         status=deal.status,
         missing_fields=list(deal.missing_fields),
         credit_authorization_signed=deal.credit_authorization_signed,
+        guarantor_name=deal.guarantor_name,
+        loan_purpose=deal.loan_purpose,
         product=deal.product,
         product_source=deal.product_source,
-        purchase_price=deal.purchase_price,
-        rehab_budget=deal.rehab_budget,
-        loan_requested=deal.loan_requested,
+        closing_date=deal.closing_date,
         term_bucket=deal.term_bucket,
+        term_months=deal.term_months,
+        payoff_date=_payoff_date(deal),
+        purchase_price=deal.purchase_price,
+        rehab_costs=deal.rehab_costs,
+        loan_requested=deal.loan_requested,
+        loan_purchase_portion=deal.loan_purchase_portion,
+        loan_rehab_portion=deal.loan_rehab_portion,
+        interest_rate=deal.interest_rate,
+        contingency_pct=deal.contingency_pct,
+        closing_costs_usd=deal.closing_costs_usd,
+        holding_costs_total_usd=deal.holding_costs_total_usd,
+        origination_fee_pct=deal.origination_fee_pct,
         asset_type=deal.asset_type,
         stated_exit=deal.stated_exit,
+        flip_analysis=deal.flip_analysis,
+        rental_analysis=deal.rental_analysis,
         credit_range_self_reported=deal.credit_range_self_reported,
         experience_bucket_self_reported=deal.experience_bucket_self_reported,
         repeat_borrower_self_reported=deal.repeat_borrower_self_reported,
-        actual_annual_taxes_usd=deal.actual_annual_taxes_usd,
-        actual_annual_insurance_usd=deal.actual_annual_insurance_usd,
-        actual_annual_utilities_usd=deal.actual_annual_utilities_usd,
-        market_rent_monthly=deal.market_rent_monthly,
+        monthly_rent=deal.monthly_rent,
         as_is_value_team=deal.as_is_value_team,
-        arv_team=deal.arv_team,
+        estimated_sale_price_team=deal.estimated_sale_price_team,
         court_records_status=deal.court_records_status,
         court_records_as_of=deal.court_records_as_of,
         court_records_team=[

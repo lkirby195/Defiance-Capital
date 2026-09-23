@@ -450,13 +450,15 @@ def test_the_deal_page_renders_a_screen_and_an_underwrite(
     assert "Suggested reply" in body
     assert "sent by hand" in body
     assert "Copy reply" in body
-    # the sizing table and the yield grid (SPEC §8.2, §8.5)
+    # the sizing table and the §9 result sections, in their SPEC order
     assert "Sizing against caps" in body
     assert "LTARV" in body
-    assert "Lender yield grid" in body
-    assert "Solved rate r*" in body
-    # the solved column is named in the header, because the headers round to a tenth
-    assert body.count(">r*<") == 1
+    assert body.index("Return Overview") < body.index("Flip Analysis")
+    assert body.index("Flip Analysis") < body.index("Rental Analysis")
+    assert body.index("Rental Analysis") < body.index("Take-Back Analysis")
+    assert "Future Draws" in body  # the ledger's own column
+    assert "Yield (Profit / Costs)" in body
+    assert "DSCR at loan cost" in body
     # the audit trail
     assert AuditAction.UNDERWRITE_RUN.value in body
 
@@ -479,13 +481,16 @@ def test_the_run_buttons_screen_and_underwrite_the_deal(
 def test_the_underwrite_button_runs_without_a_rent_or_utilities(
     client: TestClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    """Both are optional now: utilities default from config, and the takeout stands down."""
+    """The rent is optional: without one, both DSCR analyses stand down (SPEC §8.5, §8.6)."""
     save_overrides(
         db_session,
         deal_with_overrides.id,
         TeamOverrides(
             as_is_value_team=deal_with_overrides.as_is_value_team,
-            arv_team=deal_with_overrides.arv_team,
+            estimated_sale_price_team=deal_with_overrides.estimated_sale_price_team,
+            closing_date=deal_with_overrides.closing_date,
+            term_months=deal_with_overrides.term_months,
+            interest_rate=deal_with_overrides.interest_rate,
             court_records_status=deal_with_overrides.court_records_status,
             court_records_as_of=deal_with_overrides.court_records_as_of,
         ),
@@ -499,21 +504,19 @@ def test_the_underwrite_button_runs_without_a_rent_or_utilities(
     assert response.status_code == 303, response.text
     page = client.get(f"/queue/deals/{deal_with_overrides.id}").text
     assert "NOT_EVALUATED" in page
-    assert "MARKET_RENT_MISSING" in page
+    assert "MONTHLY_RENT_MISSING" in page
 
 
 def test_the_underwrite_button_names_what_the_deal_still_needs(
     client: TestClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    """A SPLIT_DRAW deal nobody has divided is screened and not priced.  # SPEC §8.1, §8.2"""
-    deal_with_overrides.loan_purchase_portion = None
-    deal_with_overrides.loan_rehab_portion = None
+    """A deal with no rate on it is screened and not priced.  # SPEC §8.1"""
+    deal_with_overrides.interest_rate = None
     db_session.commit()
 
     response = client.post(f"/queue/deals/{deal_with_overrides.id}/underwrite")
     assert response.status_code == 422
-    assert "deal.loan_purchase_portion" in response.text
-    assert "deal.loan_rehab_portion" in response.text
+    assert "deal.interest_rate" in response.text
     # and the page said so before the button was pressed
     assert "Run underwrite is off until these are entered" in response.text
 
@@ -552,5 +555,5 @@ def test_every_team_entry_fixture_renders_its_screen_and_underwrite(
     response = client.get(f"/queue/deals/{deal.id}")
     assert response.status_code == 200, response.text
     assert "Score components" in response.text
-    assert "Lender yield grid" in response.text
-    assert "Downside" in response.text
+    assert "Return Overview" in response.text
+    assert "Take-Back Analysis" in response.text

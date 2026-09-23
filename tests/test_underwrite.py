@@ -1,23 +1,33 @@
-"""engine/underwrite.py: assembly, flags, recording, purity.  # SPEC §8.7"""
+"""engine/underwrite.py: the run that assembles the ledger, the analyses and the flags.
+
+# SPEC §8
+
+The pieces have their own tests (``test_calc.py``, ``test_irr.py``); these are about the
+assembly - that the caps cell comes from the same place the screen's does, that the screen's
+own flags carry through, that each of the four underwrite codes is raised exactly when its
+threshold says so and not otherwise, and that the result is the shape a stored row rebuilds.
+"""
 
 from __future__ import annotations
 
-import copy
 from datetime import date
 from decimal import Decimal
-from typing import Any
 
-from config.config import DEFAULT_PATH, Config, load_yaml
-from engine.underwrite import downside_flags, exit_flags, underwrite
-from engine.version import ENGINE_VERSION
+import pytest
+
+from config.config import Config
+from engine.underwrite import underwrite
 from schema.models import (
-    SPLIT_PRODUCTS,
+    AnalysisStatus,
+    AssetType,
     BorrowerInputs,
     CourtFlag,
     CourtRecordInputs,
+    ExitSource,
     ExperienceBucket,
     ExperienceTier,
     Flag,
+    LoanPurpose,
     Product,
     RepeatBorrowerStatus,
     ScreenFlag,
@@ -34,422 +44,328 @@ from schema.models import (
 
 CONFIG = Config.load()
 D = Decimal
-TIGHT = D("0.000000000001")
-SEARCHED_ON = date(2026, 9, 9)
+CLOSING = date(2027, 1, 1)
+SEARCHED = date(2026, 12, 1)
+
+BORROWER = BorrowerInputs(
+    credit_range_self_reported=Tranche.T1,
+    experience_bucket_self_reported=ExperienceBucket.SIX_PLUS,
+    repeat_borrower_self_reported=False,
+)
 
 
-def config_with(**sections: dict[str, Any]) -> Config:
-    data = copy.deepcopy(load_yaml(DEFAULT_PATH.read_text(encoding="utf-8")))
-    for section, values in sections.items():
-        for key, value in values.items():
-            data[section][key] = value
-    return Config.from_dict(data)
+def deal(
+    *,
+    product: Product = Product.NO_DRAW,
+    purchase_price: str = "200000",
+    rehab_costs: str = "0",
+    loan_requested: str = "150000",
+    purchase_portion: str | None = None,
+    rehab_portion: str | None = None,
+    as_is_value: str | None = "250000",
+    estimated_sale_price: str | None = "260000",
+    **extra: object,
+) -> SizingInputs:
+    return SizingInputs(
+        product=product,
+        purchase_price=D(purchase_price),
+        rehab_costs=D(rehab_costs),
+        loan_requested=D(loan_requested),
+        as_is_value=None if as_is_value is None else D(as_is_value),
+        estimated_sale_price=None if estimated_sale_price is None else D(estimated_sale_price),
+        loan_purchase_portion=None if purchase_portion is None else D(purchase_portion),
+        loan_rehab_portion=None if rehab_portion is None else D(rehab_portion),
+        **extra,  # type: ignore[arg-type]
+    )
 
 
-def borrower(**overrides: Any) -> BorrowerInputs:
-    base: dict[str, Any] = {
-        "credit_range_self_reported": Tranche.T2,
-        "experience_bucket_self_reported": ExperienceBucket.THREE_TO_FIVE,
-        "repeat_borrower_self_reported": False,
-        "verified_credit_score": 715,
-        "verified_deals_36mo": 4,
-    }
-    base.update(overrides)
-    return BorrowerInputs(**base)
-
-
-def deal(**overrides: Any) -> SizingInputs:
-    base: dict[str, Any] = {
-        "product": Product.NO_DRAW,
-        "purchase_price": D("150000.00"),
-        "rehab_budget": D("0.00"),
-        "loan_requested": D("105000.00"),
-        "as_is_value": D("160000.00"),
-        "arv": D("165000.00"),
-    }
-    base.update(overrides)
-    if base["product"] in SPLIT_PRODUCTS and "loan_purchase_portion" not in base:
-        # the split the team would have entered: the rehab side is the contingency-adjusted
-        # budget (capped at the request), the rest is the purchase side (SPEC §8.2)
-        loan = D(base["loan_requested"])
-        rehab = min(loan, (D(base["rehab_budget"]) * D("1.10")).quantize(D("0.01")))
-        base["loan_purchase_portion"] = loan - rehab
-        base["loan_rehab_portion"] = rehab
-    return SizingInputs(**base)
-
-
-def inputs(**overrides: Any) -> UnderwriteInputs:
-    base: dict[str, Any] = {
-        "deal": deal(),
-        "state": State.OK,
-        "borrower": borrower(),
-        "term_months": 9,
-        "market_rent_monthly": D("1500.00"),
-        "annual_taxes_usd": D("1800.00"),
-        "annual_insurance_usd": D("1200.00"),
-        "annual_utilities_usd": D("600.00"),
-        "stated_exit": StatedExit.FLIP,
-        # A clean search, dated: the underwrite runs the SPEC §7.2 tests on its own court
-        # record (SPEC §8.1), and an absent one is an INFO flag rather than a clean bill.
-        "court_records": CourtRecordInputs(as_of=SEARCHED_ON),
-    }
-    base.update(overrides)
-    return UnderwriteInputs(**base)
-
-
-def codes(flags: list[Flag]) -> list[str]:
-    return [f.code.value for f in flags]
-
-
-def test_underwrite_assembles_the_result() -> None:
-    result = underwrite(inputs(), CONFIG)
-    assert result.engine_version == ENGINE_VERSION
-    assert result.config_hash == CONFIG.config_hash
-    assert result.term_months == 9 and result.rehab_months == 6
-    assert result.sizing.credit_tranche is Tranche.T2  # from the verified 715
-    assert result.sizing.experience_tier is ExperienceTier.E2  # from the verified 4 deals
-    assert result.sizing.commitment == D("105000.00")
-    assert result.solved_rate.quantize(D("0.000001")) == D("0.148333")
-    assert result.lender_yield_at_solve.quantize(TIGHT) == CONFIG.returns.target_irr
-    assert result.lender_at_solve.rate == result.solved_rate
-    assert result.lender_at_solve.month == 9
-    assert result.grid_lender.solved_rate == result.solved_rate
-    assert result.grid_lender.months[0] == 9
-    assert result.borrower_at_solve.month == 9
-    assert result.borrower_at_solve.rate == result.solved_rate
-    assert result.borrower_at_solve.profit.quantize(D("0.01")) == D("-15881.25")
-    assert result.exit.type is StatedExit.FLIP and result.exit.refi_covers is True
-    assert result.downside.passed is True
-    assert result.flags == []
-
-
-def test_underwrite_result_round_trips_as_json() -> None:
-    result = underwrite(inputs(), CONFIG)
-    again = UnderwriteResult.model_validate_json(result.model_dump_json())
-    assert again == result
-    assert isinstance(again.solved_rate, Decimal)
-    assert isinstance(again.downside.cover, Decimal)
-
-
-def test_borrower_economics_are_information_only() -> None:
-    # a losing flip raises no flag: no CoC floor in v1
-    result = underwrite(inputs(), CONFIG)
-    assert result.borrower_at_solve.profit < 0
-    assert result.borrower_at_solve.cash_on_cash is not None
-    assert result.borrower_at_solve.cash_on_cash < 0
-    assert result.flags == []
-
-
-def test_refi_shortfall_flag_names_the_numbers() -> None:
-    result = underwrite(inputs(market_rent_monthly=D("900.00")), CONFIG)
-    assert result.exit.refi_covers is False
-    [flag] = result.flags
-    assert flag.code is UnderwriteFlag.REFI_SHORTFALL
-    assert flag.severity is Severity.SOFT  # config placeholder
-    assert "75.0% LTV on ARV = $123,750.00" in flag.message
-    assert "1.20x DSCR, 7.5% / 30-yr" in flag.message
-    assert "$106,050.00 payoff due" in flag.message
-    assert f"shortfall ${result.exit.shortfall:,.2f}" in flag.message
-
-
-def test_downside_flag_names_cover_and_floor() -> None:
-    small = inputs(
-        deal=deal(
-            purchase_price=D("80000.00"),
-            loan_requested=D("60000.00"),
-            as_is_value=D("85000.00"),
-            arv=D("95000.00"),
+def inputs(
+    sizing: SizingInputs | None = None,
+    *,
+    term_months: int = 12,
+    interest_rate: str = "0.12",
+    monthly_rent: str | None = "2000",
+    borrower: BorrowerInputs = BORROWER,
+    court_records: CourtRecordInputs | None = None,
+    **extra: object,
+) -> UnderwriteInputs:
+    return UnderwriteInputs(
+        deal=sizing if sizing is not None else deal(),
+        state=State.OK,
+        borrower=borrower,
+        closing_date=CLOSING,
+        term_months=term_months,
+        interest_rate=D(interest_rate),
+        monthly_rent=None if monthly_rent is None else D(monthly_rent),
+        court_records=(
+            court_records if court_records is not None else CourtRecordInputs(as_of=SEARCHED)
         ),
-        annual_taxes_usd=D("1000.00"),
-        annual_insurance_usd=D("800.00"),
-        term_months=6,
+        **extra,  # type: ignore[arg-type]
     )
-    result = underwrite(small, CONFIG)
-    assert result.downside.passed is False
-    assert result.exit.refi_covers is True
-    [flag] = result.flags
-    assert flag.code is UnderwriteFlag.DOWNSIDE_COVER_BELOW_FLOOR
-    assert flag.severity is Severity.HARD  # config placeholder
-    assert "cover 0.93x (recovery $56,315.00 / exposure $60,600.00)" in flag.message
-    assert "below the 1.00x floor" in flag.message
 
 
-def test_underwrite_flag_severities_come_from_config() -> None:
-    cfg = config_with(
-        flags={
-            "underwrite_severities": {
-                "REFI_SHORTFALL": "HARD",
-                "DOWNSIDE_COVER_BELOW_FLOOR": "INFO",
-            }
-        }
+def codes(flags: list[Flag]) -> set[str]:
+    return {flag.code.value for flag in flags}
+
+
+def find(flags: list[Flag], code: object) -> Flag:
+    return next(flag for flag in flags if flag.code is code)
+
+
+# --- the shape of a run --------------------------------------------------------------------------
+
+
+def test_the_result_carries_the_dates_the_term_and_the_version() -> None:
+    result = underwrite(inputs(term_months=9), CONFIG)
+    assert result.engine_version and result.config_hash == CONFIG.config_hash
+    assert result.closing_date == CLOSING
+    assert result.payoff_date == date(2027, 10, 1)
+    assert result.term_months == 9
+    assert result.rehab_months == 6
+    assert len(result.return_overview.entries) == 10
+
+
+def test_the_caps_cell_comes_from_the_verified_values_the_screen_would_use() -> None:
+    verified = BorrowerInputs(
+        credit_range_self_reported=Tranche.T1,
+        experience_bucket_self_reported=ExperienceBucket.SIX_PLUS,
+        repeat_borrower_self_reported=False,
+        verified_credit_score=705,  # T2 on the placeholder cutoffs
+        verified_deals_36mo=2,  # E1
     )
-    result = underwrite(inputs(market_rent_monthly=D("900.00")), cfg)
-    assert [f.severity for f in result.flags] == [Severity.HARD]
-    assert exit_flags(result.exit, cfg)[0].severity is Severity.HARD
-    assert exit_flags(underwrite(inputs(), cfg).exit, cfg) == []
-    assert downside_flags(underwrite(inputs(), cfg).downside, cfg) == []
-
-
-def test_credit_and_experience_flags_carry_into_the_underwrite() -> None:
-    result = underwrite(
-        inputs(
-            borrower=borrower(
-                credit_range_self_reported=Tranche.T1,  # verified 715 is T2 -> mismatch
-                verified_deals_36mo=1,  # E1 vs self-reported 3-5 -> mismatch
-                repeat_borrower_self_reported=True,
-                repeat_borrower_verified=RepeatBorrowerStatus.CLEAN,  # lifts E1 -> E2
-            )
-        ),
-        CONFIG,
-    )
+    result = underwrite(inputs(borrower=verified), CONFIG)
     assert result.sizing.credit_tranche is Tranche.T2
-    assert result.sizing.experience_tier is ExperienceTier.E2
-    assert codes(result.flags) == [
-        "CREDIT_MISMATCH",
-        "EXPERIENCE_MISMATCH",
-        "REPEAT_BORROWER_OVERRIDE_APPLIED",
-    ]
+    assert result.sizing.experience_tier is ExperienceTier.E1
+    # ...and the screen's own mismatch flags come with it
+    assert {"CREDIT_MISMATCH", "EXPERIENCE_MISMATCH"} <= codes(result.flags)
 
 
-def test_verified_credit_below_floor_is_a_hard_flag() -> None:
-    result = underwrite(inputs(borrower=borrower(verified_credit_score=600)), CONFIG)
-    assert result.sizing.credit_tranche is Tranche.T5
-    assert result.flags[0].code is ScreenFlag.CREDIT_BELOW_FLOOR
-    assert result.flags[0].severity is Severity.HARD
-
-
-def test_leverage_flags_use_verified_values() -> None:
-    # as-is 130,000 puts LTV at 80.8% for a 105,000 loan: over the 75% cap, past the band
-    result = underwrite(inputs(deal=deal(as_is_value=D("130000.00"))), CONFIG)
-    assert "LTV_AS_IS_OVER_CAP" in codes(result.flags)
-    assert result.flags[0].severity is Severity.HARD
-    assert result.sizing.all_pass is False
-
-
-def test_flags_are_severity_ordered() -> None:
+def test_the_economics_are_the_resolved_inputs_not_the_raw_ones() -> None:
     result = underwrite(
         inputs(
-            deal=deal(as_is_value=D("130000.00")),  # HARD leverage
-            market_rent_monthly=D("900.00"),  # SOFT refi shortfall
-            borrower=borrower(repeat_borrower_self_reported=True),  # INFO unverified repeat
+            deal(rehab_costs="50000", contingency_pct=D("0.10"), closing_costs_usd=D("1500.00")),
+            origination_fee_pct=D("0.03"),
+            holding_costs_total_usd=D("12000.00"),
         ),
         CONFIG,
     )
-    severities = [f.severity for f in result.flags]
-    assert severities == sorted(severities, key=[Severity.HARD, Severity.SOFT, Severity.INFO].index)
-    assert Severity.HARD in severities and Severity.SOFT in severities
-    assert Severity.INFO in severities
+    economics = result.economics
+    assert economics.contingency_pct == D("0.10")
+    assert economics.contingency == D("5000.00")
+    assert economics.rehab_adj == D("55000.00")
+    assert economics.closing_costs == D("1500.00")
+    assert economics.origination_fee_pct == D("0.03")
+    assert economics.holding_costs_total == D("12000.00")
+    assert economics.holding_costs_monthly == D("1000")
+    assert economics.commitment == D("150000")
+    assert economics.loan_purchase_portion is None  # NO_DRAW has no split
 
 
-def test_extension_fee_and_exit_price_inputs_flow_through() -> None:
-    result = underwrite(inputs(extension_fee_pct=D("0.01"), exit_price=D("172000.00")), CONFIG)
-    assert result.borrower_at_solve.exit_price == D("172000.00")
-    month_after = result.grid_lender.rows[1].cells[0]
-    at_term = result.grid_lender.rows[0].cells[0]
-    assert month_after.annualized_yield > at_term.annualized_yield  # extension fee charged
+def test_the_exit_and_both_toggles_are_reported() -> None:
+    result = underwrite(inputs(term_months=6, asset_type=AssetType.SFR), CONFIG)
+    assert result.exit.type is StatedExit.FLIP
+    assert result.exit.exit_source is ExitSource.INFERRED
+    assert result.exit.flip_analysis is True
+    assert result.exit.rental_analysis is True  # a rent was entered
+    assert result.flip.status is AnalysisStatus.EVALUATED
 
 
-def test_split_principal_underwrite_uses_tranche_a_draws() -> None:
-    result = underwrite(
-        inputs(
-            deal=deal(
-                product=Product.SPLIT_PRINCIPAL,
-                rehab_budget=D("60000.00"),
-                loan_requested=D("170000.00"),
-                as_is_value=D("230000.00"),
-                arv=D("290000.00"),
-            ),
-            term_months=12,
-            market_rent_monthly=D("2400.00"),
-        ),
-        CONFIG,
-    )
-    assert result.rehab_months == 9
-    assert result.sizing.split is not None
-    assert result.lender_at_solve.avg_outstanding == D("145250")
-    assert result.solved_rate.quantize(D("0.000001")) == D("0.181411")
-    assert result.lender_yield_at_solve.quantize(TIGHT) == CONFIG.returns.target_irr
+def test_a_result_round_trips_through_json_exactly() -> None:
+    result = underwrite(inputs(), CONFIG)
+    assert UnderwriteResult.model_validate_json(result.model_dump_json()) == result
 
 
-# --- Phase 2b review decisions: the two informational flags (SPEC §8.3, §8.4, §8.7) -------------
+# --- the split products a run cannot price (SPEC §8.2) -------------------------------------------
 
 
-def test_no_rehab_period_flag_when_a_split_principal_term_leaves_no_rehab() -> None:
-    """A SPLIT_PRINCIPAL term at or under listing_months draws Tranche A in full at close."""
-    short = inputs(
-        deal=deal(
+@pytest.mark.parametrize("product", [Product.SPLIT_DRAW, Product.SPLIT_PRINCIPAL])
+def test_a_split_product_without_its_split_is_refused_at_the_door(product: Product) -> None:
+    with pytest.raises(ValueError, match="requires the loan split"):
+        inputs(deal(product=product, rehab_costs="50000"))
+
+
+# --- NO_REHAB_PERIOD (SPEC §8.3, §8.8) -----------------------------------------------------------
+
+
+def split_principal(term: int, rehab_portion: str = "25000") -> UnderwriteInputs:
+    return inputs(
+        deal(
             product=Product.SPLIT_PRINCIPAL,
-            purchase_price=D("120000.00"),
-            rehab_budget=D("20000.00"),
-            loan_requested=D("105000.00"),
-            as_is_value=D("175000.00"),
-            arv=D("195000.00"),
+            purchase_price="120000",
+            rehab_costs="30000",
+            loan_requested="110000",
+            purchase_portion=str(D("110000") - D(rehab_portion)),
+            rehab_portion=rehab_portion,
+            as_is_value="160000",
+            estimated_sale_price="185000",
         ),
-        term_months=3,
+        term_months=term,
     )
-    result = underwrite(short, CONFIG)
-    assert result.rehab_months == 0
-    flag = next(f for f in result.flags if f.code is UnderwriteFlag.NO_REHAB_PERIOD)
+
+
+def test_no_rehab_period_is_raised_when_the_term_leaves_none() -> None:
+    result = underwrite(split_principal(3), CONFIG)
+    flag = find(result.flags, UnderwriteFlag.NO_REHAB_PERIOD)
     assert flag.severity is Severity.INFO
+    assert "3 month(s)" in flag.message
     assert "3-month listing period" in flag.message
-    # the draw curve is inert: the whole commitment is outstanding for the whole term
-    assert result.lender_at_solve.avg_outstanding == result.sizing.commitment
+    assert "$25,000.00 rehab portion is advanced at close" in flag.message
+    assert result.rehab_months == 0
+    # and the ledger shows it: everything out at close, nothing drawn
+    assert result.return_overview.total_draws == 0
+    assert result.economics.funded_at_close == D("110000")
 
 
-def test_no_rehab_period_flag_is_silent_with_a_rehab_period_or_another_product() -> None:
-    with_rehab = inputs(
-        deal=deal(
-            product=Product.SPLIT_PRINCIPAL,
-            rehab_budget=D("60000.00"),
-            loan_requested=D("170000.00"),
-            as_is_value=D("230000.00"),
-            arv=D("290000.00"),
-        ),
+def test_no_rehab_period_is_not_raised_when_there_is_one() -> None:
+    result = underwrite(split_principal(9), CONFIG)
+    assert UnderwriteFlag.NO_REHAB_PERIOD.value not in codes(result.flags)
+
+
+def test_no_rehab_period_is_not_raised_on_a_product_with_no_rehab_portion() -> None:
+    """A NO_DRAW on a 3-month term has no rehab period either, and nothing to draw."""
+    result = underwrite(inputs(term_months=3), CONFIG)
+    assert result.rehab_months == 0
+    assert UnderwriteFlag.NO_REHAB_PERIOD.value not in codes(result.flags)
+
+
+# --- the DSCR flags (SPEC §8.5, §8.6, §8.8) ------------------------------------------------------
+
+
+def test_a_rental_under_the_floor_is_flagged_with_the_threshold_it_missed() -> None:
+    result = underwrite(inputs(monthly_rent="2000"), CONFIG)
+    flag = find(result.flags, UnderwriteFlag.DSCR_BELOW_FLOOR)
+    assert flag.severity is CONFIG.flags.underwrite_severities[UnderwriteFlag.DSCR_BELOW_FLOOR]
+    assert "1.20x floor" in flag.message
+    assert "6.5%" in flag.message and "30 years" in flag.message
+    assert result.rental.passed is False
+
+
+def test_a_rental_over_the_floor_is_not_flagged() -> None:
+    result = underwrite(inputs(monthly_rent="8000"), CONFIG)
+    assert result.rental.passed is True
+    assert UnderwriteFlag.DSCR_BELOW_FLOOR.value not in codes(result.flags)
+
+
+def test_a_take_back_under_the_floor_is_hard_and_names_what_it_cost() -> None:
+    result = underwrite(inputs(monthly_rent="2000"), CONFIG)
+    flag = find(result.flags, UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR)
+    assert flag.severity is Severity.HARD
+    assert "1.00x floor" in flag.message
+    assert "3 months' lost interest" in flag.message
+    assert "$5,000.00" in flag.message  # the legal bill
+    assert result.take_back.passed is False
+
+
+def test_a_take_back_over_the_floor_is_not_flagged() -> None:
+    result = underwrite(inputs(monthly_rent="8000"), CONFIG)
+    assert result.take_back.passed is True
+    assert UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR.value not in codes(result.flags)
+
+
+# --- MONTHLY_RENT_MISSING (SPEC §8.5, §8.6, §8.8) ------------------------------------------------
+
+
+def test_no_rent_replaces_both_dscr_tests_with_one_informational_flag() -> None:
+    result = underwrite(inputs(monthly_rent=None), CONFIG)
+    flag = find(result.flags, UnderwriteFlag.MONTHLY_RENT_MISSING)
+    assert flag.severity is Severity.INFO
+    assert "nothing stands in for what a property lets for" in flag.message
+    # the take-back's own cost does not depend on the rent, so it is still reported
+    assert "$159,500.00 take-back cost" in flag.message
+    assert result.rental.status is AnalysisStatus.NOT_EVALUATED
+    assert result.take_back.status is AnalysisStatus.NOT_EVALUATED
+    assert codes(result.flags).isdisjoint(
+        {UnderwriteFlag.DSCR_BELOW_FLOOR.value, UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR.value}
+    )
+
+
+def test_a_rent_on_the_deal_leaves_the_flag_unraised() -> None:
+    result = underwrite(inputs(monthly_rent="2000"), CONFIG)
+    assert UnderwriteFlag.MONTHLY_RENT_MISSING.value not in codes(result.flags)
+
+
+def test_the_flag_says_when_the_rental_was_off_anyway() -> None:
+    result = underwrite(inputs(monthly_rent=None, rental_analysis=False), CONFIG)
+    flag = find(result.flags, UnderwriteFlag.MONTHLY_RENT_MISSING)
+    assert "the Rental analysis is off in any case" in flag.message
+
+
+# --- the screen's flags carry through (SPEC §8) --------------------------------------------------
+
+
+def test_the_leverage_flags_the_screen_raises_are_raised_here_too() -> None:
+    result = underwrite(
+        inputs(deal(loan_requested="240000", as_is_value="250000", estimated_sale_price="260000")),
+        CONFIG,
+    )
+    assert ScreenFlag.LTC_OVER_CAP.value in codes(result.flags)
+    assert ScreenFlag.LTARV_OVER_CAP.value in codes(result.flags)
+
+
+def test_the_court_tests_are_re_run_here_on_the_record_in_force() -> None:
+    """Not copied from the screens row: weeks pass, and a pull may have landed since."""
+    found = CourtRecordInputs(
+        as_of=SEARCHED,
+        source=ValueSource.ADAPTER,
+        open_tax_liens_usd=[D("4000")],
+    )
+    result = underwrite(inputs(court_records=found), CONFIG)
+    assert CourtFlag.OPEN_TAX_LIEN.value in codes(result.flags)
+
+
+def test_no_court_record_at_all_is_reported_rather_than_read_as_clean() -> None:
+    """NOT_CHECKED is not CLEAN (SPEC §7.2), and the underwrite says so as the screen does."""
+    nothing_checked = UnderwriteInputs(
+        deal=deal(),
+        state=State.OK,
+        borrower=BORROWER,
+        closing_date=CLOSING,
         term_months=12,
-        market_rent_monthly=D("2400.00"),
+        interest_rate=D("0.12"),
+        monthly_rent=D("2000"),
+        court_records=None,
     )
-    long_enough = underwrite(with_rehab, CONFIG)
-    assert UnderwriteFlag.NO_REHAB_PERIOD not in [f.code for f in long_enough.flags]
-    # a single-note product on the same short term has no Tranche A to flag
-    single = underwrite(inputs(term_months=3), CONFIG)
-    assert UnderwriteFlag.NO_REHAB_PERIOD not in [f.code for f in single.flags]
+    result = underwrite(nothing_checked, CONFIG)
+    assert ScreenFlag.COURT_RECORDS_NOT_CHECKED.value in codes(result.flags)
 
 
-def test_no_rehab_period_threshold_follows_the_configured_listing_months() -> None:
-    cfg = config_with(draws={"listing_months": 6})
-    short = inputs(
-        deal=deal(
-            product=Product.SPLIT_PRINCIPAL,
-            rehab_budget=D("60000.00"),
-            loan_requested=D("170000.00"),
-            as_is_value=D("230000.00"),
-            arv=D("290000.00"),
-        ),
-        term_months=6,
-        market_rent_monthly=D("2400.00"),
+def test_hand_entered_values_are_named() -> None:
+    by_hand = SizingInputs(
+        product=Product.NO_DRAW,
+        purchase_price=D("200000"),
+        rehab_costs=D("0"),
+        loan_requested=D("150000"),
+        as_is_value=D("250000"),
+        as_is_value_source=ValueSource.TEAM,
+        estimated_sale_price=D("260000"),
+        estimated_sale_price_source=ValueSource.TEAM,
     )
-    codes_at_6 = [f.code for f in underwrite(short, cfg).flags]
-    assert UnderwriteFlag.NO_REHAB_PERIOD in codes_at_6
-    assert UnderwriteFlag.NO_REHAB_PERIOD not in [f.code for f in underwrite(short, CONFIG).flags]
-
-
-def test_solved_rate_below_grid_is_reported_as_computed_and_flagged() -> None:
-    """r* = target - origination x 12 / term: 9.5% at three months, under the 10% grid floor."""
-    result = underwrite(inputs(term_months=3), CONFIG)
-    assert result.solved_rate.quantize(D("0.000001")) == D("0.095000")
-    assert result.solved_rate < CONFIG.returns.rate_grid.min
-    flag = next(f for f in result.flags if f.code is UnderwriteFlag.SOLVED_RATE_BELOW_GRID)
+    result = underwrite(inputs(by_hand), CONFIG)
+    flag = find(result.flags, ScreenFlag.TEAM_SOURCED_VALUES)
+    assert "estimated sale price" in flag.message
     assert flag.severity is Severity.INFO
-    assert "10.0%" in flag.message  # names the threshold it was tested against
-    assert "negative" not in flag.message
-    # reported as computed: the grid carries the solved rate as its first column
-    grid = result.grid_lender
-    assert grid.solved_rate == result.solved_rate
-    assert grid.solved_rate_inserted is True
-    assert grid.rates[0] == result.solved_rate
-    assert result.lender_yield_at_solve.quantize(TIGHT) == CONFIG.returns.target_irr
 
 
-def test_solved_rate_below_grid_says_so_when_r_star_is_negative() -> None:
-    """One month of interest cannot carry 2% of fees: r* = 0.175 - 0.24 = -6.5%."""
-    result = underwrite(inputs(term_months=1), CONFIG)
-    assert result.solved_rate.quantize(D("0.000001")) == D("-0.065000")
-    flag = next(f for f in result.flags if f.code is UnderwriteFlag.SOLVED_RATE_BELOW_GRID)
-    assert "negative" in flag.message
-    assert result.lender_yield_at_solve.quantize(TIGHT) == CONFIG.returns.target_irr
+# --- flags are ordered and every one carries a message -------------------------------------------
 
 
-def test_solved_rate_flag_is_silent_on_and_above_the_grid() -> None:
-    on_grid = underwrite(inputs(term_months=9), CONFIG)  # r* 14.83%
-    assert UnderwriteFlag.SOLVED_RATE_BELOW_GRID not in [f.code for f in on_grid.flags]
-    above = underwrite(
+def test_flags_come_back_hard_first_and_every_one_says_what_it_tested() -> None:
+    result = underwrite(
         inputs(
-            deal=deal(
-                product=Product.SPLIT_PRINCIPAL,
-                rehab_budget=D("60000.00"),
-                loan_requested=D("170000.00"),
-                as_is_value=D("230000.00"),
-                arv=D("290000.00"),
+            deal(loan_requested="240000"),
+            monthly_rent="2000",
+            borrower=BorrowerInputs(
+                credit_range_self_reported=Tranche.T1,
+                experience_bucket_self_reported=ExperienceBucket.SIX_PLUS,
+                repeat_borrower_self_reported=True,
+                repeat_borrower_verified=RepeatBorrowerStatus.NO_MATCH,
             ),
-            term_months=12,
-            market_rent_monthly=D("2400.00"),
-        ),
-        CONFIG,
-    )  # r* 18.14%, above the grid top
-    assert UnderwriteFlag.SOLVED_RATE_BELOW_GRID not in [f.code for f in above.flags]
-
-
-def test_informational_flags_never_change_a_verdict_input() -> None:
-    """Both new codes are INFO, so nothing about them is a config severity decision."""
-    result = underwrite(inputs(term_months=3), CONFIG)
-    informational = {UnderwriteFlag.NO_REHAB_PERIOD, UnderwriteFlag.SOLVED_RATE_BELOW_GRID}
-    for flag in result.flags:
-        if flag.code in informational:
-            assert flag.severity is Severity.INFO
-
-
-# --- TEAM_SOURCED_VALUES on the underwrite (SPEC §6.1) -------------------------------------------
-
-
-def test_the_underwrite_flags_a_hand_entered_valuation() -> None:
-    team_valued = inputs(
-        deal=deal().model_copy(
-            update={
-                "as_is_value_source": ValueSource.TEAM,
-                "arv_source": ValueSource.TEAM,
-            }
-        )
-    )
-    result = underwrite(team_valued, CONFIG)
-    flag = next(f for f in result.flags if f.code is ScreenFlag.TEAM_SOURCED_VALUES)
-    assert flag.severity is Severity.INFO
-    assert flag.message.startswith("As-is value and ARV came from the team")
-    # court records are named only by the screen: the underwrite takes none (SPEC §8)
-    assert "court records" not in flag.message
-
-
-def test_the_underwrite_is_silent_when_the_valuation_was_pulled() -> None:
-    result = underwrite(inputs(), CONFIG)
-    assert ScreenFlag.TEAM_SOURCED_VALUES not in [f.code for f in result.flags]
-
-
-# --- court and filing records at underwrite time (SPEC §7.2, §8.1) -------------------------------
-
-
-def test_the_underwrite_runs_the_court_tests_again_on_its_own_record() -> None:
-    """A §7.2 finding reaches the underwrite flags, not only the screen's.  # SPEC §8.1"""
-    result = underwrite(
-        inputs(
-            court_records=CourtRecordInputs(as_of=SEARCHED_ON, open_tax_liens_usd=[D("3200.00")])
+            loan_purpose=LoanPurpose.PURCHASE,
         ),
         CONFIG,
     )
-    lien = [f for f in result.flags if f.code is CourtFlag.OPEN_TAX_LIEN]
-    assert len(lien) == 1
-    assert lien[0].severity is CONFIG.flags.severities[CourtFlag.OPEN_TAX_LIEN]
-    assert "3,200.00" in lien[0].message
-
-
-def test_an_unchecked_court_record_is_informational_at_underwrite_too() -> None:
-    """No source checked is an INFO flag, never read as clean.  # SPEC §6.1, §7.2"""
-    result = underwrite(inputs(court_records=None), CONFIG)
-    unchecked = [f for f in result.flags if f.code is ScreenFlag.COURT_RECORDS_NOT_CHECKED]
-    assert len(unchecked) == 1
-    assert unchecked[0].severity is Severity.INFO
-
-
-def test_a_court_record_the_underwrite_ran_on_can_be_team_sourced() -> None:
-    """TEAM_SOURCED_VALUES names the hand search at underwrite as well.  # SPEC §6.1"""
-    result = underwrite(
-        inputs(court_records=CourtRecordInputs(as_of=SEARCHED_ON, source=ValueSource.TEAM)),
-        CONFIG,
-    )
-    sourced = [f for f in result.flags if f.code is ScreenFlag.TEAM_SOURCED_VALUES]
-    assert len(sourced) == 1
-    assert sourced[0].message.startswith("Court records came from the team")
-
-
-def test_an_adapter_court_record_is_not_named_as_team_sourced() -> None:
-    """The default source is the adapter, which raises nothing.  # SPEC §6.1"""
-    result = underwrite(inputs(), CONFIG)
-    assert ScreenFlag.TEAM_SOURCED_VALUES not in {f.code for f in result.flags}
+    ranks = {Severity.HARD: 0, Severity.SOFT: 1, Severity.INFO: 2}
+    order = [ranks[flag.severity] for flag in result.flags]
+    assert order == sorted(order)
+    assert all(flag.message.strip() for flag in result.flags)
+    assert result.loan_purpose is LoanPurpose.PURCHASE
