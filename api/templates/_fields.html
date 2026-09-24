@@ -1,4 +1,4 @@
-{# One form control, labelled and marked.  # SPEC §4.1, §12
+{# One form control, labelled and marked.  # SPEC §4.1, §8.1, §12
 
    Every box on every form in the queue says whether it is Required or Optional, because the
    alternative is a person guessing and a submission bouncing. Required here means the
@@ -9,37 +9,71 @@
    The attribute is a courtesy, not a control: `api/intake_form.py` checks the same list on
    the way in.
 
-   `readonly` is the other half of that: a box whose value is derived - the term a bucket
-   names (SPEC §8.1) - is shown rather than hidden, and posted back rather than dropped, but
-   nobody is invited to argue with it. The server re-derives it either way. #}
+   `readonly` is the other half of that: a box whose value is derived is shown rather than
+   hidden, and posted back rather than dropped, but nobody is invited to argue with it. The
+   server re-derives it either way.
+
+   `mask` names the shape a box holds — `money`, `pct`, `phone` (`schema/masks.py`). The
+   script in base.html formats what is typed into that shape, and the server parses the
+   shape back out; neither depends on the other having run.
+
+   `default` is the config default for the four §8.1 economics that have one. The box is
+   pre-filled with it and tagged, the tag goes as soon as somebody types something else, and
+   the reset link puts it back. A box still holding its default stores nothing on the deal,
+   so the deal goes on saying "the config decides" (`api/masks.py`). #}
 
 {# Three states, not two. A box can be required only on some deals - the loan split is
-   required on the two split products and forbidden on the other two (SPEC §8.2) - and the
-   product itself may be left blank for the normalizer to infer, so the browser cannot be
-   told which. It is marked as what it is and checked on the server. #}
+   required on the two split products and forbidden on the other two (SPEC §8.2), the term
+   can be said as months or as a payoff date - so it is marked as what it is and checked on
+   the server. #}
 {% macro badge(required, mark="") %}
   {%- if mark %}<span class="cond">{{ mark }}</span>
   {%- elif required %}<span class="req">Required</span>
   {%- else %}<span class="opt">Optional</span>{% endif -%}
 {% endmacro %}
 
-{% macro caption(name, text, required, mark="") %}<label for="{{ name }}">{{ text }} {{ badge(required, mark) }}</label>{% endmacro %}
+{% macro default_tag(box, default) %}
+  {%- if default %} <span class="dflt" data-default-tag="{{ box }}">default</span>{% endif -%}
+{% endmacro %}
 
-{% macro text_box(name, text, value, required=false, kind="", mode="", maxlength=0, disabled=false, id="", mark="", readonly=false) %}
+{% macro caption(name, text, required, mark="", default="") %}<label for="{{ name }}">{{ text }} {{ badge(required, mark) }}{{ default_tag(name, default) }}</label>{% endmacro %}
+
+{% macro text_box(name, text, value, required=false, kind="", mode="", maxlength=0, disabled=false, id="", mark="", readonly=false, mask="", default="") %}
   {#- ``id`` only where one page carries the same name twice: the three reason boxes in the
       action block all post ``reason`` and each needs a label of its own. -#}
   {% set box = id or name %}
   <div>
-    {{ caption(box, text, required, mark) }}
+    {{ caption(box, text, required, mark, default) }}
     <input id="{{ box }}" name="{{ name }}"
            {%- if kind %} type="{{ kind }}"{% endif %}
            {%- if mode %} inputmode="{{ mode }}"{% endif %}
            {%- if maxlength %} maxlength="{{ maxlength }}"{% endif %}
+           {%- if mask %} data-mask="{{ mask }}"{% endif %}
+           {%- if default %} data-default="{{ default }}"{% endif %}
            value="{{ value }}"
            {%- if required %} required{% endif %}
            {%- if readonly %} readonly{% endif %}
            {%- if disabled %} disabled{% endif %}>
+    {%- if default %}
+      <button class="linky" type="button" data-reset="{{ box }}">reset to default</button>
+    {%- endif %}
   </div>
+{% endmacro %}
+
+{% macro money_box(name, text, value, required=false, mark="", default="") %}
+  {{ text_box(name, text, value, required=required, mode="decimal", mark=mark, mask="money",
+              default=default) }}
+{% endmacro %}
+
+{% macro pct_box(name, text, value, required=false, mark="", default="") %}
+  {#- The box holds a percent and the deal holds the fraction: a person types 12, the deal
+      carries 0.12 (``schema/masks.py``). -#}
+  {{ text_box(name, text, value, required=required, mode="decimal", mark=mark, mask="pct",
+              default=default) }}
+{% endmacro %}
+
+{% macro phone_box(name, text, value, required=false) %}
+  {{ text_box(name, text, value, required=required, mode="tel", mask="phone") }}
 {% endmacro %}
 
 {% macro text_area(name, text, required=false, maxlength=0) %}
@@ -59,6 +93,7 @@
     <option value="{{ choice }}" {% if chosen == choice %}selected{% endif %}>
       {%- if labelled == "tranche" %}{{ choice | tranche }}
       {%- elif labelled == "experience" %}{{ choice | experience }}
+      {%- elif labelled == "label" %}{{ choice | label }}
       {%- else %}{{ choice }}{% endif -%}
     </option>
   {%- endfor %}
@@ -70,6 +105,12 @@
   <select {% if labelled_by %}id="{{ name }}" {% endif %}name="{{ name }}"{% if required %} required{% endif %}>
     {{- options(choices, chosen, labelled) -}}
   </select>
+{% endmacro %}
+
+{% macro enum_box(name, text, choices, chosen, required=false) %}
+  {#- The four enums a person reads as words rather than as codes: the loan type, the asset
+      type, the loan purpose and the exit (SPEC §3, §8.1). -#}
+  {{ select_box(name, text, choices, chosen, required, "label") }}
 {% endmacro %}
 
 {% macro select_box(name, text, choices, chosen, required=false, labelled="") %}
@@ -88,6 +129,22 @@
   {{ select_box(name, text, choices, chosen, required, "experience") }}
 {% endmacro %}
 
+{% macro product_box(name, text, choices, chosen, required=false) %}
+  {#- The Loan Type box, with the SPEC §3 definition of every option under it: a person
+      picking one is told what they are picking rather than expected to know. The definitions
+      are four sentences, so the box takes the whole row rather than stretching one grid
+      column into a column of words. -#}
+  <div class="wide">
+    {{ caption(name, text, required) }}
+    <div class="narrow">{{ bare_select(name, choices, chosen, required, "label") }}</div>
+    <dl class="defs small muted">
+      {%- for choice in choices %}
+        <dt>{{ choice | label }}</dt><dd>{{ choice | definition }}</dd>
+      {%- endfor %}
+    </dl>
+  </div>
+{% endmacro %}
+
 {% macro bare_yes_no(name, chosen, required=false, labelled_by=true) %}
   {#- Three states, not a checkbox: blank means nobody said, which an unticked box cannot
       express and does not even submit (``api/forms.py``). -#}
@@ -102,6 +159,29 @@
   <div>
     {{ caption(name, text, required) }}
     {{ bare_yes_no(name, chosen, required) }}
+  </div>
+{% endmacro %}
+
+{# --- the analysis toggles (SPEC §8.1) ----------------------------------------------------- #}
+
+{% macro toggle_box(name, text, chosen, note="") %}
+  {#- An on/off toggle with the third state a select hid: Default is what the §3 exit implies
+      and is what a deal nobody has touched carries, On and Off are a person overriding it in
+      either direction. Radios rather than a select because the state is the point of the
+      control and a person should see it without opening anything. Take-Back has no toggle at
+      all - it runs on every deal (SPEC §8.6). -#}
+  <div>
+    {#- The caption points at the first radio, so the group reads as one labelled control. -#}
+    {{ caption(name, text, false) }}
+    <div class="toggle" role="group" aria-label="{{ text }}">
+      <label><input id="{{ name }}" type="radio" name="{{ name }}" value=""
+                    {% if chosen != "true" and chosen != "false" %}checked{% endif %}> Default</label>
+      <label><input type="radio" name="{{ name }}" value="true"
+                    {% if chosen == "true" %}checked{% endif %}> On</label>
+      <label><input type="radio" name="{{ name }}" value="false"
+                    {% if chosen == "false" %}checked{% endif %}> Off</label>
+    </div>
+    {%- if note %}<span class="small muted">{{ note }}</span>{% endif %}
   </div>
 {% endmacro %}
 

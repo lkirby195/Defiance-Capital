@@ -23,7 +23,6 @@ from schema.models import CourtRecordInputs
 class AdapterValues:
     """Enrichment results the engine can use directly; every field is optional."""
 
-    as_is_value: Decimal | None = None
     estimated_sale_price: Decimal | None = None
     court_records: CourtRecordInputs | None = None
 

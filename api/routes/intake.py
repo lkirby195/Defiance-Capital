@@ -26,7 +26,7 @@ from starlette.datastructures import FormData
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from api.forms import fields, is_form_post, rows
-from api.intake_form import intake_record, read_form
+from api.intake_form import intake_record, read_form, redisplay_values
 from api.render import redirect
 from api.routes.queue import (
     MATTER_FIELDS,
@@ -86,8 +86,11 @@ def _from_form(
     the one place the two content types deliberately part company. A partial intake is a real
     thing (SPEC §4.1) and arrives from a channel that only has part of one - an SMS, a
     listing link - or from a client posting JSON. A person sitting in front of this page has
-    the borrower on the phone; the ten boxes it marks Required are what the deal cannot be
-    screened without, and a browser that skipped them never reaches here anyway.
+    the deal in front of them; the boxes it marks Required are what it cannot be screened
+    without, and a browser that skipped them never reaches here anyway.
+
+    The masks come off inside ``read_form`` and go back on for a rejection, so a person who
+    typed ``$425,000`` gets ``$425,000`` back rather than the number it parsed to.
     """
     submitted = fields(posted, skip=("matter_",))
     matters = rows(posted, "matter", MATTER_FIELDS)
@@ -101,7 +104,7 @@ def _from_form(
             intro=NEW_DEAL_INTRO,
             submit_label="Create deal",
             back_url="",
-            form=submitted,
+            form=redisplay_values(submitted),
             matters=redisplay(matters),
             complaints=complaints,
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

@@ -62,7 +62,6 @@ def deal(
     loan_requested: str = "150000",
     purchase_portion: str | None = None,
     rehab_portion: str | None = None,
-    as_is_value: str | None = "250000",
     estimated_sale_price: str | None = "260000",
     **extra: object,
 ) -> SizingInputs:
@@ -71,7 +70,6 @@ def deal(
         purchase_price=D(purchase_price),
         rehab_costs=D(rehab_costs),
         loan_requested=D(loan_requested),
-        as_is_value=None if as_is_value is None else D(as_is_value),
         estimated_sale_price=None if estimated_sale_price is None else D(estimated_sale_price),
         loan_purchase_portion=None if purchase_portion is None else D(purchase_portion),
         loan_rehab_portion=None if rehab_portion is None else D(rehab_portion),
@@ -196,7 +194,6 @@ def split_principal(term: int, rehab_portion: str = "25000") -> UnderwriteInputs
             loan_requested="110000",
             purchase_portion=str(D("110000") - D(rehab_portion)),
             rehab_portion=rehab_portion,
-            as_is_value="160000",
             estimated_sale_price="185000",
         ),
         term_months=term,
@@ -295,11 +292,36 @@ def test_the_flag_says_when_the_rental_was_off_anyway() -> None:
 
 def test_the_leverage_flags_the_screen_raises_are_raised_here_too() -> None:
     result = underwrite(
-        inputs(deal(loan_requested="240000", as_is_value="250000", estimated_sale_price="260000")),
+        inputs(deal(loan_requested="240000", estimated_sale_price="260000")),
         CONFIG,
     )
     assert ScreenFlag.LTC_OVER_CAP.value in codes(result.flags)
-    assert ScreenFlag.LTARV_OVER_CAP.value in codes(result.flags)
+    assert ScreenFlag.LTV_OVER_CAP.value in codes(result.flags)
+
+
+def test_a_run_with_no_sale_price_prices_the_deal_and_says_what_it_lost() -> None:
+    """SPEC §8.4: the flip is what goes missing, not the run."""
+    result = underwrite(inputs(deal(estimated_sale_price=None), flip_analysis=True), CONFIG)
+    assert result.flip.status is AnalysisStatus.NOT_EVALUATED
+    assert result.flip.net_profit is None and result.flip.profit_yield is None
+    # ...and everything that does not read a sale price is there in full
+    assert result.flip.total_costs > 0
+    assert result.return_overview.irr is not None
+    assert result.take_back.status is AnalysisStatus.EVALUATED
+
+    flag = find(result.flags, UnderwriteFlag.SALE_PRICE_MISSING)
+    assert flag.severity is Severity.INFO
+    assert "the Flip analysis was not evaluated" in flag.message
+    assert "LTV is not computed" in flag.message
+    # the leverage side of the same absence keeps its own Soft flag (SPEC §7.4)
+    assert ScreenFlag.ESTIMATED_SALE_PRICE_MISSING.value in codes(result.flags)
+
+
+def test_a_flip_toggled_off_is_a_decision_not_a_gap() -> None:
+    """OFF is somebody's choice, so there is nothing for SALE_PRICE_MISSING to report."""
+    result = underwrite(inputs(deal(estimated_sale_price=None), flip_analysis=False), CONFIG)
+    assert result.flip.status is AnalysisStatus.OFF
+    assert UnderwriteFlag.SALE_PRICE_MISSING.value not in codes(result.flags)
 
 
 def test_the_court_tests_are_re_run_here_on_the_record_in_force() -> None:
@@ -335,14 +357,12 @@ def test_hand_entered_values_are_named() -> None:
         purchase_price=D("200000"),
         rehab_costs=D("0"),
         loan_requested=D("150000"),
-        as_is_value=D("250000"),
-        as_is_value_source=ValueSource.TEAM,
         estimated_sale_price=D("260000"),
         estimated_sale_price_source=ValueSource.TEAM,
     )
     result = underwrite(inputs(by_hand), CONFIG)
     flag = find(result.flags, ScreenFlag.TEAM_SOURCED_VALUES)
-    assert "estimated sale price" in flag.message
+    assert flag.message.startswith("Estimated sale price came from the team")
     assert flag.severity is Severity.INFO
 
 

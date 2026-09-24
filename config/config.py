@@ -70,11 +70,15 @@ class CreditConfig(_Section):
 
 
 class LeverageCaps(_Section):
-    """One cell of the caps grid.  # SPEC §7.4"""
+    """One cell of the caps grid.  # SPEC §7.4
+
+    Two caps, not three. LTARV is gone and so is the as-is value beside it: LTV is the
+    commitment over the estimated sale price, which is the one number the lender is lending
+    against, and there is nothing left for a second ratio to test.
+    """
 
     ltc: Pct
-    ltv_as_is: Pct
-    ltarv: Pct
+    ltv: Pct
 
 
 CapsGrid = dict[Product, dict[Tranche, dict[ExperienceTier, LeverageCaps]]]

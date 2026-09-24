@@ -4,8 +4,10 @@
 {% block title %}{{ heading }} — GLENWOOD{% endblock %}
 
 {# The three groups below are the SPEC §8.1 input groups, in the order §9 shows a run back:
-   Overview, Property Overview, Deal Economics. The two blocks after them are the interim
-   team sources (SPEC §6.1) — the valuation, the rent, and the court search. #}
+   Overview, Property Overview, Deal Economics. The Overview is who the borrower is and
+   nothing else; the loan's own terms — its purpose, its type, its closing date and its term —
+   are Deal Economics, beside the money they describe. The two blocks after them are the
+   interim team sources (SPEC §6.1) — the valuation, the rent, and the court search. #}
 
 {% block content %}
 <h1>{{ heading }}</h1>
@@ -16,37 +18,21 @@
   <section class="panel">
     <h2>Overview</h2>
     <p class="small muted">
-      Enter either a term in months or a payoff date and the other one derives: the payoff
-      date is the closing date plus the term, to the day (SPEC §8.1). A payoff date that is
-      not a whole number of months after closing is refused by name — the ledger's rows are
-      months. The term bucket is the borrower's own answer to how long they need the loan;
-      it seeds the term and does not fix it.
+      Who is on the loan. The guarantor's name is the one name a deal carries; the phone is
+      the borrower match key when there is one (SPEC §5) and is optional, because a deal that
+      arrives by email has a name and no number.
     </p>
     <div class="grid3">
-      {{ fields.text_box("borrower_name", "Borrower Name", form.borrower_name, required=true) }}
-      {{ fields.text_box("borrower_phone", "Phone — the borrower match key", form.borrower_phone,
-                         required=true, mode="tel") }}
+      {{ fields.text_box("entity_name", "Entity Name", form.entity_name) }}
+      {{ fields.text_box("borrower_name", "Guarantor Name", form.borrower_name, required=true) }}
+      {{ fields.phone_box("borrower_phone", "Phone", form.borrower_phone) }}
       {{ fields.text_box("borrower_email", "Email", form.borrower_email, kind="email") }}
-      {{ fields.text_box("entity_name", "Entity", form.entity_name) }}
-      {{ fields.text_box("guarantor_name", "Guarantor Name", form.guarantor_name) }}
       {{ fields.tranche_box("credit_range", "Credit Range (self-reported)", enums.tranche,
                             form.credit_range) }}
-      {{ fields.experience_box("experience_bucket", "Deals in the last 36 months",
+      {{ fields.experience_box("experience_bucket", "Deals in last 36 months",
                                enums.experience_bucket, form.experience_bucket, required=true) }}
       {{ fields.yes_no_box("repeat_borrower", "Repeat borrower", form.repeat_borrower,
                            required=true) }}
-      {{ fields.select_box("loan_purpose", "Loan Purpose", enums.loan_purpose,
-                           form.loan_purpose) }}
-      {{ fields.select_box("product", "Loan Type — blank is inferred from the rehab costs",
-                           enums.product, form.product) }}
-      {{ fields.text_box("closing_date", "Closing Date — month 0 of the ledger",
-                         form.closing_date, required=true, kind="date") }}
-      {{ fields.select_box("term_bucket", "Term (the borrower's ask)", enums.term_bucket,
-                           form.term_bucket, required=true) }}
-      {{ fields.text_box("term_months", "Term (months) — what the deal is priced on",
-                         form.term_months, mark="Required for a 12+ term", mode="numeric") }}
-      {{ fields.text_box("payoff_date", "Payoff Date — blank derives it from the term",
-                         form.payoff_date, kind="date") }}
     </div>
   </section>
 
@@ -62,7 +48,6 @@
                          "Listing or auction link — the address is read off the URL",
                          form.listing_url) }}
       {{ fields.text_box("city", "City", form.city) }}
-      {{ fields.text_box("county", "County", form.county) }}
       {{ fields.select_box("state", "State — blank is inferred from the address", enums.state,
                            form.state) }}
       {{ fields.text_box("units", "Units", form.units, mode="numeric") }}
@@ -74,45 +59,61 @@
       {{ fields.text_box("beds", "Beds", form.beds, mode="numeric") }}
       {{ fields.text_box("baths", "Baths", form.baths, mode="decimal") }}
       {{ fields.text_box("garage_spaces", "Garage Spaces", form.garage_spaces, mode="numeric") }}
-      {{ fields.select_box("asset_type", "Asset type", enums.asset_type, form.asset_type) }}
-      {{ fields.select_box("stated_exit", "Stated exit", enums.stated_exit, form.stated_exit) }}
+      {{ fields.enum_box("asset_type", "Asset Type", enums.asset_type, form.asset_type) }}
+      {{ fields.enum_box("stated_exit", "Exit", enums.stated_exit, form.stated_exit) }}
     </div>
   </section>
 
   <section class="panel">
     <h2>Deal Economics</h2>
     <p class="small muted">
-      A SPLIT_DRAW or SPLIT_PRINCIPAL loan is advanced in two parts, so both portions are
-      required and have to add up to the loan requested (SPEC §8.2). A NO_DRAW or WHOLETAIL
-      loan is one advance and carries neither. The four boxes marked with a default are the
-      config stand-in when left blank; the interest rate has none and the ledger cannot be
-      laid out without it.
+      One term, said either way: enter a term in months or a payoff date and the other
+      derives — the payoff date is the closing date plus the term, to the day (SPEC §8.1).
+      Enter both and they have to agree; a payoff date that is not a whole number of months
+      after closing is refused by name, because the ledger's rows are months.
+    </p>
+    <p class="small muted">
+      A Split Draw or Split Principal loan is advanced in two parts, so both portions are
+      required and have to add up to the Loan Amount (SPEC §8.2). A No Draw or Wholetail loan
+      is one advance and carries neither. The four boxes tagged <span class="dflt">default</span>
+      are pre-filled from config and editable; leave one alone and the deal follows config,
+      type over it and the deal carries your number. The interest rate has no default and the
+      ledger cannot be laid out without it.
     </p>
     <div class="grid3">
-      {{ fields.text_box("purchase_price", "Purchase Price", form.purchase_price,
-                         required=true, mode="decimal") }}
-      {{ fields.text_box("rehab_costs", "Rehab Costs — 0 is a NO_DRAW", form.rehab_costs,
-                         required=true, mode="decimal") }}
-      {{ fields.text_box("loan_requested", "Loan Requested", form.loan_requested,
-                         required=true, mode="decimal") }}
-      {{ fields.text_box("loan_purchase_portion",
-                         "Purchase portion — the Principal Note on SPLIT_PRINCIPAL",
-                         form.loan_purchase_portion, mark="Required for a split", mode="decimal") }}
-      {{ fields.text_box("loan_rehab_portion",
-                         "Rehab portion — the holdback, or Tranche A",
-                         form.loan_rehab_portion, mark="Required for a split", mode="decimal") }}
-      {{ fields.text_box("interest_rate", "Interest Rate — annual, as a fraction (0.12 = 12%)",
-                         form.interest_rate, required=true, mode="decimal") }}
-      {{ fields.text_box("contingency_pct", "Contingency — blank uses the config default",
-                         form.contingency_pct, mode="decimal") }}
-      {{ fields.text_box("closing_costs_usd", "Closing Costs — blank uses the config default",
-                         form.closing_costs_usd, mode="decimal") }}
-      {{ fields.text_box("holding_costs_total_usd",
-                         "Holding Costs (total over the hold) — blank uses the config default",
-                         form.holding_costs_total_usd, mode="decimal") }}
-      {{ fields.text_box("origination_fee_pct",
-                         "Origination Fee — blank uses the config default",
-                         form.origination_fee_pct, mode="decimal") }}
+      {{ fields.enum_box("loan_purpose", "Loan Purpose", enums.loan_purpose,
+                         form.loan_purpose) }}
+      {{ fields.product_box("product", "Loan Type — blank is inferred from the rehab costs",
+                            enums.product, form.product) }}
+      {{ fields.text_box("closing_date", "Closing Date — month 0 of the ledger",
+                         form.closing_date, required=true, kind="date") }}
+      {{ fields.text_box("term_months", "Term (months)", form.term_months,
+                         mark="Required, or a payoff date", mode="numeric") }}
+      {{ fields.text_box("payoff_date", "Payoff Date", form.payoff_date,
+                         mark="Required, or a term", kind="date") }}
+      {{ fields.money_box("purchase_price", "Purchase Price", form.purchase_price,
+                          required=true) }}
+      {{ fields.money_box("rehab_costs", "Rehab Costs — 0 is a No Draw", form.rehab_costs,
+                          required=true) }}
+      {{ fields.money_box("loan_requested", "Loan Amount", form.loan_requested,
+                          required=true) }}
+      {{ fields.money_box("loan_purchase_portion",
+                          "Advance at Closing — the Principal Note on Split Principal",
+                          form.loan_purchase_portion, mark="Required for a split") }}
+      {{ fields.money_box("loan_rehab_portion", "Rehab Portion — the holdback, or Tranche A",
+                          form.loan_rehab_portion, mark="Required for a split") }}
+      {{ fields.pct_box("interest_rate", "Interest Rate — annual", form.interest_rate,
+                        required=true) }}
+      {{ fields.pct_box("contingency_pct", "Contingency", form.contingency_pct,
+                        default=defaults.contingency_pct) }}
+      {{ fields.money_box("closing_costs_usd", "Closing Costs", form.closing_costs_usd,
+                          default=defaults.closing_costs_usd) }}
+      {{ fields.money_box("holding_costs_total_usd",
+                          "Holding Costs (total) — default 2% of price + rehab",
+                          form.holding_costs_total_usd,
+                          default=defaults.holding_costs_total_usd) }}
+      {{ fields.pct_box("origination_fee_pct", "Origination Fee", form.origination_fee_pct,
+                        default=defaults.origination_fee_pct) }}
     </div>
   </section>
 
@@ -120,22 +121,22 @@
     <h2>Valuation, rent and analyses
       <span class="muted small">(SPEC §6.1 — until the adapters land)</span></h2>
     <p class="small muted">
-      The estimated sale price is what the Flip analysis sells at and what LTARV is computed
-      on. Without a monthly rent the Rental and Take-Back analyses are not evaluated — nothing
-      stands in for what a property lets for. Both toggles blank take the default the §3 exit
-      implies: flip on for a resale, rental on for a hold or whenever a rent is entered.
+      The estimated sale price is what LTV is computed on (SPEC §7.4) and what the Flip
+      analysis sells at. Without it the screen goes Conditional and the flip is not evaluated;
+      nothing else about the deal depends on it. Without a monthly rent the Rental and
+      Take-Back analyses are not evaluated — nothing stands in for what a property lets for.
+      Each toggle on Default takes what the §3 exit implies: flip on for a resale, rental on
+      for a hold or whenever a rent is entered. The Take-Back analysis has no toggle; it runs
+      on every deal (SPEC §8.6).
     </p>
     <div class="grid3">
-      {{ fields.text_box("as_is_value_team", "As-is value — LTV only", form.as_is_value_team,
-                         mode="decimal") }}
-      {{ fields.text_box("estimated_sale_price_team", "Estimated Sale Price",
-                         form.estimated_sale_price_team, mode="decimal") }}
-      {{ fields.text_box("monthly_rent", "Monthly Rent — no default", form.monthly_rent,
-                         mode="decimal") }}
-      {{ fields.yes_no_box("flip_analysis", "Flip analysis — blank takes the §3 default",
-                           form.flip_analysis) }}
-      {{ fields.yes_no_box("rental_analysis", "Rental analysis — blank takes the §3 default",
-                           form.rental_analysis) }}
+      {{ fields.money_box("estimated_sale_price_team", "Estimated Sale Price",
+                          form.estimated_sale_price_team) }}
+      {{ fields.money_box("monthly_rent", "Monthly Rent — no default", form.monthly_rent) }}
+      {{ fields.toggle_box("flip_analysis", "Flip Analysis", form.flip_analysis,
+                           "Default: on for a resale exit") }}
+      {{ fields.toggle_box("rental_analysis", "Rental Analysis", form.rental_analysis,
+                           "Default: on for a hold exit, or with a rent") }}
       {{ fields.select_box("court_records_status", "Court search — NOT_CHECKED is not CLEAN",
                            enums.court_records_status, form.court_records_status) }}
       {{ fields.text_box("court_records_as_of", "Searched on", form.court_records_as_of,

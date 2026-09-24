@@ -127,7 +127,6 @@ class DealView(BaseModel):
     status: Status
     missing_fields: list[str]
     credit_authorization_signed: bool
-    guarantor_name: str | None
     loan_purpose: LoanPurpose | None
     product: Product | None
     product_source: ProductSource | None
@@ -153,7 +152,6 @@ class DealView(BaseModel):
     experience_bucket_self_reported: ExperienceBucket | None
     repeat_borrower_self_reported: bool | None
     monthly_rent: Decimal | None
-    as_is_value_team: Decimal | None
     estimated_sale_price_team: Decimal | None
     court_records_status: CourtRecordsStatus | None
     court_records_as_of: date | None
@@ -274,7 +272,6 @@ def deal_view(deal: Deal, session: Session) -> DealView:
         status=deal.status,
         missing_fields=list(deal.missing_fields),
         credit_authorization_signed=deal.credit_authorization_signed,
-        guarantor_name=deal.guarantor_name,
         loan_purpose=deal.loan_purpose,
         product=deal.product,
         product_source=deal.product_source,
@@ -300,7 +297,6 @@ def deal_view(deal: Deal, session: Session) -> DealView:
         experience_bucket_self_reported=deal.experience_bucket_self_reported,
         repeat_borrower_self_reported=deal.repeat_borrower_self_reported,
         monthly_rent=deal.monthly_rent,
-        as_is_value_team=deal.as_is_value_team,
         estimated_sale_price_team=deal.estimated_sale_price_team,
         court_records_status=deal.court_records_status,
         court_records_as_of=deal.court_records_as_of,

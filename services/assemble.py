@@ -20,6 +20,7 @@ from typing import NamedTuple
 from config.config import Config, get_config
 from db.models import Deal
 from engine.calc.exit import flip_default, infer_exit, rental_default
+from schema.labels import enum_label
 from schema.models import (
     AMOUNT_COURT_FLAGS,
     DATED_COURT_FLAGS,
@@ -122,15 +123,18 @@ def deal_core(deal: Deal) -> DealCore:
 
 
 class Valuation(NamedTuple):
-    """The valuation the engine will run on, and where each half of it came from."""
+    """The valuation the engine will run on, and where it came from.
 
-    as_is_value: Decimal | None
-    as_is_value_source: ValueSource | None
+    One number, since SPEC §7.4 went to a single value ratio: the estimated sale price is
+    what LTV is computed on and what the Flip analysis sells at, and the as-is value that
+    used to sit beside it is gone from the engine entirely.
+    """
+
     estimated_sale_price: Decimal | None
     estimated_sale_price_source: ValueSource | None
 
 
-NO_VALUATION = Valuation(None, None, None, None)
+NO_VALUATION = Valuation(None, None)
 
 
 def resolve_one(
@@ -155,19 +159,13 @@ def resolve_valuation(
     deal at intake, and the one a team member types when they advance the deal to
     underwrite. The request wins between those two - it is the more recent judgement - and
     an adapter value wins over both. Nothing here writes back to the deal, so
-    ``as_is_value_team`` and ``estimated_sale_price_team`` survive a run that did not use
-    them.
+    ``estimated_sale_price_team`` survives a run that did not use it.
     """
-    team_as_is = deal.as_is_value_team
     team_sale = deal.estimated_sale_price_team
-    if request is not None:
-        team_as_is = request.as_is_value if request.as_is_value is not None else team_as_is
-        team_sale = (
-            request.estimated_sale_price if request.estimated_sale_price is not None else team_sale
-        )
-    as_is_value, as_is_source = resolve_one(adapters.as_is_value, team_as_is)
+    if request is not None and request.estimated_sale_price is not None:
+        team_sale = request.estimated_sale_price
     sale_price, sale_source = resolve_one(adapters.estimated_sale_price, team_sale)
-    return Valuation(as_is_value, as_is_source, sale_price, sale_source)
+    return Valuation(sale_price, sale_source)
 
 
 def team_court_records(deal: Deal) -> CourtRecordInputs | None:
@@ -247,7 +245,7 @@ def sizing_inputs(
     valuation: Valuation = NO_VALUATION,
     request: UnderwriteRequest | None = None,
 ) -> SizingInputs:
-    """The deal numbers plus the valuation in force and where each half of it came from.
+    """The deal numbers plus the valuation in force and where it came from.
 
     The loan split travels with the deal (SPEC §8.2) rather than being handed in at run
     time: it is a description of the loan, not a judgement made at pricing. Both halves are
@@ -269,8 +267,6 @@ def sizing_inputs(
         closing_costs_usd=_first(
             request.closing_costs_usd if request else None, core.closing_costs_usd
         ),
-        as_is_value=valuation.as_is_value,
-        as_is_value_source=valuation.as_is_value_source,
         estimated_sale_price=valuation.estimated_sale_price,
         estimated_sale_price_source=valuation.estimated_sale_price_source,
     )
@@ -383,19 +379,19 @@ def underwrite_inputs(
     (SPEC §8.1); the monthly rent ends at None too, which leaves the Rental and Take-Back
     analyses NOT_EVALUATED with an INFO flag rather than computed on a zero.
 
-    Five things have no default and stop the run, and every one that is absent is named at
+    Four things have no default and stop the run, and every one that is absent is named at
     once rather than one per attempt:
 
     * the closing date, the term and the interest rate, because the ledger is dated months of
       interest and none of the three has a defensible stand-in (SPEC §8.3);
     * the loan split on a split product, because SPEC §8.2 advances the two portions
-      differently and the draw schedule is one of them;
-    * the estimated sale price **while the Flip analysis is on**, because that is what the
-      flip sells at (SPEC §8.4). With the toggle off it is optional, and a deal without one
-      is sized with LTARV not available, exactly as at the screen.
+      differently and the draw schedule is one of them.
 
-    The as-is value is no longer one of them: it feeds LTV only, and LTV falls back to the
-    purchase price with a flag (SPEC §7.4).
+    The estimated sale price is not one of them any more. A deal without one is priced: the
+    ledger, the economics and the Take-Back analysis do not read it, the flip reports
+    NOT_EVALUATED with SALE_PRICE_MISSING beside it (SPEC §8.4, §8.8) and LTV reports
+    NOT_AVAILABLE (SPEC §7.4). Refusing the whole run for a figure three quarters of it does
+    not need was a gate on the wrong thing.
 
     The court record is resolved here the same way the screen resolves it, adapter over team
     (SPEC §6.1), and not read off the stored screen: the underwrite runs the SPEC §7.2 tests
@@ -416,19 +412,11 @@ def underwrite_inputs(
         ("deal.interest_rate", interest_rate, "the ledger's interest rows (SPEC §8.3)"),
     ]
     if core.product in SPLIT_PRODUCTS:
-        split_why = f"a {core.product.value} loan is advanced in two parts (SPEC §8.2)"
+        split_why = f"a {enum_label(core.product)} loan is advanced in two parts (SPEC §8.2)"
         needed += [
             ("deal.loan_purchase_portion", core.loan_purchase_portion, split_why),
             ("deal.loan_rehab_portion", core.loan_rehab_portion, split_why),
         ]
-    if flip_is_on(deal, request, term_months):
-        needed.append(
-            (
-                "estimated_sale_price",
-                valuation.estimated_sale_price,
-                "the Flip analysis sells at it (SPEC §8.4); turn the toggle off to run without",
-            )
-        )
     missing = [f"{name} ({why})" for name, value, why in needed if value is None]
     if missing:
         raise DealNotReady(deal.id, missing)

@@ -50,7 +50,6 @@ def test_every_spec_8_1_input_has_a_row(deal_with_overrides: Deal) -> None:
         "payoff_date",
         "deal.interest_rate",
         "estimated_sale_price",
-        "as_is_value",
         "monthly_rent",
         "contingency_pct",
         "closing_costs_usd",
@@ -66,17 +65,17 @@ def test_every_spec_8_1_input_has_a_row(deal_with_overrides: Deal) -> None:
 
 
 def test_a_hand_entered_value_says_team(deal_with_overrides: Deal) -> None:
-    row = rows(deal_with_overrides)["as_is_value"]
+    row = rows(deal_with_overrides)["estimated_sale_price"]
     assert row.source is InputSource.TEAM
-    assert row.value == deal_with_overrides.as_is_value_team
-    # optional now: LTV falls back to the purchase price with a flag (SPEC §7.4)
+    assert row.value == deal_with_overrides.estimated_sale_price_team
+    # optional: without one the flip is not evaluated and LTV is not available (SPEC §7.4)
     assert row.required is False
 
 
 def test_an_adapter_value_beats_the_team_and_says_so(deal_with_overrides: Deal) -> None:
     """SPEC §6.1 precedence, shown rather than only applied."""
-    pulled = AdapterValues(as_is_value=D("999000.00"))
-    row = rows(deal_with_overrides, pulled)["as_is_value"]
+    pulled = AdapterValues(estimated_sale_price=D("999000.00"))
+    row = rows(deal_with_overrides, pulled)["estimated_sale_price"]
     assert row.source is InputSource.ADAPTER
     assert row.value == D("999000.00")
 
@@ -123,19 +122,21 @@ def test_the_payoff_date_is_derived_and_never_turns_the_button_off(
     assert "derived" in row.note
 
 
-def test_the_sale_price_is_required_only_while_the_flip_is_on(
+def test_the_sale_price_is_optional_whatever_the_flip_toggle_says(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    """SPEC §8.1: the flip sells at it, so a flip-off deal can run without one."""
+    """SPEC §8.4: the run goes ahead without one; the flip is what goes missing."""
     deal_with_overrides.flip_analysis = True
     db_session.commit()
-    assert rows(deal_with_overrides)["estimated_sale_price"].required is True
+    row = rows(deal_with_overrides)["estimated_sale_price"]
+    assert row.required is False
+    assert "the flip is not evaluated" in row.note
 
     deal_with_overrides.flip_analysis = False
     db_session.commit()
     row = rows(deal_with_overrides)["estimated_sale_price"]
     assert row.required is False
-    assert "LTARV is not computed" in row.note
+    assert "LTV is not available" in row.note
 
 
 def test_a_split_product_lists_its_two_portions_by_their_real_names(
@@ -186,7 +187,6 @@ def test_a_complete_deal_is_ready(deal_with_overrides: Deal) -> None:
         (["closing_date"], "Closing date"),
         (["interest_rate"], "Interest rate"),
         (["term_months"], "Term (months)"),
-        (["estimated_sale_price_team"], "Estimated sale price"),
     ],
 )
 def test_a_required_input_that_is_absent_turns_the_button_off(
@@ -201,9 +201,11 @@ def test_a_required_input_that_is_absent_turns_the_button_off(
 
 
 def test_a_term_the_bucket_names_says_so_and_is_not_a_team_entry(
-    deal_with_overrides: Deal,
+    db_session: Session, deal_with_overrides: Deal
 ) -> None:
     """Nobody chose 6 months on a 6-month bucket; the bucket seeded it.  # SPEC §8.1"""
+    deal_with_overrides.term_bucket = TermBucket.M6
+    db_session.commit()
     row = rows(deal_with_overrides)["deal.term_months"]
     assert row.value == 6
     assert row.source is InputSource.DEFAULT
@@ -211,9 +213,21 @@ def test_a_term_the_bucket_names_says_so_and_is_not_a_team_entry(
     assert "seeded by the 6-month bucket" in row.note
 
 
+def test_a_term_off_a_form_that_asks_no_bucket_is_the_teams_own(
+    deal_with_overrides: Deal,
+) -> None:
+    """The team form does not ask the bucket (SPEC §8.1), so the number is somebody's."""
+    assert deal_with_overrides.term_bucket is None
+    row = rows(deal_with_overrides)["deal.term_months"]
+    assert row.value == 6
+    assert row.source is InputSource.TEAM
+    assert "no term bucket on the deal" in row.note
+
+
 def test_a_term_repriced_off_its_bucket_says_team(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
+    deal_with_overrides.term_bucket = TermBucket.M6
     deal_with_overrides.term_months = 12  # a 6-month ask, priced at 12
     db_session.commit()
     row = rows(deal_with_overrides)["deal.term_months"]
@@ -256,7 +270,6 @@ def test_an_intake_gap_is_named_the_way_the_refusal_names_it(
     [
         ["closing_date"],
         ["interest_rate"],
-        ["estimated_sale_price_team"],
         ["term_months"],
         ["purchase_price"],
     ],
@@ -278,7 +291,6 @@ def test_a_deal_the_page_calls_ready_actually_assembles(deal_with_overrides: Dea
     """The other half: ready has to mean the run goes through."""
     assert underwrite_readiness(deal_with_overrides).ready is True
     assembled = underwrite_inputs(deal_with_overrides, UnderwriteRequest())
-    assert assembled.deal.as_is_value is not None
     assert assembled.deal.estimated_sale_price is not None
     assert assembled.interest_rate is not None
 
@@ -296,7 +308,6 @@ def test_the_deal_page_shows_the_checklist(client: TestClient, deal_with_overrid
     body = page(client, deal_with_overrides)
     assert "Underwrite inputs" in body
     for label in (
-        "As-is value",
         "Estimated sale price",
         "Monthly rent",
         "Holding costs (total)",

@@ -55,7 +55,6 @@ OVERRIDE_FIELDS: tuple[str, ...] = (
     "closing_costs_usd",
     "holding_costs_total_usd",
     "origination_fee_pct",
-    "as_is_value_team",
     "estimated_sale_price_team",
     "monthly_rent",
     "asset_type",

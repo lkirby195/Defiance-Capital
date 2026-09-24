@@ -463,8 +463,9 @@ class PropertyInfo(BaseModel):
 class DealInfo(BaseModel):
     """Deal terms as requested by the borrower, plus the team's own §8.1 economics.
 
-    Grouped as SPEC §8.1 groups them: Overview, then Deal Economics, then the valuation and
-    rent the adapters will eventually supply.
+    Grouped as SPEC §8.1 groups them: Deal Economics, then the valuation and rent the
+    adapters will eventually supply. Nothing here belongs to the Overview any more - that
+    group is who the borrower is, and every one of its fields lives on ``BorrowerInfo``.
 
     The four economics with a config default (``contingency_pct``, ``closing_costs_usd``,
     ``holding_costs_total_usd``, ``origination_fee_pct``) are None until somebody overrides
@@ -479,11 +480,11 @@ class DealInfo(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # Overview (SPEC §8.1)
-    guarantor_name: str | None = None
+    # Deal economics (SPEC §8.1). The loan purpose, the loan type, the closing date and
+    # the term are here rather than in the Overview: they are terms of the loan, and the
+    # Overview is who the borrower is.
     loan_purpose: LoanPurpose | None = None
     closing_date: date | None = None  # month 0 of the ledger (SPEC §8.3)
-    # Deal economics (SPEC §8.1)
     purchase_price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     rehab_costs: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     loan_requested: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
@@ -524,8 +525,7 @@ class DealInfo(BaseModel):
     # lets for, so without one both analyses are NOT_EVALUATED rather than run on a zero.
     monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     # Team-supplied valuation, used when no adapter has produced one (SPEC §6). An adapter
-    # value always wins; these stay on the deal either way, for audit.
-    as_is_value_team: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    # value always wins; it stays on the deal either way, for audit.
     estimated_sale_price_team: Decimal | None = Field(
         default=None, gt=0, max_digits=14, decimal_places=2
     )
@@ -591,9 +591,7 @@ class ScreenFlag(StrEnum):
 
     CREDIT_BELOW_FLOOR = "CREDIT_BELOW_FLOOR"  # HARD, SPEC §7.5
     LTC_OVER_CAP = "LTC_OVER_CAP"  # HARD beyond the tolerance band, SOFT within it
-    LTV_AS_IS_OVER_CAP = "LTV_AS_IS_OVER_CAP"
-    LTARV_OVER_CAP = "LTARV_OVER_CAP"
-    AS_IS_VALUE_MISSING = "AS_IS_VALUE_MISSING"  # SOFT, SPEC §7.4
+    LTV_OVER_CAP = "LTV_OVER_CAP"  # SPEC §7.4: LTV is commitment / estimated sale price
     ESTIMATED_SALE_PRICE_MISSING = "ESTIMATED_SALE_PRICE_MISSING"  # SOFT, SPEC §7.4
     STATE_NOT_SERVED = "STATE_NOT_SERVED"  # SOFT, SPEC §7.5
     CREDIT_MISMATCH = "CREDIT_MISMATCH"  # SOFT, SPEC §7.5
@@ -611,13 +609,14 @@ class ScreenFlag(StrEnum):
 class UnderwriteFlag(StrEnum):
     """Stable codes for flags the underwrite raises.  # SPEC §8.6, §8.7
 
-    The two DSCR codes take their severity from ``flags.underwrite_severities``; the two
+    The two DSCR codes take their severity from ``flags.underwrite_severities``; the three
     informational codes are fixed INFO in code and config must not grade them.
     """
 
     DSCR_BELOW_FLOOR = "DSCR_BELOW_FLOOR"  # SPEC §8.5: rental DSCR under rental.dscr_floor
     TAKE_BACK_DSCR_BELOW_FLOOR = "TAKE_BACK_DSCR_BELOW_FLOOR"  # SPEC §8.6: under take_back floor
     MONTHLY_RENT_MISSING = "MONTHLY_RENT_MISSING"  # INFO, SPEC §8.5, §8.6: no rent to run either on
+    SALE_PRICE_MISSING = "SALE_PRICE_MISSING"  # INFO, SPEC §8.4: no price, so no flip to evaluate
     NO_REHAB_PERIOD = "NO_REHAB_PERIOD"  # INFO, SPEC §8.3: no rehab period, so no draw schedule
 
 
@@ -637,11 +636,15 @@ class RepeatBorrowerStatus(StrEnum):
 
 
 class LeverageMetric(StrEnum):
-    """The three implied-leverage metrics.  # SPEC §7.4"""
+    """The two implied-leverage metrics.  # SPEC §7.4
+
+    There is one value in the denominator of the second: the estimated sale price. LTARV is
+    gone and so is the as-is value it sat beside - one ratio against the price the property
+    is expected to sell for, not two against two opinions of what it is worth.
+    """
 
     LTC = "LTC"
-    LTV_AS_IS = "LTV_AS_IS"
-    LTARV = "LTARV"
+    LTV = "LTV"
 
 
 class CapStatus(StrEnum):
@@ -650,14 +653,7 @@ class CapStatus(StrEnum):
     PASS = "PASS"  # actual <= cap
     WITHIN_TOLERANCE = "WITHIN_TOLERANCE"  # cap < actual <= cap + tolerance band -> Conditional
     FAIL = "FAIL"  # actual > cap + tolerance band -> Decline
-    NOT_AVAILABLE = "NOT_AVAILABLE"  # denominator unavailable (ARV missing)
-
-
-class ValueBasis(StrEnum):
-    """Denominator used for LTV.  # SPEC §7.4"""
-
-    AS_IS_VALUE = "AS_IS_VALUE"
-    PURCHASE_PRICE = "PURCHASE_PRICE"  # fallback when the as-is value is unavailable
+    NOT_AVAILABLE = "NOT_AVAILABLE"  # denominator unavailable (no estimated sale price)
 
 
 class Flag(BaseModel):
@@ -711,10 +707,10 @@ class CourtRecordInputs(BaseModel):
 class SizingInputs(BaseModel):
     """Deal numbers for implied leverage and the commitment split.  # SPEC §7.4, §8.2
 
-    ``as_is_value`` / ``estimated_sale_price`` are None when enrichment or valuation has not
-    supplied them. Neither stops a screen; the estimated sale price is what the Flip analysis
-    sells at and what LTARV is computed on, so the underwrite needs one while that toggle is
-    on (SPEC §8.1).
+    ``estimated_sale_price`` is None when enrichment or valuation has not supplied one. It
+    stops nothing at either stage: it is what LTV is computed on (SPEC §7.4) and what the
+    Flip analysis sells at (SPEC §8.4), so without one the screen reports LTV NOT_AVAILABLE
+    and goes Conditional, and the underwrite reports the flip NOT_EVALUATED.
 
     ``contingency_pct`` and ``closing_costs_usd`` are SPEC §8.1 inputs with config defaults,
     and they are here rather than read straight from config because both stages size on the
@@ -734,11 +730,9 @@ class SizingInputs(BaseModel):
     loan_requested: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
     contingency_pct: Decimal | None = Field(default=None, ge=0, le=1)
     closing_costs_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
-    as_is_value: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     estimated_sale_price: Decimal | None = Field(
         default=None, gt=0, max_digits=14, decimal_places=2
     )
-    as_is_value_source: ValueSource | None = None
     estimated_sale_price_source: ValueSource | None = None
     loan_purchase_portion: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
@@ -751,22 +745,17 @@ class SizingInputs(BaseModel):
         """A valuation with no stated source came from enrichment; the team names itself."""
         if not isinstance(data, dict):
             return data
-        for value, source in (
-            ("as_is_value", "as_is_value_source"),
-            ("estimated_sale_price", "estimated_sale_price_source"),
+        if (
+            data.get("estimated_sale_price") is not None
+            and data.get("estimated_sale_price_source") is None
         ):
-            if data.get(value) is not None and data.get(source) is None:
-                data = {**data, source: ValueSource.ADAPTER}
+            data = {**data, "estimated_sale_price_source": ValueSource.ADAPTER}
         return data
 
     @model_validator(mode="after")
     def _source_needs_a_value(self) -> SizingInputs:
-        for value, source in (
-            (self.as_is_value, self.as_is_value_source),
-            (self.estimated_sale_price, self.estimated_sale_price_source),
-        ):
-            if source is not None and value is None:
-                raise ValueError("a valuation source cannot be recorded without its value")
+        if self.estimated_sale_price_source is not None and self.estimated_sale_price is None:
+            raise ValueError("a valuation source cannot be recorded without its value")
         return self
 
     @model_validator(mode="after")
@@ -822,7 +811,6 @@ class MetricCheck(BaseModel):
     tolerance_band: Decimal
     status: CapStatus
     passed: bool  # status is PASS
-    basis: ValueBasis | None = None  # LTV only: which denominator was used
 
 
 class CommitmentSplit(BaseModel):
@@ -862,9 +850,7 @@ class SizingResult(BaseModel):
     commitment: Decimal
     funded_at_close: Decimal
     split: CommitmentSplit | None
-    ltv_basis: ValueBasis
-    as_is_value_source: ValueSource | None  # None when no as-is value was available
-    estimated_sale_price_source: ValueSource | None
+    estimated_sale_price_source: ValueSource | None  # None when no price was available
     metrics: dict[LeverageMetric, MetricCheck]
     all_pass: bool
 
@@ -906,8 +892,8 @@ class ScreenResult(BaseModel):
 class UnderwriteInputs(BaseModel):
     """Everything the underwrite needs; the caller assembles it from deal + enrichment.  # SPEC §8.1
 
-    ``deal`` carries the valuation and, on a split product, the team's purchase / rehab
-    split. ``borrower`` carries the verified credit score and deal count when known; the
+    ``deal`` carries the estimated sale price and, on a split product, the team's advance /
+    rehab split. ``borrower`` carries the verified credit score and deal count when known; the
     underwrite derives the caps cell from them exactly as the screen does.
 
     ``closing_date``, ``term_months`` and ``interest_rate`` are the three the ledger cannot

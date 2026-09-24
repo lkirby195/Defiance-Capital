@@ -107,13 +107,13 @@ def test_screen_moves_the_deal_to_screened(db_session: Session, deal_with_overri
 
 @requires_db
 def test_screen_declines_the_deal_when_the_verdict_does(
-    db_session: Session, stored_deal: Deal
+    db_session: Session, declining_deal: Deal
 ) -> None:
-    """No valuation behind it, so its LTV is on the purchase price and lands over the cap."""
-    result = run_screen(db_session, stored_deal.id, CONFIG, actor=ACTOR)
+    """The sale price it carries puts the commitment at 88.6% of it, past the 75% cap."""
+    result = run_screen(db_session, declining_deal.id, CONFIG, actor=ACTOR)
     db_session.commit()
     assert result.verdict is Verdict.DECLINE
-    assert stored_deal.status is Status.DECLINED
+    assert declining_deal.status is Status.DECLINED
 
 
 @requires_db
@@ -160,16 +160,16 @@ def test_a_closed_deal_is_refused_and_nothing_is_written(
 
 @requires_db
 def test_a_declined_screen_then_blocks_the_underwrite(
-    db_session: Session, stored_deal: Deal
+    db_session: Session, declining_deal: Deal
 ) -> None:
     """The two rules meet: a Decline closes the deal, and a closed deal is not priced."""
-    run_screen(db_session, stored_deal.id, CONFIG, actor=ACTOR)
-    assert stored_deal.status is Status.DECLINED
+    run_screen(db_session, declining_deal.id, CONFIG, actor=ACTOR)
+    assert declining_deal.status is Status.DECLINED
     with pytest.raises(DealNotUnderwritable):
         run_underwrite(
             db_session,
-            stored_deal.id,
-            request(as_is_value=D("250000"), estimated_sale_price=D("295000")),
+            declining_deal.id,
+            request(estimated_sale_price=D("295000")),
             CONFIG,
             actor=ACTOR,
         )
@@ -196,14 +196,14 @@ def test_the_status_change_rides_the_caller_s_transaction(
     "current", [Status.SCREENED, Status.IN_REVIEW], ids=["screened", "in_review"]
 )
 def test_a_rescreen_that_declines_closes_a_deal_in_review(
-    db_session: Session, stored_deal: Deal, current: Status
+    db_session: Session, declining_deal: Deal, current: Status
 ) -> None:
-    stored_deal.status = current
+    declining_deal.status = current
     db_session.flush()
-    result = run_screen(db_session, stored_deal.id, CONFIG, actor=ACTOR)
+    result = run_screen(db_session, declining_deal.id, CONFIG, actor=ACTOR)
     db_session.commit()
     assert result.verdict is Verdict.DECLINE
-    assert stored_deal.status is Status.DECLINED
+    assert declining_deal.status is Status.DECLINED
 
 
 @requires_db
@@ -213,20 +213,20 @@ def test_a_rescreen_that_declines_closes_a_deal_in_review(
     ids=["underwriting", "loi_sent", "handed_off"],
 )
 def test_a_decline_on_a_deal_being_worked_records_the_flags_and_leaves_the_status(
-    db_session: Session, stored_deal: Deal, current: Status
+    db_session: Session, declining_deal: Deal, current: Status
 ) -> None:
     """A person owns the deal from here on; the Hard flags are theirs to read and act on."""
-    stored_deal.status = current
+    declining_deal.status = current
     db_session.flush()
-    result = run_screen(db_session, stored_deal.id, CONFIG, actor=ACTOR)
+    result = run_screen(db_session, declining_deal.id, CONFIG, actor=ACTOR)
     db_session.commit()
 
     assert result.verdict is Verdict.DECLINE
-    assert stored_deal.status is current
+    assert declining_deal.status is current
     hard = [f for f in result.flags if f.severity is Severity.HARD]
     assert hard, "the decline had no hard flag to record"
     # recorded, not just returned: the row carries the same flags and verdict
-    row = latest_screen(db_session, stored_deal.id)
+    row = latest_screen(db_session, declining_deal.id)
     assert row is not None
     assert row.verdict is Verdict.DECLINE
     stored = screen_result(row)
@@ -253,14 +253,14 @@ def test_an_underwrite_on_a_new_deal_screens_it_first_and_proceeds(
 
 @requires_db
 def test_an_underwrite_on_a_new_deal_stops_when_that_screen_declines(
-    db_session: Session, stored_deal: Deal
+    db_session: Session, declining_deal: Deal
 ) -> None:
-    assert stored_deal.status is Status.NEW
+    assert declining_deal.status is Status.NEW
     with pytest.raises(DealNotUnderwritable) as caught:
         run_underwrite(
             db_session,
-            stored_deal.id,
-            request(as_is_value=D("250000.00"), estimated_sale_price=D("295000.00")),
+            declining_deal.id,
+            request(estimated_sale_price=D("295000.00")),
             CONFIG,
             actor=ACTOR,
         )
@@ -268,11 +268,11 @@ def test_an_underwrite_on_a_new_deal_stops_when_that_screen_declines(
     assert caught.value.status is Status.DECLINED
 
     # the screen that declined it is recorded, and nothing was priced
-    assert stored_deal.status is Status.DECLINED
-    row = latest_screen(db_session, stored_deal.id)
+    assert declining_deal.status is Status.DECLINED
+    row = latest_screen(db_session, declining_deal.id)
     assert row is not None and row.verdict is Verdict.DECLINE
     assert (
-        db_session.scalars(select(Underwrite).where(Underwrite.deal_id == stored_deal.id)).all()
+        db_session.scalars(select(Underwrite).where(Underwrite.deal_id == declining_deal.id)).all()
         == []
     )
 
@@ -324,15 +324,15 @@ def test_an_incomplete_intake_is_not_priced_and_names_what_is_missing(
     ``underwrites`` row would have landed on a deal still sitting in NEEDS_INFO.
     """
     payload = dict(team_entry_with_overrides)
-    payload.pop("borrower_phone")
+    payload.pop("credit_range")
     deal = store_deal(db_session, payload)
     assert deal.status is Status.NEEDS_INFO
-    assert deal.missing_fields == ["borrower.phone"]
+    assert deal.missing_fields == ["borrower.credit_range"]
 
     with pytest.raises(DealNotReady) as caught:
         run_underwrite(db_session, deal.id, request(), CONFIG, actor=ACTOR)
-    assert caught.value.missing == ["borrower.phone"]
-    assert "borrower.phone" in str(caught.value)
+    assert caught.value.missing == ["borrower.credit_range"]
+    assert "borrower.credit_range" in str(caught.value)
 
     rows = db_session.scalars(select(Underwrite).where(Underwrite.deal_id == deal.id)).all()
     assert rows == []

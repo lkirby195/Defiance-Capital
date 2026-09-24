@@ -79,108 +79,109 @@ states:                                   # SPEC §10
 
 leverage_caps:                            # SPEC §7.4 — product x credit tranche x experience tier
   # PLACEHOLDER GRID: every cell carries the same dummy caps so it is obvious nothing is tuned.
-  # GLENWOOD fills this. Each cell: ltc, ltv_as_is, ltarv (fractions of 1).
+  # GLENWOOD fills this. Each cell: ltc, ltv (fractions of 1). LTV is the commitment over
+  # the estimated sale price (SPEC §7.4); the LTC placeholder is 100%, i.e. no cap yet.
   NO_DRAW:
     T1:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
     T2:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
     T3:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
     T4:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
     T5:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
   SPLIT_DRAW:
     T1:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
     T2:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
     T3:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
     T4:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
     T5:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
   SPLIT_PRINCIPAL:
     T1:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
     T2:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
     T3:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
     T4:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
     T5:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
   WHOLETAIL:
     T1:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
     T2:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
     T3:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
     T4:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}
     T5:
-      E0: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E1: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E2: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
-      E3: {ltc: 0.80, ltv_as_is: 0.75, ltarv: 0.70}
+      E0: {ltc: 1.00, ltv: 0.75}
+      E1: {ltc: 1.00, ltv: 0.75}
+      E2: {ltc: 1.00, ltv: 0.75}
+      E3: {ltc: 1.00, ltv: 0.75}

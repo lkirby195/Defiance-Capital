@@ -131,12 +131,16 @@ def test_a_term_with_no_rehab_period_says_so(capsys: pytest.CaptureFixture[str])
 
 
 def test_an_analysis_that_did_not_run_says_why(capsys: pytest.CaptureFixture[str]) -> None:
-    no_rent = FIXTURE_DIR / "conditional_no_rent_no_draw.json"
+    no_rent = FIXTURE_DIR / "conditional_no_price_no_rent.json"
     assert main(["run", str(no_rent), "--underwrite"]) == 0
     out = capsys.readouterr().out
     assert "RENTAL ANALYSIS" in out and "OFF" in out
     assert "NOT EVALUATED: no monthly rent" in out
     assert "MONTHLY_RENT_MISSING" in out
+    # ...and the flip, which had no price to sell at (SPEC §8.4)
+    assert "NOT EVALUATED: no estimated sale price" in out
+    assert "SALE_PRICE_MISSING" in out
+    assert "TAKE-BACK ANALYSIS" in out and "(always on)" in out
 
 
 def test_run_fixture_refuses_an_underwrite_it_was_not_given(tmp_path: Path) -> None:
@@ -173,8 +177,11 @@ def test_a_team_entry_fixture_reaches_its_expected_verdict(path: Path) -> None:
     run = run_fixture(path, CONFIG, with_underwrite=False)
     assert run.screen_result.verdict.value == fixture["expected"]["verdict"]
     sources = fixture["expected"]["sources"]
-    assert run.screen_result.sizing.as_is_value_source is not None
-    assert run.screen_result.sizing.as_is_value_source.value == sources["as_is_value"]
+    assert run.screen_result.sizing.estimated_sale_price_source is not None
+    assert (
+        run.screen_result.sizing.estimated_sale_price_source.value
+        == sources["estimated_sale_price"]
+    )
     assert run.screen_result.components.court_records_source is not None
     assert run.screen_result.components.court_records_source.value == sources["court_records"]
 
@@ -186,7 +193,7 @@ def test_the_team_override_fixture_screens_go_and_says_where_its_numbers_came_fr
     assert main(["run", str(team), "--underwrite"]) == 0
     out = capsys.readouterr().out
     assert "verdict: GO" in out
-    assert "As-is / sale price from" in out and "team / team" in out
+    assert "Estimated sale price from" in out and "team" in out
     assert "Court records from" in out
     # the underwrite request names no valuation, so the deal's own team numbers carry it
     assert "Estimated sale price" in out and "200,000.00" in out

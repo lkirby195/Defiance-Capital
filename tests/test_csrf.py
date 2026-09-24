@@ -40,9 +40,11 @@ COMPLETE_INTAKE: dict[str, Any] = {
     "repeat_borrower": "false",
     "address": "1 Main St, Tulsa, OK 74119",
     "purchase_price": "100000.00",
-    "rehab_budget": "0",
-    "loan_requested": "70000.00",
-    "term_bucket": "9",
+    "rehab_costs": "$0",
+    "loan_requested": "$70,000",
+    "term_months": "9",
+    "interest_rate": "12%",
+    "closing_date": "2027-01-01",
 }
 
 # Every state-changing path a browser posts to, with a body that would otherwise be accepted.
@@ -50,7 +52,7 @@ GUARDED: list[tuple[str, dict[str, Any]]] = [
     ("/queue/deals/{deal}/intake", COMPLETE_INTAKE),
     ("/queue/deals/{deal}/screen", {}),
     ("/queue/deals/{deal}/underwrite", {}),
-    ("/queue/deals/{deal}/overrides", {"as_is_value_team": "250000.00"}),
+    ("/queue/deals/{deal}/overrides", {"estimated_sale_price_team": "$250,000"}),
     ("/queue/deals/{deal}/advance", {}),
     ("/queue/deals/{deal}/decline", {"reason": "leverage"}),
     ("/queue/deals/{deal}/dead", {"reason": "went quiet"}),

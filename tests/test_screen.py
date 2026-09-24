@@ -34,6 +34,7 @@ from engine.screen import (
 )
 from engine.sizing import size_deal
 from engine.version import ENGINE_VERSION
+from schema.labels import enum_label
 from schema.models import (
     BorrowerInputs,
     CourtFlag,
@@ -86,7 +87,6 @@ def deal(**overrides: Any) -> SizingInputs:
         "purchase_price": D("150000.00"),
         "rehab_costs": D("0.00"),
         "loan_requested": D("105000.00"),
-        "as_is_value": D("160000.00"),
         "estimated_sale_price": D("165000.00"),
     }
     base.update(overrides)
@@ -449,8 +449,7 @@ def test_leverage_flags_name_cap_actual_band_and_cell() -> None:
             purchase_price=D("100000.00"),
             rehab_costs=D("40000.00"),
             loan_requested=D("135000.00"),
-            as_is_value=D("110000.00"),
-            estimated_sale_price=D("180000.00"),
+            estimated_sale_price=D("150000.00"),
         ),
         Tranche.T3,
         ExperienceTier.E1,
@@ -458,34 +457,39 @@ def test_leverage_flags_name_cap_actual_band_and_cell() -> None:
     )
     flags = leverage_flags(sizing)
     by_code = {f.code: f for f in flags}
-    ltc = by_code[ScreenFlag.LTC_OVER_CAP]
-    assert ltc.severity is Severity.HARD
-    assert re.search(r"LTC 95\.7% exceeds the 80\.0% cap for SPLIT_PRINCIPAL/T3/E1", ltc.message)
-    assert "5.0 pt tolerance band (limit 85.0%)" in ltc.message
-    ltarv = by_code[ScreenFlag.LTARV_OVER_CAP]
-    assert ltarv.severity is Severity.SOFT
-    assert "LTARV 75.0% is over the 70.0% cap" in ltarv.message
+    ltv = by_code[ScreenFlag.LTV_OVER_CAP]
+    assert ltv.severity is Severity.HARD
+    assert re.search(r"LTV 90\.0% exceeds the 75\.0% cap for SPLIT_PRINCIPAL/T3/E1", ltv.message)
+    assert "5.0 pt tolerance band (limit 80.0%)" in ltv.message
+    # ...and the LTC, at 95.7% of cost, is inside the 100% placeholder cap.
+    assert ScreenFlag.LTC_OVER_CAP not in by_code
 
 
-def test_missing_values_are_soft_flags() -> None:
+def test_an_ltc_past_its_cap_is_named_the_same_way() -> None:
     sizing = size_deal(
-        deal(as_is_value=None, estimated_sale_price=None), Tranche.T2, ExperienceTier.E2, CONFIG
-    )
-    flags = leverage_flags(sizing)
-    assert codes(flags) == ["AS_IS_VALUE_MISSING", "ESTIMATED_SALE_PRICE_MISSING"]
-    assert all(f.severity is Severity.SOFT for f in flags)
-    assert "LTV computed on the purchase price" in flags[0].message
-    assert "cap 70.0%" in flags[1].message
-
-
-def test_ltv_breach_on_purchase_price_says_so() -> None:
-    sizing = size_deal(
-        deal(as_is_value=None, loan_requested=D("125000.00")), Tranche.T2, ExperienceTier.E2, CONFIG
+        deal(
+            purchase_price=D("100000.00"),
+            rehab_costs=D("0.00"),
+            loan_requested=D("104000.00"),
+            estimated_sale_price=D("300000.00"),
+        ),
+        Tranche.T3,
+        ExperienceTier.E1,
+        CONFIG,
     )
     by_code = {f.code: f for f in leverage_flags(sizing)}
-    assert by_code[ScreenFlag.LTV_AS_IS_OVER_CAP].message.startswith(
-        "LTV (on purchase price) 83.3%"
-    )
+    ltc = by_code[ScreenFlag.LTC_OVER_CAP]
+    assert ltc.severity is Severity.SOFT  # 103.0% of cost is inside the 5-point band
+    assert "LTC 103.0% is over the 100.0% cap for NO_DRAW/T3/E1" in ltc.message
+
+
+def test_a_missing_sale_price_is_a_soft_flag() -> None:
+    sizing = size_deal(deal(estimated_sale_price=None), Tranche.T2, ExperienceTier.E2, CONFIG)
+    flags = leverage_flags(sizing)
+    assert codes(flags) == ["ESTIMATED_SALE_PRICE_MISSING"]
+    assert flags[0].severity is Severity.SOFT
+    assert "Estimated sale price unavailable; LTV not computed" in flags[0].message
+    assert "cap 75.0%" in flags[0].message
 
 
 def test_split_principal_capped_tranche_a_below_request_is_an_info_flag() -> None:
@@ -495,7 +499,6 @@ def test_split_principal_capped_tranche_a_below_request_is_an_info_flag() -> Non
             purchase_price=D("150000.00"),
             rehab_costs=D("60000.00"),
             loan_requested=D("170000.00"),
-            as_is_value=D("230000.00"),
             estimated_sale_price=D("290000.00"),
             loan_purchase_portion=D("80000.00"),
             loan_rehab_portion=D("90000.00"),  # capped at rehab_adj = 66,000
@@ -515,7 +518,7 @@ def test_split_principal_capped_tranche_a_below_request_is_an_info_flag() -> Non
     flag = flags[1]
     assert flag.code is ScreenFlag.COMMITMENT_BELOW_REQUEST and flag.severity is Severity.INFO
     assert "commitment $140,000.00" in flag.message
-    assert "$170,000.00 requested" in flag.message
+    assert "$170,000.00 loan amount" in flag.message
     assert "Tranche A $60,000.00" in flag.message
     assert "entered rehab portion is capped" in flag.message
     assert "rehab cost $60,000.00" in flag.message
@@ -533,7 +536,6 @@ def test_a_rehab_portion_over_the_budget_is_an_info_flag_on_both_split_products(
                 purchase_price=D("150000.00"),
                 rehab_costs=D("60000.00"),
                 loan_requested=D("170000.00"),
-                as_is_value=D("230000.00"),
                 estimated_sale_price=D("290000.00"),
                 loan_purchase_portion=D("80000.00"),
                 loan_rehab_portion=D("90000.00"),  # rehab_adj is 60,000
@@ -546,7 +548,7 @@ def test_a_rehab_portion_over_the_budget_is_an_info_flag_on_both_split_products(
             f for f in leverage_flags(sizing) if f.code is ScreenFlag.REHAB_PORTION_EXCEEDS_BUDGET
         )
         assert flag.severity is Severity.INFO
-        assert f"{product.value} rehab portion $90,000.00" in flag.message
+        assert f"{enum_label(product)} rehab portion $90,000.00" in flag.message
         assert "rehab cost $60,000.00" in flag.message
         assert consequence in flag.message
 
@@ -558,7 +560,6 @@ def test_no_rehab_portion_flag_when_the_portion_is_within_the_budget() -> None:
             purchase_price=D("150000.00"),
             rehab_costs=D("60000.00"),
             loan_requested=D("170000.00"),
-            as_is_value=D("230000.00"),
             estimated_sale_price=D("290000.00"),
             loan_purchase_portion=D("110000.00"),
             loan_rehab_portion=D("60000.00"),  # exactly rehab_adj, so nothing is capped
@@ -579,7 +580,6 @@ def test_no_commitment_flag_when_the_request_is_fully_allocated() -> None:
                 purchase_price=D("150000.00"),
                 rehab_costs=D("60000.00"),
                 loan_requested=D("70000.00"),
-                as_is_value=D("230000.00"),
                 estimated_sale_price=D("290000.00"),
                 loan_purchase_portion=D("10000.00"),
                 loan_rehab_portion=D("60000.00"),  # exactly rehab_adj, so uncapped
@@ -630,7 +630,7 @@ def test_suggested_reply_lists_deduplicated_asks_on_conditional() -> None:
     flags = [
         flag(Severity.SOFT, ScreenFlag.ESTIMATED_SALE_PRICE_MISSING),
         flag(Severity.SOFT, ScreenFlag.LTC_OVER_CAP),
-        flag(Severity.SOFT, ScreenFlag.LTV_AS_IS_OVER_CAP),
+        flag(Severity.SOFT, ScreenFlag.LTV_OVER_CAP),
         flag(Severity.SOFT, ScreenFlag.STATE_NOT_SERVED),
         Flag(
             code=CourtFlag.ACTIVE_CIVIL_LITIGATION_AS_DEFENDANT, severity=Severity.SOFT, message="x"
@@ -710,12 +710,10 @@ def test_engine_modules_do_no_io() -> None:
 # --- TEAM_SOURCED_VALUES (SPEC §6.1) -------------------------------------------------------------
 
 
-def sized_with(as_is: ValueSource | None, sale: ValueSource | None) -> SizingResult:
-    """A sizing result whose valuation halves carry the sources asked for."""
+def sized_with(sale: ValueSource | None) -> SizingResult:
+    """A sizing result whose sale price carries the source asked for."""
     return size_deal(
-        deal().model_copy(
-            update={"as_is_value_source": as_is, "estimated_sale_price_source": sale}
-        ),
+        deal().model_copy(update={"estimated_sale_price_source": sale}),
         Tranche.T2,
         ExperienceTier.E2,
         CONFIG,
@@ -727,58 +725,38 @@ def searched(source: ValueSource) -> CourtRecordInputs:
 
 
 def test_no_flag_when_every_value_was_pulled() -> None:
-    both_pulled = sized_with(ValueSource.ADAPTER, ValueSource.ADAPTER)
-    assert team_sourced_flags(both_pulled, searched(ValueSource.ADAPTER)) == []
-    assert team_sourced_flags(both_pulled, None) == []
+    pulled = sized_with(ValueSource.ADAPTER)
+    assert team_sourced_flags(pulled, searched(ValueSource.ADAPTER)) == []
+    assert team_sourced_flags(pulled, None) == []
 
 
 def test_the_flag_names_which_values_the_team_entered() -> None:
-    all_three = team_sourced_flags(
-        sized_with(ValueSource.TEAM, ValueSource.TEAM), searched(ValueSource.TEAM)
-    )
-    assert len(all_three) == 1
-    flag = all_three[0]
+    both = team_sourced_flags(sized_with(ValueSource.TEAM), searched(ValueSource.TEAM))
+    assert len(both) == 1
+    flag = both[0]
     assert flag.code is ScreenFlag.TEAM_SOURCED_VALUES
     assert flag.severity is Severity.INFO
-    assert flag.message.startswith(
-        "As-is value, estimated sale price, and court records came from the team"
-    )
+    assert flag.message.startswith("Estimated sale price and court records came from the team")
 
-    only_sale = team_sourced_flags(
-        sized_with(ValueSource.ADAPTER, ValueSource.TEAM), searched(ValueSource.ADAPTER)
-    )
+    only_sale = team_sourced_flags(sized_with(ValueSource.TEAM), searched(ValueSource.ADAPTER))
     assert only_sale[0].message.startswith("Estimated sale price came from the team")
 
-    two_of_them = team_sourced_flags(
-        sized_with(ValueSource.TEAM, ValueSource.ADAPTER), searched(ValueSource.TEAM)
-    )
-    assert two_of_them[0].message.startswith("As-is value and court records came from the team")
-
-    court_only = team_sourced_flags(
-        sized_with(ValueSource.ADAPTER, ValueSource.ADAPTER), searched(ValueSource.TEAM)
-    )
+    court_only = team_sourced_flags(sized_with(ValueSource.ADAPTER), searched(ValueSource.TEAM))
     assert court_only[0].message.startswith("Court records came from the team")
 
 
 def test_an_unavailable_value_is_not_a_team_value() -> None:
     """A missing valuation has its own flags; it is not also reported as hand-entered."""
-    nothing = size_deal(
-        deal(as_is_value=None, estimated_sale_price=None), Tranche.T2, ExperienceTier.E2, CONFIG
-    )
-    assert nothing.as_is_value_source is None and nothing.estimated_sale_price_source is None
+    nothing = size_deal(deal(estimated_sale_price=None), Tranche.T2, ExperienceTier.E2, CONFIG)
+    assert nothing.estimated_sale_price_source is None
     assert team_sourced_flags(nothing, None) == []
-    # the screen still says the values are missing, through their own flags
-    assert codes(leverage_flags(nothing)) == ["AS_IS_VALUE_MISSING", "ESTIMATED_SALE_PRICE_MISSING"]
+    # the screen still says the value is missing, through its own flag
+    assert codes(leverage_flags(nothing)) == ["ESTIMATED_SALE_PRICE_MISSING"]
 
 
 def test_the_flag_is_information_and_never_moves_a_verdict() -> None:
     inputs = ScreenInputs(
-        deal=deal().model_copy(
-            update={
-                "as_is_value_source": ValueSource.TEAM,
-                "estimated_sale_price_source": ValueSource.TEAM,
-            }
-        ),
+        deal=deal().model_copy(update={"estimated_sale_price_source": ValueSource.TEAM}),
         state=State.OK,
         borrower=borrower(),
         court_records=searched(ValueSource.TEAM),

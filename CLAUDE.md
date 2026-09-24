@@ -32,8 +32,9 @@ glenwood-uw/
     intake.json            # canonical IntakeRecord JSON schema (generated from Pydantic, committed)
     models.py              # IntakeRecord, UnderwriteResult, enums (Product, Tranche, ExperienceTier, Verdict, ...)
     labels.py              # what a person is shown where the model stores a code (T3 -> "660-699")
+    masks.py               # what a person types where the model stores a number ($#,###, 12%, digits)
   engine/
-    sizing.py              # LTV / LTC / LTARV, product-specific commitment split
+    sizing.py              # LTC / LTV, product-specific commitment split
     screen.py              # score components + verdict + reasons
     calc/                  # the v0.3 ledger model: terms.py, ledger.py, irr.py,
                            #   flip.py, rental.py, exit.py
@@ -76,6 +77,7 @@ glenwood-uw/
     main.py, routes/       # auth, queue, intake, deals
     security.py            # the signed session cookie and the who-is-signed-in dependencies
     forms.py, render.py    # HTML form parsing; the Jinja environment and its filters
+    masks.py               # which box holds which kind of number, and the config defaults
     intake_form.py         # the team-entry form: its fields, which are required, a deal as one
     templates/             # the review queue's own pages (committed; not the docx templates)
   cli/
@@ -136,11 +138,27 @@ term and the interest rate - are named by the readiness checklist and refused by
 - **No dependency on any other repo.** See top of file.
 - **No self-signup and no password reset.** Users are created and deactivated from the command line. Do not add a registration page, an invite link, or a reset-by-email flow to v1.
 - **A code the model stores is never a label a person reads.** `Tranche` and
-  `ExperienceBucket` are grid coordinates and stored values; `schema/labels.py` turns them
-  into the FICO range and the deal count somebody actually picked, and every rendered page and
-  flag message goes through it. The credit labels are derived from the config cutoffs, so
-  moving a cutoff moves the label.
-- **No client-side JS in the queue beyond the copy button.** Server-rendered Jinja, plain form posts, POST-redirect-GET. If a page seems to need script, it needs a different page.
+  `ExperienceBucket` are grid coordinates and stored values; `Product`, `AssetType`,
+  `LoanPurpose` and `StatedExit` are SCREAMING_SNAKE for the same reason. `schema/labels.py`
+  turns each into the words somebody actually picked - the FICO range, the deal count, "Split
+  Draw" - and every rendered page and flag message goes through it. The credit labels are
+  derived from the config cutoffs, so moving a cutoff moves the label. The one exception is
+  the caps cell (`SPLIT_DRAW/T3/E2`), which is a config grid coordinate a person looks up
+  rather than a label they read.
+- **A number the model stores is not the text a person types.** `schema/masks.py` and
+  `api/masks.py` are the two halves: money is typed and shown `$425,000`, a percent `12%`
+  (the deal carries `0.12`), a phone `555-123-4567` (the deal carries the digits). The
+  conversion happens at the HTML boundary and nowhere else - the models, the database and the
+  engine never see 12 - so the JSON half of `POST /intake/team` still speaks in what is
+  stored.
+- **No client-side JS in the queue beyond the copy button and the input masks.**
+  Server-rendered Jinja, plain form posts, POST-redirect-GET. The two exceptions are
+  conveniences and neither is load-bearing: the copy button on the suggested reply, and the
+  masks in `base.html` that format a price, a percent and a phone as they are typed and
+  toggle the "default" tag on the four §8.1 economics that have one. The server parses
+  `$425,000`, `425000`, `12%` and `12` alike, so a browser that runs none of it still posts a
+  deal that saves. Nothing client-side validates, fetches or decides. If a page seems to need
+  script for anything else, it needs a different page.
 - **Every form post carries a CSRF token.** The guard is a router-level dependency (`api/security.py`), so a new route is covered by where it lives rather than by somebody remembering; every `<form method="post">` renders `{{ csrf.field(csrf_token) }}`. `tests/test_csrf.py` posts to every guarded route without one and asserts the refusal — do not add a route that needs an exemption without saying why there.
 
 ## Style

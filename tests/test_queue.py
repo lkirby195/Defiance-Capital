@@ -39,7 +39,7 @@ from services import (
 )
 from services.queue import RunSummary
 from services.requests import UnderwriteRequest
-from tests.conftest import ACTOR, requires_db, store_deal
+from tests.conftest import ACTOR, DECLINING_SALE_PRICE, requires_db, store_deal
 
 pytestmark = requires_db
 
@@ -53,6 +53,12 @@ def a_deal(session: Session, **overrides: Any) -> Deal:
     payload = json.loads(TEAM_ENTRY.read_text(encoding="utf-8"))
     payload.update(overrides)
     return store_deal(session, payload)
+
+
+def a_deal_that_declines(session: Session, **overrides: Any) -> Deal:
+    """The same deal at a sale price its commitment is 88.6% of: a Hard LTV flag, so a
+    Decline (SPEC §7.4, §7.5). The pin tests need a real Hard flag from the real engine."""
+    return a_deal(session, estimated_sale_price_team=DECLINING_SALE_PRICE, **overrides)
 
 
 def deal_that_screens_go(session: Session) -> Deal:
@@ -234,8 +240,8 @@ def test_each_entry_carries_the_latest_run_of_each_stage(
 def hard_flagged(session: Session, deal: Deal) -> None:
     """Screen the deal into a state where its latest screen carries a Hard flag.
 
-    The stock fixture has no valuation, so its LTV falls back to the purchase price and
-    blows the cap: a real Hard flag from the real engine rather than a row written by hand.
+    The deal's sale price puts its commitment past the LTV cap by more than the tolerance
+    band: a real Hard flag from the real engine rather than a row written by hand.
     """
     run_screen(session, deal.id, CONFIG, actor=ACTOR)
     session.commit()
@@ -246,21 +252,21 @@ def hard_flagged(session: Session, deal: Deal) -> None:
 
 @pytest.mark.parametrize("status", [Status.LOI_SENT, Status.HANDED_OFF])
 def test_a_hard_flag_raised_after_the_loi_pins_the_deal(
-    db_session: Session, stored_deal: Deal, status: Status
+    db_session: Session, declining_deal: Deal, status: Status
 ) -> None:
     record_audit(
         db_session,
         actor=ACTOR,
         action=AuditAction.LOI_SENT if status is Status.LOI_SENT else AuditAction.HANDED_OFF,
         table_name=DEALS,
-        row_id=stored_deal.id,
+        row_id=declining_deal.id,
         after={"status": status.value},
     )
-    at(db_session, stored_deal, status)
-    hard_flagged(db_session, stored_deal)
+    at(db_session, declining_deal, status)
+    hard_flagged(db_session, declining_deal)
 
     view = queue_view(db_session)
-    assert [entry.deal.id for entry in view.pinned] == [stored_deal.id]
+    assert [entry.deal.id for entry in view.pinned] == [declining_deal.id]
     entry = view.pinned[0]
     assert entry.pinned is True
     assert entry.pin_reason is not None
@@ -272,17 +278,17 @@ def test_a_hard_flag_raised_after_the_loi_pins_the_deal(
 
 
 def test_a_hard_flag_raised_before_the_loi_does_not_pin(
-    db_session: Session, stored_deal: Deal
+    db_session: Session, declining_deal: Deal
 ) -> None:
     """The flag was already on the file when the LOI went out; it is not news."""
-    hard_flagged(db_session, stored_deal)
-    at(db_session, stored_deal, Status.LOI_SENT)
+    hard_flagged(db_session, declining_deal)
+    at(db_session, declining_deal, Status.LOI_SENT)
     record_audit(
         db_session,
         actor=ACTOR,
         action=AuditAction.LOI_SENT,
         table_name=DEALS,
-        row_id=stored_deal.id,
+        row_id=declining_deal.id,
         after={"status": Status.LOI_SENT.value},
     )
     db_session.commit()
@@ -292,10 +298,10 @@ def test_a_hard_flag_raised_before_the_loi_does_not_pin(
     assert statuses(view) == [Status.LOI_SENT.value]
 
 
-def test_a_deal_short_of_the_loi_is_never_pinned(db_session: Session, stored_deal: Deal) -> None:
+def test_a_deal_short_of_the_loi_is_never_pinned(db_session: Session, declining_deal: Deal) -> None:
     """Below LOI_SENT a Decline still closes the deal (SPEC §4.6); nothing needs pinning."""
-    hard_flagged(db_session, stored_deal)
-    assert stored_deal.status is Status.DECLINED
+    hard_flagged(db_session, declining_deal)
+    assert declining_deal.status is Status.DECLINED
     assert queue_view(db_session).pinned == []
 
 
@@ -310,13 +316,13 @@ def test_a_deal_at_the_loi_with_no_hard_flag_is_not_pinned(
 
 
 def test_a_deal_that_reached_the_loi_without_an_audit_row_still_pins(
-    db_session: Session, stored_deal: Deal
+    db_session: Session, declining_deal: Deal
 ) -> None:
     """No row to compare against, and a missed Hard flag at LOI is the worse mistake."""
-    at(db_session, stored_deal, Status.LOI_SENT)
-    hard_flagged(db_session, stored_deal)
+    at(db_session, declining_deal, Status.LOI_SENT)
+    hard_flagged(db_session, declining_deal)
     view = queue_view(db_session)
-    assert [entry.deal.id for entry in view.pinned] == [stored_deal.id]
+    assert [entry.deal.id for entry in view.pinned] == [declining_deal.id]
     assert "and the deal is LOI_SENT" in (view.pinned[0].pin_reason or "")
 
 
@@ -355,7 +361,7 @@ def test_the_pinned_list_is_ordered_by_last_activity_too(db_session: Session) ->
     now = datetime.now(UTC)
     pinned_deals = []
     for n in range(2):
-        deal = a_deal(db_session, address=f"{n} Birch St, Tulsa OK")
+        deal = a_deal_that_declines(db_session, address=f"{n} Birch St, Tulsa OK")
         at(db_session, deal, Status.LOI_SENT)
         hard_flagged(db_session, deal)
         pinned_deals.append(deal)
@@ -389,10 +395,10 @@ def test_the_queue_page_lists_a_deal_and_its_status(
 
 
 def test_the_queue_page_shows_the_pin_banner(
-    client: TestClient, db_session: Session, stored_deal: Deal
+    client: TestClient, db_session: Session, declining_deal: Deal
 ) -> None:
-    at(db_session, stored_deal, Status.LOI_SENT)
-    hard_flagged(db_session, stored_deal)
+    at(db_session, declining_deal, Status.LOI_SENT)
+    hard_flagged(db_session, declining_deal)
     response = client.get("/queue")
     assert response.status_code == 200
     assert "Hard flags after LOI or handoff" in response.text
@@ -424,16 +430,16 @@ def test_the_deal_page_shows_intake_missing_fields_and_the_overrides(
     client: TestClient, db_session: Session, team_entry: dict[str, Any]
 ) -> None:
     payload = dict(team_entry)
-    payload.pop("borrower_phone")
+    payload.pop("credit_range")
     deal = store_deal(db_session, payload)
 
     response = client.get(f"/queue/deals/{deal.id}")
     assert response.status_code == 200
     assert "NEEDS_INFO" in response.text
-    assert "borrower.phone" in response.text
+    assert "borrower.credit_range" in response.text
     assert "Not screened yet" in response.text
     assert "Not underwritten yet" in response.text
-    assert 'name="as_is_value_team"' in response.text
+    assert 'name="estimated_sale_price_team"' in response.text
 
 
 def test_the_deal_page_renders_a_screen_and_an_underwrite(
@@ -452,7 +458,8 @@ def test_the_deal_page_renders_a_screen_and_an_underwrite(
     assert "Copy reply" in body
     # the sizing table and the §9 result sections, in their SPEC order
     assert "Sizing against caps" in body
-    assert "LTARV" in body
+    assert ">LTV<" in body and ">LTC<" in body
+    assert "LTARV" not in body
     assert body.index("Return Overview") < body.index("Flip Analysis")
     assert body.index("Flip Analysis") < body.index("Rental Analysis")
     assert body.index("Rental Analysis") < body.index("Take-Back Analysis")
@@ -478,7 +485,7 @@ def test_the_run_buttons_screen_and_underwrite_the_deal(
     assert deal is not None and deal.status is Status.UNDERWRITING
 
 
-def test_the_underwrite_button_runs_without_a_rent_or_utilities(
+def test_the_underwrite_button_runs_without_a_rent(
     client: TestClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
     """The rent is optional: without one, both DSCR analyses stand down (SPEC §8.5, §8.6)."""
@@ -486,7 +493,6 @@ def test_the_underwrite_button_runs_without_a_rent_or_utilities(
         db_session,
         deal_with_overrides.id,
         TeamOverrides(
-            as_is_value_team=deal_with_overrides.as_is_value_team,
             estimated_sale_price_team=deal_with_overrides.estimated_sale_price_team,
             closing_date=deal_with_overrides.closing_date,
             term_months=deal_with_overrides.term_months,

@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session
 os.environ.setdefault("SESSION_SECRET", "test-session-secret-not-a-real-one")
 
 from api.main import app  # noqa: E402
+from api.masks import mask_one  # noqa: E402
 from api.security import COOKIE_NAME  # noqa: E402
 from db.models import Base, Deal, User  # noqa: E402
 from db.repository import create_deal_from_intake  # noqa: E402
@@ -104,6 +105,21 @@ def team_entry() -> dict[str, Any]:
     return payload
 
 
+def form_body(payload: dict[str, Any], **changes: Any) -> dict[str, str]:
+    """A team-entry payload as the browser posts it: masked, every value a string.
+
+    The page renders ``$200,000`` and ``12%`` and takes them back that way
+    (``api/masks.py``), so a test that posts the stored numbers instead is testing a client
+    that does not exist. Blanks are dropped, exactly as ``api.forms.fields`` drops them.
+    """
+    out: dict[str, str] = {}
+    for key, value in {**payload, **changes}.items():
+        if value is None or value == "":
+            continue
+        out[key] = mask_one(key, value)
+    return out
+
+
 def store_deal(session: Session, payload: dict[str, Any]) -> Deal:
     """Normalize a team-entry payload and store it, as ``POST /intake/team`` does."""
     record = normalize(parse_team_form(TeamEntryForm(**payload)), Channel.TEAM, raw_payload=payload)
@@ -116,11 +132,22 @@ def store_deal(session: Session, payload: dict[str, Any]) -> Deal:
 def stored_deal(db_session: Session, team_entry: dict[str, Any]) -> Deal:
     """One complete deal in the database, ready to screen.
 
-    No team overrides: with no valuation behind it, this deal screens to a Decline (its
-    LTV is computed on the purchase price and lands over the cap), which is the honest
+    No team overrides: with no estimated sale price behind it, LTV is NOT_AVAILABLE and this
+    deal screens Conditional on ESTIMATED_SALE_PRICE_MISSING (SPEC §7.4). That is the honest
     state of a deal today and the reason the overrides exist.
     """
     return store_deal(db_session, team_entry)
+
+
+# A sale price low enough that the $195,000 commitment is 88.6% of it - past the 75% cap by
+# more than the 5-point band, so the flag is Hard and the screen declines (SPEC §7.5).
+DECLINING_SALE_PRICE = "220000.00"
+
+
+@pytest.fixture
+def declining_deal(db_session: Session, team_entry: dict[str, Any]) -> Deal:
+    """One deal whose leverage declines it, for the tests about what a Decline does."""
+    return store_deal(db_session, {**team_entry, "estimated_sale_price_team": DECLINING_SALE_PRICE})
 
 
 @pytest.fixture

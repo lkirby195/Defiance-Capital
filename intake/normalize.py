@@ -5,13 +5,14 @@ module is the only writer of ``missing_fields`` and of the initial ``status``:
 ``NEEDS_INFO`` while anything from the minimum viable intake is absent, ``NEW``
 once it is complete and ready to screen (SPEC §7 screens every complete intake).
 
-Normalization here is deliberately light: the phone goes to E.164 for NANP
-numbers so it works as the borrower match key (SPEC §5), the address gets
-whitespace/case cleanup, and the state is inferred from the address text unless a
-person entered it (``state_source`` records which). The product is inferred from the
-rehab costs unless the team entered it (``product_source`` records which). The term is the
-team's own when they set one and the bucket's number otherwise (SPEC §8.1).
-Parcel, county, and USPS-form addresses come from enrichment (SPEC §6).
+Normalization here is deliberately light: the phone goes to bare digits so it works
+as the borrower match key (SPEC §5) and masks back to ``###-###-####`` wherever it is
+shown (``schema/masks.py``), the address gets whitespace/case cleanup, and the state is
+inferred from the address text unless a person entered it (``state_source`` records which).
+The product is inferred from the rehab costs unless the team entered it (``product_source``
+records which). The term is the team's own when they set one and the bucket's number
+otherwise (SPEC §8.1). Parcel, county, and USPS-form addresses come from enrichment
+(SPEC §6).
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
+from schema.masks import phone_digits
 from schema.models import (
     BorrowerInfo,
     Channel,
@@ -37,14 +39,21 @@ from schema.models import (
 )
 
 # The minimum viable intake, in the order the team should ask for it.  # SPEC §4.1
+#
+# The phone is not on it. It is the borrower match key when there is one (SPEC §5) and it is
+# optional on the team-entry form: a deal that arrives by email has a name and no number, and
+# a deal nobody can screen for want of a phone number is worse than one nobody can match.
+#
+# ``deal.term`` is one row for two columns. The borrower channels ask the SPEC §4.1 bucket
+# question and the team form asks for months or a payoff date (SPEC §8.1); either answers
+# "how long does this loan run", and a deal that has one does not need the other.
 MINIMUM_FIELDS: tuple[str, ...] = (
     "property.address_raw",
     "deal.purchase_price",
     "deal.rehab_costs",
     "deal.loan_requested",
-    "deal.term_bucket",
+    "deal.term",
     "borrower.name",
-    "borrower.phone",
     "borrower.credit_range",
     "borrower.experience_bucket",
     "borrower.repeat_borrower",
@@ -63,7 +72,6 @@ _TRAILING_STATE = re.compile(
 )
 _WHITESPACE = re.compile(r"\s+")
 _COMMA = re.compile(r"\s*,\s*")
-_NON_DIGIT = re.compile(r"\D+")
 
 
 @dataclass(frozen=True)
@@ -84,16 +92,13 @@ def clean_text(raw: str | None) -> str | None:
 
 
 def normalize_phone(raw: str | None) -> str | None:
-    """E.164 for 10-digit and 1+10-digit NANP numbers; anything else passes through stripped."""
-    text = clean_text(raw)
-    if text is None:
-        return None
-    digits = _NON_DIGIT.sub("", text)
-    if len(digits) == 10:
-        return "+1" + digits
-    if len(digits) == 11 and digits.startswith("1"):
-        return "+" + digits
-    return text
+    """Bare digits for 10-digit and 1+10-digit NANP numbers; anything else stripped.
+
+    The stored form is digits and the shown form is ``###-###-####``
+    (``schema/masks.py``), so the match key does not depend on how somebody punctuated a
+    number they read off a message.
+    """
+    return phone_digits(clean_text(raw))
 
 
 def normalize_address(raw: str | None) -> str | None:
@@ -145,9 +150,9 @@ def missing_fields(borrower: BorrowerInfo, prop: PropertyInfo, deal: DealInfo) -
         "deal.purchase_price": deal.purchase_price is not None,
         "deal.rehab_costs": deal.rehab_costs is not None,  # 0 is allowed
         "deal.loan_requested": deal.loan_requested is not None,
-        "deal.term_bucket": deal.term_bucket is not None,
+        # The bucket or the months: the borrower channels ask one, the team form the other.
+        "deal.term": deal.term_bucket is not None or deal.term_months is not None,
         "borrower.name": bool(borrower.name),
-        "borrower.phone": bool(borrower.phone),
         "borrower.credit_range": borrower.credit_range is not None,
         "borrower.experience_bucket": borrower.experience_bucket is not None,
         "borrower.repeat_borrower": borrower.repeat_borrower is not None,

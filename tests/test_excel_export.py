@@ -214,12 +214,12 @@ def test_the_inputs_sheet_names_where_each_valuation_came_from() -> None:
     book = book_for(FIXTURE_DIR / "go_team_overrides_tulsa.json")
     sheet = book["Inputs"]
     notes = {row[0].value: row[2].value for row in sheet.iter_rows(min_col=1, max_col=3)}
-    assert notes["As-is value"] == "team, by hand"
     assert notes["Estimated sale price"] == "team, by hand"
+    assert "As-is value" not in notes  # SPEC §7.4: one value ratio, one valuation
 
 
 def test_an_analysis_that_did_not_run_says_why_on_its_own_sheet() -> None:
-    book = book_for(FIXTURE_DIR / "conditional_no_rent_no_draw.json")
+    book = book_for(FIXTURE_DIR / "conditional_no_price_no_rent.json")
     status, _ = find_row(book["Rental"], "Status")
     assert status == "OFF"
     status, _ = find_row(book["Take-Back"], "Status")
@@ -227,6 +227,12 @@ def test_an_analysis_that_did_not_run_says_why_on_its_own_sheet() -> None:
     take_back = book["Take-Back"]
     notes = {row[0].value: row[2].value for row in take_back.iter_rows(min_col=1, max_col=3)}
     assert "no monthly rent" in notes["Status"]
+    assert notes["Toggle"] == "it runs on every deal (SPEC §8.6)"
+    flip = book["Flip"]
+    status, _ = find_row(flip, "Status")
+    assert status == "NOT_EVALUATED"
+    flip_notes = {row[0].value: row[2].value for row in flip.iter_rows(min_col=1, max_col=3)}
+    assert "no estimated sale price" in flip_notes["Status"]
 
 
 def test_the_flip_sheet_reports_the_cost_stack_even_when_the_toggle_is_off() -> None:

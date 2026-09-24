@@ -6,7 +6,14 @@ inquiry from a call; the normalizer reports what is still missing.
 
 The fields are grouped as SPEC §8.1 groups them - Overview, Property Overview, Deal
 Economics - because that is the order the page asks for them in and the order every output
-shows them back.
+shows them back. The Overview is who the borrower is; the loan's own terms - its purpose, its
+type, its closing date and its term - are Deal Economics, beside the money they describe.
+
+The team form asks for the term in months or as a payoff date and not as the SPEC §4.1
+bucket. The bucket is the borrower's own answer to "how long do you need the loan?", which is
+a question the borrower channels ask and a person with the whole deal in front of them does
+not: they know the term, and entering a bucket beside it would be a second number to keep
+in step with the first.
 
 The team-only block also carries the stand-ins for enrichment (SPEC §6): a valuation, a rent
 and a court search the team did by hand. They are used only where no adapter has produced the
@@ -38,7 +45,6 @@ from schema.models import (
     StatedExit,
     StateSource,
     TeamCourtRecord,
-    TermBucket,
     Tranche,
     validate_court_records,
     validate_loan_split,
@@ -50,28 +56,19 @@ class TeamEntryForm(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # Overview (SPEC §8.1)
-    borrower_name: str | None = None
-    borrower_phone: str | None = None
-    borrower_email: str | None = None
+    # Overview (SPEC §8.1): who the borrower is. ``borrower_name`` is the name on the
+    # guarantee - the box is captioned "Guarantor Name" - and is the only name a deal has.
     entity_name: str | None = None
-    guarantor_name: str | None = None
+    borrower_name: str | None = None
+    borrower_phone: str | None = None  # optional; the match key when there is one (SPEC §5)
+    borrower_email: str | None = None
     credit_range: Tranche | None = None
     experience_bucket: ExperienceBucket | None = None
     repeat_borrower: bool | None = None
-    loan_purpose: LoanPurpose | None = None
-    product: Product | None = None  # "Loan Type"; inferred from the rehab costs when omitted
-    closing_date: date | None = None  # month 0 of the ledger (SPEC §8.3)
-    term_bucket: TermBucket | None = None
-    # Enter either; the other derives (SPEC §8.1). ``payoff_date`` is not stored - it is the
-    # closing date plus the term - so the box is an alternative way of saying the term.
-    term_months: int | None = Field(default=None, ge=1, le=60)
-    payoff_date: date | None = None
     # Property Overview (SPEC §8.1)
     address: str | None = None
     listing_url: str | None = None
     city: str | None = None
-    county: str | None = None
     state: State | None = None
     units: int | None = Field(default=None, ge=0)
     structures: int | None = Field(default=None, ge=0)
@@ -85,6 +82,14 @@ class TeamEntryForm(BaseModel):
     stated_exit: StatedExit | None = None
     # Deal Economics (SPEC §8.1). Everything but the price, the costs, the loan and the rate
     # falls back to a config default when the box is left blank.
+    loan_purpose: LoanPurpose | None = None
+    product: Product | None = None  # "Loan Type"; inferred from the rehab costs when omitted
+    closing_date: date | None = None  # month 0 of the ledger (SPEC §8.3)
+    # Enter either; the other derives (SPEC §8.1). ``payoff_date`` is not stored - it is the
+    # closing date plus the term - so the box is an alternative way of saying the term. The
+    # team form does not ask for the SPEC §4.1 bucket at all; see the module docstring.
+    term_months: int | None = Field(default=None, ge=1, le=60)
+    payoff_date: date | None = None
     purchase_price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     rehab_costs: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     loan_requested: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
@@ -107,7 +112,6 @@ class TeamEntryForm(BaseModel):
     rental_analysis: bool | None = None
     # Team-supplied valuation, rent and court search, used until the Phase 3 adapters land
     # (SPEC §6). An adapter value always wins over any of these.
-    as_is_value_team: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     estimated_sale_price_team: Decimal | None = Field(
         default=None, gt=0, max_digits=14, decimal_places=2
     )
@@ -134,8 +138,8 @@ class TeamEntryForm(BaseModel):
     def effective_term_months(self) -> int | None:
         """The term this form produces: the one typed, else the one the payoff date implies.
 
-        # SPEC §8.1. ``None`` when neither box was filled in, which leaves the bucket to
-        seed it (``intake/normalize.py``).
+        # SPEC §8.1. ``None`` when neither box was filled in, which the form refuses
+        (``api/intake_form.py``): a deal nobody has said the length of cannot be priced.
         """
         return term_from_dates(self.closing_date, self.term_months, self.payoff_date)
 
@@ -169,7 +173,7 @@ def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
     """Map the flat form onto the channel-agnostic ``ParsedIntake``."""
     return ParsedIntake(
         borrower=BorrowerInfo(
-            name=form.borrower_name,
+            name=form.borrower_name,  # the guarantor (SPEC §8.1)
             phone=form.borrower_phone,
             email=form.borrower_email,
             entity_name=form.entity_name,
@@ -181,7 +185,6 @@ def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
             address_raw=form.address,
             listing_url=form.listing_url,
             city=form.city,
-            county=form.county,
             state=form.state or State.OTHER,
             state_source=StateSource.ENTERED if form.state is not None else StateSource.INFERRED,
             units=form.units,
@@ -194,7 +197,6 @@ def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
             garage_spaces=form.garage_spaces,
         ),
         deal=DealInfo(
-            guarantor_name=form.guarantor_name,
             loan_purpose=form.loan_purpose,
             closing_date=form.closing_date,
             purchase_price=form.purchase_price,
@@ -202,7 +204,6 @@ def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
             loan_requested=form.loan_requested,
             loan_purchase_portion=form.loan_purchase_portion,
             loan_rehab_portion=form.loan_rehab_portion,
-            term_bucket=form.term_bucket,
             term_months=form.effective_term_months,
             interest_rate=form.interest_rate,
             contingency_pct=form.contingency_pct,
@@ -216,7 +217,6 @@ def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
             flip_analysis=form.flip_analysis,
             rental_analysis=form.rental_analysis,
             monthly_rent=form.monthly_rent,
-            as_is_value_team=form.as_is_value_team,
             estimated_sale_price_team=form.estimated_sale_price_team,
             court_records_status=form.court_records_status,
             court_records_as_of=form.court_records_as_of,

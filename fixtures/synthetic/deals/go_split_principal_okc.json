@@ -8,7 +8,6 @@
       "rehab_costs": "60000.00",
       "loan_requested": "190000.00",
       "contingency_pct": "0.10",
-      "as_is_value": "270000.00",
       "estimated_sale_price": "300000.00",
       "loan_purchase_portion": "136000.00",
       "loan_rehab_portion": "54000.00"
@@ -36,8 +35,7 @@
     "rehab_adj": "66000.00",
     "metrics": {
       "LTC": "PASS",
-      "LTV_AS_IS": "PASS",
-      "LTARV": "PASS"
+      "LTV": "PASS"
     },
     "reasons_contain": [],
     "reply_contains": [
@@ -56,7 +54,6 @@
         "rehab_costs": "60000.00",
         "loan_requested": "190000.00",
         "contingency_pct": "0.10",
-        "as_is_value": "270000.00",
         "estimated_sale_price": "300000.00",
         "loan_purchase_portion": "136000.00",
         "loan_rehab_portion": "54000.00"

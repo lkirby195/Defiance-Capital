@@ -20,7 +20,6 @@ D = Decimal
 MISSING_UUID = "00000000-0000-0000-0000-000000000000"
 
 UNDERWRITE_BODY: dict[str, Any] = {
-    "as_is_value": "230000.00",
     "estimated_sale_price": "260000.00",
     "verified_credit_score": 715,
     "verified_deals_36mo": 4,
@@ -92,19 +91,21 @@ def test_underwrite_route_rejects_a_body_it_does_not_recognise(
     assert response.status_code == 422
 
 
-def test_underwrite_route_requires_a_valuation(
+def test_underwrite_route_runs_without_a_valuation_and_says_what_it_lost(
     client: TestClient, db_session: Session, stored_deal: Deal
 ) -> None:
-    """Past the screen gate, a flip deal with no sale price anywhere is a 422 naming it."""
+    """SPEC §8.4: the sale price is not a gate; the flip is what goes missing without one."""
     stored_deal.status = Status.SCREENED
     db_session.flush()
     body = {key: value for key, value in UNDERWRITE_BODY.items() if key != "estimated_sale_price"}
     response = client.post(f"/deals/{stored_deal.id}/underwrite", json=body)
-    assert response.status_code == 422
-    assert response.json()["detail"]["missing"] == [
-        "estimated_sale_price (the Flip analysis sells at it (SPEC §8.4); "
-        "turn the toggle off to run without)"
-    ]
+    assert response.status_code == 201, response.text
+    result = response.json()
+    assert result["flip"]["status"] == "NOT_EVALUATED"
+    assert result["sizing"]["metrics"]["LTV"]["status"] == "NOT_AVAILABLE"
+    assert result["return_overview"]["irr"] is not None
+    codes = {flag["code"] for flag in result["flags"]}
+    assert {"ESTIMATED_SALE_PRICE_MISSING", "SALE_PRICE_MISSING"} <= codes
 
 
 def test_read_deal_returns_the_deal_with_its_latest_screen_and_underwrite(
@@ -118,17 +119,16 @@ def test_read_deal_returns_the_deal_with_its_latest_screen_and_underwrite(
     assert body["status"] == "NEW"
     assert body["asset_type"] == "SFR"
     assert body["stated_exit"] is None  # the exit is inferred, not stated (SPEC §3)
-    assert body["term_bucket"] == "6"
+    assert body["term_bucket"] is None and body["term_months"] == 6
     assert body["term_months"] == 6
     assert body["payoff_date"] == "2027-08-01"  # derived: closing plus the term
     assert body["product"] == "WHOLETAIL" and body["product_source"] == "ENTERED"
-    assert body["borrower"]["phone"] == "+19185550147"
+    assert body["borrower"]["phone"] == "9185550147"
     assert body["borrower"]["entities"] == ["Whitlock Homes LLC"]
     assert body["property"]["state"] == "OK"
     assert body["property"]["city"] == "Tulsa" and body["property"]["sf"] == 1420
     assert body["missing_fields"] == []
     # the team's own entries are on the read model, so the queue can show what a Go rests on
-    assert D(body["as_is_value_team"]) == D("175000.00")
     assert D(body["estimated_sale_price_team"]) == D("200000.00")
     assert body["court_records_status"] == "CLEAN"
     assert body["court_records_as_of"] == "2026-09-16"
@@ -188,10 +188,10 @@ def test_a_screen_moves_the_deal_along_the_lifecycle(
     assert client.get(f"/deals/{deal_with_overrides.id}").json()["status"] == "SCREENED"
 
 
-def test_a_declined_screen_closes_the_deal(client: TestClient, stored_deal: Deal) -> None:
-    """No valuation behind it, so it declines and the deal closes with it."""
-    assert client.post(f"/deals/{stored_deal.id}/screen").json()["verdict"] == "DECLINE"
-    assert client.get(f"/deals/{stored_deal.id}").json()["status"] == "DECLINED"
+def test_a_declined_screen_closes_the_deal(client: TestClient, declining_deal: Deal) -> None:
+    """Its leverage puts it past the LTV cap by more than the band, so it declines."""
+    assert client.post(f"/deals/{declining_deal.id}/screen").json()["verdict"] == "DECLINE"
+    assert client.get(f"/deals/{declining_deal.id}").json()["status"] == "DECLINED"
 
 
 def test_underwriting_a_closed_deal_is_409_not_422(
@@ -219,16 +219,11 @@ def test_the_underwrite_route_falls_back_to_the_teams_valuation(
     client: TestClient, deal_with_overrides: Deal
 ) -> None:
     """A request with no valuation at all still underwrites off the deal's own."""
-    body = {
-        key: value
-        for key, value in UNDERWRITE_BODY.items()
-        if key not in {"as_is_value", "estimated_sale_price"}
-    }
+    body = {key: value for key, value in UNDERWRITE_BODY.items() if key != "estimated_sale_price"}
     response = client.post(f"/deals/{deal_with_overrides.id}/underwrite", json=body)
     assert response.status_code == 201, response.text
     sizing = response.json()["sizing"]
-    assert D(sizing["metrics"]["LTV_AS_IS"]["actual"]) == D("120000.00") / D("175000.00")
-    assert sizing["as_is_value_source"] == "TEAM"
+    assert D(sizing["metrics"]["LTV"]["actual"]) == D("120000.00") / D("200000.00")
     assert sizing["estimated_sale_price_source"] == "TEAM"
 
 
@@ -244,16 +239,16 @@ def test_the_underwrite_route_screens_an_unscreened_deal_first(
 
 
 def test_an_underwrite_that_screens_a_decline_is_409_and_keeps_the_screen(
-    client: TestClient, stored_deal: Deal
+    client: TestClient, declining_deal: Deal
 ) -> None:
-    """No valuation behind it: the screen it runs on the way in declines, and that is kept."""
-    response = client.post(f"/deals/{stored_deal.id}/underwrite", json=UNDERWRITE_BODY)
+    """Its leverage declines it: the screen run on the way in says so, and that is kept."""
+    response = client.post(f"/deals/{declining_deal.id}/underwrite", json=UNDERWRITE_BODY)
     assert response.status_code == 409
     detail = response.json()["detail"]
     assert detail["status"] == "DECLINED"
     assert "the screen it just ran declined it" in detail["message"]
 
-    after = client.get(f"/deals/{stored_deal.id}").json()
+    after = client.get(f"/deals/{declining_deal.id}").json()
     assert after["status"] == "DECLINED"
     assert after["screen"]["result"]["verdict"] == "DECLINE"
     assert after["underwrite"] is None

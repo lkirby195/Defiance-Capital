@@ -17,6 +17,7 @@ from datetime import date
 from decimal import Decimal
 
 from config.config import Config
+from schema.labels import enum_label
 from schema.models import (
     SPLIT_PRODUCTS,
     AnalysisStatus,
@@ -30,7 +31,6 @@ from schema.models import (
     SizingResult,
     TakeBackAnalysis,
     UnderwriteResult,
-    ValueBasis,
     ValueSource,
 )
 
@@ -38,8 +38,7 @@ WIDTH = 92
 LABEL = 34
 _METRIC_LABEL = {
     LeverageMetric.LTC: "LTC",
-    LeverageMetric.LTV_AS_IS: "LTV (as-is)",
-    LeverageMetric.LTARV: "LTARV",
+    LeverageMetric.LTV: "LTV (sale price)",
 }
 
 
@@ -86,6 +85,8 @@ def banner(title: str, subtitle: str) -> list[str]:
 def render_sizing(sizing: SizingResult, config: Config, title: str = "SIZING") -> list[str]:
     """Cost stack, commitment and split, then each metric against its cap.  # SPEC §7.4, §8.2"""
     del config  # every figure below is on the result itself
+    # The caps cell is the config grid coordinate, so it prints the keys a person would look
+    # up (``leverage_caps.SPLIT_DRAW.T3.E2``) rather than the words they read elsewhere.
     cell = f"{sizing.product.value}  {sizing.credit_tranche.value}/{sizing.experience_tier.value}"
     lines = heading(title, cell)
     lines += [
@@ -98,7 +99,7 @@ def render_sizing(sizing: SizingResult, config: Config, title: str = "SIZING") -
         ),
         row("Closing costs", money(sizing.closing_costs), "the lender's, in the LTC denominator"),
         row("Total cost", money(sizing.total_cost)),
-        row("Loan requested", money(sizing.loan_requested)),
+        row("Loan amount", money(sizing.loan_requested)),
         row("Commitment", money(sizing.commitment)),
         row("Funded at close", money(sizing.funded_at_close)),
     ]
@@ -106,7 +107,7 @@ def render_sizing(sizing: SizingResult, config: Config, title: str = "SIZING") -
         purchase, rehab = (
             ("Principal Note", "Tranche A")
             if sizing.product is Product.SPLIT_PRINCIPAL
-            else ("Purchase portion", "Rehab holdback")
+            else ("Advance at closing", "Rehab holdback")
         )
         capped = (
             f"entered {money(sizing.split.rehab_portion_requested)}, capped at rehab_adj"
@@ -118,14 +119,12 @@ def render_sizing(sizing: SizingResult, config: Config, title: str = "SIZING") -
             row(f"  {rehab}", money(sizing.split.rehab_portion), capped),
         ]
     elif sizing.product in SPLIT_PRODUCTS:
-        lines.append(row("  Loan split", "not entered", "sized on the loan requested"))
+        lines.append(row("  Loan split", "not entered", "sized on the loan amount"))
     lines += ["", f"  {'Metric':<16}{'Actual':>10}{'Cap':>10}{'Limit':>10}   Status"]
     for metric, check in sizing.metrics.items():
         actual = pct1(check.actual)
         limit = pct1(check.cap + check.tolerance_band)
         label = _METRIC_LABEL[metric]
-        if check.basis is ValueBasis.PURCHASE_PRICE:
-            label = "LTV (on price)"  # the as-is value was unavailable (SPEC §7.4)
         lines.append(
             f"  {label:<16}{actual:>10}{pct1(check.cap):>10}{limit:>10}   {check.status.value}"
         )
@@ -140,7 +139,7 @@ def source_label(source: ValueSource | None, missing: str = "none") -> str:
 
 
 def render_provenance(sizing: SizingResult, components: ScreenComponents) -> list[str]:
-    """Where the valuation and the court record came from.  # SPEC §6
+    """Where the sale price and the court record came from.  # SPEC §6
 
     Worth its own two lines: a Go that rests on a hand-entered value and a hand-done court
     search is a different thing from a Go that rests on a pull, and the verdict alone does
@@ -148,9 +147,8 @@ def render_provenance(sizing: SizingResult, components: ScreenComponents) -> lis
     """
     return [
         row(
-            "As-is / sale price from",
-            f"{source_label(sizing.as_is_value_source)} / "
-            f"{source_label(sizing.estimated_sale_price_source)}",
+            "Estimated sale price from",
+            source_label(sizing.estimated_sale_price_source),
             "team = entered by hand; an adapter value wins",
         ),
         row(
@@ -221,6 +219,7 @@ def render_economics(result: UnderwriteResult) -> list[str]:
             f"{money(economics.origination_at_payoff)} at payoff",
         ),
         row("Interest rate", pct1(economics.interest_rate), "annual"),
+        row("Loan amount", money(economics.loan_requested)),
         row("Commitment", money(economics.commitment)),
         row("Funded at close", money(economics.funded_at_close)),
     ]
@@ -271,7 +270,7 @@ def render_flip(flip: FlipAnalysis) -> list[str]:
     lines = heading("FLIP ANALYSIS", flip.status.value)
     note = _status_note(
         flip.status,
-        "  OFF: the exit is not a resale, so the flip was not asked for.",
+        "  OFF: the toggle is off, so the flip was not asked for.",
         "  NOT EVALUATED: no estimated sale price, so there is nothing to sell at.",
     )
     if note:
@@ -303,7 +302,7 @@ def render_rental(rental: RentalAnalysis) -> list[str]:
     lines = heading("RENTAL ANALYSIS", rental.status.value)
     note = _status_note(
         rental.status,
-        "  OFF: the exit is not a hold and no rent was entered.",
+        "  OFF: the toggle is off.",
         "  NOT EVALUATED: no monthly rent, so there is no net monthly income.",
     )
     if note:
@@ -330,7 +329,7 @@ def render_rental(rental: RentalAnalysis) -> list[str]:
 
 def render_take_back(take_back: TakeBackAnalysis) -> list[str]:
     """Whether the rent carries what the loan cost GLENWOOD.  # SPEC §8.6"""
-    lines = heading("TAKE-BACK ANALYSIS", take_back.status.value)
+    lines = heading("TAKE-BACK ANALYSIS", f"{take_back.status.value}  (always on)")
     if take_back.status is AnalysisStatus.NOT_EVALUATED:
         lines.append("  NOT EVALUATED: no monthly rent, so there is no DSCR to test.")
     lines += [
@@ -385,9 +384,10 @@ def render_underwrite(
     else:
         sizing = render_sizing(result.sizing, config, title="SIZING (underwrite: verified)")
     exit_note = (
-        f"exit {result.exit.type.value} ({result.exit.exit_source.value}); "
+        f"exit {enum_label(result.exit.type)} ({result.exit.exit_source.value}); "
         f"flip {'on' if result.exit.flip_analysis else 'off'}, "
-        f"rental {'on' if result.exit.rental_analysis else 'off'}"
+        f"rental {'on' if result.exit.rental_analysis else 'off'}, "
+        "take-back always on"
     )
     return [
         *sizing,

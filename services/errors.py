@@ -25,7 +25,7 @@ class DealNotReady(ServiceError):
     Two sets reach here, and both are things the team has to go and get:
 
     * the narrow set the engine cannot run without (``services/assemble.py``), named as the
-      column they sit in - ``deal.product``, ``as_is_value``;
+      column they sit in - ``deal.product``, ``estimated_sale_price``;
     * the minimum viable intake (SPEC §4.1) still outstanding on a ``NEEDS_INFO`` deal,
       which is ``IntakeRecord.missing_fields`` verbatim - ``borrower.phone``.
 

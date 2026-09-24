@@ -139,25 +139,8 @@
     },
     "DealInfo": {
       "additionalProperties": false,
-      "description": "Deal terms as requested by the borrower, plus the team's own \u00a78.1 economics.\n\nGrouped as SPEC \u00a78.1 groups them: Overview, then Deal Economics, then the valuation and\nrent the adapters will eventually supply.\n\nThe four economics with a config default (``contingency_pct``, ``closing_costs_usd``,\n``holding_costs_total_usd``, ``origination_fee_pct``) are None until somebody overrides\nthem, and None is what tells the engine to use the config default rather than a number\nsomebody chose. ``interest_rate`` has no default and is required to price a deal.\n\n``payoff_date`` is deliberately not here. It is ``closing_date`` plus ``term_months``\n(``schema/dates.py``), so storing it would be storing the same fact twice and inviting\nthe two to disagree; the team-entry form and the queue's override block take one as an\nalternative way to say the other, and both derive the term before they get here.",
+      "description": "Deal terms as requested by the borrower, plus the team's own \u00a78.1 economics.\n\nGrouped as SPEC \u00a78.1 groups them: Deal Economics, then the valuation and rent the\nadapters will eventually supply. Nothing here belongs to the Overview any more - that\ngroup is who the borrower is, and every one of its fields lives on ``BorrowerInfo``.\n\nThe four economics with a config default (``contingency_pct``, ``closing_costs_usd``,\n``holding_costs_total_usd``, ``origination_fee_pct``) are None until somebody overrides\nthem, and None is what tells the engine to use the config default rather than a number\nsomebody chose. ``interest_rate`` has no default and is required to price a deal.\n\n``payoff_date`` is deliberately not here. It is ``closing_date`` plus ``term_months``\n(``schema/dates.py``), so storing it would be storing the same fact twice and inviting\nthe two to disagree; the team-entry form and the queue's override block take one as an\nalternative way to say the other, and both derive the term before they get here.",
       "properties": {
-        "as_is_value_team": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0.0,
-              "type": "number"
-            },
-            {
-              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "As Is Value Team"
-        },
         "asset_type": {
           "anyOf": [
             {
@@ -276,18 +259,6 @@
           ],
           "default": null,
           "title": "Flip Analysis"
-        },
-        "guarantor_name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Guarantor Name"
         },
         "holding_costs_total_usd": {
           "anyOf": [

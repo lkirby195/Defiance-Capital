@@ -38,11 +38,13 @@ from engine.screen import (
 )
 from engine.sizing import size_deal
 from engine.version import ENGINE_VERSION
+from schema.labels import enum_label
 from schema.models import (
     SPLIT_PRODUCTS,
     AnalysisStatus,
     DealEconomics,
     Flag,
+    FlipAnalysis,
     RentalAnalysis,
     Severity,
     TakeBackAnalysis,
@@ -92,7 +94,7 @@ def structure_flags(loan: LoanTerms, config: Config) -> list[Flag]:
             code=UnderwriteFlag.NO_REHAB_PERIOD,
             severity=Severity.INFO,
             message=(
-                f"{loan.product.value} term of {loan.term_months} month(s) is at or inside "
+                f"{enum_label(loan.product)} term of {loan.term_months} month(s) is at or inside "
                 f"the {config.draws.listing_months}-month listing period, so there is no "
                 f"rehab period: the {money(loan.rehab_portion)} rehab portion is advanced at "
                 "close rather than drawn, and no draw is scheduled."
@@ -127,6 +129,34 @@ def rent_flags(rental: RentalAnalysis, take_back: TakeBackAnalysis) -> list[Flag
                 f"property lets for. The {money(take_back.total_cost)} take-back cost and its "
                 f"{money(take_back.debt_service_monthly)} monthly debt service are reported "
                 "regardless; enter a rent and re-run to test either DSCR."
+            ),
+        )
+    ]
+
+
+def sale_price_flags(flip: FlipAnalysis) -> list[Flag]:
+    """SALE_PRICE_MISSING when the flip had no price to sell at.  # SPEC §8.4, §8.8
+
+    Fixed INFO, and the sibling of MONTHLY_RENT_MISSING: the underwrite runs without an
+    estimated sale price, and what it costs is the four figures the sale price feeds. The
+    whole cost stack is still reported, so the flag says what was lost rather than that
+    something failed - a flip nobody could price has not lost money.
+
+    It is raised only where the flip was asked for. A toggle somebody turned off is a
+    decision, not a gap, and the screen's own ESTIMATED_SALE_PRICE_MISSING (SOFT) already
+    says the leverage side of the same absence whatever the toggle is doing.
+    """
+    if flip.status is not AnalysisStatus.NOT_EVALUATED:
+        return []
+    return [
+        Flag(
+            code=UnderwriteFlag.SALE_PRICE_MISSING,
+            severity=Severity.INFO,
+            message=(
+                "No estimated sale price on the deal, so the Flip analysis was not "
+                f"evaluated: the {money(flip.total_costs)} cost stack is reported, and the "
+                "broker's cut, the net profit and the yield are not. LTV is not computed "
+                "either (SPEC §7.4). Enter a price and re-run to get all four."
             ),
         )
     ]
@@ -198,6 +228,7 @@ def underwrite(inputs: UnderwriteInputs, config: Config) -> UnderwriteResult:
         + court_flags(inputs.court_records, config)
         + team_sourced_flags(sizing, inputs.court_records)
         + structure_flags(loan, config)
+        + sale_price_flags(flip)
         + rent_flags(rental, take_back)
         + rental_flags(rental, config)
         + take_back_flags(take_back, config)
