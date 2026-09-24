@@ -18,8 +18,8 @@ in step with the first.
 The team-only block also carries the stand-ins for enrichment (SPEC §6): a valuation, a rent
 and a court search the team did by hand. They are used only where no adapter has produced the
 same value, and the form validates them the same way the engine would - a court search with
-findings has to say what it found and when, and a payoff date has to be a whole number of
-months after the closing date.
+findings has to say what it found and when, and a payoff date has to fall after the closing
+date and to agree with any term entered beside it.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from intake.normalize import ParsedIntake, infer_product
-from schema.dates import term_from_dates
+from schema.dates import Term, term_from_dates
 from schema.models import (
     AssetType,
     BorrowerInfo,
@@ -85,9 +85,10 @@ class TeamEntryForm(BaseModel):
     loan_purpose: LoanPurpose | None = None
     product: Product | None = None  # "Loan Type"; inferred from the rehab costs when omitted
     closing_date: date | None = None  # month 0 of the ledger (SPEC §8.3)
-    # Enter either; the other derives (SPEC §8.1). ``payoff_date`` is not stored - it is the
-    # closing date plus the term - so the box is an alternative way of saying the term. The
-    # team form does not ask for the SPEC §4.1 bucket at all; see the module docstring.
+    # Enter either; the other derives (SPEC §8.1). ``payoff_date`` is not stored as a date -
+    # it is the closing date plus the term's whole months and stub days - so the box is an
+    # alternative way of saying the term, and any date after closing is allowed. The team
+    # form does not ask for the SPEC §4.1 bucket at all; see the module docstring.
     term_months: int | None = Field(default=None, ge=1, le=60)
     payoff_date: date | None = None
     purchase_price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
@@ -103,9 +104,9 @@ class TeamEntryForm(BaseModel):
     interest_rate: Decimal | None = Field(default=None, ge=0, le=1)
     contingency_pct: Decimal | None = Field(default=None, ge=0, le=1)
     closing_costs_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
-    holding_costs_total_usd: Decimal | None = Field(
-        default=None, ge=0, max_digits=14, decimal_places=2
-    )
+    # A share of purchase_price + rehab_costs over the whole hold (SPEC §8.1); the dollar
+    # figure is computed from it and is never entered.
+    holding_costs_pct_of_cost: Decimal | None = Field(default=None, ge=0, le=1)
     origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
     # The two analysis toggles (SPEC §8.1); blank leaves the §3-derived default in force.
     flip_analysis: bool | None = None
@@ -135,18 +136,19 @@ class TeamEntryForm(BaseModel):
         return infer_product(self.rehab_costs)
 
     @property
-    def effective_term_months(self) -> int | None:
+    def effective_term(self) -> Term | None:
         """The term this form produces: the one typed, else the one the payoff date implies.
 
         # SPEC §8.1. ``None`` when neither box was filled in, which the form refuses
-        (``api/intake_form.py``): a deal nobody has said the length of cannot be priced.
+        (``api/intake_form.py``): a deal nobody has said the length of cannot be priced. A
+        payoff date between two monthly anchors gives a term with a stub, which is a term.
         """
         return term_from_dates(self.closing_date, self.term_months, self.payoff_date)
 
     @model_validator(mode="after")
     def _term_and_payoff_agree(self) -> TeamEntryForm:
-        """A payoff date that cannot be a whole number of months says so at the door."""
-        _ = self.effective_term_months
+        """A payoff date that contradicts the term beside it says so at the door."""
+        _ = self.effective_term
         return self
 
     @model_validator(mode="after")
@@ -171,6 +173,7 @@ class TeamEntryForm(BaseModel):
 
 def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
     """Map the flat form onto the channel-agnostic ``ParsedIntake``."""
+    term = form.effective_term
     return ParsedIntake(
         borrower=BorrowerInfo(
             name=form.borrower_name,  # the guarantor (SPEC §8.1)
@@ -204,11 +207,13 @@ def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
             loan_requested=form.loan_requested,
             loan_purchase_portion=form.loan_purchase_portion,
             loan_rehab_portion=form.loan_rehab_portion,
-            term_months=form.effective_term_months,
+            term_months=term.full_months if term is not None else None,
+            # NULL rather than 0: a term said in months has no stub on the end of it.
+            term_stub_days=(term.stub_days or None) if term is not None else None,
             interest_rate=form.interest_rate,
             contingency_pct=form.contingency_pct,
             closing_costs_usd=form.closing_costs_usd,
-            holding_costs_total_usd=form.holding_costs_total_usd,
+            holding_costs_pct_of_cost=form.holding_costs_pct_of_cost,
             origination_fee_pct=form.origination_fee_pct,
             asset_type=form.asset_type,
             stated_exit=form.stated_exit,

@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from db.models import Deal
 from intake.normalize import ParsedIntake, infer_term_months, normalize
 from intake.parsers.team_form import TeamEntryForm, parse_team_form
+from schema.dates import Term, payoff_date_for
 from schema.models import Channel, DealInfo, Status, TermBucket, months_for_bucket
 from services import TeamOverrides, save_overrides
 from tests.conftest import ACTOR, requires_db
@@ -127,7 +128,7 @@ def test_a_payoff_date_solves_the_term() -> None:
     form = TeamEntryForm(
         **payload(term_months=None, closing_date="2027-01-01", payoff_date="2027-08-01")
     )
-    assert form.effective_term_months == 7
+    assert form.effective_term == Term(7, 0)
 
 
 def test_a_term_solves_the_payoff_date() -> None:
@@ -149,14 +150,32 @@ def test_a_term_and_a_payoff_date_that_agree_are_fine() -> None:
     form = TeamEntryForm(
         **payload(closing_date="2027-01-01", term_months=7, payoff_date="2027-08-01")
     )
-    assert form.effective_term_months == 7
+    assert form.effective_term == Term(7, 0)
 
 
-def test_a_payoff_date_that_is_not_a_whole_number_of_months_is_refused() -> None:
-    with pytest.raises(ValidationError, match="not a whole number of months"):
+def test_a_mid_month_payoff_date_is_a_term_with_a_stub() -> None:
+    """SPEC §8.1: any date after closing is a term now - the days past the last anchor
+    are a stub, and the ledger prices them as a short final period (SPEC §8.3)."""
+    form = TeamEntryForm(
+        **payload(term_months=None, closing_date="2027-01-01", payoff_date="2027-08-15")
+    )
+    assert form.effective_term == Term(7, 14)
+    record = normalize(parse_team_form(form), Channel.TEAM, raw_payload={})
+    assert (record.deal.term_months, record.deal.term_stub_days) == (7, 14)
+    assert record.deal.payoff_date == date(2027, 8, 15)
+
+
+def test_a_payoff_date_on_or_before_the_closing_date_is_refused() -> None:
+    with pytest.raises(ValidationError, match="on or before the closing date"):
         TeamEntryForm(
-            **payload(term_months=None, closing_date="2027-01-01", payoff_date="2027-08-15")
+            **payload(term_months=None, closing_date="2027-01-01", payoff_date="2026-12-31")
         )
+
+
+def test_a_term_in_months_beside_a_mid_month_payoff_date_is_refused() -> None:
+    """A term said in months has no stub on it, so the two boxes contradict each other."""
+    with pytest.raises(ValidationError, match="disagree"):
+        TeamEntryForm(**payload(closing_date="2027-01-01", term_months=7, payoff_date="2027-08-15"))
 
 
 # --- what the form insists on --------------------------------------------------------------------
@@ -172,7 +191,7 @@ def test_the_form_marks_both_boxes_as_the_alternatives_they_are(client: TestClie
 def test_the_form_refuses_a_deal_with_neither(client: TestClient) -> None:
     response = form_post(client, payload(term_months=None))
     assert response.status_code == 422
-    assert "Term (months) is required" in response.text
+    assert "A term is required" in response.text
     assert "Entering either solves the other" in response.text
 
 
@@ -240,6 +259,40 @@ def test_the_override_block_takes_a_payoff_date_instead_of_a_term(
     db_session.expire_all()
     again = db_session.get(Deal, deal.id)
     assert again is not None and again.term_months == 10
+    assert again.term_stub_days is None  # a whole-month term stores no stub
+
+
+def test_the_override_block_takes_a_mid_month_payoff_date_and_stores_the_stub(
+    client: TestClient, db_session: Session
+) -> None:
+    """SPEC §8.1: the two columns move together, and the payoff date derives back exactly."""
+    deal = stored(client, db_session, payload())
+    save_overrides(
+        db_session,
+        deal.id,
+        TeamOverrides(closing_date=date(2027, 3, 15), payoff_date=date(2027, 12, 26)),
+        actor=ACTOR,
+    )
+    db_session.commit()
+    db_session.expire_all()
+    again = db_session.get(Deal, deal.id)
+    assert again is not None
+    assert (again.term_months, again.term_stub_days) == (9, 11)
+    assert payoff_date_for(again.closing_date, again.term_months, again.term_stub_days) == (
+        date(2027, 12, 26)
+    )
+
+    # ...and a term typed back in months clears the stub, because a term in months has none.
+    save_overrides(
+        db_session,
+        deal.id,
+        TeamOverrides(closing_date=date(2027, 3, 15), term_months=9),
+        actor=ACTOR,
+    )
+    db_session.commit()
+    db_session.expire_all()
+    back = db_session.get(Deal, deal.id)
+    assert back is not None and back.term_stub_days is None
 
 
 def test_the_override_block_refuses_a_term_and_a_date_that_disagree() -> None:
@@ -252,9 +305,25 @@ def test_the_deal_page_shows_the_term_in_deal_economics(
 ) -> None:
     deal = stored(client, db_session, payload())
     body = client.get(f"/queue/deals/{deal.id}").text
-    assert "<dt>Term (months)</dt>" in body
+    assert "<dt>Term</dt>" in body
     assert "<dt>Payoff Date</dt>" in body
     assert 'name="term_months"' in body  # and the override block carries a box
+
+
+def test_the_deal_page_shows_a_stub_term_and_the_date_it_pays_off_on(
+    client: TestClient, db_session: Session
+) -> None:
+    """The date on the page is the date the team typed, not the anchor before it."""
+    deal = stored(
+        client,
+        db_session,
+        payload(term_months=None, closing_date="2027-03-15", payoff_date="2027-12-26"),
+    )
+    assert (deal.term_months, deal.term_stub_days) == (9, 11)
+    body = client.get(f"/queue/deals/{deal.id}").text
+    assert "9 month(s) and 11 day(s)" in body
+    assert "2027-12-26" in body
+    assert "2027-12-15" not in body  # the ninth anchor is not the payoff date
 
 
 def test_the_page_says_the_button_is_off_on_a_deal_with_no_term(
@@ -263,7 +332,7 @@ def test_the_page_says_the_button_is_off_on_a_deal_with_no_term(
     deal = stored(client, db_session, payload(term_months=None))
     body = client.get(f"/queue/deals/{deal.id}").text
     assert "Run underwrite is off until these are entered" in body
-    assert "Term (months)" in body
+    assert "Term" in body
 
 
 # --- and what the database insists on ------------------------------------------------------------

@@ -24,7 +24,7 @@ UNDERWRITE_BODY: dict[str, Any] = {
     "verified_credit_score": 715,
     "verified_deals_36mo": 4,
     "monthly_rent": "1800.00",
-    "holding_costs_total_usd": "3600.00",
+    "holding_costs_pct_of_cost": "0.03",
 }
 
 

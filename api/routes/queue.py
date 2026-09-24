@@ -18,6 +18,7 @@ rendered from the same template through the same ``team_entry_page``.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -26,18 +27,22 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 from starlette.responses import HTMLResponse, RedirectResponse
 
-from api.forms import FormDep, fields, problems, rows
+from api.forms import FormDep, fields, rows
 from api.intake_form import (
+    TEAM_ENTRY_NAMES,
     blank_form_values,
     deal_defaults,
+    deal_holding_costs_hint,
     default_marks,
     intake_form_values,
     intake_record,
     read_form,
     redisplay_values,
+    submitted_holding_costs_hint,
     text_value,
 )
-from api.masks import drop_defaults, mask_one, masked, unmasked
+from api.masks import drop_defaults, holding_costs_amount, mask_one, masked, unmasked
+from api.problems import NO_PROBLEMS, FormProblems, at_top, from_validation_error
 from api.render import page, redirect
 from api.security import PageUser, require_csrf
 from db.models import Deal
@@ -63,6 +68,7 @@ from services import (
     REOPEN_FROM,
     ActionNotAllowed,
     DealNotFound,
+    DealNotPriceable,
     DealNotReady,
     DealNotUnderwritable,
     ReasonRequired,
@@ -87,6 +93,7 @@ from services import (
     underwrite_result,
     update_intake,
 )
+from services.readiness import deal_term
 
 # Every state-changing request through this router carries a CSRF token, by living here
 # rather than by each route remembering to ask (``api/security.py``).
@@ -132,7 +139,7 @@ OVERRIDE_NAMES: tuple[str, ...] = (
     "interest_rate",
     "contingency_pct",
     "closing_costs_usd",
-    "holding_costs_total_usd",
+    "holding_costs_pct_of_cost",
     "origination_fee_pct",
     "estimated_sale_price_team",
     "monthly_rent",
@@ -143,6 +150,11 @@ OVERRIDE_NAMES: tuple[str, ...] = (
     "court_records_status",
     "court_records_as_of",
 )
+
+
+# Every box the override block renders, so a complaint about one of them lands under it and
+# anything else Pydantic names goes to the top (``api/problems.py``).
+OVERRIDE_BOX_NAMES: frozenset[str] = frozenset({*OVERRIDE_NAMES, "payoff_date"})
 
 
 def override_form(deal: Deal) -> dict[str, str]:
@@ -209,15 +221,24 @@ def deal_path(deal_id: UUID) -> str:
     return f"/queue/deals/{deal_id}"
 
 
+def deal_payoff_date(deal: Deal) -> date | None:
+    """The last row of the ledger: closing plus the term, stub days included.  # SPEC §8.1"""
+    term = deal_term(deal)
+    if deal.closing_date is None or term is None or not term.is_positive:
+        return None
+    return payoff_date_for(deal.closing_date, term.full_months, term.stub_days)
+
+
 def render_deal(
     request: Request,
     session: Session,
     deal_id: UUID,
     user: PageUser,
     *,
-    complaints: list[str] | None = None,
+    complaints: FormProblems | None = None,
     form: dict[str, str] | None = None,
     matters: list[dict[str, str]] | None = None,
+    holding_costs_hint: str | None = None,
     status_code: int = status.HTTP_200_OK,
 ) -> HTMLResponse:
     """The deal page, rebuilt from the database plus whatever the last post left behind.
@@ -234,12 +255,9 @@ def render_deal(
         "deal.html",
         {
             "deal": deal,
-            # Derived, not stored (SPEC §8.1): the page shows it beside the term it comes from.
-            "payoff_date": (
-                None
-                if deal.closing_date is None or deal.term_months is None
-                else payoff_date_for(deal.closing_date, deal.term_months)
-            ),
+            # Derived, not stored (SPEC §8.1): the page shows it beside the term it comes
+            # from, and the term is the whole months plus whatever stub sits after them.
+            "payoff_date": deal_payoff_date(deal),
             "allowed": _allowed(deal),
             "enums": enum_values(),
             # Not "re-screen it": whether an edited intake is worth another Stage 1 run is a
@@ -253,6 +271,19 @@ def render_deal(
             "defaults": default_marks(deal),
             "form": form if form is not None else override_form(deal),
             "matters": matters if matters is not None else matter_rows(deal.court_records_team),
+            # What the holding-cost percentage in force comes to in dollars (SPEC §8.1),
+            # printed under the box that holds the percentage.
+            "holding_costs_hint": (
+                holding_costs_hint
+                if holding_costs_hint is not None
+                else deal_holding_costs_hint(deal)
+            ),
+            # The same figure for the "as entered" facts above, which show what somebody
+            # typed rather than what a run resolved: None where nobody typed a percentage,
+            # so the row says an em dash rather than quoting the config's own number back.
+            "holding_costs_entered": holding_costs_amount(
+                deal.holding_costs_pct_of_cost, deal.purchase_price, deal.rehab_costs
+            ),
             "screen": (
                 None
                 if screen_row is None
@@ -272,7 +303,7 @@ def render_deal(
                 }
             ),
             "trail": deal_trail(session, deal.id),
-            "problems": complaints or [],
+            "problems": complaints if complaints is not None else NO_PROBLEMS,
         },
         user=user,
         status_code=status_code,
@@ -317,7 +348,8 @@ def team_entry_page(
     back_url: str,
     form: dict[str, str],
     matters: list[dict[str, str]],
-    complaints: list[str],
+    complaints: FormProblems,
+    holding_costs_hint: str,
     defaults: dict[str, str] | None = None,
     status_code: int = status.HTTP_200_OK,
 ) -> HTMLResponse:
@@ -341,6 +373,7 @@ def team_entry_page(
             # Every name the template renders, so a dropped blank is still a blank box.
             "form": {**blank_form_values(), **form},
             "defaults": defaults,
+            "holding_costs_hint": holding_costs_hint,
             "matters": matters,
             "problems": complaints,
         },
@@ -362,7 +395,8 @@ def new_deal_page(request: Request, user: PageUser) -> HTMLResponse:
         back_url="",
         form={},
         matters=[blank_matter() for _ in range(SPARE_MATTER_ROWS)],
-        complaints=[],
+        complaints=NO_PROBLEMS,
+        holding_costs_hint=deal_holding_costs_hint(None),
     )
 
 
@@ -387,14 +421,16 @@ def screen_action(
     """Run the screen (SPEC §7) and record it against the person who asked for it."""
     try:
         result = run_screen(session, deal_id, actor=user.email)
-    except DealNotReady as exc:
+    except DealNotFound:
+        return redirect("/queue", "That deal does not exist.")
+    except (DealNotReady, DealNotPriceable) as exc:
         session.rollback()
         return render_deal(
             request,
             session,
             deal_id,
             user,
-            complaints=[str(exc)],
+            complaints=at_top(str(exc)),
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
     session.commit()
@@ -413,6 +449,8 @@ def underwrite_action(
     """
     try:
         result = run_underwrite(session, deal_id, UnderwriteRequest(), actor=user.email)
+    except DealNotFound:
+        return redirect("/queue", "That deal does not exist.")
     except DealNotUnderwritable as exc:
         # A refusal can arrive with a real screen behind it: an unscreened deal is screened
         # first (SPEC §8), and that screen ran. Keep it, exactly as the JSON route does.
@@ -422,8 +460,20 @@ def underwrite_action(
             session,
             deal_id,
             user,
-            complaints=[str(exc)],
+            complaints=at_top(str(exc)),
             status_code=status.HTTP_409_CONFLICT,
+        )
+    except DealNotPriceable as exc:
+        # Every value the run needs is on the deal and the engine will not run on them
+        # (SPEC §8.2). The page says which, beside the deal it is about.
+        session.rollback()
+        return render_deal(
+            request,
+            session,
+            deal_id,
+            user,
+            complaints=at_top(*exc.reasons),
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
     except DealNotReady as exc:
         session.rollback()
@@ -432,7 +482,7 @@ def underwrite_action(
             session,
             deal_id,
             user,
-            complaints=[str(exc)],
+            complaints=at_top(str(exc)),
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
     session.commit()
@@ -453,7 +503,8 @@ def _edit_page(
     *,
     form: dict[str, str],
     matters: list[dict[str, str]],
-    complaints: list[str],
+    complaints: FormProblems,
+    holding_costs_hint: str,
     defaults: dict[str, str] | None = None,
     status_code: int = status.HTTP_200_OK,
 ) -> HTMLResponse:
@@ -468,6 +519,7 @@ def _edit_page(
         form=form,
         matters=matters,
         complaints=complaints,
+        holding_costs_hint=holding_costs_hint,
         defaults=defaults,
         status_code=status_code,
     )
@@ -493,7 +545,8 @@ def edit_intake_page(
         deal_id,
         form=intake_form_values(deal),
         matters=matter_rows(deal.court_records_team),
-        complaints=[],
+        complaints=NO_PROBLEMS,
+        holding_costs_hint=deal_holding_costs_hint(deal),
         defaults=default_marks(deal),
     )
 
@@ -510,16 +563,21 @@ def edit_intake_action(
     submitted = fields(form, skip=("matter_",))
     matters = submitted_matters(form)
     entry, complaints = read_form(submitted, matters)
-    if entry is None:
+
+    def back(problems: FormProblems, code: int) -> HTMLResponse:
         return _edit_page(
             request,
             user,
             deal_id,
             form=redisplay_values(submitted),
             matters=redisplay(matters),
-            complaints=complaints,
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            complaints=problems,
+            holding_costs_hint=submitted_holding_costs_hint(submitted),
+            status_code=code,
         )
+
+    if entry is None:
+        return back(complaints, status.HTTP_422_UNPROCESSABLE_CONTENT)
     try:
         update_intake(session, deal_id, intake_record(entry), actor=user.email)
     except DealNotFound:
@@ -527,15 +585,17 @@ def edit_intake_action(
         return redirect("/queue", "That deal does not exist.")
     except ActionNotAllowed as exc:
         session.rollback()
-        return _edit_page(
-            request,
-            user,
-            deal_id,
-            form=redisplay_values(submitted),
-            matters=redisplay(matters),
-            complaints=[str(exc)],
-            status_code=status.HTTP_409_CONFLICT,
-        )
+        return back(at_top(str(exc)), status.HTTP_409_CONFLICT)
+    except ValidationError as exc:
+        # Everything the intake models refuse that the form did not: the deal is rebuilt
+        # from the record on the way in, and a rule only the stored shape can test - the
+        # split against a product the normalizer inferred - is caught there rather than here.
+        session.rollback()
+        problems = from_validation_error(exc, TEAM_ENTRY_NAMES)
+        return back(problems, status.HTTP_422_UNPROCESSABLE_CONTENT)
+    except ValueError as exc:
+        session.rollback()
+        return back(at_top(str(exc)), status.HTTP_422_UNPROCESSABLE_CONTENT)
     session.commit()
     return redirect(deal_path(deal_id), "Intake updated.")
 
@@ -550,22 +610,39 @@ def overrides_action(
     """Save the team's own valuation, opex, structure and court search.  # SPEC §6.1"""
     submitted = fields(form, skip=("matter_",))
     matters = submitted_matters(form)
-    deal = load_deal(session, deal_id)
-    values = drop_defaults(unmasked(submitted), deal_defaults(deal))
     try:
-        overrides = TeamOverrides.model_validate({**values, "court_records_team": matters})
-    except ValidationError as exc:
+        deal = load_deal(session, deal_id)
+    except DealNotFound:
+        return redirect("/queue", "That deal does not exist.")
+    values = drop_defaults(unmasked(submitted), deal_defaults(deal))
+
+    def back(problems: FormProblems, code: int) -> HTMLResponse:
         return render_deal(
             request,
             session,
             deal_id,
             user,
-            complaints=problems(exc),
+            complaints=problems,
             form={**dict.fromkeys(override_form(deal), ""), **masked(values)},
             matters=redisplay(matters),
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            holding_costs_hint=submitted_holding_costs_hint(submitted),
+            status_code=code,
         )
-    save_overrides(session, deal_id, overrides, actor=user.email)
+
+    try:
+        overrides = TeamOverrides.model_validate({**values, "court_records_team": matters})
+    except ValidationError as exc:
+        session.rollback()
+        problems = from_validation_error(exc, OVERRIDE_BOX_NAMES)
+        return back(problems, status.HTTP_422_UNPROCESSABLE_CONTENT)
+    try:
+        save_overrides(session, deal_id, overrides, actor=user.email)
+    except ValueError as exc:
+        # The database's own rules (a split on a product that has no split, a term of no
+        # time at all) reach here as an integrity error on the flush, which is still a
+        # complaint about what was typed rather than a fault of the server's.
+        session.rollback()
+        return back(at_top(str(exc)), status.HTTP_422_UNPROCESSABLE_CONTENT)
     session.commit()
     return redirect(deal_path(deal_id), "Team entry saved.")
 
@@ -584,6 +661,9 @@ def _act(
     """Apply one action, commit it, and say so; or re-render with why it did not apply."""
     try:
         run()
+    except DealNotFound:
+        session.rollback()
+        return redirect("/queue", "That deal does not exist.")
     except (ActionNotAllowed, ReasonRequired) as exc:
         session.rollback()
         return render_deal(
@@ -591,7 +671,7 @@ def _act(
             session,
             deal_id,
             user,
-            complaints=[str(exc)],
+            complaints=at_top(str(exc)),
             status_code=status.HTTP_409_CONFLICT,
         )
     session.commit()

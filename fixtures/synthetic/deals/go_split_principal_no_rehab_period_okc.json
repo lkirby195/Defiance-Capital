@@ -70,7 +70,6 @@
       "court_records": {
         "as_of": "2026-09-09"
       },
-      "holding_costs_total_usd": "3000.00",
       "monthly_rent": "1600.00",
       "asset_type": "SFR",
       "loan_purpose": "PURCHASE"
@@ -87,7 +86,9 @@
         "holding_costs_total": "3000.00",
         "holding_costs_monthly": "1000.00",
         "origination_at_close": "1100.00",
-        "origination_at_payoff": "1100.00"
+        "origination_at_payoff": "1100.00",
+        "holding_costs_pct_of_cost": "0.020000",
+        "holding_costs_basis": "150000.00"
       },
       "ledger": {
         "rows": 4,
@@ -138,7 +139,10 @@
           "code": "NO_REHAB_PERIOD",
           "severity": "INFO"
         }
-      ]
+      ],
+      "term_months": 3,
+      "term_stub_days": 0,
+      "term_months_decimal": "3.000000"
     }
   }
 }

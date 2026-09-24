@@ -1,4 +1,5 @@
-{# One form control, labelled and marked.  # SPEC §4.1, §8.1, §12
+{# One form control, labelled, marked, and — when the last post complained about it — carrying
+   the complaint.  # SPEC §4.1, §8.1, §12
 
    Every box on every form in the queue says whether it is Required or Optional, because the
    alternative is a person guessing and a submission bouncing. Required here means the
@@ -9,6 +10,13 @@
    The attribute is a courtesy, not a control: `api/intake_form.py` checks the same list on
    the way in.
 
+   `errors` is the other half of that courtesy. It comes from the render context rather than
+   from an argument on every one of the forty call sites (`api/render.py` puts it there, and
+   both forms import this file `with context`), and it is keyed by the same box names the
+   macros below are called with — so a complaint about `purchase_price` lands under the
+   Purchase Price box without anybody wiring it there. What is left at the top of the page is
+   what is about more than one box and has nowhere else to go (`api/problems.py`).
+
    `readonly` is the other half of that: a box whose value is derived is shown rather than
    hidden, and posted back rather than dropped, but nobody is invited to argue with it. The
    server re-derives it either way.
@@ -16,6 +24,10 @@
    `mask` names the shape a box holds — `money`, `pct`, `phone` (`schema/masks.py`). The
    script in base.html formats what is typed into that shape, and the server parses the
    shape back out; neither depends on the other having run.
+
+   `note` is a line under the box: what the number it holds comes to, or what it is measured
+   against. The holding-cost percentage is the one that needs it — the box holds 2% and what
+   a person wants to see is the dollars that is (SPEC §8.1).
 
    `default` is the config default for the four §8.1 economics that have one. The box is
    pre-filled with it and tagged, the tag goes as soon as somebody types something else, and
@@ -36,9 +48,27 @@
   {%- if default %} <span class="dflt" data-default-tag="{{ box }}">default</span>{% endif -%}
 {% endmacro %}
 
+{# The complaint the last post made about this box, under it, in the colour a problem is
+   printed in everywhere else on the page. Empty for a box nobody complained about, which is
+   every box on a form nobody has posted yet. #}
+{% macro field_error(name) %}
+  {%- set messages = errors.get(name) %}
+  {%- if messages %}
+    <span class="err" id="{{ name }}-error">{{ messages | join(" ") }}</span>
+  {%- endif %}
+{% endmacro %}
+
+{% macro described_by(name) %}
+  {%- if errors.get(name) %} aria-invalid="true" aria-describedby="{{ name }}-error"{% endif -%}
+{% endmacro %}
+
+{% macro note_line(note) %}
+  {%- if note %}<span class="small muted">{{ note }}</span>{% endif -%}
+{% endmacro %}
+
 {% macro caption(name, text, required, mark="", default="") %}<label for="{{ name }}">{{ text }} {{ badge(required, mark) }}{{ default_tag(name, default) }}</label>{% endmacro %}
 
-{% macro text_box(name, text, value, required=false, kind="", mode="", maxlength=0, disabled=false, id="", mark="", readonly=false, mask="", default="") %}
+{% macro text_box(name, text, value, required=false, kind="", mode="", maxlength=0, disabled=false, id="", mark="", readonly=false, mask="", default="", note="") %}
   {#- ``id`` only where one page carries the same name twice: the three reason boxes in the
       action block all post ``reason`` and each needs a label of its own. -#}
   {% set box = id or name %}
@@ -53,23 +83,25 @@
            value="{{ value }}"
            {%- if required %} required{% endif %}
            {%- if readonly %} readonly{% endif %}
-           {%- if disabled %} disabled{% endif %}>
+           {%- if disabled %} disabled{% endif %}{{ described_by(name) }}>
     {%- if default %}
       <button class="linky" type="button" data-reset="{{ box }}">reset to default</button>
     {%- endif %}
+    {{ note_line(note) }}
+    {{ field_error(name) }}
   </div>
 {% endmacro %}
 
-{% macro money_box(name, text, value, required=false, mark="", default="") %}
+{% macro money_box(name, text, value, required=false, mark="", default="", note="") %}
   {{ text_box(name, text, value, required=required, mode="decimal", mark=mark, mask="money",
-              default=default) }}
+              default=default, note=note) }}
 {% endmacro %}
 
-{% macro pct_box(name, text, value, required=false, mark="", default="") %}
+{% macro pct_box(name, text, value, required=false, mark="", default="", note="") %}
   {#- The box holds a percent and the deal holds the fraction: a person types 12, the deal
       carries 0.12 (``schema/masks.py``). -#}
   {{ text_box(name, text, value, required=required, mode="decimal", mark=mark, mask="pct",
-              default=default) }}
+              default=default, note=note) }}
 {% endmacro %}
 
 {% macro phone_box(name, text, value, required=false) %}
@@ -81,7 +113,8 @@
     {{ caption(name, text, required) }}
     <textarea id="{{ name }}" name="{{ name }}"
               {%- if maxlength %} maxlength="{{ maxlength }}"{% endif %}
-              {%- if required %} required{% endif %}></textarea>
+              {%- if required %} required{% endif %}{{ described_by(name) }}></textarea>
+    {{ field_error(name) }}
   </div>
 {% endmacro %}
 
@@ -102,14 +135,15 @@
 {% macro bare_select(name, choices, chosen, required=false, labelled="", labelled_by=true) %}
   {#- A repeated row (the court matters below) carries no id: the name appears once per row
       and a page cannot hold the same id twice. -#}
-  <select {% if labelled_by %}id="{{ name }}" {% endif %}name="{{ name }}"{% if required %} required{% endif %}>
+  <select {% if labelled_by %}id="{{ name }}" {% endif %}name="{{ name }}"{% if required %} required{% endif %}{% if labelled_by %}{{ described_by(name) }}{% endif %}>
     {{- options(choices, chosen, labelled) -}}
   </select>
 {% endmacro %}
 
 {% macro enum_box(name, text, choices, chosen, required=false) %}
-  {#- The four enums a person reads as words rather than as codes: the loan type, the asset
-      type, the loan purpose and the exit (SPEC §3, §8.1). -#}
+  {#- The enums a person reads as words rather than as codes: the loan type, the asset type,
+      the loan purpose, the exit, and the court search's own outcome and matter codes
+      (SPEC §3, §7.2, §8.1). -#}
   {{ select_box(name, text, choices, chosen, required, "label") }}
 {% endmacro %}
 
@@ -117,6 +151,7 @@
   <div>
     {{ caption(name, text, required) }}
     {{ bare_select(name, choices, chosen, required, labelled) }}
+    {{ field_error(name) }}
   </div>
 {% endmacro %}
 
@@ -135,8 +170,9 @@
       are four sentences, so the box takes the whole row rather than stretching one grid
       column into a column of words. -#}
   <div class="wide">
-    {{ caption(name, text, required) }}
+    {{ caption(name, text, required, default="") }}
     <div class="narrow">{{ bare_select(name, choices, chosen, required, "label") }}</div>
+    {{ field_error(name) }}
     <dl class="defs small muted">
       {%- for choice in choices %}
         <dt>{{ choice | label }}</dt><dd>{{ choice | definition }}</dd>
@@ -148,7 +184,7 @@
 {% macro bare_yes_no(name, chosen, required=false, labelled_by=true) %}
   {#- Three states, not a checkbox: blank means nobody said, which an unticked box cannot
       express and does not even submit (``api/forms.py``). -#}
-  <select {% if labelled_by %}id="{{ name }}" {% endif %}name="{{ name }}"{% if required %} required{% endif %}>
+  <select {% if labelled_by %}id="{{ name }}" {% endif %}name="{{ name }}"{% if required %} required{% endif %}{% if labelled_by %}{{ described_by(name) }}{% endif %}>
     <option value="">—</option>
     <option value="true" {% if chosen == "true" %}selected{% endif %}>Yes</option>
     <option value="false" {% if chosen == "false" %}selected{% endif %}>No</option>
@@ -159,6 +195,7 @@
   <div>
     {{ caption(name, text, required) }}
     {{ bare_yes_no(name, chosen, required) }}
+    {{ field_error(name) }}
   </div>
 {% endmacro %}
 
@@ -181,13 +218,18 @@
       <label><input type="radio" name="{{ name }}" value="false"
                     {% if chosen == "false" %}checked{% endif %}> Off</label>
     </div>
-    {%- if note %}<span class="small muted">{{ note }}</span>{% endif %}
+    {{ note_line(note) }}
+    {{ field_error(name) }}
   </div>
 {% endmacro %}
 
 {# --- the repeated court-matter rows (SPEC §7.2), the same table on both forms ------------- #}
 
 {% macro matter_table(enums, matters) %}
+  {#- Every code, lien kind and outcome in this table is shown as the words a person reads —
+      "Bankruptcy In Lookback", not BANKRUPTCY_IN_LOOKBACK — on the same rule the Loan Type
+      box follows (``schema/labels.py``). The stored value does not change; nothing a person
+      reads says the code. -#}
   <div class="scroll">
     <table>
       <thead>
@@ -204,10 +246,10 @@
       <tbody>
         {% for matter in matters %}
           <tr>
-            <td>{{ bare_select("matter_code", enums.court_flag, matter.code, labelled_by=false) }}</td>
+            <td>{{ bare_select("matter_code", enums.court_flag, matter.code, labelled="label", labelled_by=false) }}</td>
             <td><input name="matter_occurred_on" type="date" value="{{ matter.occurred_on }}"></td>
             <td><input name="matter_amount_usd" inputmode="decimal" value="{{ matter.amount_usd }}"></td>
-            <td>{{ bare_select("matter_lien_kind", enums.lien_kind, matter.lien_kind, labelled_by=false) }}</td>
+            <td>{{ bare_select("matter_lien_kind", enums.lien_kind, matter.lien_kind, labelled="label", labelled_by=false) }}</td>
             <td>{{ bare_yes_no("matter_senior", matter.senior, labelled_by=false) }}</td>
             <td>{{ bare_yes_no("matter_resolved_at_close", matter.resolved_at_close, labelled_by=false) }}</td>
             <td><input name="matter_description" maxlength="500" value="{{ matter.description }}"></td>

@@ -190,6 +190,9 @@ def test_the_fixture_set_covers_every_analysis_status() -> None:
 def test_fixture_underwrite_term_and_economics(path: Path) -> None:
     expected, result = run_underwrite(path)
     assert result.payoff_date.isoformat() == expected["payoff_date"]
+    assert result.term_months == expected["term_months"]
+    assert result.term_stub_days == expected["term_stub_days"]
+    assert rate(result.term_months_decimal) == D(expected["term_months_decimal"])
     assert result.rehab_months == expected["rehab_months"]
     assert cents(result.sizing.commitment) == D(expected["commitment"])
     assert cents(result.economics.funded_at_close) == D(expected["funded_at_close"])
@@ -198,8 +201,18 @@ def test_fixture_underwrite_term_and_economics(path: Path) -> None:
     assert cents(economics.rehab_adj) == D(want["rehab_adj"])
     assert cents(economics.contingency) == D(want["contingency"])
     assert cents(economics.closing_costs) == D(want["closing_costs"])
+    assert rate(economics.holding_costs_pct_of_cost) == D(want["holding_costs_pct_of_cost"])
+    assert cents(economics.holding_costs_basis) == D(want["holding_costs_basis"])
     assert cents(economics.holding_costs_total) == D(want["holding_costs_total"])
     assert cents(economics.holding_costs_monthly) == D(want["holding_costs_monthly"])
+    # The three are one statement: the percentage of the basis, over the term (SPEC §8.1).
+    assert economics.holding_costs_total == economics.holding_costs_basis * (
+        economics.holding_costs_pct_of_cost
+    )
+    assert (
+        economics.holding_costs_monthly * result.term_months_decimal
+        == economics.holding_costs_total
+    )
     assert cents(economics.origination_at_close) == D(want["origination_at_close"])
     assert cents(economics.origination_at_payoff) == D(want["origination_at_payoff"])
     # the two halves are exactly that, whatever the fee is
@@ -214,7 +227,8 @@ def test_fixture_underwrite_term_and_economics(path: Path) -> None:
 def test_fixture_underwrite_ledger_and_irr(path: Path) -> None:
     expected, result = run_underwrite(path)
     overview, want = result.return_overview, expected["ledger"]
-    assert len(overview.entries) == want["rows"] == result.term_months + 1
+    rows = result.term_months + 1 + (1 if result.term_stub_days else 0)
+    assert len(overview.entries) == want["rows"] == rows
     assert cents(overview.entries[0].net) == D(want["first_net"])
     assert cents(overview.entries[-1].net) == D(want["last_net"])
     for name in ("funding", "draws", "interest", "fees", "payoff"):
@@ -224,6 +238,15 @@ def test_fixture_underwrite_ledger_and_irr(path: Path) -> None:
     # the two identities the ledger rests on (SPEC §8.3)
     assert overview.total_profit == overview.total_interest + overview.total_fees
     assert -(overview.total_funding + overview.total_draws) == overview.total_payoff
+
+    # A stub term ends on one short period, and only that row is short (SPEC §8.3).
+    stubs = [entry for entry in overview.entries if entry.stub_days]
+    assert [entry.stub_days for entry in stubs] == (
+        [result.term_stub_days] if result.term_stub_days else []
+    )
+    if stubs:
+        assert stubs[0] is overview.entries[-1]
+        assert cents(stubs[0].interest) == D(want["stub_interest"])
 
     assert overview.irr is not None
     assert abs(overview.irr - D(want["irr"])) < D("1e-6")
@@ -238,7 +261,7 @@ def test_fixture_underwrite_dates_run_month_by_month(path: Path) -> None:
     entries = result.return_overview.entries
     assert entries[0].date == result.closing_date
     assert entries[-1].date == result.payoff_date
-    assert [e.month for e in entries] == list(range(result.term_months + 1))
+    assert [e.month for e in entries] == list(range(len(entries)))
     assert all(a.date < b.date for a, b in zip(entries, entries[1:], strict=False))
 
 

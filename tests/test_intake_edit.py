@@ -304,7 +304,7 @@ def test_the_edit_form_asks_for_the_same_required_boxes(
     response = edit(client, stored_deal.id, body)
 
     assert response.status_code == 422
-    assert "Term (months) is required" in response.text
+    assert "A term is required" in response.text
     db_session.expire_all()
     assert len(list(db_session.scalars(select(IntakeSubmission)))) == 1
     assert trail(db_session, AuditAction.INTAKE_EDITED) == []

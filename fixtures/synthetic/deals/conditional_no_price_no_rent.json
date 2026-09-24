@@ -1,6 +1,6 @@
 {
   "name": "conditional_no_price_no_rent",
-  "description": "NO_DRAW with no estimated sale price and no monthly rent. LTV is the commitment over the sale price and there is no fallback denominator (SPEC \u00a77.4), so it is NOT_AVAILABLE, ESTIMATED_SALE_PRICE_MISSING is raised and the screen goes Conditional on it. The underwrite still runs - the ledger, the economics and the take-back cost do not read a sale price - and reports the Flip analysis NOT_EVALUATED with SALE_PRICE_MISSING beside it, and neither DSCR tested (MONTHLY_RENT_MISSING). Closing 31 March on a 6-month term pays off 30 September.",
+  "description": "NO_DRAW with no estimated sale price and no monthly rent. LTV is the commitment over the sale price and there is no fallback denominator (SPEC §7.4), so it is NOT_AVAILABLE, ESTIMATED_SALE_PRICE_MISSING is raised and the screen goes Conditional on it. The underwrite still runs - the ledger, the economics and the take-back cost do not read a sale price - and reports the Flip analysis NOT_EVALUATED with SALE_PRICE_MISSING beside it, and neither DSCR tested (MONTHLY_RENT_MISSING). Closing 31 March on a 6-month term pays off 30 September.",
   "inputs": {
     "deal": {
       "product": "NO_DRAW",
@@ -81,7 +81,9 @@
         "holding_costs_total": "2000.00",
         "holding_costs_monthly": "333.33",
         "origination_at_close": "800.00",
-        "origination_at_payoff": "800.00"
+        "origination_at_payoff": "800.00",
+        "holding_costs_pct_of_cost": "0.020000",
+        "holding_costs_basis": "100000.00"
       },
       "ledger": {
         "rows": 7,
@@ -132,7 +134,10 @@
           "code": "MONTHLY_RENT_MISSING",
           "severity": "INFO"
         }
-      ]
+      ],
+      "term_months": 6,
+      "term_stub_days": 0,
+      "term_months_decimal": "6.000000"
     }
   }
 }

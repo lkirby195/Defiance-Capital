@@ -46,7 +46,7 @@ def request(**overrides: Any) -> UnderwriteRequest:
         "verified_credit_score": 715,
         "verified_deals_36mo": 4,
         "monthly_rent": D("1800.00"),
-        "holding_costs_total_usd": D("3600.00"),
+        "holding_costs_pct_of_cost": D("0.03"),
     }
     base.update(overrides)
     return UnderwriteRequest(**base)
@@ -177,8 +177,11 @@ def test_underwrite_falls_back_to_the_deals_own_economics(
     db_session.flush()
     from_deal = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
     assert from_deal.economics.origination_fee_pct == D("0.03000")
-    # the holding cost comes off the request here, and the contingency off config
-    assert from_deal.economics.holding_costs_total == D("3600.00")
+    # the holding cost comes off the request here, and the contingency off config:
+    # 3% of the 155,000 price plus rehab is 4,650 over the hold (SPEC §8.1)
+    assert from_deal.economics.holding_costs_pct_of_cost == D("0.03")
+    assert from_deal.economics.holding_costs_basis == D("155000.00")
+    assert from_deal.economics.holding_costs_total == D("4650.00")
     assert from_deal.economics.contingency_pct == CONFIG.fees.contingency_default_pct
     db_session.commit()
 

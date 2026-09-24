@@ -129,21 +129,39 @@ def _sheet_inputs(
         ("Loan purpose", enum_label(underwrite_inputs.loan_purpose), None, ""),
         ("Loan type", enum_label(deal.product), None, "the SPEC §3 product"),
         ("Closing date", underwrite_inputs.closing_date, DATE, "month 0 of the ledger"),
-        ("Term (months)", result.term_months, INTEGER, ""),
+        ("Term (whole months)", result.term_months, INTEGER, ""),
+        ("Term (stub days)", result.term_stub_days, INTEGER, "days past the last anchor"),
+        (
+            "Term (months, exact)",
+            result.term_months_decimal,
+            RATIO,
+            "whole months + stub days / day-count basis; the monthly carry divides by it",
+        ),
         ("Payoff date", result.payoff_date, DATE, "closing date + term"),
-        ("Rehab months", result.rehab_months, INTEGER, "term - listing months"),
+        ("Rehab months", result.rehab_months, INTEGER, "whole months only"),
         ("Purchase price", economics.purchase_price, MONEY, ""),
         ("Rehab costs", economics.rehab_costs, MONEY, "before contingency"),
         ("Contingency", economics.contingency_pct, PCT1, "of the rehab costs"),
         ("Rehab + contingency", economics.rehab_adj, MONEY, "what the rehab portion is capped at"),
         ("Closing costs", economics.closing_costs, MONEY, "the lender's; in the LTC denominator"),
         (
+            "Holding costs (% of cost)",
+            economics.holding_costs_pct_of_cost,
+            PCT1,
+            "of the purchase price plus the rehab costs",
+        ),
+        (
             "Holding costs (total)",
             economics.holding_costs_total,
             MONEY,
-            "over the whole hold",
+            "the percentage above, over the whole hold",
         ),
-        ("Holding costs (monthly)", economics.holding_costs_monthly, MONEY, "total / term"),
+        (
+            "Holding costs (monthly)",
+            economics.holding_costs_monthly,
+            MONEY,
+            "total / the exact term in months",
+        ),
         ("Origination fee", economics.origination_fee_pct, PCT1, "half at close, half at payoff"),
         ("Interest rate", economics.interest_rate, PCT1, "annual"),
         ("Loan amount", economics.loan_requested, MONEY, ""),
@@ -272,21 +290,27 @@ def _sheet_return_overview(book: Workbook, result: UnderwriteResult) -> None:
         row=2,
         column=1,
         value=(
-            f"{result.term_months} months from {result.closing_date.isoformat()} to "
-            f"{result.payoff_date.isoformat()}; money out is negative. The XIRR below is "
-            "Excel's own, over column B and column H."
+            f"{result.term_months} months"
+            + (f" and {result.term_stub_days} days" if result.term_stub_days else "")
+            + f" from {result.closing_date.isoformat()} to "
+            f"{result.payoff_date.isoformat()}; money out is negative. A stub row carries the "
+            "days it covers and earns one month's interest prorated over them (SPEC §8.3). "
+            "The XIRR below is Excel's own, over column A and column I."
         ),
     )
     at = _header(
-        sheet, 4, ["Date", "Month", "Funding", "Draws", "Interest", "Fees", "Payoff", "Net"]
+        sheet,
+        4,
+        ["Date", "Month", "Stub days", "Funding", "Draws", "Interest", "Fees", "Payoff", "Net"],
     )
     first = at
     for entry in result.return_overview.entries:
         sheet.cell(row=at, column=1, value=entry.date).number_format = DATE
         sheet.cell(row=at, column=2, value=entry.month).number_format = INTEGER
+        sheet.cell(row=at, column=3, value=entry.stub_days or None).number_format = INTEGER
         for column, amount in enumerate(
             (entry.funding, entry.draws, entry.interest, entry.fees, entry.payoff, entry.net),
-            start=3,
+            start=4,
         ):
             sheet.cell(row=at, column=column, value=amount).number_format = MONEY
         at += 1
@@ -303,7 +327,7 @@ def _sheet_return_overview(book: Workbook, result: UnderwriteResult) -> None:
             overview.total_payoff,
             overview.total_profit,
         ),
-        start=3,
+        start=4,
     ):
         cell = sheet.cell(row=at, column=column, value=total)
         cell.number_format = MONEY
@@ -321,7 +345,7 @@ def _sheet_return_overview(book: Workbook, result: UnderwriteResult) -> None:
     formula = sheet.cell(
         row=at,
         column=2,
-        value=f"=XIRR(H{first}:H{last},A{first}:A{last})",
+        value=f"=XIRR(I{first}:I{last},A{first}:A{last})",
     )
     formula.number_format = PCT4
     sheet.cell(
@@ -330,7 +354,7 @@ def _sheet_return_overview(book: Workbook, result: UnderwriteResult) -> None:
         value="Excel solves this itself from the dates and the Net column; it should equal "
         "the engine's IRR above.",
     )
-    _widths(sheet, 14, 8, 15, 15, 13, 12, 15, 15)
+    _widths(sheet, 14, 8, 11, 15, 15, 13, 12, 15, 15)
 
 
 def _sheet_flip(book: Workbook, result: UnderwriteResult) -> None:
@@ -345,6 +369,12 @@ def _sheet_flip(book: Workbook, result: UnderwriteResult) -> None:
         ("Purchase price", flip.purchase_price, MONEY, ""),
         ("Closing costs", flip.closing_costs, MONEY, ""),
         ("Holding costs", flip.holding_costs_total, MONEY, "total over the hold"),
+        (
+            "Holding costs (% of cost)",
+            result.economics.holding_costs_pct_of_cost,
+            PCT1,
+            "of the purchase price plus the rehab costs (SPEC §8.1)",
+        ),
         ("Rehab costs", flip.rehab_costs, MONEY, ""),
         ("Contingency", flip.contingency, MONEY, ""),
         ("Financing costs", flip.financing_costs, MONEY, "total interest + both fee halves"),
@@ -391,7 +421,12 @@ def _sheet_rental(book: Workbook, result: UnderwriteResult) -> None:
         ("Monthly rent", rental.monthly_rent, MONEY, ""),
         ("Expenses", rental.expenses_pct, PCT1, "of rent"),
         ("Expenses (monthly)", rental.expenses, MONEY, ""),
-        ("Holding costs (monthly)", rental.holding_costs_monthly, MONEY, ""),
+        (
+            "Holding costs (monthly)",
+            rental.holding_costs_monthly,
+            MONEY,
+            "the total over the exact term in months, stub included",
+        ),
         ("Net monthly income", rental.net_monthly_income, MONEY, "rent - expenses - holding"),
         ("Loan amount", rental.loan_amount, MONEY, "the commitment"),
         ("Takeout rate", rental.takeout_rate, PCT1, ""),

@@ -28,6 +28,7 @@ from services.enrichment import NO_ADAPTER_VALUES, AdapterValues, adapter_values
 from services.errors import (
     ActionNotAllowed,
     DealNotFound,
+    DealNotPriceable,
     DealNotReady,
     DealNotUnderwritable,
     ReasonRequired,
@@ -97,6 +98,7 @@ __all__ = [
     "ActionNotAllowed",
     "AdapterValues",
     "DealNotFound",
+    "DealNotPriceable",
     "DealNotReady",
     "DealNotUnderwritable",
     "InputRow",

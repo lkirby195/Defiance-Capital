@@ -290,7 +290,7 @@ def test_the_caps_grid_carries_two_caps_and_refuses_the_retired_pair(
 
 
 def test_one_holding_cost_replaced_the_three_itemized_opex_lines(data: dict[str, Any]) -> None:
-    """Taxes, insurance and utilities are one ``holding_costs_total_usd`` input now, so the
+    """Taxes, insurance and utilities are one ``holding_costs_pct_of_cost`` input now, so the
     percentages that stood in for them are gone from config entirely (SPEC §8.1)."""
     cfg = Config.from_dict(data)
     assert cfg.fees.holding_costs_default_pct_of_cost == Decimal("0.02")

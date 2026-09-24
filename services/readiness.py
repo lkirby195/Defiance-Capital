@@ -33,7 +33,7 @@ from typing import Any, Literal
 
 from config.config import Config, get_config
 from db.models import Deal
-from schema.dates import payoff_date_for
+from schema.dates import Term, describe, payoff_date_for
 from schema.labels import enum_label
 from schema.models import SPLIT_PRODUCTS, CourtRecordsStatus, Product, months_for_bucket
 from services.assemble import flip_is_on, intake_gaps, rental_is_on
@@ -43,9 +43,10 @@ from services.requests import UnderwriteRequest
 ZERO = Decimal(0)
 
 # How the page renders a row's value. Not every §8.1 input is money any more: the rate, the
-# contingency and the origination fee are percentages and the two dates are dates, and a
-# percentage rendered through the money filter reads as two cents.
-RowFormat = Literal["money", "pct", "plain"]
+# contingency, the holding costs and the origination fee are percentages, the two dates are
+# dates, and a percentage rendered through the money filter reads as two cents. ``label`` is
+# a stored enum shown as the words a person reads (``schema/labels.py``).
+RowFormat = Literal["money", "pct", "plain", "label"]
 
 
 class InputSource(StrEnum):
@@ -136,17 +137,27 @@ def _resolved_row(
     )
 
 
+def deal_term(deal: Deal) -> Term | None:
+    """The term the deal carries: whole months, then the stub days after them.  # SPEC §8.1"""
+    if deal.term_months is None:
+        return None
+    return Term(deal.term_months, deal.term_stub_days or 0)
+
+
 def _term_row(deal: Deal) -> InputRow:
     """The term on the deal, and where it came from.  # SPEC §8.1
 
     DEFAULT rather than TEAM while the value is still the one the bucket seeded: nobody chose
     9 months on a 9-month bucket, the bucket did. A term that differs from the bucket - or one
-    on a ``12_PLUS`` bucket, which names none - is a person's own.
+    on a ``12_PLUS`` bucket, which names none, or one with a stub, which no bucket names - is
+    a person's own.
     """
+    term = deal_term(deal)
     named = months_for_bucket(deal.term_bucket)
-    if deal.term_months is None:
+    seeded = named is not None and term == Term(named, 0)
+    if term is None:
         source = InputSource.MISSING
-    elif deal.term_months == named:
+    elif seeded:
         source = InputSource.DEFAULT
     else:
         source = InputSource.TEAM
@@ -155,14 +166,16 @@ def _term_row(deal: Deal) -> InputRow:
         note = "no term bucket on the deal; the team's own number is all there is"
     elif named is None:
         note = "the 12+ bucket names no months; enter a term, or a payoff date to imply one"
-    elif deal.term_months == named:
+    elif seeded:
         note = f"seeded by the {bucket.value}-month bucket"
     else:
         note = f"the team's own; the {bucket.value}-month bucket was the ask"
+    if term is not None and term.has_stub:
+        note = f"{note}; the last period is a {term.stub_days}-day stub (SPEC 8.3)"
     return _row(
         "deal.term_months",
-        "Term (months)",
-        deal.term_months,
+        "Term",
+        None if term is None else describe(term),
         source=source,
         required=True,
         note=note,
@@ -172,14 +185,15 @@ def _term_row(deal: Deal) -> InputRow:
 def _payoff_row(deal: Deal) -> InputRow:
     """The payoff date, derived from the closing date and the term.  # SPEC §8.1
 
-    Never required and never a reason the button is off: it is not a column, it is
-    ``closing_date + term_months``, and the two rows above it are what turn the button off.
+    Never required and never a reason the button is off: it is not a column, it is the closing
+    date plus the term's whole months and stub days, and the two rows above turn the button off.
     It is on the checklist because it is the date the ledger's last row carries, and a person
     wants to see it before they press anything.
     """
+    term = deal_term(deal)
     payoff = None
-    if deal.closing_date is not None and deal.term_months is not None:
-        payoff = payoff_date_for(deal.closing_date, deal.term_months)
+    if deal.closing_date is not None and term is not None and term.is_positive:
+        payoff = payoff_date_for(deal.closing_date, term.full_months, term.stub_days)
     return _row(
         "payoff_date",
         "Payoff date",
@@ -204,6 +218,7 @@ def _court_row(deal: Deal, adapters: AdapterValues) -> InputRow:
         "court_records",
         "Court and filing search",
         value,
+        fmt="label",
         source=source,
         note="" if source is not InputSource.MISSING else "not checked is not clean (SPEC §7.2)",
     )
@@ -237,6 +252,32 @@ def _split_rows(deal: Deal) -> list[InputRow]:
     ]
 
 
+def holding_costs_dollars(deal: Deal, default_pct: Decimal) -> Decimal | None:
+    """What the holding-cost percentage in force comes to in dollars.  # SPEC §8.1
+
+    None until the price and the rehab are both known: a percentage of nothing is not a
+    dollar figure, it is zero pretending to be one.
+    """
+    if deal.purchase_price is None or deal.rehab_costs is None:
+        return None
+    cost = deal.purchase_price + deal.rehab_costs
+    if cost <= ZERO:
+        return None
+    pct = deal.holding_costs_pct_of_cost
+    return cost * (pct if pct is not None else default_pct)
+
+
+def holding_costs_note(deal: Deal, default_pct: Decimal) -> str:
+    """The row's note: what the percentage comes to in dollars, and the default behind it."""
+    dollars = holding_costs_dollars(deal, default_pct)
+    amount = (
+        "the price and the rehab are not both known yet, so there is no dollar figure"
+        if dollars is None
+        else f"${dollars:,.2f} over the whole hold"
+    )
+    return f"{amount}; config default {default_pct:.2%} of price plus rehab"
+
+
 def _toggle_row(key: str, label: str, on: bool, chosen: bool | None, default_note: str) -> InputRow:
     """One analysis toggle: the state it is in, and whether a person or the §3 exit set it."""
     return _row(
@@ -259,7 +300,6 @@ def underwrite_readiness(
     empty = UnderwriteRequest()
     flip_on = flip_is_on(deal, empty, deal.term_months, settings)
     rental_on = rental_is_on(deal, empty, deal.term_months, settings)
-    cost = (deal.purchase_price or ZERO) + (deal.rehab_costs or ZERO)
     rows = [
         _row(
             "deal.closing_date",
@@ -313,14 +353,12 @@ def underwrite_readiness(
             note="the lender's own, inside the LTC denominator (SPEC §8.2)",
         ),
         _resolved_row(
-            "holding_costs_total_usd",
-            "Holding costs (total)",
-            team=deal.holding_costs_total_usd,
-            default=cost * fees.holding_costs_default_pct_of_cost if cost > ZERO else None,
-            note=(
-                f"config default: {fees.holding_costs_default_pct_of_cost:.2%} of price plus "
-                "rehab, over the whole hold"
-            ),
+            "holding_costs_pct_of_cost",
+            "Holding costs (% of price + rehab)",
+            fmt="pct",
+            team=deal.holding_costs_pct_of_cost,
+            default=fees.holding_costs_default_pct_of_cost,
+            note=holding_costs_note(deal, fees.holding_costs_default_pct_of_cost),
         ),
         _resolved_row(
             "origination_fee_pct",

@@ -87,8 +87,8 @@ def xirr_by_secant(flows: list[tuple[date, float]]) -> float:
 def ledger_rows(sheet: Worksheet) -> list[tuple[date, float]]:
     """The dates and the net column, read back out of the sheet as a person would."""
     rows: list[tuple[date, float]] = []
-    for row in sheet.iter_rows(min_row=5, max_col=8):
-        when, net = row[0].value, row[7].value
+    for row in sheet.iter_rows(min_row=5, max_col=9):
+        when, net = row[0].value, row[8].value
         if not isinstance(when, datetime | date) or not isinstance(net, int | float | Decimal):
             break
         rows.append((when.date() if isinstance(when, datetime) else when, float(net)))
@@ -139,9 +139,11 @@ def test_the_ledger_is_written_as_dates_and_numbers(path: Path) -> None:
         assert isinstance(when.value, datetime | date)
         assert when.number_format == "yyyy-mm-dd"
         assert sheet.cell(row=at, column=2).value == entry.month
+        # The stub column is blank on a whole period and carries its days on the short one.
+        assert sheet.cell(row=at, column=3).value == (entry.stub_days or None)
         for column, amount in enumerate(
             (entry.funding, entry.draws, entry.interest, entry.fees, entry.payoff, entry.net),
-            start=3,
+            start=4,
         ):
             cell = sheet.cell(row=at, column=column)
             assert isinstance(cell.value, Decimal | int | float), (at, column)
@@ -186,7 +188,7 @@ def test_the_sheet_carries_an_xirr_formula_over_its_own_ledger(path: Path) -> No
     assert result is not None
     last = 4 + len(result.return_overview.entries)
     formula, fmt = find_row(sheet, "IRR (this workbook)")
-    assert formula == f"=XIRR(H5:H{last},A5:A{last})"
+    assert formula == f"=XIRR(I5:I{last},A5:A{last})"
     assert fmt == "0.0000%"
     # ...over exactly the rows the ledger occupies, and no others
     assert len(ledger_rows(sheet)) == len(result.return_overview.entries)

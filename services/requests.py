@@ -11,7 +11,7 @@ engine default:
     estimated_sale_price          request -> deal.estimated_sale_price_team -> no LTV and no
                                   flip (§7.4, §8.4)
     closing_date                  request -> deal.closing_date -> not ready (§8.1)
-    term months / payoff date     request -> deal.term_months -> not ready (§8.1)
+    term months / payoff date     request -> deal.term_months + term_stub_days -> not ready
     interest_rate                 request -> deal.interest_rate -> not ready (§8.1)
     contingency / closing costs   request -> deal -> the config default (§8.1)
     holding costs / origination   request -> deal -> the config default (§8.1)
@@ -31,8 +31,9 @@ with the Rental and Take-Back analyses NOT_EVALUATED and an INFO flag saying so.
 
 The loan split is not here at all. It is two columns on the deal, entered on the team-entry
 form (SPEC §8.2), so there is one place it lives and one place it is edited. Nor is the
-payoff date a column: it is the closing date plus the term (``schema/dates.py``), and both
-models below take one as an alternative way of saying the other.
+payoff date a column: it is the closing date plus the term, whole months and stub days
+together (``schema/dates.py``), and both models below take a payoff date as an alternative
+way of saying that term.
 
 An adapter value, when one exists, wins over every step of that (``services/enrichment.py``).
 """
@@ -44,7 +45,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from schema.dates import term_from_dates
+from schema.dates import Term, term_from_dates
 from schema.models import (
     AssetType,
     CourtRecordsStatus,
@@ -80,9 +81,7 @@ class UnderwriteRequest(BaseModel):
     # The §8.1 economics that carry a config default.
     contingency_pct: Decimal | None = Field(default=None, ge=0, le=1)
     closing_costs_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
-    holding_costs_total_usd: Decimal | None = Field(
-        default=None, ge=0, max_digits=14, decimal_places=2
-    )
+    holding_costs_pct_of_cost: Decimal | None = Field(default=None, ge=0, le=1)
     origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
     # The Rental and Take-Back analyses (SPEC §8.5, §8.6).
     monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
@@ -95,13 +94,12 @@ class UnderwriteRequest(BaseModel):
 
     @model_validator(mode="after")
     def _term_and_payoff_agree(self) -> UnderwriteRequest:
-        """A payoff date that is not a whole number of months after closing says so here."""
-        if self.payoff_date is not None:
-            term_from_dates(self.closing_date, self.term_months, self.payoff_date)
+        """A payoff date that cannot be reconciled with the term beside it says so here."""
+        _ = self.requested_term
         return self
 
     @property
-    def requested_term_months(self) -> int | None:
+    def requested_term(self) -> Term | None:
         """The term this request names: the one typed, else the payoff date's.  # SPEC §8.1"""
         return term_from_dates(self.closing_date, self.term_months, self.payoff_date)
 
@@ -133,7 +131,8 @@ class TeamOverrides(BaseModel):
     loan_purpose: LoanPurpose | None = None
     product: Product | None = None
     closing_date: date | None = None
-    # Enter either; the other derives. ``payoff_date`` is never stored (``schema/dates.py``).
+    # Enter either; the other derives. ``payoff_date`` is never stored as a date
+    # (``schema/dates.py``): it is the term's whole months plus its stub days.
     term_months: int | None = Field(default=None, ge=1, le=60)
     payoff_date: date | None = None
     # Deal economics (SPEC §8.1). Blank means the config default, except the rate, which has
@@ -141,9 +140,7 @@ class TeamOverrides(BaseModel):
     interest_rate: Decimal | None = Field(default=None, ge=0, le=1)
     contingency_pct: Decimal | None = Field(default=None, ge=0, le=1)
     closing_costs_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
-    holding_costs_total_usd: Decimal | None = Field(
-        default=None, ge=0, max_digits=14, decimal_places=2
-    )
+    holding_costs_pct_of_cost: Decimal | None = Field(default=None, ge=0, le=1)
     origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
     # Valuation and rent (SPEC §6.1); an adapter value still wins over either of these.
     estimated_sale_price_team: Decimal | None = Field(
@@ -171,11 +168,15 @@ class TeamOverrides(BaseModel):
 
     @model_validator(mode="after")
     def _term_and_payoff_agree(self) -> TeamOverrides:
-        """A payoff date that cannot be a whole number of months says so at the door."""
-        _ = self.requested_term_months
+        """A payoff date that contradicts the term beside it says so at the door."""
+        _ = self.requested_term
         return self
 
     @property
-    def requested_term_months(self) -> int | None:
-        """The term this block names: the one typed, else the payoff date's.  # SPEC §8.1"""
+    def requested_term(self) -> Term | None:
+        """The term this block names: the one typed, else the payoff date's.  # SPEC §8.1
+
+        A payoff date that falls between two monthly anchors gives a term with a stub, which
+        is a term the ledger prices like any other (SPEC §8.3).
+        """
         return term_from_dates(self.closing_date, self.term_months, self.payoff_date)

@@ -25,10 +25,10 @@ checklist still says DEFAULT rather than claiming somebody chose it. A person wh
 default gets it by leaving the box alone; a person who wants 2.5% types 2.5 and the deal
 carries it. The "default" tag on the page is that rule, said out loud.
 
-The holding-cost default is the one that depends on other boxes — a percentage of the price
-plus the rehab — so it can only be worked out once those two are known. On a blank new-deal
-form they are not, and the box is empty with the rule in its tag; on a submitted form and on
-a deal page they are, and it is pre-filled like the other three.
+All four are flat config values, so all four pre-fill on a blank new-deal form. Holding costs
+are a percentage of the price plus the rehab (SPEC §8.1), and the dollar figure it comes to is
+shown beside the box rather than typed into it — ``holding_costs_amount`` is that arithmetic,
+and it has an answer only once the price and the rehab are both on the page.
 """
 
 from __future__ import annotations
@@ -56,14 +56,13 @@ MONEY_FIELDS: frozenset[str] = frozenset(
         "loan_purchase_portion",
         "loan_rehab_portion",
         "closing_costs_usd",
-        "holding_costs_total_usd",
         "estimated_sale_price_team",
         "monthly_rent",
     }
 )
 # Every box a person types a percent into. The deal carries the fraction.
 PERCENT_FIELDS: frozenset[str] = frozenset(
-    {"interest_rate", "contingency_pct", "origination_fee_pct"}
+    {"interest_rate", "contingency_pct", "holding_costs_pct_of_cost", "origination_fee_pct"}
 )
 PHONE_FIELDS: frozenset[str] = frozenset({"borrower_phone"})
 
@@ -71,7 +70,7 @@ PHONE_FIELDS: frozenset[str] = frozenset({"borrower_phone"})
 DEFAULTED_FIELDS: tuple[str, ...] = (
     "contingency_pct",
     "closing_costs_usd",
-    "holding_costs_total_usd",
+    "holding_costs_pct_of_cost",
     "origination_fee_pct",
 )
 
@@ -136,34 +135,33 @@ def unmasked(submitted: Mapping[str, str]) -> dict[str, str]:
     return {name: unmask_one(name, text) for name, text in submitted.items()}
 
 
-def holding_costs_default(
-    purchase_price: Decimal | None, rehab_costs: Decimal | None, config: Config
+def holding_costs_amount(
+    pct: Decimal | None, purchase_price: Decimal | None, rehab_costs: Decimal | None
 ) -> Decimal | None:
-    """The §8.1 holding-cost default: a share of the price plus the rehab, over the hold.
+    """What a holding-cost percentage comes to in dollars.  # SPEC §8.1
 
-    None until both are known, because a percentage of nothing is not a default - it is
-    zero pretending to be one.
+    None until the percentage, the price and the rehab are all three known, because a
+    percentage of nothing is not a dollar figure - it is zero pretending to be one.
     """
-    if purchase_price is None or rehab_costs is None:
+    if pct is None or purchase_price is None or rehab_costs is None:
         return None
     cost = purchase_price + rehab_costs
     if cost <= ZERO:
         return None
-    return cost * config.fees.holding_costs_default_pct_of_cost
+    return cost * pct
 
 
-def config_defaults(
-    config: Config,
-    *,
-    purchase_price: Decimal | None = None,
-    rehab_costs: Decimal | None = None,
-) -> dict[str, Decimal | None]:
-    """The four defaulted §8.1 economics, as numbers, for this deal's price and rehab."""
+def config_defaults(config: Config) -> dict[str, Decimal | None]:
+    """The four defaulted §8.1 economics, as numbers.  # SPEC §8.1
+
+    Four flat config values now that holding costs are a percentage: none of them depends on
+    anything else on the deal, so a blank new-deal form pre-fills all four.
+    """
     fees = config.fees
     return {
         "contingency_pct": fees.contingency_default_pct,
         "closing_costs_usd": fees.closing_costs_default_usd,
-        "holding_costs_total_usd": holding_costs_default(purchase_price, rehab_costs, config),
+        "holding_costs_pct_of_cost": fees.holding_costs_default_pct_of_cost,
         "origination_fee_pct": fees.origination_default_pct,
     }
 

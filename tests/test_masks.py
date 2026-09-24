@@ -23,13 +23,19 @@ from typing import Any
 import pytest
 from sqlalchemy.orm import Session
 
-from api.intake_form import blank_form_values, deal_defaults, read_form
+from api.intake_form import (
+    blank_form_values,
+    deal_defaults,
+    holding_costs_hint,
+    read_form,
+)
 from api.masks import (
     DEFAULTED_FIELDS,
     MONEY_FIELDS,
     PERCENT_FIELDS,
     PHONE_FIELDS,
     drop_defaults,
+    holding_costs_amount,
     mask_one,
     masked,
     unmask_one,
@@ -192,24 +198,27 @@ def test_a_number_somebody_chose_is_kept_even_when_it_is_close() -> None:
     assert kept["origination_fee_pct"] == "0.025"
 
 
-def test_the_holding_cost_default_needs_the_price_and_the_rehab() -> None:
-    """A percentage of nothing is not a default; it is zero pretending to be one."""
-    assert deal_defaults(None, CONFIG)["holding_costs_total_usd"] is None
-    assert blank_form_values(CONFIG)["holding_costs_total_usd"] == ""
-    # the other three are constants and are there on a blank form
+def test_all_four_defaults_are_flat_config_numbers_on_a_blank_form() -> None:
+    """Holding costs are a percentage now, so nothing about the deal is needed to show it."""
+    assert deal_defaults(None, CONFIG)["holding_costs_pct_of_cost"] == D("0.02")
+    assert blank_form_values(CONFIG)["holding_costs_pct_of_cost"] == "2%"
     assert blank_form_values(CONFIG)["contingency_pct"] == "0%"
     assert blank_form_values(CONFIG)["origination_fee_pct"] == "2%"
     assert blank_form_values(CONFIG)["closing_costs_usd"] == "$1,000"
 
 
-def test_a_submitted_price_and_rehab_are_enough_to_work_the_default_out() -> None:
-    """On the way in the two it depends on are in front of us, blank form or not."""
-    submitted = {"purchase_price": "$200,000", "rehab_costs": "$48,000"}
-    form, complaints = read_form({**COMPLETE, **submitted}, [], CONFIG)
-    assert complaints == [], complaints
-    assert form is not None
-    # 2% of 248,000 is 4,960 - exactly the default, so the deal carries nothing
-    assert form.holding_costs_total_usd is None
+def test_the_dollars_a_holding_percentage_comes_to_are_shown_beside_the_box() -> None:
+    """The box holds 2%; what a person checks is the dollars (SPEC §8.1)."""
+    assert holding_costs_amount(D("0.02"), D("200000"), D("48000")) == D("4960.00")
+    # ...and there is no figure until both halves of the cost basis are known.
+    assert holding_costs_amount(D("0.02"), None, D("48000")) is None
+    assert holding_costs_amount(None, D("200000"), D("48000")) is None
+    assert holding_costs_amount(D("0.02"), D("0"), D("0")) is None
+    hint = holding_costs_hint(D("0.02"), D("200000"), D("48000"))
+    assert "$4,960.00" in hint and "$248,000.00" in hint
+    assert holding_costs_hint(None, None, None) == (
+        "of the purchase price plus the rehab costs, over the whole hold"
+    )
 
 
 COMPLETE: dict[str, str] = {
@@ -225,18 +234,18 @@ COMPLETE: dict[str, str] = {
     "loan_rehab_portion": "$48,000",
     "interest_rate": "12%",
     "term_months": "9",
-    "holding_costs_total_usd": "$4,960",
+    "holding_costs_pct_of_cost": "2%",
 }
 
 
 def test_the_form_reads_a_masked_submission_into_what_the_deal_stores() -> None:
     form, complaints = read_form(COMPLETE, [], CONFIG)
-    assert complaints == [], complaints
+    assert not complaints, complaints.lines
     assert form is not None
     assert form.purchase_price == D("200000")
     assert form.loan_requested == D("195000")
     assert form.interest_rate == D("0.12")
-    assert form.holding_costs_total_usd is None  # it is the default, so it stores nothing
+    assert form.holding_costs_pct_of_cost is None  # it is the default, so it stores nothing
 
 
 # --- the labels a person reads --------------------------------------------------------------------

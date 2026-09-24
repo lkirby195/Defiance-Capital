@@ -193,6 +193,19 @@ class DrawsConfig(_Section):
     listing_months: Months
 
 
+class InterestConfig(_Section):
+    """The day-count convention the final stub period accrues on.  # SPEC §8.3
+
+    A term need not end on a monthly anchor any more: a payoff date between two of them
+    leaves a stub of days, and that stub accrues one month's interest scaled by
+    ``stub_days / day_count_basis``. 30 is the 30/360 convention, where every whole period is
+    30 days and a 15-day stub is half a month. A lender who accrues on actual/365 sets 365
+    here and gets a stub scaled by its real days against a year's twelfth.
+    """
+
+    day_count_basis: Annotated[int, Field(ge=1, le=366)]
+
+
 class RentalConfig(_Section):
     """Rental analysis assumptions.  # SPEC §8.5"""
 
@@ -248,6 +261,7 @@ class Config(_Section):
     fees: FeesConfig
     exit: ExitConfig
     draws: DrawsConfig
+    interest: InterestConfig
     rental: RentalConfig
     take_back: TakeBackConfig
     states: StatesConfig

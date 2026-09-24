@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 {% import "_csrf.html" as csrf %}
 {% import "_flags.html" as parts %}
-{% import "_fields.html" as fields %}
+{# ``with context`` so the macros can read ``errors`` and print each complaint under
+   the box it is about, rather than every call site passing it (``api/problems.py``). #}
+{% import "_fields.html" as fields with context %}
 {% block title %}Deal — GLENWOOD{% endblock %}
 
 {# The first eight panels are the SPEC §9 order, the same order the CLI prints and the
@@ -107,8 +109,9 @@
       <span class="small muted">({{ deal.product_source | plain }})</span>
       {% if deal.product %}<div class="small muted">{{ deal.product | definition }}</div>{% endif %}</dd>
     <dt>Closing Date</dt><dd>{{ deal.closing_date | when }}</dd>
-    <dt>Term (months)</dt>
-    <dd>{{ deal.term_months | plain }}
+    <dt>Term</dt>
+    <dd>{{ deal.term_months | plain }}{% if deal.term_months is not none %} month(s){% endif %}
+      {%- if deal.term_stub_days %} and {{ deal.term_stub_days }} day(s){% endif %}
       {% if deal.term_bucket %}<span class="small muted">(the borrower asked for
         {{ deal.term_bucket | plain }})</span>{% endif %}</dd>
     <dt>Payoff Date</dt>
@@ -125,10 +128,12 @@
         <span class="small muted">({{ economics.contingency_pct | pct }} of rehab)</span></dd>
       <dt>Rehab + contingency</dt><dd>{{ economics.rehab_adj | money }}</dd>
       <dt>Closing Costs</dt><dd>{{ economics.closing_costs | money }}</dd>
-      <dt>Holding Costs (total)</dt>
+      <dt>Holding Costs</dt>
       <dd>{{ economics.holding_costs_total | money }}
-        <span class="small muted">{{ economics.holding_costs_monthly | money }}/mo over the
-          term</span></dd>
+        <span class="small muted">{{ economics.holding_costs_pct_of_cost | pct }} of
+          {{ economics.holding_costs_basis | money }} (price + rehab);
+          {{ economics.holding_costs_monthly | money }}/mo over
+          {{ result.term_months_decimal | months }}</span></dd>
       <dt>Origination Fee</dt>
       <dd>{{ economics.origination_fee_pct | pct }} —
         {{ economics.origination_at_close | money }} at close,
@@ -153,7 +158,10 @@
       <dt>Rehab Costs</dt><dd>{{ deal.rehab_costs | money }}</dd>
       <dt>Contingency</dt><dd>{{ deal.contingency_pct | pct }}</dd>
       <dt>Closing Costs</dt><dd>{{ deal.closing_costs_usd | money }}</dd>
-      <dt>Holding Costs (total)</dt><dd>{{ deal.holding_costs_total_usd | money }}</dd>
+      <dt>Holding Costs</dt>
+      <dd>{{ deal.holding_costs_pct_of_cost | pct }}
+        <span class="small muted">of the price plus the rehab{% if holding_costs_entered %} —
+          {{ holding_costs_entered | money }} over the hold{% endif %}</span></dd>
       <dt>Origination Fee</dt><dd>{{ deal.origination_fee_pct | pct }}</dd>
       <dt>Interest Rate</dt><dd>{{ deal.interest_rate | pct }}</dd>
       <dt>Loan Amount</dt><dd>{{ deal.loan_requested | money }}</dd>
@@ -176,7 +184,8 @@
     <p class="lede small">
       run {{ underwrite.created_at | when }} · engine {{ result.engine_version }} ·
       config {{ result.config_hash[:12] }} ·
-      {{ result.term_months }} months ({{ result.rehab_months }} rehab) from
+      {{ result.term_months }} month(s){% if result.term_stub_days %} and
+      {{ result.term_stub_days }} day(s){% endif %} ({{ result.rehab_months }} rehab) from
       {{ result.closing_date | when }} to {{ result.payoff_date | when }}
     </p>
     <dl class="facts">
@@ -200,7 +209,8 @@
           {% for entry in overview.entries %}
             <tr>
               <td>{{ entry.date | when }}</td>
-              <td class="num">{{ entry.month }}</td>
+              <td class="num">{{ entry.month }}{% if entry.stub_days %}<span class="small muted">
+                stub, {{ entry.stub_days }}d</span>{% endif %}</td>
               <td class="num">{{ entry.funding | money }}</td>
               <td class="num">{{ entry.draws | money }}</td>
               <td class="num">{{ entry.interest | money }}</td>
@@ -310,7 +320,9 @@
       <dt>Expenses</dt>
       <dd>{{ rental.expenses | money }}
         <span class="muted">({{ rental.expenses_pct | pct }} of rent)</span></dd>
-      <dt>Monthly holding costs</dt><dd>{{ rental.holding_costs_monthly | money }}</dd>
+      <dt>Monthly holding costs</dt>
+      <dd>{{ rental.holding_costs_monthly | money }}
+        <span class="small muted">total over {{ result.term_months_decimal | months }}</span></dd>
       <dt>Net monthly income</dt><dd>{{ rental.net_monthly_income | money }}</dd>
       <dt>Debt service</dt>
       <dd>{{ rental.debt_service_monthly | money }}
@@ -425,6 +437,7 @@
             <td class="num">
               {% if row.fmt == "money" %}{{ row.value | money }}
               {% elif row.fmt == "pct" %}{{ row.value | pct }}
+              {% elif row.fmt == "label" %}{{ row.value | label }}
               {% else %}{{ row.value | plain }}{% endif %}
             </td>
             <td><span class="tag {{ 'HARD' if row.required and not row.satisfied
@@ -516,16 +529,19 @@
                           default=defaults.contingency_pct) }}
         {{ fields.money_box("closing_costs_usd", "Closing Costs", form.closing_costs_usd,
                             default=defaults.closing_costs_usd) }}
-        {{ fields.money_box("holding_costs_total_usd", "Holding Costs (total over the hold)",
-                            form.holding_costs_total_usd,
-                            default=defaults.holding_costs_total_usd) }}
+        {{ fields.pct_box("holding_costs_pct_of_cost",
+                          "Holding Costs — % of price + rehab, over the whole hold",
+                          form.holding_costs_pct_of_cost,
+                          default=defaults.holding_costs_pct_of_cost,
+                          note=holding_costs_hint) }}
         {{ fields.pct_box("origination_fee_pct", "Origination Fee", form.origination_fee_pct,
                           default=defaults.origination_fee_pct) }}
       </div>
       <p class="small muted">
         The payoff date is currently {{ payoff_date | when }}. Enter a term or a payoff date
-        and the other derives; enter both and they have to agree, and a payoff date that is
-        not a whole number of months after closing is refused by name.
+        and the other derives; enter both and they have to agree. A payoff date may be any
+        date after closing — the whole months that fit inside it are the term and the days
+        left over are a stub, which the ledger prices as a short final period (SPEC §8.3).
       </p>
     </fieldset>
 
@@ -551,8 +567,8 @@
     <fieldset>
       <legend>Court and filing search (SPEC §7.2)</legend>
       <div class="grid3">
-        {{ fields.select_box("court_records_status", "Outcome — NOT_CHECKED is not CLEAN",
-                             enums.court_records_status, form.court_records_status) }}
+        {{ fields.enum_box("court_records_status", "Outcome — Not Checked is not Clean",
+                           enums.court_records_status, form.court_records_status) }}
         {{ fields.text_box("court_records_as_of", "Searched on — lookbacks run from this date",
                            form.court_records_as_of, kind="date") }}
       </div>

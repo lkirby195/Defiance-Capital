@@ -80,7 +80,9 @@
         "holding_costs_total": "4000.00",
         "holding_costs_monthly": "333.33",
         "origination_at_close": "1500.00",
-        "origination_at_payoff": "1500.00"
+        "origination_at_payoff": "1500.00",
+        "holding_costs_pct_of_cost": "0.020000",
+        "holding_costs_basis": "200000.00"
       },
       "ledger": {
         "rows": 13,
@@ -127,7 +129,10 @@
           "code": "TAKE_BACK_DSCR_BELOW_FLOOR",
           "severity": "HARD"
         }
-      ]
+      ],
+      "term_months": 12,
+      "term_stub_days": 0,
+      "term_months_decimal": "12.000000"
     }
   }
 }

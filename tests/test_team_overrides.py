@@ -220,7 +220,7 @@ def test_an_underwrite_request_outranks_the_deal_but_not_an_adapter() -> None:
     request = UnderwriteRequest(
         estimated_sale_price=D("205000.00"),
         monthly_rent=D("2400.00"),
-        holding_costs_total_usd=D("3600.00"),
+        holding_costs_pct_of_cost=D("0.03"),
     )
     # the team typed a newer number when they advanced the deal
     from_request = resolve_valuation(deal, request=request)
@@ -355,7 +355,7 @@ def test_an_underwrite_falls_back_to_the_team_valuation_on_the_deal(
     result = run_underwrite(
         db_session,
         deal_with_overrides.id,
-        UnderwriteRequest(monthly_rent=D("2400.00"), holding_costs_total_usd=D("3600.00")),
+        UnderwriteRequest(monthly_rent=D("2400.00"), holding_costs_pct_of_cost=D("0.03")),
         CONFIG,
         actor=ACTOR,
     )
@@ -382,7 +382,7 @@ def test_an_underwrite_with_no_valuation_anywhere_is_priced_and_says_what_it_los
     result = run_underwrite(
         db_session,
         stored_deal.id,
-        UnderwriteRequest(monthly_rent=D("1500.00"), holding_costs_total_usd=D("3000.00")),
+        UnderwriteRequest(monthly_rent=D("1500.00"), holding_costs_pct_of_cost=D("0.025")),
         CONFIG,
         actor=ACTOR,
     )
@@ -412,7 +412,7 @@ def test_the_intake_endpoint_refuses_an_incoherent_court_block(
 def underwrite_request(**overrides: Any) -> UnderwriteRequest:
     base: dict[str, Any] = {
         "monthly_rent": D("2400.00"),
-        "holding_costs_total_usd": D("3600.00"),
+        "holding_costs_pct_of_cost": D("0.03"),
     }
     base.update(overrides)
     return UnderwriteRequest(**base)

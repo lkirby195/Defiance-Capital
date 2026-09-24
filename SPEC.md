@@ -172,10 +172,13 @@ IntakeRecord
     loan_purchase_portion?, loan_rehab_portion?          # §8.2, split products; the first is
                                                          #   "Advance at Closing"
     term_bucket?: 3 | 6 | 9 | 12 | 12_PLUS               # borrower channels only; it seeds term_months
-    term_months?, payoff_date?   # enter either; the other derives from closing_date (§8.1)
+    term_months?, term_stub_days?, payoff_date?
+                                 # enter a term or a payoff date; the other derives from
+                                 #   closing_date. term_months is whole monthly periods and
+                                 #   term_stub_days is the days a mid-month payoff leaves (§8.1)
     closing_date?                # month 0 of the ledger (§8.3)
     interest_rate?               # annual; required to underwrite (§8.1)
-    contingency_pct?, closing_costs_usd?, holding_costs_total_usd?, origination_fee_pct?
+    contingency_pct?, closing_costs_usd?, holding_costs_pct_of_cost?, origination_fee_pct?
                                  # §8.1 deal economics; each falls back to its config default
     flip_analysis?, rental_analysis?   # §8.1 toggles; null leaves the §3-derived default
     asset_type?: SFR | UNITS_2_4 | UNITS_5_PLUS | OTHER   # drives the §3 exit inference
@@ -434,7 +437,7 @@ Descriptive: captured, stored on `properties`, and reported. None of them feeds 
 | `loan_purpose` | — | `PURCHASE` \| `REFINANCE` \| `CASH_OUT` \| `CONSTRUCTION`, team-selected. Recorded and reported; it feeds no math |
 | `loan_type` | — | The §3 product, labelled "Loan Type" wherever a person reads it, with that product's §3 one-liner under the box |
 | `closing_date` | — | Month 0 of the ledger. **Required to underwrite** |
-| `term_months` / `payoff_date` | — | Enter either and the other derives; enter both and they have to agree. **Required to underwrite** |
+| `term_months` / `payoff_date` | — | Enter either and the other derives; enter both and they have to agree. `term_months` is the count of **full monthly periods**, and a payoff date between two of them leaves a stub of days beside it. **Required to underwrite** |
 | `purchase_price` | — | |
 | `rehab_costs` | — | 0 allowed |
 | `loan_requested` | — | Labelled **Loan Amount** wherever it is shown |
@@ -442,15 +445,30 @@ Descriptive: captured, stored on `properties`, and reported. None of them feeds 
 | `interest_rate` | — | Annual. **Required to underwrite** |
 | `contingency_pct` | `fees.contingency_default_pct` (0.00) | `rehab_adj = rehab_costs × (1 + contingency_pct)` |
 | `closing_costs_usd` | `fees.closing_costs_default_usd` (1,000) | The lender's closing costs. It replaces the 3%-of-price borrower closing assumption, which is gone |
-| `holding_costs_total_usd` | `fees.holding_costs_default_pct_of_cost` × (`purchase_price` + `rehab_costs`) (2%) | **Total over the hold**; the monthly figure is `holding_costs_total_usd / term_months` |
+| `holding_costs_pct_of_cost` | `fees.holding_costs_default_pct_of_cost` (2%) | A **percentage of `purchase_price` + `rehab_costs`**, over the whole hold. The dollar figure is that percentage of that cost and is computed, never entered: `holding_costs_total = (purchase_price + rehab_costs) × holding_costs_pct_of_cost`, shown beside the box and everywhere holding costs appear. The monthly figure is `holding_costs_total / term_months` as a decimal (below) |
 | `origination_fee_pct` | `fees.origination_default_pct` (2.0%) | Half at close, half at payoff, both on the commitment |
 
-`payoff_date = closing_date + term_months` calendar months, clamped to the end of a short
-month (31 January + 1 month is 28 February). Entering a payoff date derives the term the same
-way, and a date that is not exactly a whole number of months after closing is refused, naming
-the two nearest dates that are — the ledger's rows are months, so a term of "5½ months" is a
-number the engine cannot price. A term and a payoff date that disagree are refused too, naming
-both: that is a person having edited one box and left the other behind.
+**The term is whole monthly periods plus a stub.** Periods are anchored to `closing_date`'s
+day of the month, clamped to the end of a short one (31 January + 1 month is 28 February).
+`term_months` is how many anchors fit on or before the payoff date, and `term_stub_days` is the
+days between the last anchor and the payoff date:
+
+```
+payoff_date  = closing_date + term_months months + term_stub_days days
+term_months  = the largest m with closing_date + m months <= payoff_date
+term_stub_days = payoff_date − (closing_date + term_months months)      # 0 .. 30
+term in months (decimal) = term_months + term_stub_days / interest.day_count_basis
+```
+
+**Entering only a term keeps deriving a whole-month payoff date**: a term said in months has no
+stub, and its payoff date is the anchor. Entering a payoff date allows any date after closing.
+A payoff date on or before the closing date is refused — a term runs forwards — and a term and
+a payoff date that disagree are refused, naming both: that is a person having edited one box
+and left the other behind. `term_months` may be 0 only alongside a stub, which is a loan that
+pays off inside its first month; 0 months and 0 days is not a term.
+
+`term_stub_days` is a column on `deals` beside `term_months` (migration `0012`); the payoff
+date is still derived from the two and never stored.
 
 `term_bucket` (§4.1) is the borrower's own answer to "how long do you need the loan?" and
 still seeds `term_months` on a borrower-channel intake. **The team form does not ask it**: a
@@ -528,10 +546,25 @@ Output: pass/fail on each cap, with the cap and the actual.
 The lender's dated monthly cash flows from `closing_date`, and their XIRR. Signs are from the lender's side: money out is negative, money in is positive.
 
 ```
-rehab_months   = max(0, term_months − listing_months)
+rehab_months   = max(0, term_months − listing_months)              # whole periods only
 draw_per_month = rehab_portion / rehab_months                      # rehab_months > 0
 month m date   = closing_date + m calendar months, m = 0 .. term_months
+stub row       = month term_months + 1, dated payoff_date          # when term_stub_days > 0
 ```
+
+**The stub.** A term whose payoff date falls between two anchors gets one more row after the
+last one, dated the payoff date itself. It is a period like any other, only shorter: it accrues
+interest on the balance standing at its start, prorated by its days, and it carries the payoff
+and the fee's payoff half.
+
+```
+stub interest = balance × interest_rate / 12 × term_stub_days / interest.day_count_basis
+```
+
+`interest.day_count_basis` is config, placeholder 30 — the 30/360 convention, where an 11-day
+stub accrues eleven thirtieths of a month. **The draw schedule is whole periods only**: a stub
+is days at the end of the term, after the listing period in every case, so there is no draw to
+schedule in it and `rehab_months` does not see it.
 
 **Month 0 — closing.**
 
@@ -563,14 +596,15 @@ balance(m)  = commitment                                        # NO_DRAW, WHOLE
 
 `SPLIT_DRAW` pays on the full commitment from close even though the holdback has not gone out yet — that is the product (§3), and the ledger shows it as a real difference from `SPLIT_PRINCIPAL` rather than a constant.
 
-**Month `term_months` — payoff.**
+**The last row — payoff.** Month `term_months` on a whole-month term, the stub row on any
+other; either way it is dated the actual payoff date the team entered.
 
 ```
 payoff = +outstanding principal      # funded_at_close + every draw = commitment
 fees  += +commitment × origination_fee_pct / 2        # the payoff half
 ```
 
-**Outputs.** The ledger as a table — `date`, `month`, `funding`, `draws`, `interest`, `fees`, `payoff`, `net` — plus:
+**Outputs.** The ledger as a table — `date`, `month`, `stub_days`, `funding`, `draws`, `interest`, `fees`, `payoff`, `net` — plus:
 
 ```
 total_interest = Σ interest
@@ -600,11 +634,11 @@ financing_costs = total_interest + both origination halves           # from §8.
 net_profit      = estimated_sale_price
                   − broker_costs
                   − (purchase_price + closing_costs_usd)
-                  − holding_costs_total_usd
+                  − holding_costs_total
                   − rehab_costs
                   − contingency
                   − financing_costs
-total_costs     = purchase_price + closing_costs_usd + holding_costs_total_usd
+total_costs     = purchase_price + closing_costs_usd + holding_costs_total
                   + rehab_costs + contingency + financing_costs
 profit_yield    = net_profit / total_costs
 ```
@@ -619,7 +653,8 @@ On by default for a hold exit, or when a `monthly_rent` has been entered (§8.1)
 
 ```
 expenses           = monthly_rent × rental.expenses_pct_of_rent      # config, 35%
-holding_monthly    = holding_costs_total_usd / term_months
+holding_costs_total = (purchase_price + rehab_costs) × holding_costs_pct_of_cost
+holding_monthly    = holding_costs_total / (term_months + term_stub_days / day_count_basis)
 net_monthly_income = monthly_rent − expenses − holding_monthly
 
 debt_service       = level monthly payment on the commitment
@@ -655,13 +690,16 @@ Like the Rental analysis it is `NOT_EVALUATED` without a `monthly_rent`, and sha
 ```
 UnderwriteResult
   engine_version, config_hash
-  loan_purpose?, closing_date, payoff_date, term_months, rehab_months
+  loan_purpose?, closing_date, payoff_date, term_months, term_stub_days,
+    term_months_decimal, rehab_months
   exit: {type, exit_source}                                    # §3, informational
   sizing: {LTC, LTV, caps, pass/fail each, commitment, split}   # §8.2
   economics: {interest_rate, contingency_pct, rehab_adj, closing_costs,
-              holding_costs_total, holding_costs_monthly, origination_fee_pct,
+              holding_costs_pct_of_cost, holding_costs_basis, holding_costs_total,
+              holding_costs_monthly, origination_fee_pct,
               origination_at_close, origination_at_payoff, commitment, funded_at_close}
-  return_overview: {ledger: [{month, date, funding, draws, interest, fees, payoff, net}],
+  return_overview: {ledger: [{month, date, stub_days, funding, draws, interest,
+                             fees, payoff, net}],
                     total_funding, total_draws, total_interest, total_fees,
                     total_payoff, total_profit, irr}           # §8.3
   flip: {status, estimated_sale_price, broker_costs, financing_costs,
@@ -713,8 +751,22 @@ screen summary keeps its structure unchanged (§7).
 ### 9.1 Screen summary
 One page in the review queue: intake facts, enrichment hits, score components, verdict, reasons, suggested reply, missing fields.
 
+**A rejected form is a page, not an error.** Every `ValueError` and `ValidationError` raised
+while handling the team-entry form, the deal page's override block, Edit Intake or an
+underwrite request re-renders the same form with what was typed still in it, and each complaint
+sits **under the box it is about**; only the ones about more than one box — the term against
+the payoff date against the closing date — go to the top of the page, because there is no
+single box they belong under. A deal whose values are all present and which the engine will not
+run on (a commitment of zero, §8.2) says so the same way rather than as a server error, and so
+does an action on a deal id that no longer exists.
+
+**Every enum a person reads is title case with spaces**, on the one convention `schema/labels.py`
+sets for the Loan Type box: the court search's outcome, its matter codes and lien kinds, and a
+flag's severity. The stored value is untouched — an `<option>` still posts `BANKRUPTCY_IN_LOOKBACK`
+and a flag tag is still styled by its code — only the words change.
+
 ### 9.2 Readiness checklist
-Above the Run underwrite button, one row per §8.1 input with the value in force, where it came from (`ADAPTER` / `TEAM` / `DEFAULT` / `MISSING`), whether the run needs it, and what the run does without it. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months` or `payoff_date`), and the loan split on a split product. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
+Above the Run underwrite button, one row per §8.1 input with the value in force, where it came from (`ADAPTER` / `TEAM` / `DEFAULT` / `MISSING`), whether the run needs it, and what the run does without it. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months` or `payoff_date`, shown as months and, where there is one, the stub days after them), and the loan split on a split product. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
 
 ### 9.3 Credit memo
 Generated from `UnderwriteResult` into GLENWOOD's template (to be supplied; docx). Sections: borrower, property, deal structure, sizing vs caps, the return overview (ledger and IRR), flip, rental, take-back, flags with pass/fail, recommendation. Every flag shows the threshold it was tested against.
@@ -755,9 +807,10 @@ so the math can be checked by hand against a spreadsheet; neither is shown to a 
   - `origination_default_pct` (2.0%, half at close and half at payoff)
   - `contingency_default_pct` (0.00)
   - `closing_costs_default_usd` (1,000) — the lender's closing costs, inside the LTC denominator (§7.4, §8.2)
-  - `holding_costs_default_pct_of_cost` (2%) of `purchase_price + rehab_costs`, total over the hold
+  - `holding_costs_default_pct_of_cost` (2%) — the default for `holding_costs_pct_of_cost`, itself a percentage of `purchase_price + rehab_costs` over the whole hold (§8.1)
   - `broker_selling_pct` (4%) — the flip's cost of selling; not an input
-- `draws.listing_months` (3): `rehab_months = term_months − listing_months`
+- `draws.listing_months` (3): `rehab_months = term_months − listing_months`, whole periods only
+- `interest.day_count_basis` (30): the days a whole monthly period counts as, for the final stub period's prorated interest (§8.3)
 - exit inference term boundaries (resale max term, hold min term, §3)
 - rental takeout: `expenses_pct_of_rent` (35%), `takeout_rate` (6.5%), `amortization_years` (30), `dscr_floor` (1.20)
 - take-back: `lost_interest_months` (3), `legal_costs_usd` (5,000), `amortization_years` (30), `dscr_floor` (1.00)
@@ -810,7 +863,10 @@ Config is versioned; each `screens`/`underwrites` row records the config hash us
 
 Phase 5 replaced the underwrite calc layer and its inputs with the §8 above (engine `1.0.0`).
 Phase 5a (engine `1.1.0`) followed it with the single value ratio (§7.4), the underwrite that
-runs without a sale price (§8.4), and the §8.1 form as it now stands. The credit memo and LOI
+runs without a sale price (§8.4), and the §8.1 form as it now stands. Phase 5b (engine `1.2.0`)
+removed the whole-month requirement on the payoff date — the term is whole periods plus a stub
+(§8.1, §8.3) — made holding costs a percentage of the price plus the rehab (§8.1), and made
+every form refusal a page with the message beside the box (§9.1). The credit memo and LOI
 generation Phase 5 also names wait on GLENWOOD's templates (§13).
 
 Phase 4's review queue is built: sign-in and `users`, the queue list, the deal page, the team
@@ -837,5 +893,6 @@ recorded the move into that status.
 - LOI and credit memo templates
 - Historical deals for fixtures
 - The config placeholders the mechanics walkthrough left open: the contingency, holding-cost
-  and broker percentages, the rental expense ratio and takeout rate, the two DSCR floors, and
-  the take-back's lost-interest months and legal costs
+  and broker percentages, the rental expense ratio and takeout rate, the two DSCR floors, the
+  take-back's lost-interest months and legal costs, and the stub period's day-count basis
+  (`interest.day_count_basis`, placeholder 30 — 30/360; a lender who accrues actual/365 sets 365)

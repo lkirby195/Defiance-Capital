@@ -1,6 +1,6 @@
 {
   "name": "go_team_overrides_tulsa",
-  "description": "WHOLETAIL in Tulsa, entered on the team form and assembled the way the API assembles a stored deal: the valuation, the rent and the court search are all the team's own, so TEAM_SOURCED_VALUES is raised and the Go rests on hand-entered numbers. $120,000 at 13% for 6 months, the whole commitment at close; IRR 18.599%.",
+  "description": "WHOLETAIL in Tulsa, entered on the team form and assembled the way the API assembles a stored deal: the valuation, the rent and the court search are all the team's own, so TEAM_SOURCED_VALUES is raised and the Go rests on hand-entered numbers. $120,000 at 13% for 6 months, the whole commitment at close; IRR 18.599%. The holding costs are the config default, 2% of the $155,000 price-plus-rehab.",
   "team_entry": {
     "borrower_name": "Dana Whitlock",
     "borrower_phone": "918-555-0147",
@@ -28,7 +28,6 @@
     "rehab_costs": "5000.00",
     "loan_requested": "120000.00",
     "interest_rate": "0.13",
-    "holding_costs_total_usd": "3000.00",
     "estimated_sale_price_team": "200000.00",
     "monthly_rent": "1800.00",
     "court_records_status": "CLEAN",
@@ -77,10 +76,12 @@
         "rehab_adj": "5000.00",
         "contingency": "0.00",
         "closing_costs": "1000.00",
-        "holding_costs_total": "3000.00",
-        "holding_costs_monthly": "500.00",
+        "holding_costs_total": "3100.00",
+        "holding_costs_monthly": "516.67",
         "origination_at_close": "1200.00",
-        "origination_at_payoff": "1200.00"
+        "origination_at_payoff": "1200.00",
+        "holding_costs_pct_of_cost": "0.020000",
+        "holding_costs_basis": "155000.00"
       },
       "ledger": {
         "rows": 7,
@@ -97,16 +98,16 @@
       "flip": {
         "status": "EVALUATED",
         "broker_costs": "8000.00",
-        "total_costs": "169200.00",
-        "net_profit": "22800.00",
-        "profit_yield": "0.134752"
+        "total_costs": "169300.00",
+        "net_profit": "22700.00",
+        "profit_yield": "0.134082"
       },
       "rental": {
         "status": "EVALUATED",
         "expenses": "630.00",
-        "net_monthly_income": "670.00",
+        "net_monthly_income": "653.33",
         "debt_service_monthly": "758.48",
-        "dscr": "0.883344",
+        "dscr": "0.861370",
         "passed": false
       },
       "take_back": {
@@ -114,8 +115,8 @@
         "lost_interest": "3900.00",
         "total_cost": "128900.00",
         "debt_service_monthly": "1425.89",
-        "net_monthly_income": "670.00",
-        "dscr": "0.469882",
+        "net_monthly_income": "653.33",
+        "dscr": "0.458193",
         "passed": false
       },
       "flags": [
@@ -131,7 +132,10 @@
           "code": "TEAM_SOURCED_VALUES",
           "severity": "INFO"
         }
-      ]
+      ],
+      "term_months": 6,
+      "term_stub_days": 0,
+      "term_months_decimal": "6.000000"
     }
   }
 }
