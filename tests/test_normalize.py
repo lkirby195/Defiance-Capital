@@ -243,9 +243,9 @@ def test_prenormalized_inferred_state_is_re_inferred_from_the_address() -> None:
 
 
 def test_actual_opex_pass_through_the_team_form() -> None:
-    form = complete_form(holding_costs_total_usd="9600.00", monthly_rent="2500.00")
+    form = complete_form(holding_costs_pct_of_cost="0.04", monthly_rent="2500.00")
     record = normalize(parse_team_form(form), Channel.TEAM, {})
-    assert record.deal.holding_costs_total_usd == Decimal("9600.00")
+    assert record.deal.holding_costs_pct_of_cost == Decimal("0.04")
     assert record.deal.monthly_rent == Decimal("2500.00")
     assert (
         normalize(parse_team_form(complete_form()), Channel.TEAM, {}).deal.origination_fee_pct

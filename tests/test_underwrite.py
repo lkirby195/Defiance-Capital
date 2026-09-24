@@ -143,7 +143,7 @@ def test_the_economics_are_the_resolved_inputs_not_the_raw_ones() -> None:
         inputs(
             deal(rehab_costs="50000", contingency_pct=D("0.10"), closing_costs_usd=D("1500.00")),
             origination_fee_pct=D("0.03"),
-            holding_costs_total_usd=D("12000.00"),
+            holding_costs_pct_of_cost=D("0.048"),
         ),
         CONFIG,
     )
@@ -153,6 +153,9 @@ def test_the_economics_are_the_resolved_inputs_not_the_raw_ones() -> None:
     assert economics.rehab_adj == D("55000.00")
     assert economics.closing_costs == D("1500.00")
     assert economics.origination_fee_pct == D("0.03")
+    # 4.8% of the 250,000 price plus rehab, over the twelve-month term.
+    assert economics.holding_costs_pct_of_cost == D("0.048")
+    assert economics.holding_costs_basis == D("250000.00")
     assert economics.holding_costs_total == D("12000.00")
     assert economics.holding_costs_monthly == D("1000")
     assert economics.commitment == D("150000")

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC
+from datetime import UTC, date
 from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
 
+from schema.dates import Term
 from schema.generate import INTAKE_JSON, render
 from schema.models import (
     Channel,
@@ -127,22 +128,45 @@ def test_flag_codes_are_stable_and_do_not_collide() -> None:
     assert {m.value for m in ScreenFlag}.isdisjoint({m.value for m in CourtFlag})
 
 
-def test_the_new_economics_fields_are_optional_money() -> None:
-    assert DealInfo().holding_costs_total_usd is None
+def test_the_new_economics_fields_are_optional() -> None:
+    """The holding cost is a share of the cost (SPEC §8.1); the rent is money."""
+    assert DealInfo().holding_costs_pct_of_cost is None
     assert DealInfo().monthly_rent is None
-    deal = DealInfo(holding_costs_total_usd="2400.50", monthly_rent=0)
-    assert deal.holding_costs_total_usd == Decimal("2400.50")
+    deal = DealInfo(holding_costs_pct_of_cost="0.025", monthly_rent=0)
+    assert deal.holding_costs_pct_of_cost == Decimal("0.025")
     assert deal.monthly_rent == 0
     with pytest.raises(ValidationError):
-        DealInfo(holding_costs_total_usd=Decimal("-1"))
+        DealInfo(holding_costs_pct_of_cost=Decimal("-1"))
+    with pytest.raises(ValidationError):
+        DealInfo(holding_costs_pct_of_cost=Decimal("1.5"))  # a share, not a multiple
     with pytest.raises(ValidationError):
         DealInfo(monthly_rent=Decimal("1.005"))
+
+
+def test_a_term_is_whole_months_plus_a_stub_and_runs_for_some_time() -> None:
+    """SPEC §8.1: a payoff date between two anchors leaves days the ledger prices."""
+    assert DealInfo().term_stub_days is None
+    stubbed = DealInfo(closing_date=date(2027, 3, 15), term_months=9, term_stub_days=11)
+    assert stubbed.term == Term(9, 11)
+    assert stubbed.payoff_date == date(2027, 12, 26)
+    all_stub = DealInfo(closing_date=date(2027, 1, 1), term_months=0, term_stub_days=20)
+    assert all_stub.payoff_date == date(2027, 1, 21)
+    with pytest.raises(ValidationError, match="no months and no days"):
+        DealInfo(term_months=0)
+    with pytest.raises(ValidationError, match="needs a term in months"):
+        DealInfo(term_stub_days=11)
 
 
 def test_committed_intake_json_carries_the_new_fields() -> None:
     schema = json.loads(INTAKE_JSON.read_text(encoding="utf-8"))
     assert "state_source" in schema["$defs"]["PropertyInfo"]["properties"]
-    for name in ("closing_date", "interest_rate", "holding_costs_total_usd", "monthly_rent"):
+    for name in (
+        "closing_date",
+        "interest_rate",
+        "holding_costs_pct_of_cost",
+        "term_stub_days",
+        "monthly_rent",
+    ):
         assert name in schema["$defs"]["DealInfo"]["properties"], name
     for name in ("city", "units", "sf", "beds", "baths", "garage_spaces"):
         assert name in schema["$defs"]["PropertyInfo"]["properties"], name

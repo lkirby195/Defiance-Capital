@@ -13,6 +13,10 @@ gets a filter here; it never does arithmetic of its own.
 notice a redirect brought with it, the problems a rejected form produced, and the CSRF token
 its forms post back - without each route remembering to pass them. A page rendered for nobody
 gets an empty token, because a page with no session has no form worth posting.
+
+A rejected form arrives as a ``FormProblems`` (``api/problems.py``) and leaves as two names:
+``problems``, the cross-field lines the page prints at the top, and ``errors``, the rest filed
+by box name for ``_fields.html`` to print under the box each is about.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ from fastapi import Request, status
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, RedirectResponse
 
+from api.problems import NO_PROBLEMS, FormProblems
 from api.security import issue_csrf
 from config.config import get_config
 from db.models import User
@@ -61,6 +66,19 @@ def points(value: Decimal | None) -> str:
 def ratio(value: Decimal | None) -> str:
     """A cover or a DSCR: ``1.09x``."""
     return "—" if value is None else f"{value:.2f}x"
+
+
+def months(value: Decimal | None) -> str:
+    """A term as a number of months: ``9 months``, ``9.37 months``.  # SPEC §8.1
+
+    Two decimals at most, and none on a whole-month term - a term with no stub on it should
+    not read as though somebody measured it to the hundredth of a month.
+    """
+    if value is None:
+        return "—"
+    rounded = value.quantize(Decimal("0.01"))
+    text = format(rounded.normalize(), "f") if rounded == rounded.to_integral() else f"{rounded}"
+    return f"{text} months"
 
 
 def whole(value: Decimal | int | None) -> str:
@@ -141,6 +159,7 @@ def experience(value: ExperienceBucket | str | None) -> str:
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.filters.update(
     money=money,
+    months=months,
     pct=pct,
     rate=rate,
     points=points,
@@ -168,10 +187,18 @@ def page(
     status_code: int = status.HTTP_200_OK,
 ) -> HTMLResponse:
     """Render a template with the shared context every page has."""
+    trouble = context.pop("problems", NO_PROBLEMS)
+    if not isinstance(trouble, FormProblems):
+        # A page with no form of its own - the sign-in page, the CSRF refusal - says its one
+        # thing at the top and has no box to put it under.
+        trouble = FormProblems({}, list(trouble))
     shared: dict[str, Any] = {
         "user": user,
         "notice": request.query_params.get("notice"),
-        "problems": context.pop("problems", []),
+        # The cross-field lines, at the top; ``errors`` is the rest, filed by box name and
+        # rendered under that box (``api/templates/_fields.html``).
+        "problems": trouble.general,
+        "errors": trouble.fields,
         "csrf_token": issue_csrf(user) if user is not None else "",
     }
     return templates.TemplateResponse(request, name, {**shared, **context}, status_code=status_code)

@@ -53,7 +53,7 @@ OVERRIDE_FIELDS: tuple[str, ...] = (
     "interest_rate",
     "contingency_pct",
     "closing_costs_usd",
-    "holding_costs_total_usd",
+    "holding_costs_pct_of_cost",
     "origination_fee_pct",
     "estimated_sale_price_team",
     "monthly_rent",
@@ -246,7 +246,7 @@ def save_overrides(
         after[field] = jsonable(submitted)
         setattr(deal, field, submitted)
     _apply_product(deal, overrides, before, after)
-    _apply_term_months(deal, overrides, before, after)
+    _apply_term(deal, overrides, before, after)
     if not after:
         return deal
     session.flush()
@@ -262,26 +262,33 @@ def save_overrides(
     return deal
 
 
-def _apply_term_months(
+def _apply_term(
     deal: Deal, overrides: TeamOverrides, before: dict[str, Any], after: dict[str, Any]
 ) -> None:
     """Set the term the deal is priced on, however the team said it.  # SPEC §8.1
 
-    The block takes a term in months or a payoff date and ``TeamOverrides`` turns the second
-    into the first, so there is one number to store and one column to store it in. The bucket
-    does not come into it any more: it is the borrower's answer to "how long do you need the
-    loan?", it seeded this at intake, and a deal repriced to 7 months on a 6-month ask is a
-    real thing rather than a row to reject.
+    The block takes a term in months or a payoff date and ``TeamOverrides`` splits the second
+    into whole months and the days left over, so there is one term and two columns holding
+    it. The two move together: a payoff date entered on a deal that had a whole-month term
+    clears the one and sets the other, and a term typed in months clears the stub, because a
+    term said in months has none. The bucket does not come into it: it is the borrower's
+    answer to "how long do you need the loan?", it seeded this at intake, and a deal repriced
+    to 7 months on a 6-month ask is a real thing rather than a row to reject.
 
     This block is the only place in the queue a team member can set one: the Run underwrite
     button posts no form of its own.
     """
-    wanted = overrides.requested_term_months
-    if wanted == deal.term_months:
-        return
-    before["term_months"] = deal.term_months
-    after["term_months"] = wanted
-    deal.term_months = wanted
+    wanted = overrides.requested_term
+    months = wanted.full_months if wanted is not None else None
+    # NULL rather than 0 for "no stub": a whole-month term has no days on the end of it, and
+    # a column that says so two ways is a column two readers disagree about.
+    stub = (wanted.stub_days or None) if wanted is not None else None
+    for field, value in (("term_months", months), ("term_stub_days", stub)):
+        if getattr(deal, field) == value:
+            continue
+        before[field] = getattr(deal, field)
+        after[field] = value
+        setattr(deal, field, value)
 
 
 def _apply_product(

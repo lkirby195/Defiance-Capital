@@ -21,7 +21,8 @@ even sent. They are rendered as a blank / Yes / No select instead, which submits
 or "false" and lands on None, True or False without another rule anywhere.
 
 Nothing here validates. It produces dicts; the Pydantic model on the far side decides whether
-they are any good, and ``problems()`` turns its complaint into lines a person can act on.
+they are any good, and ``api/problems.py`` files its complaint under the box each line is
+about.
 """
 
 from __future__ import annotations
@@ -29,7 +30,6 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import Depends, Request
-from pydantic import ValidationError
 from starlette.datastructures import FormData
 
 # The hidden field every form post in the queue carries (``api/security.py``).
@@ -83,19 +83,6 @@ def rows(form: FormData, prefix: str, names: tuple[str, ...]) -> list[dict[str, 
         if row:
             out.append(row)
     return out
-
-
-def problems(error: ValidationError) -> list[str]:
-    """A validation error as one plain line per problem, naming the field.
-
-    Pydantic's own message is accurate and reads like a stack trace. A person looking at a
-    form needs the box and the complaint, in that order, and nothing else.
-    """
-    lines: list[str] = []
-    for issue in error.errors():
-        where = ".".join(str(part) for part in issue["loc"]) or "form"
-        lines.append(f"{where}: {issue['msg']}")
-    return lines or ["the form could not be read"]
 
 
 async def form_data(request: Request) -> FormData:

@@ -54,6 +54,13 @@ def csrf_rejected(request: Request, exc: CsrfRejected) -> Response:
     return templates.TemplateResponse(
         request,
         "csrf_rejected.html",
-        {"user": None, "notice": None, "problems": [], "csrf_token": "", "detail": exc.detail},
+        {
+            "user": None,
+            "notice": None,
+            "problems": [],
+            "errors": {},
+            "csrf_token": "",
+            "detail": exc.detail,
+        },
         status_code=HTTP_403_FORBIDDEN,
     )

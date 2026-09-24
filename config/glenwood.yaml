@@ -59,6 +59,11 @@ draws:                                    # SPEC §8.3
   listing_months: 3                       # rehab_months = term_months - this, floored at 0;
                                           #   the last months of the term are listing / sale
 
+interest:                                 # SPEC §8.3
+  day_count_basis: 30                     # days a whole monthly period counts as, for the
+                                          #   final stub period: stub interest is one month's
+                                          #   interest x stub days / this. 30 is 30/360.
+
 rental:                                   # SPEC §8.5 rental analysis
   expenses_pct_of_rent: 0.35              # operating expenses as a share of the monthly rent
   takeout_rate: 0.065                     # the rate a takeout lender would amortize at

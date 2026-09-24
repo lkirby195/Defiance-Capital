@@ -282,7 +282,7 @@ def test_saving_overrides_replaces_the_block_and_records_only_what_moved(
         current_block(
             deal_with_overrides,
             monthly_rent=Decimal("2600.00"),
-            holding_costs_total_usd=Decimal("3600.00"),
+            holding_costs_pct_of_cost=Decimal("0.03"),
         ),
         actor=ACTOR,
     )
@@ -292,7 +292,7 @@ def test_saving_overrides_replaces_the_block_and_records_only_what_moved(
     assert deal_with_overrides.estimated_sale_price_team == before_sale_price
     recorded = rows(db_session, deal_with_overrides, AuditAction.OVERRIDES_SAVED)
     assert len(recorded) == 1
-    assert set(recorded[0].after or {}) == {"monthly_rent", "holding_costs_total_usd"}
+    assert set(recorded[0].after or {}) == {"monthly_rent", "holding_costs_pct_of_cost"}
     assert "estimated_sale_price_team" not in (recorded[0].after or {})
 
 
@@ -422,7 +422,7 @@ def test_the_override_form_posts_and_saves(
         data={
             "estimated_sale_price_team": "$295,000",
             "monthly_rent": "2,400",
-            "holding_costs_total_usd": "$840",
+            "holding_costs_pct_of_cost": "1.5%",
             "court_records_status": "CLEAN",
             "court_records_as_of": "2026-09-16",
             "matter_code": ["", "", ""],
@@ -442,7 +442,7 @@ def test_the_override_form_posts_and_saves(
     # the masks come off at the boundary (api/masks.py): the deal carries the numbers
     assert deal.estimated_sale_price_team == Decimal("295000")
     assert deal.monthly_rent == Decimal("2400")
-    assert deal.holding_costs_total_usd == Decimal("840")
+    assert deal.holding_costs_pct_of_cost == Decimal("0.015")
     assert deal.court_records_status is CourtRecordsStatus.CLEAN
     assert deal.court_records_team == []
 

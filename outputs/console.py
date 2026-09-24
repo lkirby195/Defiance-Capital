@@ -64,6 +64,19 @@ def day(value: date | None) -> str:
     return "n/a" if value is None else value.isoformat()
 
 
+def term_text(result: UnderwriteResult) -> str:
+    """The term as a person reads it: ``9 mo``, or ``9 mo + 11 d`` with a stub.  # SPEC §8.1"""
+    text = f"{result.term_months} mo"
+    return f"{text} + {result.term_stub_days} d" if result.term_stub_days else text
+
+
+def months(result: UnderwriteResult) -> str:
+    """The term as the one number the monthly carry divides by.  # SPEC §8.1"""
+    exact = result.term_months_decimal.quantize(Decimal("0.01"))
+    shown = exact.normalize() if exact == exact.to_integral() else exact
+    return f"{shown:f} months"
+
+
 def row(label: str, value: str, note: str = "") -> str:
     line = f"  {label:<{LABEL}}{value:>16}"
     return f"{line}   {note}".rstrip()
@@ -195,7 +208,7 @@ def render_economics(result: UnderwriteResult) -> list[str]:
     economics = result.economics
     lines = heading(
         "DEAL ECONOMICS",
-        f"{result.term_months} mo ({result.rehab_months} rehab), "
+        f"{term_text(result)} ({result.rehab_months} rehab), "
         f"{day(result.closing_date)} to {day(result.payoff_date)}",
     )
     lines += [
@@ -210,7 +223,9 @@ def render_economics(result: UnderwriteResult) -> list[str]:
         row(
             "Holding costs (total)",
             money(economics.holding_costs_total),
-            f"{money(economics.holding_costs_monthly)}/mo over the term",
+            f"{pct1(economics.holding_costs_pct_of_cost)} of "
+            f"{money(economics.holding_costs_basis)} (price + rehab); "
+            f"{money(economics.holding_costs_monthly)}/mo over {months(result)}",
         ),
         row(
             "Origination fee",
@@ -235,8 +250,9 @@ def render_return_overview(overview: ReturnOverview) -> list[str]:
     )
     lines.append(header)
     for entry in overview.entries:
+        month = f"{entry.month}*" if entry.stub_days else str(entry.month)
         lines.append(
-            f"  {entry.date.isoformat():<12}{entry.month:>4}"
+            f"  {entry.date.isoformat():<12}{month:>4}"
             f"{entry.funding:>14,.2f}{entry.draws:>14,.2f}"
             f"{entry.interest:>12,.2f}{entry.fees:>11,.2f}"
             f"{entry.payoff:>14,.2f}{entry.net:>14,.2f}"
@@ -247,6 +263,12 @@ def render_return_overview(overview: ReturnOverview) -> list[str]:
         f"{overview.total_interest:>12,.2f}{overview.total_fees:>11,.2f}"
         f"{overview.total_payoff:>14,.2f}{overview.total_profit:>14,.2f}"
     )
+    if any(entry.stub_days for entry in overview.entries):
+        stub = next(entry for entry in overview.entries if entry.stub_days)
+        lines.append(
+            f"  * the last period is a stub of {stub.stub_days} days: its interest is one "
+            "month's, prorated (SPEC 8.3)"
+        )
     lines += [
         "",
         row("Total interest", money(overview.total_interest)),

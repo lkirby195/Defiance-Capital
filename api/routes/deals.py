@@ -47,6 +47,7 @@ from schema.models import (
 )
 from services import (
     DealNotFound,
+    DealNotPriceable,
     DealNotReady,
     DealNotUnderwritable,
     UnderwriteRequest,
@@ -132,8 +133,9 @@ class DealView(BaseModel):
     product_source: ProductSource | None
     closing_date: date | None
     term_bucket: TermBucket | None
-    term_months: int | None
-    payoff_date: date | None  # derived: closing_date + term_months (SPEC §8.1)
+    term_months: int | None  # whole monthly periods (SPEC §8.1)
+    term_stub_days: int | None  # days past the last anchor; null on a whole-month term
+    payoff_date: date | None  # derived: closing_date + the term (SPEC §8.1)
     purchase_price: Decimal | None
     rehab_costs: Decimal | None
     loan_requested: Decimal | None
@@ -142,7 +144,7 @@ class DealView(BaseModel):
     interest_rate: Decimal | None
     contingency_pct: Decimal | None
     closing_costs_usd: Decimal | None
-    holding_costs_total_usd: Decimal | None
+    holding_costs_pct_of_cost: Decimal | None  # of purchase_price + rehab_costs (SPEC §8.1)
     origination_fee_pct: Decimal | None
     asset_type: AssetType | None
     stated_exit: StatedExit | None
@@ -174,6 +176,19 @@ def _not_ready(exc: DealNotReady) -> HTTPException:
     )
 
 
+def _not_priceable(exc: DealNotPriceable) -> HTTPException:
+    """422: every value is there and the engine will not run on them (SPEC §8.2).
+
+    The same status as a deal missing an input, because the fix is the same kind of thing -
+    something on this deal has to change - and a different body, because what has to change
+    is a contradiction rather than a gap.
+    """
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={"message": str(exc), "reasons": exc.reasons},
+    )
+
+
 def _not_underwritable(exc: DealNotUnderwritable) -> HTTPException:
     """409: the deal exists and the inputs are fine, its status is what refuses.  # SPEC §4.5"""
     return HTTPException(
@@ -191,6 +206,8 @@ def screen_deal(deal_id: UUID, session: SessionDep, user: ApiUser) -> ScreenResu
         raise _not_found(exc) from exc
     except DealNotReady as exc:
         raise _not_ready(exc) from exc
+    except DealNotPriceable as exc:
+        raise _not_priceable(exc) from exc
     session.commit()
     return result
 
@@ -217,6 +234,8 @@ def underwrite_deal(
         raise _not_underwritable(exc) from exc
     except DealNotReady as exc:
         raise _not_ready(exc) from exc
+    except DealNotPriceable as exc:
+        raise _not_priceable(exc) from exc
     session.commit()
     return result
 
@@ -236,7 +255,10 @@ def _payoff_date(deal: Deal) -> date | None:
     """The last row of the ledger, derived rather than stored (SPEC §8.1)."""
     if deal.closing_date is None or deal.term_months is None:
         return None
-    return payoff_date_for(deal.closing_date, deal.term_months)
+    stub = deal.term_stub_days or 0
+    if deal.term_months == 0 and stub == 0:
+        return None
+    return payoff_date_for(deal.closing_date, deal.term_months, stub)
 
 
 def _property_view(deal: Deal) -> PropertyView | None:
@@ -278,6 +300,7 @@ def deal_view(deal: Deal, session: Session) -> DealView:
         closing_date=deal.closing_date,
         term_bucket=deal.term_bucket,
         term_months=deal.term_months,
+        term_stub_days=deal.term_stub_days,
         payoff_date=_payoff_date(deal),
         purchase_price=deal.purchase_price,
         rehab_costs=deal.rehab_costs,
@@ -287,7 +310,7 @@ def deal_view(deal: Deal, session: Session) -> DealView:
         interest_rate=deal.interest_rate,
         contingency_pct=deal.contingency_pct,
         closing_costs_usd=deal.closing_costs_usd,
-        holding_costs_total_usd=deal.holding_costs_total_usd,
+        holding_costs_pct_of_cost=deal.holding_costs_pct_of_cost,
         origination_fee_pct=deal.origination_fee_pct,
         asset_type=deal.asset_type,
         stated_exit=deal.stated_exit,

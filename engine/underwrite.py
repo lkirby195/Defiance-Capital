@@ -65,6 +65,8 @@ def deal_economics(loan: LoanTerms) -> DealEconomics:
         contingency=sizing.rehab_adj - sizing.rehab_costs,
         rehab_adj=sizing.rehab_adj,
         closing_costs=sizing.closing_costs,
+        holding_costs_pct_of_cost=loan.holding_costs_pct_of_cost,
+        holding_costs_basis=loan.holding_costs_basis,
         holding_costs_total=loan.holding_costs_total,
         holding_costs_monthly=loan.holding_costs_monthly,
         origination_fee_pct=loan.origination_fee_pct,
@@ -94,7 +96,7 @@ def structure_flags(loan: LoanTerms, config: Config) -> list[Flag]:
             code=UnderwriteFlag.NO_REHAB_PERIOD,
             severity=Severity.INFO,
             message=(
-                f"{enum_label(loan.product)} term of {loan.term_months} month(s) is at or inside "
+                f"{enum_label(loan.product)} term of {loan.term_description} is at or inside "
                 f"the {config.draws.listing_months}-month listing period, so there is no "
                 f"rehab period: the {money(loan.rehab_portion)} rehab portion is advanced at "
                 "close rather than drawn, and no draw is scheduled."
@@ -240,6 +242,8 @@ def underwrite(inputs: UnderwriteInputs, config: Config) -> UnderwriteResult:
         closing_date=loan.closing_date,
         payoff_date=loan.payoff_date,
         term_months=loan.term_months,
+        term_stub_days=loan.stub_days,
+        term_months_decimal=loan.term_months_decimal,
         rehab_months=loan.rehab_months,
         exit=exit_result,
         sizing=sizing,

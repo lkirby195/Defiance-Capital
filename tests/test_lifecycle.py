@@ -39,7 +39,7 @@ D = Decimal
 def request(**overrides: Any) -> UnderwriteRequest:
     base: dict[str, Any] = {
         "monthly_rent": D("2400.00"),
-        "holding_costs_total_usd": D("3600.00"),
+        "holding_costs_pct_of_cost": D("0.03"),
     }
     base.update(overrides)
     return UnderwriteRequest(**base)

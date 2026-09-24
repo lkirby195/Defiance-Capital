@@ -20,6 +20,7 @@ from typing import NamedTuple
 from config.config import Config, get_config
 from db.models import Deal
 from engine.calc.exit import flip_default, infer_exit, rental_default
+from schema.dates import Term
 from schema.labels import enum_label
 from schema.models import (
     AMOUNT_COURT_FLAGS,
@@ -307,15 +308,20 @@ def resolve_closing_date(deal: Deal, request: UnderwriteRequest) -> date | None:
     return request.closing_date if request.closing_date is not None else deal.closing_date
 
 
-def resolve_term_months(deal: Deal, request: UnderwriteRequest) -> int | None:
+def resolve_term(deal: Deal, request: UnderwriteRequest) -> Term | None:
     """The request's term, else the one on the deal.  # SPEC §8.1
 
-    A request may name the term as a payoff date instead, which ``UnderwriteRequest``
-    converts against its own closing date; the column is otherwise the term, seeded from the
-    bucket at intake and free to differ from it. None means nobody has set one at all.
+    A request may name the term as a payoff date instead, which ``UnderwriteRequest`` splits
+    against its own closing date into whole months and a stub; the columns are otherwise the
+    term, seeded from the bucket at intake and free to differ from it. None means nobody has
+    set one at all.
     """
-    requested = request.requested_term_months
-    return requested if requested is not None else deal.term_months
+    requested = request.requested_term
+    if requested is not None:
+        return requested
+    if deal.term_months is None:
+        return None
+    return Term(deal.term_months, deal.term_stub_days or 0)
 
 
 def resolved_exit(
@@ -400,13 +406,13 @@ def underwrite_inputs(
     core = deal_core(deal)
     valuation = resolve_valuation(deal, adapters, request)
     closing_date = resolve_closing_date(deal, request)
-    term_months = resolve_term_months(deal, request)
+    term = resolve_term(deal, request)
     interest_rate = _first(request.interest_rate, deal.interest_rate)
     needed: list[tuple[str, object | None, str]] = [
         ("deal.closing_date", closing_date, "month 0 of the ledger (SPEC §8.3)"),
         (
             "deal.term_months",
-            term_months,
+            term,
             "the ledger runs closing to payoff; enter a term or a payoff date (SPEC §8.1)",
         ),
         ("deal.interest_rate", interest_rate, "the ledger's interest rows (SPEC §8.3)"),
@@ -425,11 +431,12 @@ def underwrite_inputs(
         state=core.state,
         borrower=borrower_inputs(core, request),
         closing_date=_present(closing_date),
-        term_months=_present(term_months),
+        term_months=_present(term).full_months,
+        term_stub_days=_present(term).stub_days,
         interest_rate=_present(interest_rate),
         origination_fee_pct=_first(request.origination_fee_pct, deal.origination_fee_pct),
-        holding_costs_total_usd=_first(
-            request.holding_costs_total_usd, deal.holding_costs_total_usd
+        holding_costs_pct_of_cost=_first(
+            request.holding_costs_pct_of_cost, deal.holding_costs_pct_of_cost
         ),
         monthly_rent=_first(request.monthly_rent, deal.monthly_rent),
         flip_analysis=_first(request.flip_analysis, deal.flip_analysis),

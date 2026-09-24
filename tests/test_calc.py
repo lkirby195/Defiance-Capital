@@ -118,9 +118,11 @@ def test_rehab_months_is_the_term_less_the_listing_period(term: int, expected: i
     assert rehab_months(term, CONFIG) == expected
 
 
-def test_rehab_months_refuses_a_term_of_no_months() -> None:
-    with pytest.raises(ValueError, match="at least 1"):
-        rehab_months(0, CONFIG)
+def test_rehab_months_is_zero_on_a_term_with_no_whole_months() -> None:
+    """A term inside its first month is all stub, and a stub is no part of a rehab period."""
+    assert rehab_months(0, CONFIG) == 0
+    with pytest.raises(ValueError, match="cannot be negative"):
+        rehab_months(-1, CONFIG)
 
 
 def test_the_origination_fee_falls_back_to_config_and_splits_in_half() -> None:
@@ -132,13 +134,17 @@ def test_the_origination_fee_falls_back_to_config_and_splits_in_half() -> None:
     assert origination_fee_pct(inputs(origination_fee_pct=D("0.03")), CONFIG) == D("0.03")
 
 
-def test_the_holding_cost_falls_back_to_a_percentage_of_price_plus_rehab() -> None:
-    """2% of 200,000 + 50,000 is 5,000 over the hold, not per month."""
+def test_the_holding_cost_is_a_percentage_of_price_plus_rehab() -> None:
+    """2% of 200,000 + 50,000 is 5,000 over the hold, not per month.  # SPEC §8.1"""
     deal = inputs(rehab_costs="50000")
     assert holding_costs_total(deal, CONFIG) == D("5000.00")
-    entered = inputs(holding_costs_total_usd=D("9000.00"))
+    # The team's own percentage wins over the config default: 4.5% of 200,000 is 9,000.
+    entered = inputs(holding_costs_pct_of_cost=D("0.045"))
     assert holding_costs_total(entered, CONFIG) == D("9000.00")
     assert terms(entered).holding_costs_monthly == D("750")  # 9,000 over 12 months
+    # ...and it moves with the cost it is a percentage of, which a dollar figure would not.
+    bigger = inputs(rehab_costs="50000", holding_costs_pct_of_cost=D("0.045"))
+    assert holding_costs_total(bigger, CONFIG) == D("11250.00")
 
 
 def test_a_deal_with_no_commitment_cannot_be_priced() -> None:
@@ -413,14 +419,14 @@ def test_a_level_payment_amortizes_the_loan() -> None:
 
 
 def test_net_monthly_income_is_rent_less_expenses_less_the_monthly_carry() -> None:
-    deal = inputs(monthly_rent="2000", holding_costs_total_usd=D("4800.00"))
+    deal = inputs(monthly_rent="2000", holding_costs_pct_of_cost=D("0.024"))
     loan = terms(deal)
     # 2,000 - 35% of 2,000 - 4,800/12 = 2,000 - 700 - 400
     assert net_monthly_income(D("2000"), loan, CONFIG) == D("900.00")
 
 
 def test_the_rental_dscr_is_income_over_a_takeout_payment_on_the_commitment() -> None:
-    deal = inputs(monthly_rent="2000", holding_costs_total_usd=D("4800.00"))
+    deal = inputs(monthly_rent="2000", holding_costs_pct_of_cost=D("0.024"))
     loan = terms(deal)
     rental = rental_analysis(deal, loan, True, CONFIG)
     assert rental.status is AnalysisStatus.EVALUATED
@@ -433,7 +439,7 @@ def test_the_rental_dscr_is_income_over_a_takeout_payment_on_the_commitment() ->
 
 
 def test_a_rental_that_clears_the_floor_passes() -> None:
-    deal = inputs(monthly_rent="6000", holding_costs_total_usd=D("4800.00"))
+    deal = inputs(monthly_rent="6000", holding_costs_pct_of_cost=D("0.024"))
     rental = rental_analysis(deal, terms(deal), True, CONFIG)
     assert rental.dscr is not None and rental.dscr > CONFIG.rental.dscr_floor
     assert rental.passed is True
@@ -455,7 +461,7 @@ def test_a_rental_with_no_rent_is_not_evaluated() -> None:
 
 
 def test_the_take_back_costs_the_loan_plus_lost_interest_plus_the_legal_bill() -> None:
-    deal = inputs(monthly_rent="2000", holding_costs_total_usd=D("4800.00"))
+    deal = inputs(monthly_rent="2000", holding_costs_pct_of_cost=D("0.024"))
     loan = terms(deal)
     take_back = take_back_analysis(deal, loan, CONFIG)
     assert take_back.loan_amount == D("150000")
@@ -485,11 +491,110 @@ def test_a_take_back_with_no_rent_is_not_evaluated_but_still_costs_what_it_costs
 
 
 def test_both_analyses_share_one_net_monthly_income() -> None:
-    deal = inputs(monthly_rent="2000", holding_costs_total_usd=D("4800.00"))
+    deal = inputs(monthly_rent="2000", holding_costs_pct_of_cost=D("0.024"))
     loan = terms(deal)
     rental = rental_analysis(deal, loan, True, CONFIG)
     take_back = take_back_analysis(deal, loan, CONFIG)
     assert rental.net_monthly_income == take_back.net_monthly_income
+
+
+# --- the stub period: a payoff date between two anchors (SPEC §8.1, §8.3) -----------------------
+
+
+def stub_deal(**extra: object) -> UnderwriteInputs:
+    """150,000 at 12% for nine months and eleven days, closing on the 15th."""
+    return inputs(closing_date=date(2027, 3, 15), term_months=9, term_stub_days=11, **extra)
+
+
+def test_the_term_carries_its_stub_and_the_payoff_date_lands_on_it() -> None:
+    loan = terms(stub_deal())
+    assert (loan.term_months, loan.stub_days) == (9, 11)
+    assert loan.has_stub
+    assert loan.payoff_date == date(2027, 12, 26)
+    assert loan.term_description == "9 month(s) and 11 day(s)"
+    # The stub is eleven thirtieths of a period on the config day-count basis.
+    assert loan.day_count_basis == CONFIG.interest.day_count_basis == 30
+    assert loan.term_months_decimal == D(9) + D(11) / D(30)
+
+
+def test_a_whole_month_term_has_no_stub_and_an_integer_term_in_months() -> None:
+    loan = terms(inputs())
+    assert loan.stub_days == 0 and not loan.has_stub
+    assert loan.term_months_decimal == D(12)
+    assert loan.stub_interest(D("150000")) == D(0)
+
+
+def test_the_stub_accrues_one_months_interest_prorated_by_its_days() -> None:
+    """12% of 150,000 is 1,500 a month; eleven days of it is 550.  # SPEC §8.3"""
+    loan = terms(stub_deal())
+    assert loan.monthly_interest(D("150000")) == D("1500")
+    assert loan.stub_interest(D("150000")) == D("1500") * D(11) / D(30) == D("550")
+
+
+def test_the_ledger_ends_on_a_short_row_dated_the_payoff_date() -> None:
+    loan = terms(stub_deal())
+    entries = build_ledger(loan)
+    # Ten anchors (months 0..9) plus the stub.
+    assert len(entries) == 11
+    assert [entry.month for entry in entries] == list(range(11))
+    assert entries[9].date == date(2027, 12, 15) and entries[9].stub_days == 0
+    last = entries[-1]
+    assert last.date == date(2027, 12, 26) and last.stub_days == 11
+    assert last.interest == D("550")
+    # The payoff and the fee's payoff half land on the stub row, not on the anchor before it.
+    assert last.payoff == D("150000") and last.fees == D("1500")
+    assert entries[9].payoff == D(0) and entries[9].fees == D(0)
+
+
+def test_the_stub_does_not_lengthen_the_rehab_period_or_the_draw_schedule() -> None:
+    """Whole months only: a stub is days at the end of the term, after the listing period."""
+    loan = terms(
+        stub_deal(
+            product=Product.SPLIT_PRINCIPAL,
+            rehab_costs="60000",
+            loan_requested="240000",
+            purchase_portion="180000",
+            rehab_portion="60000",
+            estimated_sale_price="400000",
+        )
+    )
+    assert loan.rehab_months == 6  # 9 whole months less the 3 listing months
+    schedule = draw_schedule(loan)
+    assert sorted(schedule) == [1, 2, 3, 4, 5, 6]
+    assert sum(schedule.values()) == D("60000")
+
+
+def test_the_monthly_holding_cost_is_spread_over_the_stub_as_well() -> None:
+    """A hold that runs eleven days longer carries eleven days more cost.  # SPEC §8.1"""
+    whole = terms(inputs(term_months=9, holding_costs_pct_of_cost=D("0.05")))
+    stubbed = terms(stub_deal(holding_costs_pct_of_cost=D("0.05")))
+    assert whole.holding_costs_total == stubbed.holding_costs_total == D("10000.00")
+    assert whole.holding_costs_monthly == D("10000") / D(9)
+    assert stubbed.holding_costs_monthly == D("10000") / (D(9) + D(11) / D(30))
+    assert stubbed.holding_costs_monthly < whole.holding_costs_monthly
+
+
+def test_a_term_inside_its_first_month_is_all_stub_and_still_prices() -> None:
+    loan = terms(inputs(term_months=0, term_stub_days=20))
+    assert loan.rehab_months == 0
+    entries = build_ledger(loan)
+    assert len(entries) == 2
+    assert entries[1].date == date(2027, 1, 21) and entries[1].stub_days == 20
+    assert entries[1].interest == D("1500") * D(20) / D(30) == D("1000")
+    assert entries[1].payoff == D("150000")
+
+
+def test_a_term_of_no_time_at_all_is_refused_by_name() -> None:
+    with pytest.raises(ValueError, match="no months and no days"):
+        UnderwriteInputs.model_validate(
+            inputs().model_dump() | {"term_months": 0, "term_stub_days": 0}
+        )
+
+
+def test_the_stub_rows_interest_keeps_the_ledgers_two_identities() -> None:
+    overview = return_overview(terms(stub_deal()))
+    assert overview.total_profit == overview.total_interest + overview.total_fees
+    assert -(overview.total_funding + overview.total_draws) == overview.total_payoff
 
 
 # --- the exit inference and the toggles it defaults (SPEC §3, §8.1) ------------------------------

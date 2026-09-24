@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from db.models import Deal
+from schema.dates import payoff_date_for
 from schema.models import CourtRecordsStatus, Product, TermBucket
 from services import DealNotReady, InputSource, underwrite_readiness
 from services.assemble import underwrite_inputs
@@ -53,7 +54,7 @@ def test_every_spec_8_1_input_has_a_row(deal_with_overrides: Deal) -> None:
         "monthly_rent",
         "contingency_pct",
         "closing_costs_usd",
-        "holding_costs_total_usd",
+        "holding_costs_pct_of_cost",
         "origination_fee_pct",
         "flip_analysis",
         "rental_analysis",
@@ -83,14 +84,16 @@ def test_an_adapter_value_beats_the_team_and_says_so(deal_with_overrides: Deal) 
 def test_an_economics_input_nobody_entered_says_default_and_shows_the_number(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    deal_with_overrides.holding_costs_total_usd = None
+    deal_with_overrides.holding_costs_pct_of_cost = None
     db_session.commit()
-    row = rows(deal_with_overrides)["holding_costs_total_usd"]
+    row = rows(deal_with_overrides)["holding_costs_pct_of_cost"]
     assert row.source is InputSource.DEFAULT
     assert row.required is False
-    cost = deal_with_overrides.purchase_price + deal_with_overrides.rehab_costs
-    assert row.value == cost * D("0.02")
+    assert row.value == D("0.02")
     assert "config default" in row.note
+    # ...and the dollars that percentage comes to are in the note beside it (SPEC §8.1).
+    cost = deal_with_overrides.purchase_price + deal_with_overrides.rehab_costs
+    assert f"${cost * D('0.02'):,.2f} over the whole hold" in row.note
 
 
 def test_a_percentage_input_is_rendered_as_a_percentage(deal_with_overrides: Deal) -> None:
@@ -98,8 +101,11 @@ def test_a_percentage_input_is_rendered_as_a_percentage(deal_with_overrides: Dea
     by_key = rows(deal_with_overrides)
     assert by_key["deal.interest_rate"].fmt == "pct"
     assert by_key["contingency_pct"].fmt == "pct"
+    assert by_key["holding_costs_pct_of_cost"].fmt == "pct"
     assert by_key["origination_fee_pct"].fmt == "pct"
     assert by_key["closing_costs_usd"].fmt == "money"
+    # ...and the court search is an enum a person reads as words, not as a stored code.
+    assert by_key["court_records"].fmt == "label"
 
 
 def test_the_monthly_rent_has_no_default_and_says_what_it_costs(
@@ -186,7 +192,7 @@ def test_a_complete_deal_is_ready(deal_with_overrides: Deal) -> None:
     [
         (["closing_date"], "Closing date"),
         (["interest_rate"], "Interest rate"),
-        (["term_months"], "Term (months)"),
+        (["term_months"], "Term"),
     ],
 )
 def test_a_required_input_that_is_absent_turns_the_button_off(
@@ -207,7 +213,7 @@ def test_a_term_the_bucket_names_says_so_and_is_not_a_team_entry(
     deal_with_overrides.term_bucket = TermBucket.M6
     db_session.commit()
     row = rows(deal_with_overrides)["deal.term_months"]
-    assert row.value == 6
+    assert row.value == "6 month(s)"
     assert row.source is InputSource.DEFAULT
     assert row.required is True
     assert "seeded by the 6-month bucket" in row.note
@@ -219,9 +225,25 @@ def test_a_term_off_a_form_that_asks_no_bucket_is_the_teams_own(
     """The team form does not ask the bucket (SPEC §8.1), so the number is somebody's."""
     assert deal_with_overrides.term_bucket is None
     row = rows(deal_with_overrides)["deal.term_months"]
-    assert row.value == 6
+    assert row.value == "6 month(s)"
     assert row.source is InputSource.TEAM
     assert "no term bucket on the deal" in row.note
+
+
+def test_a_term_with_a_stub_reads_as_months_and_days_and_says_so(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """A payoff date between two anchors is a term the checklist has to be able to say."""
+    deal_with_overrides.term_months = 9
+    deal_with_overrides.term_stub_days = 11
+    db_session.commit()
+    by_key = rows(deal_with_overrides)
+    term = by_key["deal.term_months"]
+    assert term.value == "9 month(s) and 11 day(s)"
+    assert term.source is InputSource.TEAM  # no bucket names a stub
+    assert "11-day stub" in term.note
+    # ...and the payoff date it derives to is the date somebody typed.
+    assert by_key["payoff_date"].value == payoff_date_for(deal_with_overrides.closing_date, 9, 11)
 
 
 def test_a_term_repriced_off_its_bucket_says_team(
@@ -242,7 +264,7 @@ def test_a_twelve_plus_term_the_team_set_says_team(
     deal_with_overrides.term_months = 18
     db_session.commit()
     row = rows(deal_with_overrides)["deal.term_months"]
-    assert row.value == 18 and row.source is InputSource.TEAM
+    assert row.value == "18 month(s)" and row.source is InputSource.TEAM
 
 
 def test_a_twelve_plus_bucket_with_no_term_turns_the_button_off(
@@ -254,7 +276,7 @@ def test_a_twelve_plus_bucket_with_no_term_turns_the_button_off(
     db_session.commit()
     readiness = underwrite_readiness(deal_with_overrides)
     assert readiness.ready is False
-    assert "Term (months)" in readiness.missing
+    assert "Term" in readiness.missing
 
 
 def test_an_intake_gap_is_named_the_way_the_refusal_names_it(
@@ -310,12 +332,44 @@ def test_the_deal_page_shows_the_checklist(client: TestClient, deal_with_overrid
     for label in (
         "Estimated sale price",
         "Monthly rent",
-        "Holding costs (total)",
+        "Holding costs (% of price + rehab)",
         "Interest rate",
         "Payoff date",
     ):
         assert label in body, label
     assert "TEAM" in body
+
+
+def test_the_deal_page_shows_the_holding_cost_as_a_percentage_and_as_dollars(
+    client: TestClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """The box holds the share; the figure a person checks is the dollars (SPEC §8.1)."""
+    deal_with_overrides.holding_costs_pct_of_cost = D("0.03")
+    db_session.commit()
+    cost = deal_with_overrides.purchase_price + deal_with_overrides.rehab_costs
+    dollars = cost * D("0.03")
+
+    body = page(client, deal_with_overrides)
+
+    assert "3.0%" in body
+    # ...as entered, beside the percentage
+    assert "of the price plus the rehab" in body
+    assert f"${dollars:,.2f} over the hold" in body
+    # ...under the box on the override block
+    assert f"${dollars:,.2f} over the whole hold, on a ${cost:,.2f} cost basis" in body
+    # ...and on the checklist row, beside the config default it was typed over
+    assert f"${dollars:,.2f} over the whole hold; config default 2.00%" in body
+
+
+def test_the_holding_cost_note_falls_back_to_the_default_it_is_showing(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """A deal that entered nothing still gets a dollar figure: the default's own."""
+    deal_with_overrides.holding_costs_pct_of_cost = None
+    db_session.commit()
+    row = rows(deal_with_overrides)["holding_costs_pct_of_cost"]
+    cost = deal_with_overrides.purchase_price + deal_with_overrides.rehab_costs
+    assert f"${cost * D('0.02'):,.2f} over the whole hold" in row.note
 
 
 def test_the_button_is_live_on_a_ready_deal(client: TestClient, deal_with_overrides: Deal) -> None:

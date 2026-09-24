@@ -22,7 +22,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from schema.dates import payoff_date_for
+from schema.dates import Term, payoff_date_for
 
 
 class Product(StrEnum):
@@ -468,14 +468,15 @@ class DealInfo(BaseModel):
     group is who the borrower is, and every one of its fields lives on ``BorrowerInfo``.
 
     The four economics with a config default (``contingency_pct``, ``closing_costs_usd``,
-    ``holding_costs_total_usd``, ``origination_fee_pct``) are None until somebody overrides
+    ``holding_costs_pct_of_cost``, ``origination_fee_pct``) are None until somebody overrides
     them, and None is what tells the engine to use the config default rather than a number
     somebody chose. ``interest_rate`` has no default and is required to price a deal.
 
     ``payoff_date`` is deliberately not here. It is ``closing_date`` plus ``term_months``
-    (``schema/dates.py``), so storing it would be storing the same fact twice and inviting
-    the two to disagree; the team-entry form and the queue's override block take one as an
-    alternative way to say the other, and both derive the term before they get here.
+    plus ``term_stub_days`` (``schema/dates.py``), so storing it would be storing the same
+    fact twice and inviting them to disagree; the team-entry form and the queue's override
+    block take a payoff date as an alternative way to say the term, and both split it into
+    the two numbers before they get here.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -497,16 +498,20 @@ class DealInfo(BaseModel):
     )
     loan_rehab_portion: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     term_bucket: TermBucket | None = None
-    # The term the deal is priced on (SPEC §8.1). Seeded from the bucket at intake for every
+    # The term the deal is priced on (SPEC §8.1): whole monthly periods, then the days a
+    # payoff date between two anchors leaves over. Seeded from the bucket at intake for every
     # bucket that names a number; the team's own number - or the one their payoff date
     # implies - wins over it, and is allowed to differ from the bucket the borrower picked.
-    term_months: int | None = Field(default=None, ge=1, le=60)
+    # ``term_months`` can be 0 only alongside a stub: a loan that pays off inside its first
+    # month is all stub, and one that pays off on its closing date is not a loan.
+    term_months: int | None = Field(default=None, ge=0, le=60)
+    term_stub_days: int | None = Field(default=None, ge=0, le=31)
     interest_rate: Decimal | None = Field(default=None, ge=0, le=1)  # annual; required to price
     contingency_pct: Decimal | None = Field(default=None, ge=0, le=1)
     closing_costs_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
-    holding_costs_total_usd: Decimal | None = Field(
-        default=None, ge=0, max_digits=14, decimal_places=2
-    )
+    # Holding costs are entered as a share of purchase_price + rehab_costs (SPEC §8.1); the
+    # dollar figure is that share of that cost and is computed wherever it is shown.
+    holding_costs_pct_of_cost: Decimal | None = Field(default=None, ge=0, le=1)
     origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
     # Asset type from intake; with the term it drives the exit inference (SPEC §3). None
     # means unknown, which only ever leaves the exit UNKNOWN - it never forces one.
@@ -555,12 +560,29 @@ class DealInfo(BaseModel):
         )
         return self
 
+    @model_validator(mode="after")
+    def _a_term_runs_for_some_time(self) -> DealInfo:
+        """Zero months and zero days is a payoff on the closing date, which is not a term."""
+        if self.term_months is not None and not self.term.is_positive:
+            raise ValueError(
+                "a term of no months and no days is not a term: enter a term in months, or a "
+                "payoff date after the closing date"
+            )
+        if self.term_months is None and self.term_stub_days:
+            raise ValueError("term_stub_days needs a term in months beside it, even a zero one")
+        return self
+
+    @property
+    def term(self) -> Term:
+        """The term as the ledger lays it out: whole periods, then the stub.  # SPEC §8.1"""
+        return Term(self.term_months or 0, self.term_stub_days or 0)
+
     @property
     def payoff_date(self) -> date | None:
-        """``closing_date`` + ``term_months``, or None until both are known.  # SPEC §8.1"""
+        """``closing_date`` + the term, or None until both are known.  # SPEC §8.1"""
         if self.closing_date is None or self.term_months is None:
             return None
-        return payoff_date_for(self.closing_date, self.term_months)
+        return payoff_date_for(self.closing_date, self.term_months, self.term_stub_days or 0)
 
 
 class IntakeRecord(BaseModel):
@@ -896,12 +918,14 @@ class UnderwriteInputs(BaseModel):
     rehab split. ``borrower`` carries the verified credit score and deal count when known; the
     underwrite derives the caps cell from them exactly as the screen does.
 
-    ``closing_date``, ``term_months`` and ``interest_rate`` are the three the ledger cannot
-    be laid out without, and all three are required here. ``payoff_date`` is not a field: it
-    is ``closing_date`` plus the term (``schema/dates.py``), and the property below is the
-    single place it is worked out.
+    ``closing_date``, the term and ``interest_rate`` are the three the ledger cannot be laid
+    out without, and all three are required here. The term is ``term_months`` whole monthly
+    periods plus ``term_stub_days`` (SPEC §8.1): a payoff date that falls between two anchors
+    leaves a stub of days, which accrues its own prorated interest and carries the payoff.
+    ``payoff_date`` is not a field - it is the closing date plus that term
+    (``schema/dates.py``) - and the property below is the single place it is worked out.
 
-    ``origination_fee_pct`` and ``holding_costs_total_usd`` are SPEC §8.1 inputs with config
+    ``origination_fee_pct`` and ``holding_costs_pct_of_cost`` are SPEC §8.1 inputs with config
     defaults, so ``None`` means "use the default" rather than "zero". ``monthly_rent`` has no
     default - nothing stands in for what a property lets for - so ``None`` leaves the Rental
     and Take-Back analyses NOT_EVALUATED (SPEC §8.5, §8.6) rather than computed on a zero.
@@ -923,12 +947,11 @@ class UnderwriteInputs(BaseModel):
     state: State
     borrower: BorrowerInputs
     closing_date: date
-    term_months: int = Field(ge=1, le=60)
+    term_months: int = Field(ge=0, le=60)  # whole monthly periods; 0 only alongside a stub
+    term_stub_days: int = Field(default=0, ge=0, le=31)
     interest_rate: Decimal = Field(ge=0, le=1)
     origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
-    holding_costs_total_usd: Decimal | None = Field(
-        default=None, ge=0, max_digits=14, decimal_places=2
-    )
+    holding_costs_pct_of_cost: Decimal | None = Field(default=None, ge=0, le=1)
     monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     flip_analysis: bool | None = None
     rental_analysis: bool | None = None
@@ -953,10 +976,25 @@ class UnderwriteInputs(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _a_term_runs_for_some_time(self) -> UnderwriteInputs:
+        """The one combination ``term_months >= 0`` lets through that is not a term."""
+        if not self.term.is_positive:
+            raise ValueError(
+                "a term of no months and no days is not a term: the ledger would run from "
+                "the closing date to the closing date"
+            )
+        return self
+
+    @property
+    def term(self) -> Term:
+        """The term as the ledger lays it out: whole periods, then the stub.  # SPEC §8.1"""
+        return Term(self.term_months, self.term_stub_days)
+
     @property
     def payoff_date(self) -> date:
-        """``closing_date`` + ``term_months`` calendar months.  # SPEC §8.1"""
-        return payoff_date_for(self.closing_date, self.term_months)
+        """``closing_date`` + the whole periods + the stub days.  # SPEC §8.1"""
+        return payoff_date_for(self.closing_date, self.term_months, self.term_stub_days)
 
 
 # --- Underwrite outputs (SPEC §8.3-8.8) --------------------------------------------------------
@@ -1002,8 +1040,13 @@ class DealEconomics(BaseModel):
     contingency: Decimal  # rehab_costs x contingency_pct
     rehab_adj: Decimal  # rehab_costs + contingency
     closing_costs: Decimal
-    holding_costs_total: Decimal
-    holding_costs_monthly: Decimal  # holding_costs_total / term_months
+    # Holding costs are entered as a percentage of the price plus the rehab (SPEC §8.1); all
+    # three are reported, because the dollar figure is the one a person checks by hand and
+    # the percentage is the one they typed.
+    holding_costs_pct_of_cost: Decimal
+    holding_costs_basis: Decimal  # purchase_price + rehab_costs
+    holding_costs_total: Decimal  # basis x pct
+    holding_costs_monthly: Decimal  # holding_costs_total / the term in months, stub included
     origination_fee_pct: Decimal
     origination_at_close: Decimal  # half the fee, on the commitment
     origination_at_payoff: Decimal
@@ -1016,17 +1059,23 @@ class DealEconomics(BaseModel):
 
 
 class LedgerEntry(BaseModel):
-    """One month of the lender's cash flows.  # SPEC §8.3
+    """One period of the lender's cash flows.  # SPEC §8.3
 
     Signs are the lender's: ``funding`` and ``draws`` are money out and are negative or zero;
     ``interest``, ``fees`` and ``payoff`` are money in and are zero or positive. ``net`` is
     their sum, and it is the column the XIRR runs on.
+
+    Every row is a whole monthly period but the last one on a term whose payoff date falls
+    between two anchors: that row is the stub, ``stub_days`` says how many days it covers, and
+    its interest is prorated over ``interest.day_count_basis`` rather than a whole month's.
+    ``stub_days`` is 0 on every other row, which is every row of a whole-month term.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     month: int
     date: date
+    stub_days: int = 0
     funding: Decimal
     draws: Decimal
     interest: Decimal
@@ -1175,7 +1224,9 @@ class UnderwriteResult(BaseModel):
     loan_purpose: LoanPurpose | None
     closing_date: date
     payoff_date: date
-    term_months: int
+    term_months: int  # whole monthly periods (SPEC §8.1)
+    term_stub_days: int  # days past the last anchor; 0 on a whole-month term
+    term_months_decimal: Decimal  # the two as one number; what the monthly carry divides by
     rehab_months: int
     exit: ExitInference
     sizing: SizingResult

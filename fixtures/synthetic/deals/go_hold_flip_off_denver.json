@@ -60,10 +60,10 @@
       "court_records": {
         "as_of": "2026-09-09"
       },
-      "holding_costs_total_usd": "9000.00",
       "monthly_rent": "4200.00",
       "asset_type": "UNITS_2_4",
-      "loan_purpose": "REFINANCE"
+      "loan_purpose": "REFINANCE",
+      "holding_costs_pct_of_cost": "0.03"
     },
     "expected": {
       "payoff_date": "2028-11-01",
@@ -77,7 +77,9 @@
         "holding_costs_total": "9000.00",
         "holding_costs_monthly": "500.00",
         "origination_at_close": "2100.00",
-        "origination_at_payoff": "2100.00"
+        "origination_at_payoff": "2100.00",
+        "holding_costs_pct_of_cost": "0.030000",
+        "holding_costs_basis": "300000.00"
       },
       "ledger": {
         "rows": 19,
@@ -115,7 +117,10 @@
         "dscr": "1.153736",
         "passed": true
       },
-      "flags": []
+      "flags": [],
+      "term_months": 18,
+      "term_stub_days": 0,
+      "term_months_decimal": "18.000000"
     }
   }
 }

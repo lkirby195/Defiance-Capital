@@ -225,6 +225,18 @@ class Deal(Base):
         # "how long do you need the loan?" and it seeds term_months at intake; the team's own
         # term - or the one their payoff date implies - is what the deal is priced on, and a
         # deal repriced to 7 months on a 6-month ask is a real thing (SPEC §8.1).
+        #
+        # A stub is days at the end of a term, so it needs a term to be at the end of - even
+        # a zero-month one, which is a loan that pays off inside its first month. And a term
+        # of no months and no days is a payoff on the closing date, which is not a loan.
+        CheckConstraint(
+            "term_stub_days IS NULL OR term_months IS NOT NULL",
+            name="ck_deals_term_stub_needs_a_term",
+        ),
+        CheckConstraint(
+            "term_months IS NULL OR term_months > 0 OR COALESCE(term_stub_days, 0) > 0",
+            name="ck_deals_term_runs_for_some_time",
+        ),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -260,16 +272,23 @@ class Deal(Base):
     loan_purchase_portion: Mapped[Decimal | None] = mapped_column(MONEY)
     loan_rehab_portion: Mapped[Decimal | None] = mapped_column(MONEY)
     term_bucket: Mapped[TermBucket | None] = mapped_column(_enum(TermBucket, "term_bucket"))
-    # The term the deal is priced on (SPEC §8.1). Seeded from the bucket at intake, then
-    # the team's own - typed, or implied by a payoff date - and free to differ from it.
+    # The term the deal is priced on (SPEC §8.1): whole monthly periods, then the days a
+    # payoff date between two anchors leaves over. Seeded from the bucket at intake, then the
+    # team's own - typed, or implied by a payoff date - and free to differ from it. The payoff
+    # date is these two plus the closing date and is derived wherever it is shown, never
+    # stored: one fact, one place. ``term_stub_days`` is NULL on a whole-month term.
     term_months: Mapped[int | None] = mapped_column(Integer)
+    term_stub_days: Mapped[int | None] = mapped_column(Integer)
     # The rest of the SPEC §8.1 Deal Economics. Each but the rate has a config default, and
     # NULL is what says "use it" rather than "zero"; the rate has none and is required to
     # price a deal, which the readiness checklist says by name.
     interest_rate: Mapped[Decimal | None] = mapped_column(RATE)
     contingency_pct: Mapped[Decimal | None] = mapped_column(RATE)
     closing_costs_usd: Mapped[Decimal | None] = mapped_column(MONEY)
-    holding_costs_total_usd: Mapped[Decimal | None] = mapped_column(MONEY)
+    # Holding costs are a share of purchase_price + rehab_costs over the whole hold
+    # (SPEC §8.1). The dollar figure is that share of that cost and is computed, not stored:
+    # a price or a rehab budget that moves moves the carry with it.
+    holding_costs_pct_of_cost: Mapped[Decimal | None] = mapped_column(RATE)
     origination_fee_pct: Mapped[Decimal | None] = mapped_column(RATE)
     # The two SPEC §8.1 analysis toggles. NULL leaves the default the §3 exit implies.
     flip_analysis: Mapped[bool | None] = mapped_column(Boolean)

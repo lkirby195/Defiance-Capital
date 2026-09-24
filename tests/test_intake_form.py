@@ -330,8 +330,8 @@ def test_a_defaulted_economic_comes_back_pre_filled_with_the_config_number(
     assert values["contingency_pct"] == "0%"
     assert values["origination_fee_pct"] == "2%"
     assert values["closing_costs_usd"] == "$1,500"  # the team's own, not the default
-    # the holding cost is a share of the price plus the rehab, so it needs both
-    assert values["holding_costs_total_usd"] == "$9,000"
+    # The holding cost is a percentage now, so the box shows the percentage (SPEC §8.1).
+    assert values["holding_costs_pct_of_cost"] == "3%"
 
 
 def test_the_payoff_date_box_comes_back_blank(stored_deal: Deal) -> None:

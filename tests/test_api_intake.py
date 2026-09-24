@@ -103,7 +103,7 @@ def test_entered_state_and_the_team_economics_are_stored(
     payload.update(
         {
             "state": "OK",
-            "holding_costs_total_usd": "9600.00",
+            "holding_costs_pct_of_cost": "0.04",
             "monthly_rent": "2500.00",
             "contingency_pct": "0.1",
         }
@@ -112,12 +112,12 @@ def test_entered_state_and_the_team_economics_are_stored(
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["property"]["state_source"] == "ENTERED"
-    assert body["deal"]["holding_costs_total_usd"] == "9600.00"
+    assert body["deal"]["holding_costs_pct_of_cost"] == "0.04"
     deal = db_session.get(Deal, body["id"])
     assert deal is not None and deal.property is not None
     assert deal.property.state is State.OK
     assert deal.property.state_source is StateSource.ENTERED
-    assert deal.holding_costs_total_usd == Decimal("9600.00")
+    assert deal.holding_costs_pct_of_cost == Decimal("0.04")
     assert deal.monthly_rent == Decimal("2500.00")
     assert deal.contingency_pct == Decimal("0.10000")
 

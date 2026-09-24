@@ -26,7 +26,13 @@ from starlette.datastructures import FormData
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from api.forms import fields, is_form_post, rows
-from api.intake_form import intake_record, read_form, redisplay_values
+from api.intake_form import (
+    intake_record,
+    read_form,
+    redisplay_values,
+    submitted_holding_costs_hint,
+)
+from api.problems import FormProblems, at_top
 from api.render import redirect
 from api.routes.queue import (
     MATTER_FIELDS,
@@ -95,7 +101,8 @@ def _from_form(
     submitted = fields(posted, skip=("matter_",))
     matters = rows(posted, "matter", MATTER_FIELDS)
     form, complaints = read_form(submitted, matters)
-    if form is None:
+
+    def back(problems: FormProblems) -> HTMLResponse:
         return team_entry_page(
             request,
             user,
@@ -106,8 +113,19 @@ def _from_form(
             back_url="",
             form=redisplay_values(submitted),
             matters=redisplay(matters),
-            complaints=complaints,
+            complaints=problems,
+            holding_costs_hint=submitted_holding_costs_hint(submitted),
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
-    record = store(session, form, user.email)
+
+    if form is None:
+        return back(complaints)
+    try:
+        record = store(session, form, user.email)
+    except ValueError as exc:
+        # The form validated and the stored shape did not: the normalizer infers a product
+        # and the split is re-checked against that, and the database has rules of its own.
+        # Either way it is something on this page, and the page is where it is said.
+        session.rollback()
+        return back(at_top(str(exc)))
     return redirect(f"/queue/deals/{record.id}", "Deal created.")

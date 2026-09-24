@@ -5,7 +5,9 @@
     <ul class="plain small">
       {% for flag in flags %}
         <li>
-          <span class="tag {{ flag.severity | plain }}">{{ flag.severity | plain }}</span>
+          {#- The class stays the stored code because the stylesheet is keyed on it; the
+              words a person reads are the label (``schema/labels.py``). -#}
+          <span class="tag {{ flag.severity | plain }}">{{ flag.severity | label }}</span>
           <strong>{{ flag.code | plain }}</strong> — {{ flag.message }}
         </li>
       {% endfor %}

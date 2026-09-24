@@ -3,6 +3,26 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**1.2.0 (Phase 5b, 2026-09-24) prices an arbitrary payoff date, and makes the holding cost a
+percentage.** The term is no longer a whole number of months: ``term_months`` is the count of
+full monthly periods anchored to the closing date's day (clamped to a short month), and
+``term_stub_days`` is whatever a payoff date between two anchors leaves over. The ledger gets
+one more row for that stub, dated the payoff date itself, accruing one month's interest scaled
+by ``stub_days / interest.day_count_basis`` (config, placeholder 30) on the balance standing at
+its start, and carrying the payoff and the fee's payoff half - so both land on the date the team
+entered rather than on the anchor before it. The draw schedule and ``rehab_months`` are whole
+periods only. ``UnderwriteResult`` gains ``term_stub_days`` and ``term_months_decimal``, and
+``LedgerEntry`` gains ``stub_days``. Entering a term in months still derives a whole-month
+payoff date, and a term beside a mid-month payoff date is refused as a disagreement.
+
+``holding_costs_total_usd`` is ``holding_costs_pct_of_cost``: the team enters a share of
+``purchase_price + rehab_costs`` (config default 2%) and the dollar figure is computed from it,
+so a corrected price moves the carry with it. ``DealEconomics`` reports all three -
+``holding_costs_pct_of_cost``, ``holding_costs_basis`` and ``holding_costs_total`` - and the
+monthly carry now divides by ``term_months_decimal`` rather than by the whole months, because a
+hold that runs eleven days past its last anchor pays eleven days more. Migration ``0012``
+converts each stored dollar figure to the percentage it was and deletes the stored runs.
+
 **1.1.0 (Phase 5a, 2026-09-23) makes LTV the only value ratio.** The as-is value is gone
 from the engine, and so is LTARV: ``LTV = commitment / estimated_sale_price`` with no
 fallback denominator, NOT_AVAILABLE when there is no price, and a caps cell of ``ltc`` and
@@ -49,4 +69,4 @@ REHAB_PORTION_EXCEEDS_BUDGET.
 
 from __future__ import annotations
 
-ENGINE_VERSION = "1.1.0"
+ENGINE_VERSION = "1.2.0"

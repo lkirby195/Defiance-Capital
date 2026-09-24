@@ -39,6 +39,26 @@ class DealNotReady(ServiceError):
         self.missing = missing
 
 
+class DealNotPriceable(ServiceError):
+    """The deal's values are all present and the engine will not run on them.
+
+    A different thing from ``DealNotReady``, which is a deal missing something the team has
+    to go and get. This is a deal whose numbers contradict each other - a SPLIT_PRINCIPAL
+    whose whole loan is a rehab tranche capped to nothing, so the commitment is zero and
+    every §8 figure divides by it. The engine says so by raising, and this carries what it
+    said to the page rather than letting a ``ValueError`` out of a route as a 500: a person
+    looking at the deal can act on "the commitment is zero" and can do nothing at all with a
+    server error.
+
+    ``reasons`` is one line per thing the engine or a model objected to.
+    """
+
+    def __init__(self, deal_id: UUID, reasons: list[str]) -> None:
+        super().__init__(f"deal {deal_id} cannot be priced as entered: {'; '.join(reasons)}")
+        self.deal_id = deal_id
+        self.reasons = reasons
+
+
 class DealNotUnderwritable(ServiceError):
     """The deal's status rules out an underwrite.  # SPEC §4.5
 

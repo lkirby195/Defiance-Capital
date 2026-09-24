@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% import "_csrf.html" as csrf %}
-{% import "_fields.html" as fields %}
+{# ``with context`` so the macros can read ``errors`` and print each complaint under
+   the box it is about, rather than every call site passing it (``api/problems.py``). #}
+{% import "_fields.html" as fields with context %}
 {% block title %}{{ heading }} — GLENWOOD{% endblock %}
 
 {# The three groups below are the SPEC §8.1 input groups, in the order §9 shows a run back:
@@ -69,16 +71,19 @@
     <p class="small muted">
       One term, said either way: enter a term in months or a payoff date and the other
       derives — the payoff date is the closing date plus the term, to the day (SPEC §8.1).
-      Enter both and they have to agree; a payoff date that is not a whole number of months
-      after closing is refused by name, because the ledger's rows are months.
+      A payoff date may be any date after closing: the term is the whole months that fit
+      inside it and the days left over are a stub, which the ledger prices as a short final
+      period (SPEC §8.3). Enter both boxes and they have to agree, which means a term in
+      months lands on its own month.
     </p>
     <p class="small muted">
       A Split Draw or Split Principal loan is advanced in two parts, so both portions are
       required and have to add up to the Loan Amount (SPEC §8.2). A No Draw or Wholetail loan
       is one advance and carries neither. The four boxes tagged <span class="dflt">default</span>
       are pre-filled from config and editable; leave one alone and the deal follows config,
-      type over it and the deal carries your number. The interest rate has no default and the
-      ledger cannot be laid out without it.
+      type over it and the deal carries your number. Holding costs are a percentage of the
+      price plus the rehab and the dollars it comes to are shown under the box. The interest
+      rate has no default and the ledger cannot be laid out without it.
     </p>
     <div class="grid3">
       {{ fields.enum_box("loan_purpose", "Loan Purpose", enums.loan_purpose,
@@ -108,10 +113,11 @@
                         default=defaults.contingency_pct) }}
       {{ fields.money_box("closing_costs_usd", "Closing Costs", form.closing_costs_usd,
                           default=defaults.closing_costs_usd) }}
-      {{ fields.money_box("holding_costs_total_usd",
-                          "Holding Costs (total) — default 2% of price + rehab",
-                          form.holding_costs_total_usd,
-                          default=defaults.holding_costs_total_usd) }}
+      {{ fields.pct_box("holding_costs_pct_of_cost",
+                        "Holding Costs — % of price + rehab, over the whole hold",
+                        form.holding_costs_pct_of_cost,
+                        default=defaults.holding_costs_pct_of_cost,
+                        note=holding_costs_hint) }}
       {{ fields.pct_box("origination_fee_pct", "Origination Fee", form.origination_fee_pct,
                         default=defaults.origination_fee_pct) }}
     </div>
@@ -137,8 +143,8 @@
                            "Default: on for a resale exit") }}
       {{ fields.toggle_box("rental_analysis", "Rental Analysis", form.rental_analysis,
                            "Default: on for a hold exit, or with a rent") }}
-      {{ fields.select_box("court_records_status", "Court search — NOT_CHECKED is not CLEAN",
-                           enums.court_records_status, form.court_records_status) }}
+      {{ fields.enum_box("court_records_status", "Court search — Not Checked is not Clean",
+                         enums.court_records_status, form.court_records_status) }}
       {{ fields.text_box("court_records_as_of", "Searched on", form.court_records_as_of,
                          kind="date") }}
     </div>

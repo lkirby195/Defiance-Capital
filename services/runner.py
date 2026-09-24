@@ -18,8 +18,10 @@ queue.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from uuid import UUID
 
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from config.config import Config, get_config
@@ -30,7 +32,7 @@ from schema.models import AuditAction, ScreenResult, Status, UnderwriteResult, V
 from services.assemble import screen_inputs, underwrite_inputs
 from services.audit import DEALS, record_audit
 from services.enrichment import AdapterValues, adapter_values
-from services.errors import DealNotFound, DealNotUnderwritable
+from services.errors import DealNotFound, DealNotPriceable, DealNotUnderwritable
 from services.lifecycle import (
     advance_after_screen,
     advance_for_underwrite,
@@ -49,6 +51,32 @@ def load_deal(session: Session, deal_id: UUID) -> Deal:
     return deal
 
 
+def _reasons(exc: ValueError) -> list[str]:
+    """What a refusal objected to, one line each, without Pydantic's own punctuation."""
+    if isinstance(exc, ValidationError):
+        return [
+            f"{'.'.join(str(part) for part in issue['loc']) or 'the deal'}: {issue['msg']}"
+            for issue in exc.errors()
+        ]
+    return [str(exc)]
+
+
+def priced[T](deal_id: UUID, run: Callable[[], T]) -> T:
+    """Run the pure engine, turning its refusal into one the API can render.  # SPEC §8
+
+    The engine states its preconditions by raising - a commitment of zero cannot be divided
+    by, a term of no days is not a term - and a typed model states its own the same way.
+    Both are ``ValueError``, both are about values a person entered, and neither is a server
+    fault; letting one out of a route would answer a data-entry mistake with a 500 and a
+    page that says nothing. ``DealNotReady`` is not caught here: it is not a ``ValueError``
+    and it already names what the team has to go and get.
+    """
+    try:
+        return run()
+    except ValueError as exc:
+        raise DealNotPriceable(deal_id, _reasons(exc)) from exc
+
+
 def run_screen(
     session: Session,
     deal_id: UUID,
@@ -65,8 +93,9 @@ def run_screen(
     cfg = config or get_config()
     deal = load_deal(session, deal_id)
     before = deal.status
-    inputs = screen_inputs(deal, adapters or adapter_values(session, deal))
-    result = screen(inputs, cfg)
+    resolved = adapters or adapter_values(session, deal)
+    inputs = priced(deal.id, lambda: screen_inputs(deal, resolved))
+    result = priced(deal.id, lambda: screen(inputs, cfg))
     row = record_screen(session, deal.id, inputs, result)
     advance_after_screen(deal, result.verdict)
     record_audit(
@@ -118,8 +147,8 @@ def run_underwrite(
             )
     check_underwritable(deal)
     before = deal.status
-    inputs = underwrite_inputs(deal, request, resolved)
-    result = underwrite(inputs, cfg)
+    inputs = priced(deal.id, lambda: underwrite_inputs(deal, request, resolved))
+    result = priced(deal.id, lambda: underwrite(inputs, cfg))
     row = record_underwrite(session, deal.id, inputs, result)
     advance_for_underwrite(deal)
     record_audit(

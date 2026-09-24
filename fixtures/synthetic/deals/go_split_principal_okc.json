@@ -73,11 +73,11 @@
         "as_of": "2026-09-09"
       },
       "origination_fee_pct": "0.03",
-      "holding_costs_total_usd": "12000.00",
       "monthly_rent": "2400.00",
       "flip_analysis": true,
       "asset_type": "SFR",
-      "loan_purpose": "CONSTRUCTION"
+      "loan_purpose": "CONSTRUCTION",
+      "holding_costs_pct_of_cost": "0.05"
     },
     "expected": {
       "payoff_date": "2027-11-15",
@@ -91,7 +91,9 @@
         "holding_costs_total": "12000.00",
         "holding_costs_monthly": "1000.00",
         "origination_at_close": "2850.00",
-        "origination_at_payoff": "2850.00"
+        "origination_at_payoff": "2850.00",
+        "holding_costs_pct_of_cost": "0.050000",
+        "holding_costs_basis": "240000.00"
       },
       "ledger": {
         "rows": 13,
@@ -138,7 +140,10 @@
           "code": "TAKE_BACK_DSCR_BELOW_FLOOR",
           "severity": "HARD"
         }
-      ]
+      ],
+      "term_months": 12,
+      "term_stub_days": 0,
+      "term_months_decimal": "12.000000"
     }
   }
 }

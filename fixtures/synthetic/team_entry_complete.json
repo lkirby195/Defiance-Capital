@@ -23,9 +23,9 @@
   "rehab_costs": "48000.00",
   "loan_requested": "195000.00",
   "interest_rate": "0.12",
-  "holding_costs_total_usd": "9000.00",
   "loan_purchase_portion": "147000.00",
   "loan_rehab_portion": "48000.00",
   "closing_costs_usd": "1500.00",
-  "term_months": 9
+  "term_months": 9,
+  "holding_costs_pct_of_cost": "0.03"
 }

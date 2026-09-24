@@ -36,16 +36,17 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from api.forms import problems
 from api.masks import (
     DEFAULTED_FIELDS,
     config_defaults,
     default_text,
     drop_defaults,
+    holding_costs_amount,
     mask_one,
     masked,
     unmasked,
 )
+from api.problems import NO_PROBLEMS, FormProblems, at_top, by_field, from_validation_error
 from config.config import Config, get_config
 from db.models import Deal
 from intake.normalize import normalize
@@ -95,7 +96,7 @@ TEAM_ENTRY_FIELDS: tuple[str, ...] = (
     "interest_rate",
     "contingency_pct",
     "closing_costs_usd",
-    "holding_costs_total_usd",
+    "holding_costs_pct_of_cost",
     "origination_fee_pct",
     # Valuation, rent and the analysis toggles
     "estimated_sale_price_team",
@@ -122,6 +123,9 @@ REQUIRED_FIELDS: tuple[tuple[str, str], ...] = (
     ("interest_rate", "Interest Rate"),
 )
 REQUIRED_NAMES: frozenset[str] = frozenset(name for name, _ in REQUIRED_FIELDS)
+# Every box this form renders. A complaint about one of these sits under it; anything else
+# Pydantic names has nowhere to sit and goes to the top (``api/problems.py``).
+TEAM_ENTRY_NAMES: frozenset[str] = frozenset(TEAM_ENTRY_FIELDS)
 
 # Required, but only on a split product (SPEC §8.2). The product box may be blank - the
 # normalizer infers one from the rehab costs - so the browser cannot be told which of these
@@ -149,21 +153,23 @@ CONDITIONAL_MARKS: dict[str, str] = {
 }
 
 
-def missing_required(submitted: Mapping[str, str]) -> list[str]:
-    """One line per required box left empty, naming it.  # SPEC §4.1, §8.1
+def missing_required(submitted: Mapping[str, str]) -> FormProblems:
+    """One complaint per required box left empty, under that box.  # SPEC §4.1, §8.1
 
     ``api.forms.fields`` has already dropped the blanks, so an absent key is an empty box.
-    Returned in form order, so the list reads down the page rather than in whatever order a
-    browser happened to send.
+    Each line sits under the box it names rather than in a list at the top: a person fixing
+    an empty box wants to be told about it while they are looking at it.
     """
-    return [
-        f"{label} is required."
-        for name, label in REQUIRED_FIELDS
-        if not str(submitted.get(name, "")).strip()
-    ]
+    return by_field(
+        {
+            name: [f"{label} is required."]
+            for name, label in REQUIRED_FIELDS
+            if not str(submitted.get(name, "")).strip()
+        }
+    )
 
 
-def split_problems(form: TeamEntryForm) -> list[str]:
+def split_problems(form: TeamEntryForm) -> FormProblems:
     """The split the product asks for, or one line per thing wrong with it.  # SPEC §8.2
 
     Presence only; ``TeamEntryForm`` has already refused a split that does not add up or one
@@ -172,29 +178,32 @@ def split_problems(form: TeamEntryForm) -> list[str]:
     - a person filling this form in has the whole loan in front of them.
     """
     if form.effective_product not in SPLIT_PRODUCTS:
-        return []
+        return by_field({})
     product = enum_label(form.effective_product)
-    return [
-        f"{label} is required on a {product} loan."
-        for name, label in SPLIT_FIELDS
-        if getattr(form, name) is None
-    ]
+    return by_field(
+        {
+            name: [f"{label} is required on a {product} loan."]
+            for name, label in SPLIT_FIELDS
+            if getattr(form, name) is None
+        }
+    )
 
 
-def term_problems(form: TeamEntryForm) -> list[str]:
+def term_problems(form: TeamEntryForm) -> FormProblems:
     """The term, said one way or the other, or the line asking for it.  # SPEC §8.1
 
-    ``TeamEntryForm`` has already refused a payoff date that is not a whole number of months
-    after closing, and one that disagrees with a term beside it. What is left for the form is
-    presence: the deal is priced on a term (SPEC §8.3) and this form does not ask the SPEC
-    §4.1 bucket question, so one of the two boxes has to be filled in.
+    ``TeamEntryForm`` has already refused a payoff date on or before the closing date, and
+    one that disagrees with a term beside it. What is left for the form is presence: the deal
+    is priced on a term (SPEC §8.3) and this form does not ask the SPEC §4.1 bucket question,
+    so one of the two boxes has to be filled in. It is a complaint about the pair of them, so
+    it goes at the top rather than under either.
     """
-    if form.effective_term_months is not None:
-        return []
-    return [
-        "Term (months) is required: enter a term, or a payoff date to imply one. "
-        "Entering either solves the other."
-    ]
+    if form.effective_term is not None:
+        return at_top()
+    return at_top(
+        "A term is required: enter one in months, or a payoff date to imply it. Entering "
+        "either solves the other."
+    )
 
 
 def text_value(value: Any) -> str:
@@ -207,35 +216,71 @@ def text_value(value: Any) -> str:
 
 
 def deal_defaults(deal: Deal | None, config: Config | None = None) -> dict[str, Decimal | None]:
-    """The config default for each of the four §8.1 economics, for this deal.  # SPEC §8.1"""
-    settings = config if config is not None else get_config()
-    return config_defaults(
-        settings,
-        purchase_price=deal.purchase_price if deal is not None else None,
-        rehab_costs=deal.rehab_costs if deal is not None else None,
-    )
+    """The config default for each of the four §8.1 economics.  # SPEC §8.1
+
+    Four flat config numbers, so the deal is not consulted at all: the ``deal`` argument is
+    kept because every caller has one and dropping it would make the call sites read as if
+    the defaults came from somewhere else.
+    """
+    del deal
+    return config_defaults(config if config is not None else get_config())
 
 
 def submitted_defaults(
     submitted: Mapping[str, str], config: Config | None = None
 ) -> dict[str, Decimal | None]:
-    """The same four, worked out from the price and rehab the submission itself carries.
+    """The same four; nothing on the submission changes them.  # SPEC §8.1"""
+    del submitted
+    return config_defaults(config if config is not None else get_config())
 
-    On the way in the two the holding-cost default depends on are in front of us, whether or
-    not there is a deal behind the form yet, so the blank new-deal form gets the same rule as
-    the edit.
+
+def money_value(submitted: Mapping[str, str], name: str) -> Decimal | None:
+    """One money box off a submitted form as a number, or None when it is not one."""
+    text = money_parse(submitted.get(name, ""))
+    try:
+        return Decimal(text) if text else None
+    except ArithmeticError:
+        return None
+
+
+def holding_costs_hint(
+    pct: Decimal | None, purchase_price: Decimal | None, rehab_costs: Decimal | None
+) -> str:
+    """The line under the holding-cost box: what that percentage comes to.  # SPEC §8.1
+
+    The box holds a percentage of the price plus the rehab and the figure a person checks is
+    the dollars, so the dollars are printed beside it - once the price and the rehab are both
+    on the page. On a blank new deal they are not, and the line says what it is waiting for
+    rather than showing a percentage of nothing.
     """
+    amount = holding_costs_amount(pct, purchase_price, rehab_costs)
+    if amount is None:
+        return "of the purchase price plus the rehab costs, over the whole hold"
+    cost = (purchase_price or Decimal(0)) + (rehab_costs or Decimal(0))
+    return f"${amount:,.2f} over the whole hold, on a ${cost:,.2f} cost basis"
+
+
+def deal_holding_costs_hint(deal: Deal | None, config: Config | None = None) -> str:
+    """The same line, for a deal: its own percentage, else the config default."""
     settings = config if config is not None else get_config()
+    if deal is None:
+        return holding_costs_hint(None, None, None)
+    pct = deal.holding_costs_pct_of_cost
+    if pct is None:
+        pct = settings.fees.holding_costs_default_pct_of_cost
+    return holding_costs_hint(pct, deal.purchase_price, deal.rehab_costs)
 
-    def number(name: str) -> Decimal | None:
-        text = money_parse(submitted.get(name, ""))
-        try:
-            return Decimal(text) if text else None
-        except ArithmeticError:
-            return None
 
-    return config_defaults(
-        settings, purchase_price=number("purchase_price"), rehab_costs=number("rehab_costs")
+def submitted_holding_costs_hint(submitted: Mapping[str, str], config: Config | None = None) -> str:
+    """The same line, for a submission on its way back to a person who got something wrong."""
+    settings = config if config is not None else get_config()
+    values = unmasked(submitted)
+    try:
+        typed = Decimal(values["holding_costs_pct_of_cost"])
+    except (ArithmeticError, KeyError, ValueError):
+        typed = settings.fees.holding_costs_default_pct_of_cost
+    return holding_costs_hint(
+        typed, money_value(submitted, "purchase_price"), money_value(submitted, "rehab_costs")
     )
 
 
@@ -304,7 +349,7 @@ def intake_form_values(deal: Deal, config: Config | None = None) -> dict[str, st
         "interest_rate": deal.interest_rate,
         "contingency_pct": deal.contingency_pct,
         "closing_costs_usd": deal.closing_costs_usd,
-        "holding_costs_total_usd": deal.holding_costs_total_usd,
+        "holding_costs_pct_of_cost": deal.holding_costs_pct_of_cost,
         "origination_fee_pct": deal.origination_fee_pct,
         "estimated_sale_price_team": deal.estimated_sale_price_team,
         "monthly_rent": deal.monthly_rent,
@@ -333,8 +378,8 @@ def read_form(
     submitted: Mapping[str, str],
     matters: list[dict[str, str]],
     config: Config | None = None,
-) -> tuple[TeamEntryForm | None, list[str]]:
-    """The posted form as a model, or the lines saying why it is not one.
+) -> tuple[TeamEntryForm | None, FormProblems]:
+    """The posted form as a model, or the complaints saying why it is not one.
 
     The masks come off first and the config defaults come out next, so what reaches
     ``TeamEntryForm`` is what the deal stores: a rate as a fraction, a price as a number, and
@@ -342,17 +387,18 @@ def read_form(
 
     Both halves of the complaint run: a missing Required box and a price with three decimal
     places are two different problems with the same submission, and a person fixing one at a
-    time is a person posting twice. ``missing_required`` comes first because it is the
-    complaint that names a box they can see.
+    time is a person posting twice. Each lands under the box it is about where it has one
+    (``api/problems.py``), and the cross-field rules - the term against the payoff date - go
+    to the top of the page, which is the only place a rule about two boxes can sit.
     """
     missing = missing_required(submitted)
     values = drop_defaults(unmasked(submitted), submitted_defaults(submitted, config))
     try:
         form = TeamEntryForm.model_validate({**values, "court_records_team": matters})
     except ValidationError as exc:
-        return None, missing + problems(exc)
-    complaints = missing + term_problems(form) + split_problems(form)
-    return (None, complaints) if complaints else (form, [])
+        return None, missing.merge(from_validation_error(exc, TEAM_ENTRY_NAMES))
+    complaints = missing.merge(term_problems(form)).merge(split_problems(form))
+    return (None, complaints) if complaints else (form, NO_PROBLEMS)
 
 
 def redisplay_values(submitted: Mapping[str, str]) -> dict[str, str]:
