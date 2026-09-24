@@ -7,7 +7,6 @@
       "purchase_price": "300000.00",
       "rehab_costs": "0.00",
       "loan_requested": "210000.00",
-      "as_is_value": "320000.00",
       "estimated_sale_price": "340000.00"
     },
     "state": "CO",
@@ -33,8 +32,7 @@
     "rehab_adj": "0.00",
     "metrics": {
       "LTC": "PASS",
-      "LTV_AS_IS": "PASS",
-      "LTARV": "PASS"
+      "LTV": "PASS"
     },
     "reasons_contain": [],
     "reply_contains": [
@@ -48,7 +46,6 @@
         "purchase_price": "300000.00",
         "rehab_costs": "0.00",
         "loan_requested": "210000.00",
-        "as_is_value": "320000.00",
         "estimated_sale_price": "340000.00"
       },
       "state": "CO",

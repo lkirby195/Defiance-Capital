@@ -30,8 +30,7 @@
       <tbody>
         {% for metric, check in sizing.metrics.items() %}
           <tr>
-            <td>{{ metric | plain }}{% if check.basis %}
-              <span class="small muted">on {{ check.basis | plain }}</span>{% endif %}</td>
+            <td>{{ metric | plain }}</td>
             <td class="num">{{ check.actual | pct }}</td>
             <td class="num">{{ check.cap | pct }}</td>
             <td class="num">{{ check.tolerance_band | points }}</td>
@@ -46,7 +45,7 @@
     </table>
   </div>
   <dl class="facts small" style="margin-top:10px">
-    <dt>Product</dt><dd>{{ sizing.product | plain }}</dd>
+    <dt>Loan Type</dt><dd>{{ sizing.product | label }}</dd>
     <dt>Caps cell</dt>
     <dd>{{ sizing.credit_tranche | tranche }} × {{ sizing.experience_tier | plain }}</dd>
     <dt>Purchase price</dt><dd>{{ sizing.purchase_price | money }}</dd>
@@ -56,12 +55,12 @@
       <span class="small muted">({{ sizing.contingency_pct | pct }} contingency)</span></dd>
     <dt>Closing costs (lender)</dt><dd>{{ sizing.closing_costs | money }}</dd>
     <dt>Total cost</dt><dd>{{ sizing.total_cost | money }}</dd>
-    <dt>Loan requested</dt><dd>{{ sizing.loan_requested | money }}</dd>
+    <dt>Loan Amount</dt><dd>{{ sizing.loan_requested | money }}</dd>
     <dt>Commitment</dt><dd>{{ sizing.commitment | money }}</dd>
     <dt>Funded at close</dt><dd>{{ sizing.funded_at_close | money }}</dd>
     {% if sizing.split %}
       {% set principal = sizing.product | plain == "SPLIT_PRINCIPAL" %}
-      <dt>{{ "Principal Note" if principal else "Purchase portion" }}</dt>
+      <dt>{{ "Principal Note" if principal else "Advance at closing" }}</dt>
       <dd>{{ sizing.split.purchase_portion | money }}</dd>
       <dt>{{ "Tranche A" if principal else "Rehab holdback" }}</dt>
       <dd>{{ sizing.split.rehab_portion | money }}
@@ -71,9 +70,8 @@
             contingency-adjusted rehab cost)</span>{% endif %}</dd>
     {% elif sizing.product | plain in ("SPLIT_DRAW", "SPLIT_PRINCIPAL") %}
       <dt>Loan split</dt>
-      <dd class="muted">not entered — sized on the loan requested (SPEC §8.2)</dd>
+      <dd class="muted">not entered — sized on the loan amount (SPEC §8.2)</dd>
     {% endif %}
-    <dt>As-is value from</dt><dd>{{ sizing.as_is_value_source | plain }}</dd>
     <dt>Estimated sale price from</dt>
     <dd>{{ sizing.estimated_sale_price_source | plain }}</dd>
   </dl>

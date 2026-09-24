@@ -3,6 +3,17 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**1.1.0 (Phase 5a, 2026-09-23) makes LTV the only value ratio.** The as-is value is gone
+from the engine, and so is LTARV: ``LTV = commitment / estimated_sale_price`` with no
+fallback denominator, NOT_AVAILABLE when there is no price, and a caps cell of ``ltc`` and
+``ltv``. ``ValueBasis`` and ``MetricCheck.basis`` go with them - there is one denominator, so
+nothing has to say which was used - as do ``ScreenFlag.AS_IS_VALUE_MISSING`` and
+``ScreenFlag.LTARV_OVER_CAP``; ``LTV_AS_IS_OVER_CAP`` is ``LTV_OVER_CAP``, and
+``ESTIMATED_SALE_PRICE_MISSING`` now reports the LTV that could not be computed rather than
+the LTARV. The underwrite no longer needs a sale price to run: with the Flip toggle on and no
+price the flip is NOT_EVALUATED and ``SALE_PRICE_MISSING`` (Info, fixed in code) says so,
+exactly as ``MONTHLY_RENT_MISSING`` does for the two DSCRs. The LTC placeholder cap is 100%.
+
 **1.0.0 (Phase 5, 2026-09-23) replaces the underwrite calc layer and its inputs.** Nothing
 about a stored 0.8.1 underwrite survives it, which is why the number is a major one and why
 migration ``0010`` deletes the rows written before it rather than pretending they can be
@@ -38,4 +49,4 @@ REHAB_PORTION_EXCEEDS_BUDGET.
 
 from __future__ import annotations
 
-ENGINE_VERSION = "1.0.0"
+ENGINE_VERSION = "1.1.0"

@@ -3,16 +3,13 @@
   "borrower_phone": "720-555-0192",
   "borrower_email": "rafael@ortizbuilds.example",
   "entity_name": "Ortiz Builds LLC",
-  "guarantor_name": "Rafael Ortiz",
   "credit_range": "T1",
   "experience_bucket": "6_PLUS",
   "repeat_borrower": false,
   "loan_purpose": "PURCHASE",
   "closing_date": "2026-10-01",
-  "term_bucket": "9",
   "address": "3320 Meade St, Denver, CO 80211",
   "city": "Denver",
-  "county": "Denver",
   "units": 1,
   "structures": 1,
   "sf": 1420,
@@ -29,5 +26,6 @@
   "holding_costs_total_usd": "9000.00",
   "loan_purchase_portion": "147000.00",
   "loan_rehab_portion": "48000.00",
-  "closing_costs_usd": "1500.00"
+  "closing_costs_usd": "1500.00",
+  "term_months": 9
 }

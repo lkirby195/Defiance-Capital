@@ -20,7 +20,6 @@ from schema.models import (
     State,
     StateSource,
     Status,
-    TermBucket,
     Tranche,
 )
 from tests.conftest import requires_db
@@ -37,23 +36,23 @@ def test_complete_team_entry_is_stored(client: TestClient, db_session: Session) 
     body = response.json()
     assert body["status"] == "NEW"
     assert body["missing_fields"] == []
-    assert body["borrower"]["phone"] == "+17205550192"
+    assert body["borrower"]["phone"] == "7205550192"  # digits (SPEC §4.1)
 
     deal = db_session.get(Deal, body["id"])
     assert deal is not None
     assert deal.status is Status.NEW
     assert deal.channel is Channel.TEAM
     assert deal.purchase_price == Decimal("200000.00")
-    assert deal.term_bucket is TermBucket.M9
+    assert deal.term_bucket is None and deal.term_months == 9
     assert deal.credit_range_self_reported is Tranche.T1
     assert deal.missing_fields == []
     assert deal.credit_authorization_signed is False
-    assert deal.borrower is not None and deal.borrower.phone == "+17205550192"
+    assert deal.borrower is not None and deal.borrower.phone == "7205550192"
     assert [e.name for e in deal.borrower.entities] == ["Ortiz Builds LLC"]
     assert deal.property is not None and deal.property.state is State.CO
     assert deal.property.state_source is StateSource.INFERRED  # no state on the form
     assert deal.property.address_normalized == "3320 MEADE ST, DENVER, CO 80211"
-    assert deal.monthly_rent is None and deal.as_is_value_team is None
+    assert deal.monthly_rent is None and deal.estimated_sale_price_team is None
     assert deal.closing_date is not None and deal.interest_rate == Decimal("0.12000")
     assert len(deal.submissions) == 1
     assert deal.submissions[0].raw_payload["borrower_phone"] == "720-555-0192"

@@ -28,12 +28,16 @@ from starlette.responses import HTMLResponse, RedirectResponse
 
 from api.forms import FormDep, fields, problems, rows
 from api.intake_form import (
-    TEAM_ENTRY_FIELDS,
+    blank_form_values,
+    deal_defaults,
+    default_marks,
     intake_form_values,
     intake_record,
     read_form,
+    redisplay_values,
     text_value,
 )
+from api.masks import drop_defaults, mask_one, masked, unmasked
 from api.render import page, redirect
 from api.security import PageUser, require_csrf
 from db.models import Deal
@@ -49,7 +53,6 @@ from schema.models import (
     Product,
     State,
     StatedExit,
-    TermBucket,
     Tranche,
 )
 from services import (
@@ -117,37 +120,48 @@ def enum_values() -> dict[str, list[str]]:
         "product": [member.value for member in Product],
         "state": [member.value for member in State],
         "stated_exit": [member.value for member in StatedExit],
-        "term_bucket": [member.value for member in TermBucket],
         "tranche": [member.value for member in Tranche],
     }
 
 
+OVERRIDE_NAMES: tuple[str, ...] = (
+    "loan_purpose",
+    "product",
+    "closing_date",
+    "term_months",
+    "interest_rate",
+    "contingency_pct",
+    "closing_costs_usd",
+    "holding_costs_total_usd",
+    "origination_fee_pct",
+    "estimated_sale_price_team",
+    "monthly_rent",
+    "asset_type",
+    "stated_exit",
+    "flip_analysis",
+    "rental_analysis",
+    "court_records_status",
+    "court_records_as_of",
+)
+
+
 def override_form(deal: Deal) -> dict[str, str]:
-    """The override block as form values, so the page renders what the deal currently says."""
-    names = (
-        "loan_purpose",
-        "product",
-        "closing_date",
-        "term_months",
-        "interest_rate",
-        "contingency_pct",
-        "closing_costs_usd",
-        "holding_costs_total_usd",
-        "origination_fee_pct",
-        "as_is_value_team",
-        "estimated_sale_price_team",
-        "monthly_rent",
-        "asset_type",
-        "stated_exit",
-        "flip_analysis",
-        "rental_analysis",
-        "court_records_status",
-        "court_records_as_of",
-    )
+    """The override block as form values, so the page renders what the deal currently says.
+
+    Masked on the way out (``api/masks.py``): a rate shows as ``12%`` and a price as
+    ``$425,000``, which is what the box takes back. The four §8.1 economics with a config
+    default are pre-filled with it where the deal carries none, and the page tags them - a
+    box holding the default and a box holding a number somebody chose look different on
+    purpose.
+    """
+    values: dict[str, object | None] = {name: getattr(deal, name) for name in OVERRIDE_NAMES}
+    for name, default in deal_defaults(deal).items():
+        if values.get(name) is None:
+            values[name] = default
     # ``payoff_date`` is rendered blank on purpose: it is not a column, it is the closing
     # date plus the term (SPEC §8.1), and the box is an alternative way of saying the term
     # rather than a value to edit. The derived date is shown beside it as a hint.
-    return {**{name: text_value(getattr(deal, name)) for name in names}, "payoff_date": ""}
+    return {**{name: mask_one(name, value) for name, value in values.items()}, "payoff_date": ""}
 
 
 def blank_matter() -> dict[str, str]:
@@ -236,6 +250,7 @@ def render_deal(
             # (SPEC §8.1). The refusal behind the button reads the same rules, so the page
             # cannot promise a run the assembly then declines.
             "readiness": underwrite_readiness(deal),
+            "defaults": default_marks(deal),
             "form": form if form is not None else override_form(deal),
             "matters": matters if matters is not None else matter_rows(deal.court_records_team),
             "screen": (
@@ -279,10 +294,10 @@ def queue_page(request: Request, session: SessionDep, user: PageUser) -> HTMLRes
 
 
 NEW_DEAL_INTRO = (
-    "The team-entry channel (SPEC §4.2). The Required boxes are the minimum viable "
-    "intake (SPEC §4.1) — a deal cannot be screened without them, so this form "
-    "asks for all ten. Everything marked Optional can follow later. It posts to the same "
-    "route the API takes."
+    "The team-entry channel (SPEC §4.2). The Required boxes are what a run cannot proceed "
+    "without — the minimum viable intake (SPEC §4.1) plus the closing date, the term and the "
+    "rate the ledger has no stand-in for. Everything marked Optional can follow later. It "
+    "posts to the same route the API takes."
 )
 EDIT_INTAKE_INTRO = (
     "The same form the deal was entered on, filled in with what it currently says. Saving "
@@ -303,6 +318,7 @@ def team_entry_page(
     form: dict[str, str],
     matters: list[dict[str, str]],
     complaints: list[str],
+    defaults: dict[str, str] | None = None,
     status_code: int = status.HTTP_200_OK,
 ) -> HTMLResponse:
     """The team-entry form, blank or filled in, for whichever route is showing it.
@@ -311,6 +327,7 @@ def team_entry_page(
     what a rejected submission was carrying - so the two forms cannot drift into asking for
     different things.
     """
+    defaults = defaults if defaults is not None else default_marks(None)
     return page(
         request,
         "team_entry.html",
@@ -322,7 +339,8 @@ def team_entry_page(
             "submit_label": submit_label,
             "back_url": back_url,
             # Every name the template renders, so a dropped blank is still a blank box.
-            "form": {**dict.fromkeys(TEAM_ENTRY_FIELDS, ""), **form},
+            "form": {**blank_form_values(), **form},
+            "defaults": defaults,
             "matters": matters,
             "problems": complaints,
         },
@@ -436,6 +454,7 @@ def _edit_page(
     form: dict[str, str],
     matters: list[dict[str, str]],
     complaints: list[str],
+    defaults: dict[str, str] | None = None,
     status_code: int = status.HTTP_200_OK,
 ) -> HTMLResponse:
     return team_entry_page(
@@ -449,6 +468,7 @@ def _edit_page(
         form=form,
         matters=matters,
         complaints=complaints,
+        defaults=defaults,
         status_code=status_code,
     )
 
@@ -474,6 +494,7 @@ def edit_intake_page(
         form=intake_form_values(deal),
         matters=matter_rows(deal.court_records_team),
         complaints=[],
+        defaults=default_marks(deal),
     )
 
 
@@ -494,7 +515,7 @@ def edit_intake_action(
             request,
             user,
             deal_id,
-            form=submitted,
+            form=redisplay_values(submitted),
             matters=redisplay(matters),
             complaints=complaints,
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -510,7 +531,7 @@ def edit_intake_action(
             request,
             user,
             deal_id,
-            form=submitted,
+            form=redisplay_values(submitted),
             matters=redisplay(matters),
             complaints=[str(exc)],
             status_code=status.HTTP_409_CONFLICT,
@@ -529,8 +550,10 @@ def overrides_action(
     """Save the team's own valuation, opex, structure and court search.  # SPEC §6.1"""
     submitted = fields(form, skip=("matter_",))
     matters = submitted_matters(form)
+    deal = load_deal(session, deal_id)
+    values = drop_defaults(unmasked(submitted), deal_defaults(deal))
     try:
-        overrides = TeamOverrides.model_validate({**submitted, "court_records_team": matters})
+        overrides = TeamOverrides.model_validate({**values, "court_records_team": matters})
     except ValidationError as exc:
         return render_deal(
             request,
@@ -538,7 +561,7 @@ def overrides_action(
             deal_id,
             user,
             complaints=problems(exc),
-            form={**dict.fromkeys(override_form(load_deal(session, deal_id)), ""), **submitted},
+            form={**dict.fromkeys(override_form(deal), ""), **masked(values)},
             matters=redisplay(matters),
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )

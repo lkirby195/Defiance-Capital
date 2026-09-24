@@ -103,13 +103,20 @@ borrower_entities = Table(
 
 
 class Borrower(Base):
-    """Person-level borrower; phone is the primary match key.  # SPEC §5"""
+    """Person-level borrower; phone is the match key when there is one.  # SPEC §5
+
+    The phone is stored as digits (``schema/masks.py``) and is what a repeat inquiry is
+    matched on. It is nullable because it is optional on the team-entry form (SPEC §4.1): a
+    person taking a deal off an email has the guarantor's name and no number, and losing the
+    name to keep the key tidy would be the wrong trade. A borrower with no phone simply
+    matches nothing, and the next inquiry under the same name creates another row.
+    """
 
     __tablename__ = "borrowers"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     name: Mapped[str | None] = mapped_column(String(200))
-    phone: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    phone: Mapped[str | None] = mapped_column(String(32), unique=True)
     email: Mapped[str | None] = mapped_column(String(254))
     ma_borrower_id: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = _created_at()
@@ -240,7 +247,6 @@ class Deal(Base):
         _enum(ExperienceBucket, "experience_bucket")
     )
     repeat_borrower_self_reported: Mapped[bool | None] = mapped_column(Boolean)
-    guarantor_name: Mapped[str | None] = mapped_column(String(200))
     loan_purpose: Mapped[LoanPurpose | None] = mapped_column(_enum(LoanPurpose, "loan_purpose"))
     # Month 0 of the ledger (SPEC §8.3). The payoff date is this plus term_months and is
     # derived wherever it is shown, never stored: one fact, one column.
@@ -278,7 +284,6 @@ class Deal(Base):
     # Team-supplied valuation and court search, used until the Phase 3 adapters land
     # (SPEC §6). An adapter value always wins; these are never overwritten, so a later
     # reader can see what was entered by hand and what superseded it.
-    as_is_value_team: Mapped[Decimal | None] = mapped_column(MONEY)
     estimated_sale_price_team: Mapped[Decimal | None] = mapped_column(MONEY)
     court_records_status: Mapped[CourtRecordsStatus | None] = mapped_column(
         _enum(CourtRecordsStatus, "court_records_status")

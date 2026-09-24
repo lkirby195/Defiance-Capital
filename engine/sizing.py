@@ -3,6 +3,11 @@
 Pure: ``Decimal`` in, ``Decimal`` out, every threshold from ``Config``, no I/O.
 The screen (SPEC §7.4) and the underwrite (SPEC §8.2, with verified values) call the
 same ``size_deal``; the only difference is what the caller puts in ``SizingInputs``.
+
+Two ratios, not three. LTC is the commitment over what the project costs; LTV is the
+commitment over what the property is expected to sell for. The as-is value and the LTARV
+that sat beside them are gone: they were two more opinions of the same thing, and the price
+the deal exits at is the one the lender is actually lending against.
 """
 
 from __future__ import annotations
@@ -21,7 +26,6 @@ from schema.models import (
     SizingInputs,
     SizingResult,
     Tranche,
-    ValueBasis,
 )
 
 ZERO = Decimal(0)
@@ -59,13 +63,13 @@ def total_cost(purchase_price: Decimal, rehab_adj: Decimal, closing: Decimal) ->
 def commitment_split(
     inputs: SizingInputs, rehab_adj: Decimal
 ) -> tuple[Decimal, CommitmentSplit | None]:
-    """Commitment and purchase/rehab split per product.  # SPEC §8.2
+    """Commitment and advance-at-closing / rehab split per product.  # SPEC §8.2
 
-    NO_DRAW, WHOLETAIL: commitment = loan_requested; no split.
-    SPLIT_DRAW: purchase portion and holdback as the team entered them (they add up to
-        loan_requested), so commitment = loan_requested and the holdback is the rehab
+    NO_DRAW, WHOLETAIL: commitment = loan amount; no split.
+    SPLIT_DRAW: the advance at closing and the holdback as the team entered them (they add
+        up to the loan amount), so commitment = loan amount and the holdback is the rehab
         portion.
-    SPLIT_PRINCIPAL: Principal Note = purchase portion, Tranche A = rehab portion;
+    SPLIT_PRINCIPAL: Principal Note = the advance at closing, Tranche A = the rehab portion;
         commitment = the two added back together.
 
     The rehab side is capped at ``rehab_adj`` either way: the lender does not hold back more
@@ -74,9 +78,9 @@ def commitment_split(
     SPLIT_DRAW it does not, because there is one note - the money above the cap is advanced
     at close instead of held back, so only the timing moves.
 
-    A split product with no split entered is sized on the loan requested with no split at
-    all. That is a borrower-channel intake before anybody has divided it (SPEC §4.2): the
-    screen still runs, and the underwrite refuses until the team enters it (SPEC §8.1).
+    A split product with no split entered is sized on the loan amount with no split at all.
+    That is a borrower-channel intake before anybody has divided it (SPEC §4.2): the screen
+    still runs, and the underwrite refuses until the team enters it (SPEC §8.1).
     """
     entered = inputs.loan_split
     if inputs.product not in SPLIT_PRODUCTS or entered is None:
@@ -127,7 +131,6 @@ def check_metric(
     actual: Decimal | None,
     cap: Decimal,
     tolerance_band: Decimal,
-    basis: ValueBasis | None = None,
 ) -> MetricCheck:
     """One metric against its cap: actual, cap, pass/fail, tolerance-band status.  # SPEC §8.2"""
     status = cap_status(actual, cap, tolerance_band)
@@ -138,7 +141,6 @@ def check_metric(
         tolerance_band=tolerance_band,
         status=status,
         passed=status is CapStatus.PASS,
-        basis=basis,
     )
 
 
@@ -154,19 +156,21 @@ def size_deal(
 ) -> SizingResult:
     """Implied leverage against the caps cell, plus the commitment split.  # SPEC §7.4, §8.2
 
-    LTC    = commitment / total_cost
-    LTV    = commitment / as_is_value, or / purchase_price with basis PURCHASE_PRICE when the
-             as-is value is unavailable
-    LTARV  = commitment / estimated_sale_price, or NOT_AVAILABLE when there is no price
+    LTC = commitment / total_cost
+    LTV = commitment / estimated_sale_price, or NOT_AVAILABLE when there is no price
 
-    Where each valuation came from (``as_is_value_source`` / ``estimated_sale_price_source``)
-    travels through onto the result, so a stored screen says whether the numbers it sized on
-    were pulled or entered by hand.
+    There is no fallback denominator for LTV. A purchase price is what the borrower agreed to
+    pay, not what the property is worth after the work, and standing it in would report a
+    leverage figure nobody had measured; the screen turns the missing price into a SOFT flag
+    instead (SPEC §7.4, §7.5) and goes Conditional on it.
 
-    ``commitment`` equals ``loan_requested`` for every product unless a SPLIT_PRINCIPAL rehab
+    Where the price came from (``estimated_sale_price_source``) travels through onto the
+    result, so a stored screen says whether the number it sized on was pulled or entered by
+    hand.
+
+    ``commitment`` equals the loan amount for every product unless a SPLIT_PRINCIPAL rehab
     portion is capped at ``rehab_adj`` and leaves part of the request unallocated (see
-    ``commitment_split``). The screen turns the fallback and the missing estimated sale
-    price into flags (SPEC §7.4, §7.5).
+    ``commitment_split``).
     """
     pct = contingency_pct(inputs, config)
     rehab_adj = rehab_adjusted(inputs.rehab_costs, pct)
@@ -176,25 +180,14 @@ def size_deal(
     caps = caps_for(config, inputs.product, tranche, tier)
     band = config.screen.tolerance_band
 
-    if inputs.as_is_value is not None:
-        ltv_basis, ltv_denominator = ValueBasis.AS_IS_VALUE, inputs.as_is_value
-    else:
-        ltv_basis, ltv_denominator = ValueBasis.PURCHASE_PRICE, inputs.purchase_price
     sale_price = inputs.estimated_sale_price
-    ltarv = ratio(commitment, sale_price) if sale_price is not None else None
+    ltv = ratio(commitment, sale_price) if sale_price is not None else None
 
     metrics = {
         LeverageMetric.LTC: check_metric(
             LeverageMetric.LTC, ratio(commitment, cost), caps.ltc, band
         ),
-        LeverageMetric.LTV_AS_IS: check_metric(
-            LeverageMetric.LTV_AS_IS,
-            ratio(commitment, ltv_denominator),
-            caps.ltv_as_is,
-            band,
-            basis=ltv_basis,
-        ),
-        LeverageMetric.LTARV: check_metric(LeverageMetric.LTARV, ltarv, caps.ltarv, band),
+        LeverageMetric.LTV: check_metric(LeverageMetric.LTV, ltv, caps.ltv, band),
     }
     return SizingResult(
         product=inputs.product,
@@ -210,8 +203,6 @@ def size_deal(
         commitment=commitment,
         funded_at_close=funded_at_close(inputs.product, commitment, split),
         split=split,
-        ltv_basis=ltv_basis,
-        as_is_value_source=inputs.as_is_value_source,
         estimated_sale_price_source=inputs.estimated_sale_price_source,
         metrics=metrics,
         all_pass=all(check.passed for check in metrics.values()),

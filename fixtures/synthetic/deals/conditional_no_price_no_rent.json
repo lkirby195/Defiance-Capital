@@ -1,13 +1,12 @@
 {
-  "name": "conditional_no_rent_no_draw",
-  "description": "NO_DRAW with no as-is value and no monthly rent. The screen falls back to the purchase price for LTV, which lands 80% - over the 75% cap and inside the 5-point band - so Conditional. The underwrite runs: the flip sells at $140,000 for $25,000 of profit, and neither DSCR is tested (MONTHLY_RENT_MISSING). Closing 31 March on a 6-month term pays off 30 September.",
+  "name": "conditional_no_price_no_rent",
+  "description": "NO_DRAW with no estimated sale price and no monthly rent. LTV is the commitment over the sale price and there is no fallback denominator (SPEC \u00a77.4), so it is NOT_AVAILABLE, ESTIMATED_SALE_PRICE_MISSING is raised and the screen goes Conditional on it. The underwrite still runs - the ledger, the economics and the take-back cost do not read a sale price - and reports the Flip analysis NOT_EVALUATED with SALE_PRICE_MISSING beside it, and neither DSCR tested (MONTHLY_RENT_MISSING). Closing 31 March on a 6-month term pays off 30 September.",
   "inputs": {
     "deal": {
       "product": "NO_DRAW",
       "purchase_price": "100000.00",
       "rehab_costs": "0.00",
-      "loan_requested": "80000.00",
-      "estimated_sale_price": "140000.00"
+      "loan_requested": "80000.00"
     },
     "state": "OK",
     "borrower": {
@@ -23,11 +22,7 @@
     "verdict": "CONDITIONAL",
     "flags": [
       {
-        "code": "AS_IS_VALUE_MISSING",
-        "severity": "SOFT"
-      },
-      {
-        "code": "LTV_AS_IS_OVER_CAP",
+        "code": "ESTIMATED_SALE_PRICE_MISSING",
         "severity": "SOFT"
       }
     ],
@@ -41,15 +36,14 @@
     "rehab_adj": "0.00",
     "metrics": {
       "LTC": "PASS",
-      "LTV_AS_IS": "WITHIN_TOLERANCE",
-      "LTARV": "PASS"
+      "LTV": "NOT_AVAILABLE"
     },
     "reasons_contain": [
-      "As-is value unavailable",
-      "LTV (on purchase price)"
+      "Estimated sale price unavailable",
+      "LTV not computed"
     ],
     "reply_contains": [
-      "a current as-is value"
+      "an estimated sale price after the work"
     ]
   },
   "underwrite": {
@@ -58,8 +52,7 @@
         "product": "NO_DRAW",
         "purchase_price": "100000.00",
         "rehab_costs": "0.00",
-        "loan_requested": "80000.00",
-        "estimated_sale_price": "140000.00"
+        "loan_requested": "80000.00"
       },
       "state": "OK",
       "borrower": {
@@ -103,11 +96,11 @@
         "irr": "0.17209911"
       },
       "flip": {
-        "status": "EVALUATED",
-        "broker_costs": "5600.00",
+        "status": "NOT_EVALUATED",
+        "broker_costs": null,
         "total_costs": "109400.00",
-        "net_profit": "25000.00",
-        "profit_yield": "0.228519"
+        "net_profit": null,
+        "profit_yield": null
       },
       "rental": {
         "status": "OFF",
@@ -128,12 +121,12 @@
       },
       "flags": [
         {
-          "code": "AS_IS_VALUE_MISSING",
+          "code": "ESTIMATED_SALE_PRICE_MISSING",
           "severity": "SOFT"
         },
         {
-          "code": "LTV_AS_IS_OVER_CAP",
-          "severity": "SOFT"
+          "code": "SALE_PRICE_MISSING",
+          "severity": "INFO"
         },
         {
           "code": "MONTHLY_RENT_MISSING",

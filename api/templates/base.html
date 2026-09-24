@@ -1,6 +1,11 @@
 {# Shared shell. One stylesheet, inline, because the queue is one small internal app and a
-   second request for 4kB of CSS buys nothing. No client-side JS lives here: the only script
-   in the whole queue is the copy button on the suggested reply (deal.html). #}
+   second request for 4kB of CSS buys nothing.
+
+   Two pieces of client-side script exist in the whole queue: the copy button on the
+   suggested reply (deal.html), and the input masks below. Both are conveniences and neither
+   is load-bearing — the server parses `$425,000`, `425000`, `12%` and `12` alike
+   (`schema/masks.py`), so a browser that runs none of this still posts a deal that saves.
+   Nothing here validates, fetches, or decides anything. #}
 {% import "_csrf.html" as csrf %}
 <!doctype html>
 <html lang="en">
@@ -56,6 +61,15 @@
     header.bar form { display: inline; }
     main { max-width: 1100px; margin: 0 auto; padding: 16px; }
     h1 { font-size: 22px; margin: 4px 0 16px; }
+    /* The deal's name and the way back into its intake, on one line. */
+    .title { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline;
+             justify-content: space-between; }
+    .title h1 { margin-bottom: 8px; }
+    a.btn {
+      font: inherit; font-weight: 600; font-size: 14px; padding: 7px 13px; border-radius: 5px;
+      border: 1px solid var(--accent); color: var(--accent); text-decoration: none;
+      white-space: nowrap;
+    }
     h2 { font-size: 17px; margin: 0 0 10px; }
     h3 { font-size: 14px; margin: 16px 0 6px; color: var(--muted); text-transform: uppercase;
          letter-spacing: .06em; }
@@ -109,6 +123,35 @@
     .req { color: var(--hard); }
     .opt { color: var(--muted); font-weight: 600; }
     .cond { color: var(--soft); }
+    /* A box pre-filled with its config default says so, and stops saying so the moment
+       somebody types over it (SPEC 8.1). */
+    .dflt {
+      font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+      color: var(--info); background: var(--info-bg); border: 1px solid var(--info);
+      border-radius: 9px; padding: 0 6px; white-space: nowrap;
+    }
+    button.linky {
+      background: none; border: none; color: var(--accent); padding: 2px 0; font-size: 12px;
+      font-weight: 600; text-decoration: underline; cursor: pointer; width: auto;
+    }
+    span.cap { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
+    .toggle { display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+              border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px;
+              background: var(--bg); }
+    .toggle label { display: inline-flex; align-items: center; gap: 4px; margin: 0;
+                    font-size: 13px; color: var(--ink); white-space: nowrap; }
+    .toggle input[type="radio"] { width: auto; margin: 0; }
+    /* A control whose help does not fit a grid column takes the whole row instead. */
+    .grid3 > .wide { grid-column: 1 / -1; }
+    .narrow { max-width: 260px; }
+    dl.defs { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px;
+              margin: 8px 0 0; }
+    dl.defs dt { font-weight: 600; white-space: nowrap; }
+    dl.defs dd { margin: 0; }
+    @media (max-width: 640px) {
+      dl.defs { grid-template-columns: 1fr; }
+      dl.defs dt { margin-top: 6px; }
+    }
     input, select, textarea {
       width: 100%; padding: 7px 8px; font: inherit; color: var(--ink);
       background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
@@ -156,5 +199,59 @@
     {% for problem in problems %}<p class="problem">{{ problem }}</p>{% endfor %}
     {% block content %}{% endblock %}
   </main>
+  <script>
+    // Input masks. Formatting only: what a person types is reshaped, never rejected, and the
+    // server parses either shape (schema/masks.py). Money and percent reformat on blur so the
+    // mask never fights somebody mid-number; a phone reformats as it is typed, which is the
+    // one place the separators help while typing.
+    (function () {
+      function money(text) {
+        var bits = text.replace(/[^0-9.]/g, "").split(".");
+        var whole = bits.shift().replace(/^0+(?=[0-9])/, "");
+        var cents = bits.join("").slice(0, 2);
+        if (!whole && !cents) return "";
+        var grouped = (whole || "0").replace(/\B(?=([0-9]{3})+(?![0-9]))/g, ",");
+        return "$" + grouped + (cents ? "." + cents : "");
+      }
+      function percent(text) {
+        var cleaned = text.replace(/[^0-9.]/g, "");
+        return cleaned ? cleaned + "%" : "";
+      }
+      function phone(text) {
+        var d = text.replace(/[^0-9]/g, "").slice(0, 10);
+        if (d.length <= 3) return d;
+        if (d.length <= 6) return d.slice(0, 3) + "-" + d.slice(3);
+        return d.slice(0, 3) + "-" + d.slice(3, 6) + "-" + d.slice(6);
+      }
+      var SHAPE = { money: money, pct: percent, phone: phone };
+
+      function tag(box) {
+        return document.querySelector('[data-default-tag="' + box.id + '"]');
+      }
+      function showTag(box) {
+        var badge = tag(box);
+        if (badge) badge.hidden = box.value !== box.dataset.default;
+      }
+      document.querySelectorAll("input[data-mask], input[data-default]").forEach(function (box) {
+        var shape = SHAPE[box.dataset.mask];
+        var live = box.dataset.mask === "phone";
+        if (shape) {
+          box.addEventListener(live ? "input" : "blur", function () {
+            box.value = shape(box.value);
+            showTag(box);
+          });
+        }
+        box.addEventListener("input", function () { showTag(box); });
+        showTag(box);
+      });
+      document.querySelectorAll("[data-reset]").forEach(function (link) {
+        link.addEventListener("click", function () {
+          var box = document.getElementById(link.dataset.reset);
+          box.value = box.dataset.default;
+          showTag(box);
+        });
+      });
+    })();
+  </script>
 </body>
 </html>

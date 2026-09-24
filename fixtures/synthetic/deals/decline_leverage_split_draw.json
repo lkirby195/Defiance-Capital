@@ -1,15 +1,14 @@
 {
   "name": "decline_leverage_split_draw",
-  "description": "SPLIT_DRAW asking for more than the property is worth: LTC 95.0%, LTV 104.5% and LTARV 76.7% are all past their caps by more than the 5-point tolerance band. Three Hard flags decline it. No underwrite block: a declined deal is not priced.",
+  "description": "SPLIT_DRAW asking for more than the project costs and more than it will sell for: LTC 107.4% is past the 100% cap and LTV 86.7% is past the 75% cap, both by more than the 5-point tolerance band, so both are Hard and the screen declines. No underwrite block: a declined deal is not priced.",
   "inputs": {
     "deal": {
       "product": "SPLIT_DRAW",
       "purchase_price": "100000.00",
       "rehab_costs": "20000.00",
-      "loan_requested": "115000.00",
-      "as_is_value": "110000.00",
+      "loan_requested": "130000.00",
       "estimated_sale_price": "150000.00",
-      "loan_purchase_portion": "95000.00",
+      "loan_purchase_portion": "110000.00",
       "loan_rehab_portion": "20000.00"
     },
     "state": "OK",
@@ -30,11 +29,7 @@
         "severity": "HARD"
       },
       {
-        "code": "LTV_AS_IS_OVER_CAP",
-        "severity": "HARD"
-      },
-      {
-        "code": "LTARV_OVER_CAP",
+        "code": "LTV_OVER_CAP",
         "severity": "HARD"
       }
     ],
@@ -42,21 +37,21 @@
     "experience_tier": "E3",
     "repeat_borrower_override_applied": false,
     "all_pass": false,
-    "commitment": "115000.00",
-    "funded_at_close": "95000.00",
+    "commitment": "130000.00",
+    "funded_at_close": "110000.00",
     "total_cost": "121000.00",
     "rehab_adj": "20000.00",
     "split": {
-      "purchase_portion": "95000.00",
+      "purchase_portion": "110000.00",
       "rehab_portion": "20000.00"
     },
     "metrics": {
       "LTC": "FAIL",
-      "LTV_AS_IS": "FAIL",
-      "LTARV": "FAIL"
+      "LTV": "FAIL"
     },
     "reasons_contain": [
-      "tolerance band"
+      "LTC 107.4% exceeds the 100.0% cap",
+      "LTV 86.7% exceeds the 75.0% cap"
     ],
     "reply_contains": [
       "not a fit for us"

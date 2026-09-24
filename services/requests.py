@@ -8,8 +8,8 @@ advance a deal: it is not intake, so most of it is not on ``deals``. Each option
 resolves the same way - this request, then what intake already stored on the deal, then the
 engine default:
 
-    as_is_value                   request -> deal.as_is_value_team -> LTV on the price (§7.4)
-    estimated_sale_price          request -> deal.estimated_sale_price_team -> no flip (§8.4)
+    estimated_sale_price          request -> deal.estimated_sale_price_team -> no LTV and no
+                                  flip (§7.4, §8.4)
     closing_date                  request -> deal.closing_date -> not ready (§8.1)
     term months / payoff date     request -> deal.term_months -> not ready (§8.1)
     interest_rate                 request -> deal.interest_rate -> not ready (§8.1)
@@ -64,7 +64,6 @@ class UnderwriteRequest(BaseModel):
 
     # Valuation (RicherValues or team override). Optional here because the team may
     # already have entered one on the deal.
-    as_is_value: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     estimated_sale_price: Decimal | None = Field(
         default=None, gt=0, max_digits=14, decimal_places=2
     )
@@ -146,8 +145,7 @@ class TeamOverrides(BaseModel):
         default=None, ge=0, max_digits=14, decimal_places=2
     )
     origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
-    # Valuation and rent (SPEC §6.1); an adapter value still wins over any of these.
-    as_is_value_team: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    # Valuation and rent (SPEC §6.1); an adapter value still wins over either of these.
     estimated_sale_price_team: Decimal | None = Field(
         default=None, gt=0, max_digits=14, decimal_places=2
     )

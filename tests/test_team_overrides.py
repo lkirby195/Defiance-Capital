@@ -27,6 +27,7 @@ from engine.underwrite import underwrite
 from intake.normalize import normalize
 from intake.parsers.team_form import TeamEntryForm, parse_team_form
 from schema.models import (
+    AnalysisStatus,
     Channel,
     CourtFlag,
     CourtRecordInputs,
@@ -39,7 +40,6 @@ from schema.models import (
     Verdict,
 )
 from services import (
-    DealNotReady,
     UnderwriteRequest,
     latest_screen,
     run_screen,
@@ -201,53 +201,37 @@ def test_the_config_thresholds_still_decide_a_team_entered_matter() -> None:
 
 
 def test_the_team_valuation_is_used_when_nothing_else_has_one() -> None:
-    deal = deal_from()
-    valuation = resolve_valuation(deal)
-    assert valuation.as_is_value == D("175000.00")
-    assert valuation.as_is_value_source is ValueSource.TEAM
+    valuation = resolve_valuation(deal_from())
     assert valuation.estimated_sale_price == D("200000.00")
     assert valuation.estimated_sale_price_source is ValueSource.TEAM
 
 
 def test_an_adapter_value_wins_and_the_team_value_is_retained() -> None:
     deal = deal_from()
-    adapters = AdapterValues(as_is_value=D("183750.00"), estimated_sale_price=D("210000.00"))
-    valuation = resolve_valuation(deal, adapters)
-    assert valuation.as_is_value == D("183750.00")
-    assert valuation.as_is_value_source is ValueSource.ADAPTER
-    assert valuation.estimated_sale_price_source is ValueSource.ADAPTER
-    # retained for audit: resolution reads the deal, it never writes back to it
-    assert deal.as_is_value_team == D("175000.00")
-    assert deal.estimated_sale_price_team == D("200000.00")
-
-
-def test_an_adapter_wins_one_half_of_the_valuation_without_touching_the_other() -> None:
-    valuation = resolve_valuation(deal_from(), AdapterValues(estimated_sale_price=D("210000.00")))
-    assert (valuation.as_is_value, valuation.as_is_value_source) == (
-        D("175000.00"),
-        ValueSource.TEAM,
-    )
+    valuation = resolve_valuation(deal, AdapterValues(estimated_sale_price=D("210000.00")))
     assert valuation.estimated_sale_price == D("210000.00")
     assert valuation.estimated_sale_price_source is ValueSource.ADAPTER
+    # retained for audit: resolution reads the deal, it never writes back to it
+    assert deal.estimated_sale_price_team == D("200000.00")
 
 
 def test_an_underwrite_request_outranks_the_deal_but_not_an_adapter() -> None:
     deal = deal_from()
     request = UnderwriteRequest(
-        as_is_value=D("178500.00"),
+        estimated_sale_price=D("205000.00"),
         monthly_rent=D("2400.00"),
         holding_costs_total_usd=D("3600.00"),
     )
     # the team typed a newer number when they advanced the deal
     from_request = resolve_valuation(deal, request=request)
-    assert from_request.as_is_value == D("178500.00")
-    assert from_request.as_is_value_source is ValueSource.TEAM
+    assert from_request.estimated_sale_price == D("205000.00")
+    assert from_request.estimated_sale_price_source is ValueSource.TEAM
     # an adapter still beats it
     with_adapter = resolve_valuation(
-        deal, AdapterValues(as_is_value=D("183750.00")), request=request
+        deal, AdapterValues(estimated_sale_price=D("210000.00")), request=request
     )
-    assert with_adapter.as_is_value == D("183750.00")
-    assert with_adapter.as_is_value_source is ValueSource.ADAPTER
+    assert with_adapter.estimated_sale_price == D("210000.00")
+    assert with_adapter.estimated_sale_price_source is ValueSource.ADAPTER
 
 
 def test_an_adapter_court_record_wins_over_the_team_search() -> None:
@@ -274,13 +258,11 @@ def test_an_adapter_court_record_wins_over_the_team_search() -> None:
 def test_the_same_deal_is_declined_without_the_overrides_and_go_with_them() -> None:
     """The whole point of the overrides: this deal is undecidable without them.
 
-    With no as-is value the LTV falls back to the purchase price (SPEC §7.4), where a
-    120,000 loan on a 150,000 house is 80% - over the 75% cap and inside the band, so Soft
-    rather than Hard. With the team's own 175,000 valuation it is 68.6% and a Go, and the
-    two missing valuations and the unchecked court record are gone with it.
+    With no estimated sale price there is no denominator for LTV at all (SPEC §7.4), so the
+    ratio is NOT_AVAILABLE and the screen goes Conditional on the missing price and the
+    unchecked court record. With the team's own 200,000 price LTV is 60% and a Go.
     """
     bare = deal_from(
-        as_is_value_team=None,
         estimated_sale_price_team=None,
         court_records_status=None,
         court_records_as_of=None,
@@ -288,12 +270,10 @@ def test_the_same_deal_is_declined_without_the_overrides_and_go_with_them() -> N
     without = screen(screen_inputs(bare), CONFIG)
     assert without.verdict is Verdict.CONDITIONAL
     assert {f.code.value for f in without.flags} >= {
-        "AS_IS_VALUE_MISSING",
         "ESTIMATED_SALE_PRICE_MISSING",
         "COURT_RECORDS_NOT_CHECKED",
-        "LTV_AS_IS_OVER_CAP",
     }
-    assert without.sizing.as_is_value_source is None
+    assert without.sizing.estimated_sale_price_source is None
     assert without.components.court_records_source is None
 
     with_overrides = screen(screen_inputs(deal_from()), CONFIG)
@@ -301,7 +281,6 @@ def test_the_same_deal_is_declined_without_the_overrides_and_go_with_them() -> N
     # the only flag left says where the numbers came from, and INFO never moves a verdict
     assert [f.code.value for f in with_overrides.flags] == ["TEAM_SOURCED_VALUES"]
     assert with_overrides.flags[0].severity is Severity.INFO
-    assert with_overrides.sizing.as_is_value_source is ValueSource.TEAM
     assert with_overrides.sizing.estimated_sale_price_source is ValueSource.TEAM
     assert with_overrides.components.court_records_source is ValueSource.TEAM
 
@@ -310,7 +289,7 @@ def test_a_provenance_stamp_travels_onto_the_stored_result() -> None:
     """The verdict alone does not say a Go rested on hand-entered numbers; the result does."""
     result = screen(screen_inputs(deal_from()), CONFIG)
     again = type(result).model_validate_json(result.model_dump_json())
-    assert again.sizing.as_is_value_source is ValueSource.TEAM
+    assert again.sizing.estimated_sale_price_source is ValueSource.TEAM
     assert again.components.court_records_source is ValueSource.TEAM
 
 
@@ -340,7 +319,6 @@ def test_the_overrides_survive_a_round_trip_through_the_deals_row(
 
     reloaded = db_session.get(Deal, deal.id)
     assert reloaded is not None
-    assert reloaded.as_is_value_team == D("175000.00")
     assert reloaded.estimated_sale_price_team == D("200000.00")
     assert reloaded.court_records_status is CourtRecordsStatus.FLAGS
     assert reloaded.court_records_as_of == SEARCHED_ON
@@ -363,9 +341,9 @@ def test_a_stored_screen_records_that_the_numbers_were_the_team_s(
     assert row is not None
     stored = screen_result(row)
     assert stored.verdict is Verdict.GO
-    assert stored.sizing.as_is_value_source is ValueSource.TEAM
+    assert stored.sizing.estimated_sale_price_source is ValueSource.TEAM
     assert stored.components.court_records_source is ValueSource.TEAM
-    assert row.inputs["deal"]["as_is_value_source"] == "TEAM"
+    assert row.inputs["deal"]["estimated_sale_price_source"] == "TEAM"
     assert row.inputs["court_records"]["source"] == "TEAM"
 
 
@@ -373,7 +351,7 @@ def test_a_stored_screen_records_that_the_numbers_were_the_team_s(
 def test_an_underwrite_falls_back_to_the_team_valuation_on_the_deal(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    """The request names no valuation at all; SPEC §8.1 still needs both halves."""
+    """The request names no valuation at all, so the deal's own price carries it."""
     result = run_underwrite(
         db_session,
         deal_with_overrides.id,
@@ -382,7 +360,6 @@ def test_an_underwrite_falls_back_to_the_team_valuation_on_the_deal(
         actor=ACTOR,
     )
     db_session.commit()
-    assert result.sizing.as_is_value_source is ValueSource.TEAM
     assert result.sizing.estimated_sale_price_source is ValueSource.TEAM
     # the flip sells at the team's own price, and the rent they entered carries both DSCRs
     assert result.flip.estimated_sale_price == D("200000.00")
@@ -390,31 +367,30 @@ def test_an_underwrite_falls_back_to_the_team_valuation_on_the_deal(
 
 
 @requires_db
-def test_an_underwrite_with_no_valuation_anywhere_is_named_not_guessed(
+def test_an_underwrite_with_no_valuation_anywhere_is_priced_and_says_what_it_lost(
     db_session: Session, stored_deal: Deal
 ) -> None:
-    """Past the screen gate, a deal the flip needs a price for is named, not guessed.
+    """A valuation is not a gate any more (SPEC §8.4): the flip is what goes missing.
 
-    The as-is value is not on the list any more: it feeds LTV only, and LTV falls back to
-    the purchase price with a flag (SPEC §7.4). The estimated sale price is, because a
-    9-month term on a house infers a FLIP and the flip sells at it (SPEC §8.1, §8.4).
+    The ledger, the economics and the take-back cost do not read a sale price, so refusing
+    the whole run for want of one was a gate on the wrong thing. What the run does instead is
+    say so twice - once for the leverage it could not compute, once for the flip.
     """
     stored_deal.status = Status.SCREENED  # the screen gate is a separate test
-    stored_deal.as_is_value_team = None
     stored_deal.estimated_sale_price_team = None
     db_session.flush()
-    with pytest.raises(DealNotReady) as caught:
-        run_underwrite(
-            db_session,
-            stored_deal.id,
-            UnderwriteRequest(monthly_rent=D("1500.00"), holding_costs_total_usd=D("3000.00")),
-            CONFIG,
-            actor=ACTOR,
-        )
-    assert caught.value.missing == [
-        "estimated_sale_price (the Flip analysis sells at it (SPEC §8.4); "
-        "turn the toggle off to run without)",
-    ]
+    result = run_underwrite(
+        db_session,
+        stored_deal.id,
+        UnderwriteRequest(monthly_rent=D("1500.00"), holding_costs_total_usd=D("3000.00")),
+        CONFIG,
+        actor=ACTOR,
+    )
+    db_session.commit()
+    codes = {flag.code.value for flag in result.flags}
+    assert {"ESTIMATED_SALE_PRICE_MISSING", "SALE_PRICE_MISSING"} <= codes
+    assert result.flip.status is AnalysisStatus.NOT_EVALUATED
+    assert result.return_overview.irr is not None
 
 
 @requires_db

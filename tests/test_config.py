@@ -35,7 +35,10 @@ def test_placeholder_yaml_loads() -> None:
     assert cfg.take_back.legal_costs_usd == Decimal("5000.00")
     assert cfg.take_back.dscr_floor == Decimal("1.00")
     assert cfg.states.served == [State.OK, State.CO]
-    assert cfg.leverage_caps[Product.SPLIT_PRINCIPAL][Tranche.T5][ExperienceTier.E3].ltarv <= 1
+    cell = cfg.leverage_caps[Product.SPLIT_PRINCIPAL][Tranche.T5][ExperienceTier.E3]
+    # SPEC §7.4: two caps and no more, and the LTC placeholder is no cap at all yet.
+    assert cell.ltc == Decimal("1.00") and cell.ltv <= 1
+    assert not hasattr(cell, "ltarv") and not hasattr(cell, "ltv_as_is")
 
 
 def test_yaml_numbers_are_exact_decimals() -> None:
@@ -273,6 +276,19 @@ def test_retired_screen_closing_key_is_rejected(data: dict[str, Any]) -> None:
         Config.from_dict(data)
 
 
+def test_the_caps_grid_carries_two_caps_and_refuses_the_retired_pair(
+    data: dict[str, Any],
+) -> None:
+    """LTARV is gone and the as-is LTV went with it (SPEC §7.4); a stale yaml is refused."""
+    cell = data["leverage_caps"]["NO_DRAW"]["T1"]["E0"]
+    assert set(cell) == {"ltc", "ltv"}
+    for key in ("ltarv", "ltv_as_is"):
+        stale = copy.deepcopy(data)
+        stale["leverage_caps"]["NO_DRAW"]["T1"]["E0"][key] = Decimal("0.70")
+        with pytest.raises(ConfigError, match=key):
+            Config.from_dict(stale)
+
+
 def test_one_holding_cost_replaced_the_three_itemized_opex_lines(data: dict[str, Any]) -> None:
     """Taxes, insurance and utilities are one ``holding_costs_total_usd`` input now, so the
     percentages that stood in for them are gone from config entirely (SPEC §8.1)."""
@@ -297,7 +313,7 @@ def test_underwrite_severities_cover_the_graded_codes_only(data: dict[str, Any])
 
 def test_config_cannot_grade_an_informational_underwrite_flag(data: dict[str, Any]) -> None:
     """NO_REHAB_PERIOD and MONTHLY_RENT_MISSING are fixed Info in code (SPEC §8.8)."""
-    for code in ("NO_REHAB_PERIOD", "MONTHLY_RENT_MISSING"):
+    for code in ("NO_REHAB_PERIOD", "MONTHLY_RENT_MISSING", "SALE_PRICE_MISSING"):
         stale = copy.deepcopy(data)
         stale["flags"]["underwrite_severities"][code] = "HARD"
         with pytest.raises(ConfigError, match=code):

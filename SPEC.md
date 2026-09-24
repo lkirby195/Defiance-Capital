@@ -1,6 +1,11 @@
-# GLENWOOD Underwriting Platform — SPEC v0.3
+# GLENWOOD Underwriting Platform — SPEC v0.5
 
-Status: v0.3 — the underwrite calc layer and its inputs were replaced on 2026-09-23. §8 is now a dated monthly cash-flow ledger with a true XIRR, plus three analyses — Flip, Rental and Take-Back. Gone with the previous §8: the term-level average-outstanding model, the rate solve and target IRR, the sensitivity grid, the minimum-interest and extension arithmetic, the DSCR takeout, and the REO liquidation downside. Intake, the review queue, persistence, the audit trail, auth and the deploy are unchanged; the screen keeps its structure and changes only its LTC denominator. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.5**, 2026-09-23, engine `1.1.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.5** is one change to the leverage tests and a pass over the §8.1 form: **LTV is the commitment over the estimated sale price and is the only value ratio** — LTARV is gone, the as-is value is gone with it, and there is no fallback denominator (§7.4, §8.2). The underwrite runs without a sale price (§8.4). The §8.1 Overview is who the borrower is and the loan's own terms moved into Deal Economics; the team form asks for the term rather than the bucket, drops the county and the separate guarantor name, and takes its numbers masked — `$425,000`, `12%`, `555-123-4567` — with the four config-defaulted economics pre-filled and tagged.
+
+**v0.4's successor, the §8 rewrite** (engine `1.0.0`), is the release under it: the underwrite calc layer and its inputs were replaced on 2026-09-23. §8 is now a dated monthly cash-flow ledger with a true XIRR, plus three analyses — Flip, Rental and Take-Back. Gone with the previous §8: the term-level average-outstanding model, the rate solve and target IRR, the sensitivity grid, the minimum-interest and extension arithmetic, the DSCR takeout, and the REO liquidation downside. Intake, the review queue, persistence, the audit trail, auth and the deploy are unchanged; the screen keeps its structure and changes only its LTC denominator. Its own header said v0.3, going backwards by mistake; the number above is the correction.
+
 Companion file: `CLAUDE.md` (conventions for Claude Code).
 
 The engine math in §8 is the monthly ledger: the lender's dated cash flows from closing and their XIRR.
@@ -85,6 +90,12 @@ gates nothing and flags nothing. All it does is set the **default** state of the
 analysis toggles (§8.1): a resale exit turns the Flip analysis on, a hold exit turns the
 Rental analysis on, and the Take-Back analysis runs on every deal whatever the exit says.
 
+Each product's row above is shown as a one-line definition under the Loan Type box and beside
+the chosen product on the deal page, so a person picking one is told what they are picking.
+Every enum a person reads — the loan type, the asset type, the loan purpose and the exit — is
+rendered in title case with spaces (`SPLIT_DRAW` is "Split Draw") wherever it appears
+(`schema/labels.py`); the stored value does not change.
+
 ---
 
 ## 4. Intake
@@ -98,11 +109,20 @@ Five things. Everything else is derived or requested later, only if the deal cle
 | 1 | Property | Address, or a listing/auction link (address is extracted from the link) |
 | 2 | Purchase price | Dollars |
 | 3 | Rehab costs | Dollars; 0 allowed |
-| 4 | Loan requested | Dollars. Borrower-driven — the engine derives leverage from this |
-| 5 | How long do you need the loan? | Buckets: 3 / 6 / 9 / 12 / 12+ months. The borrower's own answer; it seeds `term_months`, and the team's own term or payoff date is what the deal is priced on (§8.1) |
-| 6 | Who you are | Name, entity (if any), phone; **credit range** (pick one of the five tranches, §7.1); **real estate experience** (deals completed in last 3 years: 0 / 1–2 / 3–5 / 6+); **repeat borrower** yes/no |
+| 4 | Loan Amount | Dollars. Borrower-driven — the engine derives leverage from this |
+| 5 | How long do you need the loan? | The term. The borrower channels ask it as a bucket (3 / 6 / 9 / 12 / 12+ months) which seeds `term_months`; the team form asks for the term in months or the payoff date directly (§8.1), because a person with the whole deal in front of them knows it |
+| 6 | Who you are | Guarantor name, entity (if any), phone (optional); **credit range** (pick one of the five tranches, §7.1); **real estate experience** (deals completed in last 3 years: 0 / 1–2 / 3–5 / 6+); **repeat borrower** yes/no |
 
 (Numbered as six rows because "who you are" is one question with sub-fields.)
+
+The phone is the borrower match key when there is one (§5) and is not itself required: a deal
+that arrives by email has a name and no number, and refusing to screen it for want of one
+would be a gate on the wrong thing. It is stored as digits and shown and typed as
+`###-###-####`.
+
+There is one name on a deal and it is the guarantor's. The separate `guarantor_name` the deal
+used to carry beside the borrower's is gone: two name columns, one optional and neither saying
+which was which, is what that arrangement actually was.
 
 Self-reported credit and experience are used for the screen only and are verified in underwrite.
 
@@ -137,21 +157,21 @@ IntakeRecord
   id, created_at, channel: SMS | LINK | CONTRACT | TEAM
   raw_payload                    # original message / file ref / form data
   borrower:
-    name, phone, email?, entity_name?
+    name, phone?, email?, entity_name?     # name is the guarantor's; phone is digits (§4.1)
     credit_range?: T1..T5        # self-reported; the screen needs one and names it when absent
     experience_bucket: 0 | 1_2 | 3_5 | 6_PLUS   # self-reported
     repeat_borrower: bool
   property:
     address_raw, address_normalized?, listing_url?
-    city?, county?, state: OK | CO | OTHER
+    city?, county?, state: OK | CO | OTHER     # county comes from enrichment; no box asks for it
     units?, structures?, sf?, year_built?, year_renovated?
     beds?, baths?, garage_spaces?                        # descriptive; no math reads them
   deal:
-    guarantor_name?
     loan_purpose?: PURCHASE | REFINANCE | CASH_OUT | CONSTRUCTION
-    purchase_price, rehab_costs, loan_requested
-    loan_purchase_portion?, loan_rehab_portion?          # §8.2, split products
-    term_bucket: 3 | 6 | 9 | 12 | 12_PLUS                # the borrower's answer; it seeds term_months
+    purchase_price, rehab_costs, loan_requested          # "Loan Amount" wherever it is shown
+    loan_purchase_portion?, loan_rehab_portion?          # §8.2, split products; the first is
+                                                         #   "Advance at Closing"
+    term_bucket?: 3 | 6 | 9 | 12 | 12_PLUS               # borrower channels only; it seeds term_months
     term_months?, payoff_date?   # enter either; the other derives from closing_date (§8.1)
     closing_date?                # month 0 of the ledger (§8.3)
     interest_rate?               # annual; required to underwrite (§8.1)
@@ -161,7 +181,7 @@ IntakeRecord
     asset_type?: SFR | UNITS_2_4 | UNITS_5_PLUS | OTHER   # drives the §3 exit inference
     stated_exit?: FLIP | HOLD | WHOLETAIL | UNKNOWN
   team overrides (§6):           # stand-ins for enrichment, entered by hand
-    as_is_value_team?, estimated_sale_price_team?, monthly_rent?
+    estimated_sale_price_team?, monthly_rent?
     court_records_status?: NOT_CHECKED | CLEAN | FLAGS
     court_records_as_of?         # the day the team searched; required for CLEAN and FLAGS
     court_records_team: [..]     # one typed matter per entry, §7.2
@@ -229,8 +249,16 @@ copy of the XIRR for querying; the JSONB carries full precision.
 A result shape is part of what `engine_version` records. The v0.3 §8 has no `UnderwriteResult`
 in common with the one before it — no solved rate, no grid, no takeout, no downside — and no
 ledger could be reconstructed from a row that never had one, so migration `0010` deletes
-every `screens` and `underwrites` row written before `1.0.0`. The deals themselves keep their
-intake, their overrides, their status and their audit trail, and are simply re-run.
+every `screens` and `underwrites` row written before `1.0.0`. Migration `0011` does the same
+for `1.1.0`, for the same reason and on a smaller change: `SizingResult` has lost `ltv_basis`
+and `as_is_value_source`, `MetricCheck` has lost `basis`, and `LeverageMetric` no longer has
+`LTV_AS_IS` or `LTARV`, so a stored row carrying any of them cannot be rebuilt into a model
+that forbids extras. The deals themselves keep their intake, their overrides, their status and
+their audit trail, and are simply re-run.
+
+`0011` also drops `deals.as_is_value_team` and `deals.guarantor_name` (§7.4, §8.1) and makes
+`borrowers.phone` nullable, rewriting every NANP number already in it from `+15551234567` to
+`5551234567` (§4.1).
 
 ---
 
@@ -247,8 +275,8 @@ Each adapter implements a common `Protocol` (see `CLAUDE.md`), returns typed res
 | PACER | Bankruptcy (both states), federal civil | PACER Case Locator; paid per query | Screen | TBD |
 | PropStream | Property detail, owner history, **deed history under borrower entities** (experience verification), lien lookup | No public API known; CSV export or manual in v1 | Screen | Recon |
 | Credco | Tri-merge credit report | API or PDF, depends on account | Underwrite only, requires signed authorization | Recon |
-| RicherValues | Paid valuation (as-is value, estimated sale price) | API or PDF, depends on account | Underwrite only | Recon |
-| Property data API (ATTOM / RentCast / similar) | Programmatic as-is value, rent estimate, comps when PropStream is manual | API, paid | Both | Optional |
+| RicherValues | Paid valuation (the estimated sale price) | API or PDF, depends on account | Underwrite only | Recon |
+| Property data API (ATTOM / RentCast / similar) | Programmatic valuation, rent estimate, comps when PropStream is manual | API, paid | Both | Optional |
 | LinkedPhone | Inbound SMS/call capture | Webhook or polling | Intake | Recon |
 
 Experience verification: count buy→sell pairs in the last 36 months across the borrower's known entities from deed history. Self-reported bucket is displayed next to the verified count; mismatch is a flag, not a fail.
@@ -256,7 +284,7 @@ Experience verification: count buy→sell pairs in the last 36 months across the
 ### 6.1 Team overrides (the interim source)
 
 Until an adapter exists for a value, the team is the source. The intake form takes a
-hand-entered `as_is_value_team`, `estimated_sale_price_team` and `monthly_rent`, and a
+hand-entered `estimated_sale_price_team` and `monthly_rent`, and a
 `court_records_status` of
 `NOT_CHECKED` / `CLEAN` / `FLAGS` with one typed matter per entry (each carrying the facts
 §7.2 tests that code on: the date for a lookback code, the amount for a threshold code, the
@@ -274,11 +302,10 @@ alone does not say which it is.
 record dated the day the team searched.
 
 Both the screen and the underwrite raise `TEAM_SOURCED_VALUES` (Info, fixed in code) when
-any value they ran on carries source `TEAM`, and the message names which — as-is value,
-estimated sale price,
-court records, or some combination. It never moves a verdict; it is there so the reason
+any value they ran on carries source `TEAM`, and the message names which — the estimated sale
+price, the court records, or both. It never moves a verdict; it is there so the reason
 survives into the credit memo (§9.2), where a reader is deciding how much weight to put on
-a Go. All three can be named at either stage: the underwrite re-runs the §7.2 tests on the
+a Go. Both can be named at either stage: the underwrite re-runs the §7.2 tests on the
 record in force at underwrite time (§8.1), so a hand search reaches it too — named as the
 team's only where no adapter has superseded it by then.
 
@@ -333,20 +360,33 @@ Repeat GLENWOOD borrower with clean payoff history is a positive override (confi
 rehab_adj    = rehab_costs × (1 + contingency_pct)        # input, config default 0.00
 total_cost   = purchase_price + rehab_adj + closing_costs_usd   # input, config default 1,000
 LTC          = loan_requested / total_cost
-LTV_as_is    = loan_requested / as_is_value               # as_is from enrichment; if unavailable, purchase_price with a flag
-LTARV        = loan_requested / estimated_sale_price      # if unavailable, flagged and the screen goes Conditional
+LTV          = loan_requested / estimated_sale_price      # if unavailable: NOT_AVAILABLE, flagged,
+                                                          #   and the screen goes Conditional
 ```
+
+**Two ratios, and one value in the second.** LTARV is gone and the as-is value is gone with
+it. They were two opinions of the same thing, and the price the deal exits at is the one the
+lender is lending against; a second ratio against a second valuation added a number to
+maintain and no test the first did not already make.
+
+**There is no fallback denominator.** A purchase price is what the borrower agreed to pay, not
+what the property is worth after the work, and standing it in reported a leverage figure
+nobody had measured. Without a sale price, LTV is `NOT_AVAILABLE`,
+`ESTIMATED_SALE_PRICE_MISSING` (Soft) is raised and the screen goes Conditional — which is
+what it did before, under a different flag.
 
 There is no borrower buy-side closing percentage any more: the LTC denominator carries the
 lender's own `closing_costs_usd` (§8.1), which is an input with a config default rather than
 a percentage of the price.
 
-Compare to caps in `config/glenwood.yaml`, keyed by product × credit tranche × experience tier. Placeholder grid ships with obvious dummy values; GLENWOOD fills.
+Compare to caps in `config/glenwood.yaml`, keyed by product × credit tranche × experience tier.
+Each cell is `ltc` and `ltv`. Placeholder grid ships with obvious dummy values — the LTC
+placeholder is **100%**, which is no cap at all until GLENWOOD fills it; GLENWOOD fills.
 
 ### 7.5 Verdict
 
 - **Decline**: any Hard flag, or credit below floor tranche, or any leverage metric above cap by more than the tolerance band (config, placeholder 5 pts)
-- **Conditional**: Soft flags, leverage within tolerance band above cap, missing estimated sale price / as-is value, self-reported vs. verified mismatch, state = OTHER
+- **Conditional**: Soft flags, leverage within tolerance band above cap, missing estimated sale price, self-reported vs. verified mismatch, state = OTHER
 - **Go**: none of the above
 
 Every verdict carries a list of `reasons[]` in plain language for the team and a `suggested_reply` draft for the borrower (never auto-sent).
@@ -365,27 +405,21 @@ Three analyses sit beside the ledger, each asking a different question about the
 
 Grouped and labelled as the team-entry form and the deal page's override block group them.
 
-**Overview**
+**Overview** — who the borrower is, and nothing else. In this order, which is the order the
+form asks and the deal page shows:
 
 | Input | Notes |
 |---|---|
-| `borrower_name` | |
-| `guarantor_name` | Optional |
+| `entity_name` | Optional. The LLC the deal is being done in |
+| `guarantor_name` | The one name a deal carries. Stored on `borrowers.name`; the box used to be captioned "Borrower Name" and the separate guarantor field is gone (§4.1) |
+| `phone` | Optional. The borrower match key when there is one (§5). Stored as digits, shown and typed `###-###-####` |
+| `email` | Optional |
 | `credit_range` | Optional on the form. One of the five tranches (§7.1), shown with its FICO range (`schema/labels.py`). The screen needs one for the floor check and the caps lookup and names it by hand when it is absent |
-| `loan_purpose` | `PURCHASE` \| `REFINANCE` \| `CASH_OUT` \| `CONSTRUCTION`, team-selected. Recorded and reported; it feeds no math |
-| `loan_type` | The §3 product, labelled "Loan Type" wherever a person reads it |
-| `closing_date` | Month 0 of the ledger. **Required to underwrite** |
-| `term_months` / `payoff_date` | Enter either and the other derives. **Required to underwrite** |
+| `experience_bucket` | Deals in last 36 months: 0 / 1–2 / 3–5 / 6+ |
+| `repeat_borrower` | Yes / no |
 
-`payoff_date = closing_date + term_months` calendar months, clamped to the end of a short
-month (31 January + 1 month is 28 February). Entering a payoff date derives the term the
-same way, and a date that is not exactly a whole number of months after closing is refused,
-naming the two nearest dates that are — the ledger's rows are months, so a term of "5½
-months" is a number the engine cannot price.
-
-`term_bucket` (§4.1) is the borrower's own answer to "how long do you need the loan?" and
-still seeds `term_months` at intake. It is not the priced term: the team's `term_months` /
-`payoff_date` is, and it is allowed to differ from the bucket the borrower picked.
+The loan's own terms are not here. Its purpose, its type, its closing date and its term are
+Deal Economics, beside the money they describe.
 
 **Property Overview**
 
@@ -397,26 +431,56 @@ Descriptive: captured, stored on `properties`, and reported. None of them feeds 
 
 | Input | Default | Notes |
 |---|---|---|
+| `loan_purpose` | — | `PURCHASE` \| `REFINANCE` \| `CASH_OUT` \| `CONSTRUCTION`, team-selected. Recorded and reported; it feeds no math |
+| `loan_type` | — | The §3 product, labelled "Loan Type" wherever a person reads it, with that product's §3 one-liner under the box |
+| `closing_date` | — | Month 0 of the ledger. **Required to underwrite** |
+| `term_months` / `payoff_date` | — | Enter either and the other derives; enter both and they have to agree. **Required to underwrite** |
 | `purchase_price` | — | |
 | `rehab_costs` | — | 0 allowed |
+| `loan_requested` | — | Labelled **Loan Amount** wherever it is shown |
+| `loan_purchase_portion`, `loan_rehab_portion` | — | §8.2; `commitment` is their sum. The first is labelled **Advance at Closing**, the second **Rehab Portion**. The rehab portion is 0 on `NO_DRAW` and `WHOLETAIL` |
+| `interest_rate` | — | Annual. **Required to underwrite** |
 | `contingency_pct` | `fees.contingency_default_pct` (0.00) | `rehab_adj = rehab_costs × (1 + contingency_pct)` |
 | `closing_costs_usd` | `fees.closing_costs_default_usd` (1,000) | The lender's closing costs. It replaces the 3%-of-price borrower closing assumption, which is gone |
 | `holding_costs_total_usd` | `fees.holding_costs_default_pct_of_cost` × (`purchase_price` + `rehab_costs`) (2%) | **Total over the hold**; the monthly figure is `holding_costs_total_usd / term_months` |
 | `origination_fee_pct` | `fees.origination_default_pct` (2.0%) | Half at close, half at payoff, both on the commitment |
-| `interest_rate` | — | Annual. **Required to underwrite** |
-| `loan_purchase_portion`, `loan_rehab_portion` | — | §8.2; `commitment` is their sum. The rehab portion is 0 on `NO_DRAW` and `WHOLETAIL` |
+
+`payoff_date = closing_date + term_months` calendar months, clamped to the end of a short
+month (31 January + 1 month is 28 February). Entering a payoff date derives the term the same
+way, and a date that is not exactly a whole number of months after closing is refused, naming
+the two nearest dates that are — the ledger's rows are months, so a term of "5½ months" is a
+number the engine cannot price. A term and a payoff date that disagree are refused too, naming
+both: that is a person having edited one box and left the other behind.
+
+`term_bucket` (§4.1) is the borrower's own answer to "how long do you need the loan?" and
+still seeds `term_months` on a borrower-channel intake. **The team form does not ask it**: a
+person with the deal in front of them knows the term, and a bucket beside it would be a second
+number to keep in step with the first. It is not the priced term wherever it exists: the
+team's `term_months` / `payoff_date` is, and it is allowed to differ from the bucket.
 
 The lender funds `rehab_adj` through the rehab portion, and the rehab portion is capped at
 it (§8.2): the lender does not hold back more than the contingency-adjusted rehab cost could
 ever draw.
 
+**What a person types is not what the deal stores.** On the team form and the deal page's
+override block, money is typed and shown `$425,000`, a percent `12%` (the deal carries the
+fraction `0.12`), and a phone `555-123-4567` (the deal carries the digits). The four economics
+with a config default — the contingency, the closing costs, the holding costs and the
+origination fee — are **pre-filled with it, tagged "default", and editable**, with a reset
+link beside each. A box still holding its default stores nothing: the column stays null, the
+engine reads config, and the readiness checklist still says `DEFAULT` rather than claiming
+somebody chose it. Small dependency-free client-side script formats what is typed; the server
+parses either shape, so a browser that runs none of it still posts a deal that saves.
+
 **Valuation and rent**
 
 | Input | Notes |
 |---|---|
-| `estimated_sale_price` | The ARV. LTARV is computed on it (§7.4, §8.2) and the Flip analysis sells at it. **Required when the Flip analysis is on** |
-| `as_is_value` | Optional. It feeds LTV only, with the existing purchase-price fallback and the existing `AS_IS_VALUE_MISSING` flag (§7.4) |
+| `estimated_sale_price` | The ARV. LTV is computed on it (§7.4, §8.2) and the Flip analysis sells at it. Optional: without one, LTV is `NOT_AVAILABLE` with `ESTIMATED_SALE_PRICE_MISSING` (Soft) and the Flip analysis is `NOT_EVALUATED` with `SALE_PRICE_MISSING` (Info) — the run itself goes ahead |
 | `monthly_rent` | Optional. Rental and Take-Back are computed on it; without it both report `NOT_EVALUATED` and the underwrite raises `MONTHLY_RENT_MISSING` (Info) rather than running either on a zero |
+
+The as-is value is gone from the engine, from the form and from `deals` (migration `0011`).
+With one value ratio there is nothing left for it to feed.
 
 **Analysis toggles**
 
@@ -426,7 +490,10 @@ ever draw.
 | `rental_analysis` | The §3 exit is `HOLD`, or a `monthly_rent` has been entered |
 | Take-Back | Always. Not a toggle |
 
-A toggle the team sets by hand wins over its default, in either direction.
+A toggle the team sets by hand wins over its default, in either direction. Both are a visible
+three-state control — Default / On / Off — on the team form and on the deal page's override
+block, and each analysis panel shows the state it ran under. Take-Back has no toggle anywhere,
+because it has none at all.
 
 Also from intake and enrichment, unchanged: `asset_type` and the team-stated exit (the §3
 inference), the verified `credit_score` and deal count, and `court_records` — the §7.2 court
@@ -442,13 +509,12 @@ Unchanged from §7.4 in structure, on verified values, with one changed denomina
 rehab_adj  = rehab_costs × (1 + contingency_pct)
 total_cost = purchase_price + rehab_adj + closing_costs_usd        # was + 3% of the price
 LTC        = commitment / total_cost
-LTV        = commitment / as_is_value      # or / purchase_price, basis PURCHASE_PRICE
-LTARV      = commitment / estimated_sale_price
+LTV        = commitment / estimated_sale_price      # NOT_AVAILABLE with no price (§7.4)
 ```
 
-The two split products carry an explicit `loan_purchase_portion` and `loan_rehab_portion`, entered by the team and adding up to `loan_requested` (§8.1). Nothing is derived: there is no default purchase portion and no override of one.
+The two split products carry an explicit `loan_purchase_portion` ("Advance at Closing") and `loan_rehab_portion` ("Rehab Portion"), entered by the team and adding up to the Loan Amount (§8.1). Nothing is derived: there is no default advance at closing and no override of one.
 
-- `NO_DRAW`, `WHOLETAIL`: `commitment = loan_requested`; no split; LTV on as-is
+- `NO_DRAW`, `WHOLETAIL`: `commitment = loan_requested`; no split
 - `SPLIT_DRAW`: `commitment = loan_requested`; `holdback = min(rehab_adj, loan_rehab_portion)`; `funded_at_close = commitment − holdback`
 - `SPLIT_PRINCIPAL`: `principal_note = loan_purchase_portion`; `tranche_a = min(rehab_adj, loan_rehab_portion)`; `commitment = principal_note + tranche_a`
 - Either split product with **no split entered**: `commitment = loan_requested` and no split is reported. That is a borrower-channel intake nobody has divided yet; the screen runs, the underwrite refuses (§8.1)
@@ -525,7 +591,7 @@ purchase portion makes unreachable in practice.
 
 ### 8.4 Flip analysis
 
-On by default for a resale exit (§8.1). It needs the `estimated_sale_price`, which is why the readiness checklist requires one while the toggle is on.
+On by default for a resale exit (§8.1). It sells at the `estimated_sale_price`, and without one it is `NOT_EVALUATED` — the whole cost stack is still reported, the four figures the sale price feeds are `null`, and `SALE_PRICE_MISSING` (Info, fixed in code, §8.8) says so. The run itself goes ahead: the ledger, the economics and the Take-Back analysis do not read a sale price, and refusing the whole underwrite for a figure three quarters of it does not need was a gate on the wrong thing.
 
 ```
 broker_costs    = estimated_sale_price × broker_selling_pct          # config, 4%
@@ -545,7 +611,7 @@ profit_yield    = net_profit / total_costs
 
 `profit_yield` is a **project margin, not an annualized return**, and is labelled "Yield (Profit / Costs)" everywhere it is shown so nobody reads it as an IRR. The broker's cut is subtracted from the sale price and is deliberately not in `total_costs`: it is a cost of selling, not a cost of the project.
 
-No floor and no flag. The Flip analysis is information.
+No floor and no pass/fail flag. The Flip analysis is information; `SALE_PRICE_MISSING` reports what was not computed, not something that fell short.
 
 ### 8.5 Rental analysis
 
@@ -591,7 +657,7 @@ UnderwriteResult
   engine_version, config_hash
   loan_purpose?, closing_date, payoff_date, term_months, rehab_months
   exit: {type, exit_source}                                    # §3, informational
-  sizing: {LTC, LTV, LTARV, caps, pass/fail each, commitment, split}   # §8.2
+  sizing: {LTC, LTV, caps, pass/fail each, commitment, split}   # §8.2
   economics: {interest_rate, contingency_pct, rehab_adj, closing_costs,
               holding_costs_total, holding_costs_monthly, origination_fee_pct,
               origination_at_close, origination_at_payoff, commitment, funded_at_close}
@@ -613,7 +679,7 @@ All three analyses are always present, and `status` says what happened to each:
 |---|---|
 | `EVALUATED` | it ran; every figure is there |
 | `OFF` | the toggle is off, so it was not asked for (Flip and Rental only) |
-| `NOT_EVALUATED` | the input it runs on is missing - the monthly rent, or the estimated sale price |
+| `NOT_EVALUATED` | the input it runs on is missing - the monthly rent, or the estimated sale price. The flag that names it is `MONTHLY_RENT_MISSING` or `SALE_PRICE_MISSING` (§8.8) |
 
 An analysis that did not run still reports everything that does not depend on the missing
 input: the Flip's whole cost stack, the Rental's debt service, the Take-Back's cost. What the
@@ -621,13 +687,14 @@ input feeds is `null`, `passed` included - a DSCR nobody could compute has not f
 
 ### 8.8 Underwrite flags
 
-The §7.2 court codes and the credit, experience and leverage codes the screen raises appear here too, on the underwrite's own inputs and with the same severities. The four below are the underwrite's own: the two DSCR codes take their severity from config; the other two are fixed `Info` in code and config must not grade them.
+The §7.2 court codes and the credit, experience and leverage codes the screen raises appear here too, on the underwrite's own inputs and with the same severities. The five below are the underwrite's own: the two DSCR codes take their severity from config; the other three are fixed `Info` in code and config must not grade them.
 
 | Code | Severity | Raised when |
 |---|---|---|
 | `DSCR_BELOW_FLOOR` | config | §8.5, the Rental DSCR is below `rental.dscr_floor` |
 | `TAKE_BACK_DSCR_BELOW_FLOOR` | config | §8.6, the Take-Back DSCR is below `take_back.dscr_floor` |
 | `MONTHLY_RENT_MISSING` | Info (fixed) | §8.5, §8.6: no `monthly_rent` on the deal, so neither DSCR is tested |
+| `SALE_PRICE_MISSING` | Info (fixed) | §8.4: the Flip analysis is on and there is no `estimated_sale_price`, so it is `NOT_EVALUATED`. Not raised when the toggle is off — that is a decision, not a gap — and the screen's own `ESTIMATED_SALE_PRICE_MISSING` (Soft) reports the same absence on the leverage side either way |
 | `NO_REHAB_PERIOD` | Info (fixed) | §8.3: a split product whose term leaves `rehab_months = 0`, so the rehab portion is advanced at close instead of drawn |
 
 ---
@@ -647,7 +714,7 @@ screen summary keeps its structure unchanged (§7).
 One page in the review queue: intake facts, enrichment hits, score components, verdict, reasons, suggested reply, missing fields.
 
 ### 9.2 Readiness checklist
-Above the Run underwrite button, one row per §8.1 input with the value in force, where it came from (`ADAPTER` / `TEAM` / `DEFAULT` / `MISSING`), whether the run needs it, and what the run does without it. The required set is `interest_rate`, `closing_date`, the term (`term_months` or `payoff_date`), the loan split on a split product, and `estimated_sale_price` while the Flip toggle is on. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `as_is_value` is optional too and falls back to the purchase price for LTV. It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
+Above the Run underwrite button, one row per §8.1 input with the value in force, where it came from (`ADAPTER` / `TEAM` / `DEFAULT` / `MISSING`), whether the run needs it, and what the run does without it. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months` or `payoff_date`), and the loan split on a split product. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
 
 ### 9.3 Credit memo
 Generated from `UnderwriteResult` into GLENWOOD's template (to be supplied; docx). Sections: borrower, property, deal structure, sizing vs caps, the return overview (ledger and IRR), flip, rental, take-back, flags with pass/fail, recommendation. Every flag shows the threshold it was tested against.
@@ -681,7 +748,7 @@ so the math can be checked by hand against a spreadsheet; neither is shown to a 
 `config/glenwood.yaml` — everything a GLENWOOD person might want to change lives here, nothing in code. The loader rejects a missing key, an **unknown key**, or an out-of-range value at startup, so a key this list does not name is a key the service will not start with.
 
 - credit floor tranche; tranche cutoffs
-- leverage caps: product × tranche × experience tier (placeholder grid)
+- leverage caps: product × tranche × experience tier (placeholder grid). Each cell is `ltc` and `ltv` — two caps, since LTARV and the as-is LTV are gone (§7.4). The LTC placeholder is **100%**: no cap at all until GLENWOOD fills it
 - screen tolerance band; court and filing flag severities, lookbacks, thresholds
 - experience: repeat-borrower minimum tier
 - fees, each the **default for a §8.1 input** except the broker's:
@@ -704,7 +771,8 @@ management / maintenance), `downside` (REO haircut, foreclosure cost, foreclosur
 state, cover floor), `fees.origination_at_close_pct` / `origination_at_payoff_pct` (the split
 is 50/50 in code), `fees.extension_default_pct`, `fees.selling_cost_pct` (now
 `broker_selling_pct`), `fees.borrower_closing_pct_of_price` (now the `closing_costs_usd`
-input), and `draws.draw_avg_utilization` (the ledger makes it unnecessary).
+input), `draws.draw_avg_utilization` (the ledger makes it unnecessary), and — with v0.5 —
+`leverage_caps.*.ltarv` and `leverage_caps.*.ltv_as_is`, which one `ltv` replaces (§7.4).
 
 Config is versioned; each `screens`/`underwrites` row records the config hash used.
 
@@ -741,7 +809,9 @@ Config is versioned; each `screens`/`underwrites` row records the config hash us
 | 7 | Back-test on 8–10 historical deals; calibrate the config placeholders against them | 2, fixtures |
 
 Phase 5 replaced the underwrite calc layer and its inputs with the §8 above (engine `1.0.0`).
-The credit memo and LOI generation it also names wait on GLENWOOD's templates (§13).
+Phase 5a (engine `1.1.0`) followed it with the single value ratio (§7.4), the underwrite that
+runs without a sale price (§8.4), and the §8.1 form as it now stands. The credit memo and LOI
+generation Phase 5 also names wait on GLENWOOD's templates (§13).
 
 Phase 4's review queue is built: sign-in and `users`, the queue list, the deal page, the team
 actions, and the team-entry form. Its SMS ingestion and contract OCR wait on the LinkedPhone
@@ -762,7 +832,8 @@ recorded the move into that status.
 - PropStream export path
 - Credco / RicherValues API vs PDF
 - Colorado court-record source decision (CoCourts vs manual)
-- GLENWOOD leverage/pricing caps (placeholder grid to be filled)
+- GLENWOOD leverage/pricing caps (placeholder grid to be filled; the LTC cell is 100%, which
+  is no cap at all, and the LTV cell is a 75% placeholder)
 - LOI and credit memo templates
 - Historical deals for fixtures
 - The config placeholders the mechanics walkthrough left open: the contingency, holding-cost

@@ -124,8 +124,8 @@ def test_deal_info_holds_the_same_line() -> None:
 def test_the_form_requires_both_portions_on_a_split_product(client: TestClient) -> None:
     response = form_post(client, payload(loan_purchase_portion=None, loan_rehab_portion=None))
     assert response.status_code == 422
-    assert "Purchase portion is required on a SPLIT_DRAW loan." in response.text
-    assert "Rehab portion is required on a SPLIT_DRAW loan." in response.text
+    assert "Advance at Closing is required on a Split Draw loan." in response.text
+    assert "Rehab Portion is required on a Split Draw loan." in response.text
 
 
 def test_the_form_takes_a_split_that_adds_up(client: TestClient, db_session: Session) -> None:
@@ -237,7 +237,7 @@ def test_the_deal_page_shows_the_split(client: TestClient, db_session: Session) 
     deal = store_deal(db_session, split_entry())
     body = client.get(f"/queue/deals/{deal.id}").text
     assert "Loan split" in body
-    assert "$147,000.00 purchase" in body
+    assert "$147,000.00 advance at closing" in body
 
 
 def test_the_sizing_table_names_the_portions(client: TestClient, db_session: Session) -> None:

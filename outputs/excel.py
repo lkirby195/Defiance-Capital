@@ -31,15 +31,16 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from config.config import Config
+from schema.labels import enum_label
 from schema.models import (
     SPLIT_PRODUCTS,
     AnalysisStatus,
+    LeverageMetric,
     Product,
     ScreenInputs,
     SizingResult,
     UnderwriteInputs,
     UnderwriteResult,
-    ValueBasis,
     ValueSource,
 )
 
@@ -52,6 +53,13 @@ DATE = "yyyy-mm-dd"
 
 HEAD = Font(bold=True)
 TITLE = Font(bold=True, size=13)
+
+# What each ratio divides by (SPEC §7.4). Written out beside the sizing table so a reader
+# checking the arithmetic by hand knows which cell to divide the commitment into.
+_DENOMINATOR: dict[LeverageMetric, str] = {
+    LeverageMetric.LTC: "total cost",
+    LeverageMetric.LTV: "estimated sale price",
+}
 
 # (label, value, number format, note); a value of None writes an empty cell.
 Row = tuple[str, Any, str | None, str]
@@ -110,13 +118,7 @@ def _sheet_inputs(
     economics = result.economics
     rows: list[Row] = [
         ("OVERVIEW", None, None, ""),
-        ("Loan purpose", _value(underwrite_inputs.loan_purpose), None, ""),
-        ("Loan type", deal.product.value, None, "the SPEC §3 product"),
         ("State", underwrite_inputs.state.value, None, ""),
-        ("Closing date", underwrite_inputs.closing_date, DATE, "month 0 of the ledger"),
-        ("Term (months)", result.term_months, INTEGER, ""),
-        ("Payoff date", result.payoff_date, DATE, "closing date + term"),
-        ("Rehab months", result.rehab_months, INTEGER, "term - listing months"),
         ("Credit (self-reported)", borrower.credit_range_self_reported.value, None, ""),
         ("Credit score (verified)", borrower.verified_credit_score, INTEGER, ""),
         ("Experience (self-reported)", borrower.experience_bucket_self_reported.value, None, ""),
@@ -124,6 +126,12 @@ def _sheet_inputs(
         ("Repeat borrower (self)", borrower.repeat_borrower_self_reported, None, ""),
         ("", None, None, ""),
         ("DEAL ECONOMICS", None, None, ""),
+        ("Loan purpose", enum_label(underwrite_inputs.loan_purpose), None, ""),
+        ("Loan type", enum_label(deal.product), None, "the SPEC §3 product"),
+        ("Closing date", underwrite_inputs.closing_date, DATE, "month 0 of the ledger"),
+        ("Term (months)", result.term_months, INTEGER, ""),
+        ("Payoff date", result.payoff_date, DATE, "closing date + term"),
+        ("Rehab months", result.rehab_months, INTEGER, "term - listing months"),
         ("Purchase price", economics.purchase_price, MONEY, ""),
         ("Rehab costs", economics.rehab_costs, MONEY, "before contingency"),
         ("Contingency", economics.contingency_pct, PCT1, "of the rehab costs"),
@@ -138,12 +146,11 @@ def _sheet_inputs(
         ("Holding costs (monthly)", economics.holding_costs_monthly, MONEY, "total / term"),
         ("Origination fee", economics.origination_fee_pct, PCT1, "half at close, half at payoff"),
         ("Interest rate", economics.interest_rate, PCT1, "annual"),
-        ("Loan requested", economics.loan_requested, MONEY, ""),
-        ("Loan purchase portion", economics.loan_purchase_portion, MONEY, "split products only"),
-        ("Loan rehab portion", economics.loan_rehab_portion, MONEY, "holdback / Tranche A"),
+        ("Loan amount", economics.loan_requested, MONEY, ""),
+        ("Advance at closing", economics.loan_purchase_portion, MONEY, "split products only"),
+        ("Rehab portion", economics.loan_rehab_portion, MONEY, "holdback / Tranche A"),
         ("", None, None, ""),
         ("VALUATION, RENT AND TOGGLES", None, None, ""),
-        ("As-is value", deal.as_is_value, MONEY, _source(deal.as_is_value_source)),
         (
             "Estimated sale price",
             deal.estimated_sale_price,
@@ -151,9 +158,14 @@ def _sheet_inputs(
             _source(deal.estimated_sale_price_source),
         ),
         ("Monthly rent", underwrite_inputs.monthly_rent, MONEY, "blank = no DSCR at all"),
-        ("Asset type", _value(underwrite_inputs.asset_type), None, "drives the exit inference"),
-        ("Stated exit", underwrite_inputs.stated_exit.value, None, "a stated exit always wins"),
-        ("Exit in force", result.exit.type.value, None, result.exit.exit_source.value.lower()),
+        ("Asset type", enum_label(underwrite_inputs.asset_type), None, "drives the exit"),
+        ("Exit (stated)", enum_label(underwrite_inputs.stated_exit), None, "a stated exit wins"),
+        (
+            "Exit in force",
+            enum_label(result.exit.type),
+            None,
+            result.exit.exit_source.value.lower(),
+        ),
         (
             "Flip analysis",
             "on" if result.exit.flip_analysis else "off",
@@ -166,6 +178,7 @@ def _sheet_inputs(
             None,
             f"default for this exit: {'on' if result.exit.rental_analysis_default else 'off'}",
         ),
+        ("Take-back analysis", "on", None, "always on; not a toggle (SPEC §8.6)"),
         (
             "Court records",
             _value(
@@ -184,12 +197,6 @@ def _sheet_inputs(
     rows += [
         ("", None, None, ""),
         ("SCREEN INPUTS", None, None, ""),
-        (
-            "Screen: as-is value",
-            screen_inputs.deal.as_is_value,
-            MONEY,
-            _source(screen_inputs.deal.as_is_value_source),
-        ),
         (
             "Screen: estimated sale price",
             screen_inputs.deal.estimated_sale_price,
@@ -214,7 +221,7 @@ def _sheet_inputs(
         ("Config: take-back DSCR floor", config.take_back.dscr_floor, RATIO, ""),
     ]
     at = _rows(sheet, rows) + 1
-    at = _header(sheet, at, ["Metric", "Actual", "Cap", "Limit", "Status", "Basis"])
+    at = _header(sheet, at, ["Metric", "Actual", "Cap", "Limit", "Status", "Denominator"])
     for metric, check in result.sizing.metrics.items():
         sheet.cell(row=at, column=1, value=metric.value)
         actual = sheet.cell(row=at, column=2, value=check.actual)
@@ -224,10 +231,7 @@ def _sheet_inputs(
         limit = sheet.cell(row=at, column=4, value=check.cap + check.tolerance_band)
         limit.number_format = PCT1
         sheet.cell(row=at, column=5, value=check.status.value)
-        basis = check.basis.value if check.basis is not None else ""
-        if check.basis is ValueBasis.PURCHASE_PRICE:
-            basis += " (as-is value unavailable)"
-        sheet.cell(row=at, column=6, value=basis)
+        sheet.cell(row=at, column=6, value=_DENOMINATOR[metric])
         at += 1
     _widths(sheet, 30, 18, 42, 12, 18, 34)
 
@@ -241,14 +245,12 @@ def _split_rows(sizing: SizingResult) -> list[Row]:
     """The purchase / rehab split, or a line saying there is not one."""
     if sizing.split is None:
         if sizing.product in SPLIT_PRODUCTS:
-            return [
-                ("Loan split", None, None, "not entered; sized on the loan requested (SPEC §8.2)")
-            ]
+            return [("Loan split", None, None, "not entered; sized on the loan amount (SPEC §8.2)")]
         return []
     purchase, rehab = (
         ("Principal Note", "Tranche A")
         if sizing.product is Product.SPLIT_PRINCIPAL
-        else ("Purchase portion", "Rehab holdback")
+        else ("Advance at closing", "Rehab holdback")
     )
     note = (
         f"entered {sizing.split.rehab_portion_requested}, capped at the "
@@ -361,7 +363,7 @@ def _sheet_flip(book: Workbook, result: UnderwriteResult) -> None:
 
 def _flip_note(status: AnalysisStatus) -> str:
     if status is AnalysisStatus.OFF:
-        return "the exit is not a resale, so the flip was not asked for"
+        return "the toggle is off, so the flip was not asked for"
     if status is AnalysisStatus.NOT_EVALUATED:
         return "no estimated sale price; the cost stack below still stands"
     return ""
@@ -384,7 +386,7 @@ def _sheet_rental(book: Workbook, result: UnderwriteResult) -> None:
             "Status",
             rental.status.value,
             None,
-            _rent_note(rental.status, "the exit is not a hold and no rent was entered"),
+            _rent_note(rental.status, "the toggle is off"),
         ),
         ("Monthly rent", rental.monthly_rent, MONEY, ""),
         ("Expenses", rental.expenses_pct, PCT1, "of rent"),
@@ -409,6 +411,7 @@ def _sheet_take_back(book: Workbook, result: UnderwriteResult) -> None:
     take_back = result.take_back
     rows: list[Row] = [
         ("Status", take_back.status.value, None, _rent_note(take_back.status, "")),
+        ("Toggle", "always on", None, "it runs on every deal (SPEC §8.6)"),
         ("Loan amount", take_back.loan_amount, MONEY, "the commitment"),
         ("Interest rate", take_back.interest_rate, PCT1, "the deal's own, not a takeout rate"),
         ("Lost interest (months)", take_back.lost_interest_months, INTEGER, ""),

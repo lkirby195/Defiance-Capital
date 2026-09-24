@@ -19,6 +19,7 @@ What an edit is and is not, which is most of what is tested here:
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -26,22 +27,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from db.models import AuditLog, Borrower, Deal, IntakeSubmission, Screen
-from schema.models import AuditAction, Status, TermBucket, Tranche
-from tests.conftest import QueueClient, requires_db
+from schema.models import AuditAction, Status, Tranche
+from tests.conftest import QueueClient, form_body, requires_db
 
 pytestmark = requires_db
 
 PARTIAL = {"address": "12 Elm St, Denver, CO 80202", "borrower_name": "Ray Okafor"}
-
-
-def form_body(payload: dict[str, Any], **changes: str) -> dict[str, str]:
-    """A team-entry payload as the form posts it: every value a string."""
-    body = {
-        key: ("true" if value is True else "false" if value is False else str(value))
-        for key, value in payload.items()
-    }
-    body.update(changes)
-    return {key: value for key, value in body.items() if value != ""}
 
 
 def edit(client: QueueClient, deal_id: Any, body: dict[str, str]) -> Any:
@@ -67,7 +58,7 @@ def needs_info_deal(client: QueueClient) -> str:
 def test_the_deal_page_offers_the_edit(client: QueueClient, stored_deal: Deal) -> None:
     body = client.get(f"/queue/deals/{stored_deal.id}").text
     assert f'href="/queue/deals/{stored_deal.id}/intake"' in body
-    assert "Edit intake" in body
+    assert "Edit Intake" in body
 
 
 def test_the_edit_page_is_the_form_filled_in(client: QueueClient, stored_deal: Deal) -> None:
@@ -76,7 +67,7 @@ def test_the_edit_page_is_the_form_filled_in(client: QueueClient, stored_deal: D
     body = response.text
     assert f'action="/queue/deals/{stored_deal.id}/intake"' in body
     assert 'value="Rafael Ortiz"' in body
-    assert 'value="200000.00"' in body
+    assert 'value="$200,000"' in body  # masked, as the box takes it back
     assert 'value="T1" selected' in body
     assert "Save intake" in body
 
@@ -102,9 +93,9 @@ def test_an_edit_keeps_the_old_submission_and_adds_a_new_one(
     )
     assert len(rows) == 2
     assert rows[0].raw_payload["purchase_price"] == "200000.00"
-    assert rows[1].raw_payload["purchase_price"] == "192500.00"
+    assert rows[1].raw_payload["purchase_price"] == "192500"
     deal = db_session.get(Deal, deal_id)
-    assert deal is not None and str(deal.purchase_price) == "192500.00"
+    assert deal is not None and deal.purchase_price == Decimal("192500")
     assert deal.id == deal_id, "an edit is not a new deal"
 
 
@@ -125,7 +116,7 @@ def test_a_completed_intake_leaves_needs_info(
     assert deal.status is Status.NEW
     assert deal.missing_fields == []
     assert deal.credit_range_self_reported is Tranche.T1
-    assert deal.term_bucket is TermBucket.M9
+    assert deal.term_months == 9
 
 
 def test_an_edit_does_not_drag_a_screened_deal_backwards(
@@ -178,8 +169,8 @@ def test_an_edit_records_who_did_it_and_what_moved(
     assert row.actor == "sam@glenwood.example"
     assert row.table_name == "deals" and row.row_id == str(stored_deal.id)
     assert row.after == {
-        "loan_requested": "175000.00",
-        "loan_purchase_portion": "127000.00",
+        "loan_requested": "175000",
+        "loan_purchase_portion": "127000",
         "borrower.email": "dana.w@example.com",
     }
     assert row.before == {
@@ -225,7 +216,7 @@ def test_a_new_phone_is_a_different_borrower(
     deal = db_session.get(Deal, stored_deal.id)
     assert deal is not None and deal.borrower is not None
     assert deal.borrower_id != was
-    assert deal.borrower.phone == "+19185550199"
+    assert deal.borrower.phone == "9185550199"  # digits (SPEC §4.1)
     assert db_session.scalar(select(func.count()).select_from(Borrower)) == 2
 
 
@@ -298,7 +289,9 @@ def test_a_closed_or_committed_deal_is_not_edited(
     assert str(deal.loan_requested) == "195000.00", "the refused edit wrote a column anyway"
     assert len(list(db_session.scalars(select(IntakeSubmission)))) == 1
     assert trail(db_session, AuditAction.INTAKE_EDITED) == []
-    assert client.get(f"/queue/deals/{stored_deal.id}").text.count("Edit intake") == 0
+    locked = client.get(f"/queue/deals/{stored_deal.id}").text
+    assert f'href="/queue/deals/{stored_deal.id}/intake"' not in locked
+    assert "Intake locked on a" in locked
 
 
 def test_the_edit_form_asks_for_the_same_required_boxes(
@@ -306,12 +299,12 @@ def test_the_edit_form_asks_for_the_same_required_boxes(
 ) -> None:
     """Server-side, by name, and nothing is written."""
     body = form_body(team_entry)
-    del body["term_bucket"]
+    del body["term_months"]
 
     response = edit(client, stored_deal.id, body)
 
     assert response.status_code == 422
-    assert "Term is required." in response.text
+    assert "Term (months) is required" in response.text
     db_session.expire_all()
     assert len(list(db_session.scalars(select(IntakeSubmission)))) == 1
     assert trail(db_session, AuditAction.INTAKE_EDITED) == []

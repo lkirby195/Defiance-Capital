@@ -7,8 +7,7 @@ court-flag severities, and caps come from config. The verdict rules are SPEC §7
                floor tranche, or a leverage metric above its cap by more than the
                tolerance band
 * Conditional  no HARD flag and any SOFT flag: a SOFT court/filing flag, leverage
-               within the tolerance band above its cap, a missing estimated sale price
-               or as-is value,
+               within the tolerance band above its cap, a missing estimated sale price,
                a self-reported vs. verified mismatch, or state = OTHER
 * Go           neither
 
@@ -26,7 +25,7 @@ from typing import NamedTuple
 from config.config import Config
 from engine.sizing import size_deal
 from engine.version import ENGINE_VERSION
-from schema.labels import tranche_label
+from schema.labels import enum_label, tranche_label
 from schema.models import (
     BorrowerInputs,
     CapStatus,
@@ -47,7 +46,6 @@ from schema.models import (
     SizingResult,
     State,
     Tranche,
-    ValueBasis,
     ValueSource,
     Verdict,
 )
@@ -73,13 +71,11 @@ _TIER_MIN_DEALS: tuple[tuple[ExperienceTier, int], ...] = (
 
 _METRIC_FLAG: dict[LeverageMetric, ScreenFlag] = {
     LeverageMetric.LTC: ScreenFlag.LTC_OVER_CAP,
-    LeverageMetric.LTV_AS_IS: ScreenFlag.LTV_AS_IS_OVER_CAP,
-    LeverageMetric.LTARV: ScreenFlag.LTARV_OVER_CAP,
+    LeverageMetric.LTV: ScreenFlag.LTV_OVER_CAP,
 }
 _METRIC_LABEL: dict[LeverageMetric, str] = {
     LeverageMetric.LTC: "LTC",
-    LeverageMetric.LTV_AS_IS: "LTV (as-is)",
-    LeverageMetric.LTARV: "LTARV",
+    LeverageMetric.LTV: "LTV",
 }
 
 # Reply drafts. A human edits and sends these (SPEC §4.3); they never name credit or
@@ -97,11 +93,9 @@ _ASK_BY_FLAG: dict[ScreenFlag, str] = {
     ScreenFlag.ESTIMATED_SALE_PRICE_MISSING: (
         "an estimated sale price after the work, or comps for the property"
     ),
-    ScreenFlag.AS_IS_VALUE_MISSING: "a current as-is value or a recent appraisal",
     ScreenFlag.STATE_NOT_SERVED: "the full property address (we lend in {served})",
     ScreenFlag.LTC_OVER_CAP: "whether you can work with a somewhat lower loan amount",
-    ScreenFlag.LTV_AS_IS_OVER_CAP: "whether you can work with a somewhat lower loan amount",
-    ScreenFlag.LTARV_OVER_CAP: "whether you can work with a somewhat lower loan amount",
+    ScreenFlag.LTV_OVER_CAP: "whether you can work with a somewhat lower loan amount",
     ScreenFlag.EXPERIENCE_MISMATCH: (
         "the addresses of the deals you have completed in the last three years"
     ),
@@ -469,19 +463,9 @@ def leverage_flags(sizing: SizingResult) -> list[Flag]:
     # SPEC §7.4, §7.5, §8.2
     """
     flags: list[Flag] = []
+    # The caps cell is a config grid coordinate (``leverage_caps.SPLIT_DRAW.T3.E2``), not a
+    # label, so it is printed as the keys a person would look up rather than as prose.
     cell = f"{sizing.product.value}/{sizing.credit_tranche.value}/{sizing.experience_tier.value}"
-    if sizing.ltv_basis is ValueBasis.PURCHASE_PRICE:
-        ltv = sizing.metrics[LeverageMetric.LTV_AS_IS]
-        flags.append(
-            Flag(
-                code=ScreenFlag.AS_IS_VALUE_MISSING,
-                severity=Severity.SOFT,
-                message=(
-                    "As-is value unavailable; LTV computed on the purchase price instead "
-                    f"(cap {pct(ltv.cap)} for {cell})."
-                ),
-            )
-        )
     split = sizing.split
     if split is not None and split.rehab_portion_capped:
         # What the cap does next differs by product, and a reader wants the consequence as
@@ -498,7 +482,7 @@ def leverage_flags(sizing: SizingResult) -> list[Flag]:
                 code=ScreenFlag.REHAB_PORTION_EXCEEDS_BUDGET,
                 severity=Severity.INFO,
                 message=(
-                    f"{sizing.product.value} rehab portion "
+                    f"{enum_label(sizing.product)} rehab portion "
                     f"{money(split.rehab_portion_requested)} exceeds the "
                     f"contingency-adjusted rehab cost {money(sizing.rehab_adj)}; "
                     f"{consequence}."
@@ -517,31 +501,31 @@ def leverage_flags(sizing: SizingResult) -> list[Flag]:
                 code=ScreenFlag.COMMITMENT_BELOW_REQUEST,
                 severity=Severity.INFO,
                 message=(
-                    f"SPLIT_PRINCIPAL commitment {money(sizing.commitment)}{notes} is below the "
-                    f"{money(sizing.loan_requested)} requested: the entered rehab portion is "
+                    f"{enum_label(Product.SPLIT_PRINCIPAL)} commitment "
+                    f"{money(sizing.commitment)}{notes} is below the "
+                    f"{money(sizing.loan_requested)} loan amount: the entered rehab portion is "
                     f"capped at the contingency-adjusted rehab cost {money(sizing.rehab_adj)}."
                 ),
             )
         )
     for metric, check in sizing.metrics.items():
         if check.status is CapStatus.NOT_AVAILABLE:
-            if metric is LeverageMetric.LTARV:
-                flags.append(
-                    Flag(
-                        code=ScreenFlag.ESTIMATED_SALE_PRICE_MISSING,
-                        severity=Severity.SOFT,
-                        message=(
-                            f"Estimated sale price unavailable; LTARV not computed "
-                            f"(cap {pct(check.cap)} for {cell})."
-                        ),
-                    )
+            # LTV is the only ratio that can be unavailable, and only for want of the
+            # estimated sale price: there is no fallback denominator (SPEC §7.4).
+            flags.append(
+                Flag(
+                    code=ScreenFlag.ESTIMATED_SALE_PRICE_MISSING,
+                    severity=Severity.SOFT,
+                    message=(
+                        f"Estimated sale price unavailable; {_METRIC_LABEL[metric]} not "
+                        f"computed (cap {pct(check.cap)} for {cell})."
+                    ),
                 )
+            )
             continue
         if check.status is CapStatus.PASS or check.actual is None:
             continue
         label = _METRIC_LABEL[metric]
-        if check.basis is ValueBasis.PURCHASE_PRICE:
-            label = "LTV (on purchase price)"
         limit = check.cap + check.tolerance_band
         if check.status is CapStatus.FAIL:
             severity = Severity.HARD
@@ -578,7 +562,6 @@ def team_sourced_flags(sizing: SizingResult, court_records: CourtRecordInputs | 
     entered = [
         label
         for label, source in (
-            ("as-is value", sizing.as_is_value_source),
             ("estimated sale price", sizing.estimated_sale_price_source),
             ("court records", court_records.source if court_records is not None else None),
         )

@@ -302,7 +302,6 @@ def test_a_blank_clears_a_value(db_session: Session, deal_with_overrides: Deal) 
     save_overrides(db_session, deal_with_overrides.id, TeamOverrides(), actor=ACTOR)
     db_session.commit()
     assert deal_with_overrides.estimated_sale_price_team is None
-    assert deal_with_overrides.as_is_value_team is None
     assert deal_with_overrides.court_records_status is None
     assert deal_with_overrides.court_records_team == []
 
@@ -421,10 +420,9 @@ def test_the_override_form_posts_and_saves(
     response = client.post(
         f"/queue/deals/{deal_with_overrides.id}/overrides",
         data={
-            "as_is_value_team": "250000.00",
-            "estimated_sale_price_team": "295000.00",
-            "monthly_rent": "2400.00",
-            "holding_costs_total_usd": "840.00",
+            "estimated_sale_price_team": "$295,000",
+            "monthly_rent": "2,400",
+            "holding_costs_total_usd": "$840",
             "court_records_status": "CLEAN",
             "court_records_as_of": "2026-09-16",
             "matter_code": ["", "", ""],
@@ -441,7 +439,10 @@ def test_the_override_form_posts_and_saves(
     db_session.expire_all()
     deal = db_session.get(Deal, deal_with_overrides.id)
     assert deal is not None
-    assert deal.monthly_rent is not None
+    # the masks come off at the boundary (api/masks.py): the deal carries the numbers
+    assert deal.estimated_sale_price_team == Decimal("295000")
+    assert deal.monthly_rent == Decimal("2400")
+    assert deal.holding_costs_total_usd == Decimal("840")
     assert deal.court_records_status is CourtRecordsStatus.CLEAN
     assert deal.court_records_team == []
 
@@ -482,7 +483,7 @@ def test_a_bad_override_comes_back_with_the_values_still_in_the_form(
     response = client.post(
         f"/queue/deals/{deal_with_overrides.id}/overrides",
         data={
-            "as_is_value_team": "250000.00",
+            "monthly_rent": "$2,400",
             "estimated_sale_price_team": "not a number",
             "matter_code": [""],
             "matter_occurred_on": [""],
@@ -495,4 +496,4 @@ def test_a_bad_override_comes_back_with_the_values_still_in_the_form(
     )
     assert response.status_code == 422
     assert "estimated_sale_price_team" in response.text
-    assert 'value="250000.00"' in response.text
+    assert 'value="$2,400"' in response.text  # re-masked, as the box had it

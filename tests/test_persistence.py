@@ -42,7 +42,6 @@ MISSING_UUID = UUID("00000000-0000-0000-0000-000000000000")
 
 def request(**overrides: Any) -> UnderwriteRequest:
     base: dict[str, Any] = {
-        "as_is_value": D("230000.00"),
         "estimated_sale_price": D("260000.00"),
         "verified_credit_score": 715,
         "verified_deals_36mo": 4,
@@ -109,12 +108,8 @@ def test_screen_without_a_valuation_flags_rather_than_guesses(
     """Enrichment is Phase 3, so a screen today runs with no valuation at all."""
     result = run_screen(db_session, stored_deal.id, CONFIG, actor=ACTOR)
     codes = {flag.code.value for flag in result.flags}
-    assert {
-        "AS_IS_VALUE_MISSING",
-        "ESTIMATED_SALE_PRICE_MISSING",
-        "COURT_RECORDS_NOT_CHECKED",
-    } <= codes
-    assert result.verdict is not Verdict.GO
+    assert {"ESTIMATED_SALE_PRICE_MISSING", "COURT_RECORDS_NOT_CHECKED"} <= codes
+    assert result.verdict is Verdict.CONDITIONAL
 
 
 def test_run_underwrite_appends_a_row_and_round_trips(
@@ -163,7 +158,7 @@ def test_underwrite_takes_the_term_from_the_deal_unless_told_otherwise(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
     """The column, seeded from the bucket at intake; a request still outranks it."""
-    assert deal_with_overrides.term_months == 6  # the deal's term_bucket is "6"
+    assert deal_with_overrides.term_months == 6  # the term on the deal, off the form
     from_deal = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
     assert from_deal.term_months == 6
     stated = run_underwrite(

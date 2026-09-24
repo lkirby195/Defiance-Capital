@@ -91,10 +91,8 @@ def test_every_fixture_states_where_its_valuation_came_from() -> None:
         want = fixture["expected"].get("sources")
         sizing = result.sizing
         if want is None:
-            for source in (sizing.as_is_value_source, sizing.estimated_sale_price_source):
-                assert source in (None, ValueSource.ADAPTER), path.stem
+            assert sizing.estimated_sale_price_source in (None, ValueSource.ADAPTER), path.stem
             continue
-        assert sizing.as_is_value_source == ValueSource(want["as_is_value"]), path.stem
         assert sizing.estimated_sale_price_source == ValueSource(want["estimated_sale_price"])
         assert result.components.court_records_source == ValueSource(want["court_records"])
 
@@ -171,7 +169,7 @@ def test_underwrite_fixtures_cover_every_product() -> None:
 
 
 def test_the_fixture_set_covers_every_analysis_status() -> None:
-    """One deal with no rent, one with the flip toggled off, and the ordinary case."""
+    """One with no rent, one with the flip off, one with no sale price, and the ordinary case."""
     statuses = {
         (result.flip.status, result.rental.status, result.take_back.status)
         for _, result in (run_underwrite(p) for p in UNDERWRITE_FILES)
@@ -179,7 +177,11 @@ def test_the_fixture_set_covers_every_analysis_status() -> None:
     flip = {status[0] for status in statuses}
     rental = {status[1] for status in statuses}
     take_back = {status[2] for status in statuses}
-    assert AnalysisStatus.EVALUATED in flip and AnalysisStatus.OFF in flip
+    assert flip == {
+        AnalysisStatus.EVALUATED,
+        AnalysisStatus.OFF,
+        AnalysisStatus.NOT_EVALUATED,
+    }
     assert AnalysisStatus.EVALUATED in rental and AnalysisStatus.OFF in rental
     assert take_back == {AnalysisStatus.EVALUATED, AnalysisStatus.NOT_EVALUATED}
 

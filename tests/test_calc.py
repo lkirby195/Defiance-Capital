@@ -76,7 +76,6 @@ def inputs(
     closing_date: date = CLOSING,
     monthly_rent: str | None = "2000",
     estimated_sale_price: str | None = "260000",
-    as_is_value: str | None = "250000",
     contingency_pct: Decimal | None = None,
     closing_costs_usd: Decimal | None = None,
     **extra: object,
@@ -90,7 +89,6 @@ def inputs(
             loan_requested=D(loan_requested),
             contingency_pct=contingency_pct,
             closing_costs_usd=closing_costs_usd,
-            as_is_value=None if as_is_value is None else D(as_is_value),
             estimated_sale_price=(
                 None if estimated_sale_price is None else D(estimated_sale_price)
             ),

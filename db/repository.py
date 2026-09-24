@@ -79,7 +79,6 @@ def intake_columns(record: IntakeRecord) -> dict[str, Any]:
     row rather than to the intake, and is set by whoever is writing the row.
     """
     return {
-        "guarantor_name": record.deal.guarantor_name,
         "loan_purpose": record.deal.loan_purpose,
         "closing_date": record.deal.closing_date,
         "product": record.deal.product,
@@ -104,7 +103,6 @@ def intake_columns(record: IntakeRecord) -> dict[str, Any]:
         "asset_type": record.deal.asset_type,
         "stated_exit": record.deal.stated_exit,
         "monthly_rent": record.deal.monthly_rent,
-        "as_is_value_team": record.deal.as_is_value_team,
         "estimated_sale_price_team": record.deal.estimated_sale_price_team,
         "court_records_status": record.deal.court_records_status,
         "court_records_as_of": record.deal.court_records_as_of,

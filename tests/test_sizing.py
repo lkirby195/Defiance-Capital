@@ -33,7 +33,6 @@ from schema.models import (
     Product,
     SizingInputs,
     Tranche,
-    ValueBasis,
 )
 
 CONFIG = Config.load()
@@ -52,7 +51,6 @@ def inputs(product: Product = Product.SPLIT_DRAW, **overrides: Any) -> SizingInp
         "purchase_price": D("100000.00"),
         "rehab_costs": D("40000.00"),
         "loan_requested": D("115000.00"),
-        "as_is_value": D("150000.00"),
         "estimated_sale_price": D("200000.00"),
     }
     base.update(overrides)
@@ -146,7 +144,6 @@ def test_check_metric_carries_cap_actual_band_and_pass_flag() -> None:
     assert check.tolerance_band == D("0.05")
     assert check.status is CapStatus.WITHIN_TOLERANCE
     assert check.passed is False
-    assert check.basis is None
     assert check_metric(LeverageMetric.LTC, D("0.80"), D("0.80"), D("0.05")).passed is True
 
 
@@ -260,44 +257,44 @@ def test_size_deal_metrics_caps_and_pass() -> None:
     assert result.closing_costs == D("1000.00")  # the config default, not a % of price
     assert result.total_cost == D("141000.00")
     assert result.commitment == D("115000.00")
-    assert result.ltv_basis is ValueBasis.AS_IS_VALUE
 
     ltc = result.metrics[LeverageMetric.LTC]
-    ltv = result.metrics[LeverageMetric.LTV_AS_IS]
-    ltarv = result.metrics[LeverageMetric.LTARV]
+    ltv = result.metrics[LeverageMetric.LTV]
+    assert set(result.metrics) == {LeverageMetric.LTC, LeverageMetric.LTV}
     assert ltc.actual == D("115000.00") / D("141000.00")
-    assert ltc.status is CapStatus.WITHIN_TOLERANCE  # 81.56% is over 80% but under 85%
-    assert ltv.actual == D("115000.00") / D("150000.00")
-    assert ltv.basis is ValueBasis.AS_IS_VALUE
-    assert ltarv.actual == D("0.575")
-    assert ltc.cap == D("0.80") and ltv.cap == D("0.75") and ltarv.cap == D("0.70")
-    assert result.all_pass is False
+    assert ltc.status is CapStatus.PASS  # 81.56% is under the 100% placeholder cap
+    assert ltv.actual == D("0.575")  # 115,000 over the 200,000 sale price
+    assert ltc.cap == D("1.00") and ltv.cap == D("0.75")
+    assert result.all_pass is True
 
 
 def test_size_deal_status_per_metric() -> None:
-    # LTC 115000/141000 = 81.56% -> within band; LTV 76.7% -> within band; LTARV 57.5% -> pass
+    # LTC 115000/141000 = 81.56% -> pass under the 100% cap; LTV 57.5% -> pass under 75%
     result = size_deal(inputs(Product.SPLIT_DRAW), Tranche.T2, ExperienceTier.E2, CONFIG)
-    assert result.metrics[LeverageMetric.LTC].status is CapStatus.WITHIN_TOLERANCE
-    assert result.metrics[LeverageMetric.LTV_AS_IS].status is CapStatus.WITHIN_TOLERANCE
-    assert result.metrics[LeverageMetric.LTARV].status is CapStatus.PASS
+    assert result.metrics[LeverageMetric.LTC].status is CapStatus.PASS
+    assert result.metrics[LeverageMetric.LTV].status is CapStatus.PASS
 
 
-def test_ltv_falls_back_to_purchase_price_when_as_is_missing() -> None:
-    result = size_deal(inputs(as_is_value=None), Tranche.T2, ExperienceTier.E2, CONFIG)
-    ltv = result.metrics[LeverageMetric.LTV_AS_IS]
-    assert result.ltv_basis is ValueBasis.PURCHASE_PRICE
-    assert ltv.basis is ValueBasis.PURCHASE_PRICE
-    assert ltv.actual == D("1.15")  # 115000 / 100000
-    assert ltv.status is CapStatus.FAIL
-
-
-def test_ltarv_not_available_when_the_sale_price_is_missing() -> None:
-    result = size_deal(inputs(estimated_sale_price=None), Tranche.T2, ExperienceTier.E2, CONFIG)
-    ltarv = result.metrics[LeverageMetric.LTARV]
-    assert ltarv.actual is None
-    assert ltarv.status is CapStatus.NOT_AVAILABLE
-    assert ltarv.passed is False
+def test_ltv_is_the_commitment_over_the_sale_price() -> None:
+    """SPEC §7.4: one denominator, and the purchase price is not a stand-in for it."""
+    result = size_deal(
+        inputs(estimated_sale_price=D("140000.00")), Tranche.T2, ExperienceTier.E2, CONFIG
+    )
+    ltv = result.metrics[LeverageMetric.LTV]
+    assert ltv.actual == D("115000.00") / D("140000.00")  # 82.1%
+    assert ltv.status is CapStatus.FAIL  # past 75% by more than the 5-point band
     assert result.all_pass is False
+
+
+def test_ltv_not_available_when_the_sale_price_is_missing() -> None:
+    result = size_deal(inputs(estimated_sale_price=None), Tranche.T2, ExperienceTier.E2, CONFIG)
+    ltv = result.metrics[LeverageMetric.LTV]
+    assert ltv.actual is None
+    assert ltv.status is CapStatus.NOT_AVAILABLE
+    assert ltv.passed is False
+    assert result.all_pass is False
+    # ...and nothing stood in for it: the LTC is still the ratio it always was.
+    assert result.metrics[LeverageMetric.LTC].actual == D("115000.00") / D("141000.00")
 
 
 def test_a_capped_tranche_a_changes_the_leverage_numerator() -> None:
@@ -308,7 +305,7 @@ def test_a_capped_tranche_a_changes_the_leverage_numerator() -> None:
         CONFIG,
     )
     assert result.commitment == D("85000.00")  # 45,000 note + Tranche A capped at 40,000
-    assert result.metrics[LeverageMetric.LTV_AS_IS].actual == D("85000.00") / D("150000.00")
+    assert result.metrics[LeverageMetric.LTV].actual == D("85000.00") / D("200000.00")
 
 
 def test_every_number_in_the_result_is_decimal() -> None:

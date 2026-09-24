@@ -13,14 +13,14 @@ per §8.1 input, each with the value in force and where it came from:
 
 ``required`` marks the rows the run cannot proceed without, and ``missing`` is exactly those
 of them that are MISSING. It is derived from the same rules the assembly raises
-``DealNotReady`` on (``services/assemble.py``) rather than a second list beside them - the
-required set, and the Flip toggle that decides whether the estimated sale price is in it,
-are both read from there - so the disabled button and the refusal behind it can never name
-different things.
+``DealNotReady`` on (``services/assemble.py``) rather than a second list beside them, so the
+disabled button and the refusal behind it can never name different things. Four rows are
+required and no more: the closing date, the term, the interest rate and - on a split product
+- the two halves of the loan.
 
 An optional row that is MISSING is not a problem to fix before running - it is a thing the
 underwrite will do without, and the note says what that costs: no DSCR at all without a
-monthly rent, LTV on the purchase price without an as-is value, the self-reported tranche
+monthly rent, no LTV and no flip without an estimated sale price, the self-reported tranche
 without a verified score, UNKNOWN without a stated exit.
 """
 
@@ -34,6 +34,7 @@ from typing import Any, Literal
 from config.config import Config, get_config
 from db.models import Deal
 from schema.dates import payoff_date_for
+from schema.labels import enum_label
 from schema.models import SPLIT_PRODUCTS, CourtRecordsStatus, Product, months_for_bucket
 from services.assemble import flip_is_on, intake_gaps, rental_is_on
 from services.enrichment import NO_ADAPTER_VALUES, AdapterValues
@@ -215,9 +216,9 @@ def _split_rows(deal: Deal) -> list[InputRow]:
     names = (
         ("Principal Note", "Tranche A")
         if deal.product is Product.SPLIT_PRINCIPAL
-        else ("Purchase portion", "Rehab holdback")
+        else ("Advance at closing", "Rehab holdback")
     )
-    note = f"a {deal.product.value} loan is advanced in two parts (SPEC §8.2)"
+    note = f"a {enum_label(deal.product)} loan is advanced in two parts (SPEC §8.2)"
     return [
         _resolved_row(
             "deal.loan_purchase_portion",
@@ -283,19 +284,12 @@ def underwrite_readiness(
             "Estimated sale price",
             adapter=adapters.estimated_sale_price,
             team=deal.estimated_sale_price_team,
-            required=flip_on,
             note=(
-                "the Flip analysis sells at it (SPEC §8.4)"
+                "the Flip analysis sells at it and LTV is computed on it; without one the "
+                "flip is not evaluated and LTV is not available (SPEC §7.4, §8.4)"
                 if flip_on
-                else "the Flip analysis is off; without one, LTARV is not computed (SPEC §7.4)"
+                else "LTV is computed on it; without one LTV is not available (SPEC §7.4)"
             ),
-        ),
-        _resolved_row(
-            "as_is_value",
-            "As-is value",
-            adapter=adapters.as_is_value,
-            team=deal.as_is_value_team,
-            note="LTV only; without one it falls back to the purchase price (SPEC §7.4)",
         ),
         _resolved_row(
             "monthly_rent",

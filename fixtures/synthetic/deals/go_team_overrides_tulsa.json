@@ -6,17 +6,14 @@
     "borrower_phone": "918-555-0147",
     "borrower_email": "dana@whitlockhomes.example",
     "entity_name": "Whitlock Homes LLC",
-    "guarantor_name": "Dana Whitlock",
     "credit_range": "T1",
     "experience_bucket": "6_PLUS",
     "repeat_borrower": false,
     "loan_purpose": "PURCHASE",
     "product": "WHOLETAIL",
     "closing_date": "2027-02-01",
-    "term_bucket": "6",
     "address": "1412 S Trenton Ave, Tulsa, OK 74120",
     "city": "Tulsa",
-    "county": "Tulsa",
     "state": "OK",
     "units": 1,
     "structures": 1,
@@ -32,11 +29,11 @@
     "loan_requested": "120000.00",
     "interest_rate": "0.13",
     "holding_costs_total_usd": "3000.00",
-    "as_is_value_team": "175000.00",
     "estimated_sale_price_team": "200000.00",
     "monthly_rent": "1800.00",
     "court_records_status": "CLEAN",
-    "court_records_as_of": "2026-09-16"
+    "court_records_as_of": "2026-09-16",
+    "term_months": 6
   },
   "expected": {
     "verdict": "GO",
@@ -56,8 +53,7 @@
     "rehab_adj": "5000.00",
     "metrics": {
       "LTC": "PASS",
-      "LTV_AS_IS": "PASS",
-      "LTARV": "PASS"
+      "LTV": "PASS"
     },
     "reasons_contain": [
       "entered by hand"
@@ -66,7 +62,6 @@
       "fit on first pass"
     ],
     "sources": {
-      "as_is_value": "TEAM",
       "estimated_sale_price": "TEAM",
       "court_records": "TEAM"
     }

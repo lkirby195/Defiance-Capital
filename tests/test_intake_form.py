@@ -101,9 +101,46 @@ def test_the_deal_page_reads_the_same_way(client: QueueClient, stored_deal: Deal
     """A tranche and a bucket are labelled the same wherever they are shown."""
     body = form_page(client, f"/queue/deals/{stored_deal.id}")
     assert "740+" in body  # the fixture's T1
-    assert "6+ deals in 36 months" in body  # its 6_PLUS
+    assert "<dd>6+</dd>" in body  # its 6_PLUS
     assert "Repeat GLENWOOD borrower" not in body
     assert ">T1<" not in body
+
+
+def test_the_four_read_enums_are_words_not_codes(client: QueueClient, stored_deal: Deal) -> None:
+    """SPEC §3: title case with spaces wherever a person reads one."""
+    body = form_page(client, f"/queue/deals/{stored_deal.id}")
+    assert "<dd>Split Draw" in body  # the inferred product
+    # the code stays the stored value on the option, and is never the words on the page
+    assert not re.search(r">\s*SPLIT_DRAW\s*<", body)
+    assert "<dd>Purchase</dd>" in body  # the loan purpose
+    assert "<dd>SFR</dd>" in body  # an initialism keeps its shape
+    # ...and the §3 definition of the product the deal is on
+    assert "the rehab holdback drawn over the rehab period" in body
+
+
+def test_the_loan_type_box_defines_every_option(client: QueueClient) -> None:
+    """A person picking one is told what they are picking (SPEC §3)."""
+    body = form_page(client, "/queue/new")
+    for label in ("No Draw", "Split Draw", "Split Principal", "Wholetail"):
+        assert f"<dt>{label}</dt>" in body
+    assert "Purchase only, no rehab funding." in body
+    assert "Buy below market, minimal work, retail resale; short term." in body
+
+
+def test_the_analysis_toggles_are_visible_and_take_back_has_none(
+    client: QueueClient, stored_deal: Deal
+) -> None:
+    """SPEC §8.1: Default / On / Off, and the Take-Back analysis is not a toggle."""
+    for body in (
+        form_page(client, "/queue/new"),
+        form_page(client, f"/queue/deals/{stored_deal.id}"),
+    ):
+        assert '<div class="toggle"' in body
+        for name in ("flip_analysis", "rental_analysis"):
+            assert f'name="{name}" value="true"' in body
+            assert f'name="{name}" value="false"' in body
+            assert f'name="{name}" value=""' in body
+        assert 'name="take_back' not in body
 
 
 def test_a_screened_deal_names_the_range_in_its_flags_and_caps_cell(
@@ -168,18 +205,19 @@ def test_the_required_list_is_the_minimum_viable_intake() -> None:
     """
     assert REQUIRED_NAMES == {
         "borrower_name",
-        "borrower_phone",
         "experience_bucket",
         "repeat_borrower",
-        "closing_date",
-        "term_bucket",
         "address",
+        "closing_date",
         "purchase_price",
         "rehab_costs",
         "loan_requested",
         "interest_rate",
     }
+    # the credit range, because a person on the phone often does not have it yet; the phone,
+    # because a deal that arrived by email has a name and no number (SPEC §4.1)
     assert "credit_range" not in REQUIRED_NAMES
+    assert "borrower_phone" not in REQUIRED_NAMES
     assert [name for name, _ in REQUIRED_FIELDS] == [
         name for name in TEAM_ENTRY_FIELDS if name in REQUIRED_NAMES
     ]
@@ -206,18 +244,19 @@ def test_a_form_post_missing_a_required_box_is_refused_by_name(
     posted = {key: str(value) for key, value in team_entry.items()}
     posted["repeat_borrower"] = "false"
     del posted["purchase_price"]
-    posted["borrower_phone"] = ""
+    posted["borrower_name"] = ""
 
     response = client.post("/intake/team", data=posted, follow_redirects=False)
 
     assert response.status_code == 422
-    assert "Phone is required." in response.text
-    assert "Purchase price is required." in response.text
-    assert "Name is required." not in response.text
+    assert "Guarantor Name is required." in response.text
+    assert "Purchase Price is required." in response.text
+    assert "Address is required." not in response.text
     # and nothing was stored
     assert db_session.scalar(select(func.count()).select_from(Deal)) == 0
-    # the rest of what was typed is still in the boxes
-    assert 'value="Rafael Ortiz"' in response.text
+    # the rest of what was typed is still in the boxes, masked as the box had it
+    assert 'value="720-555-0192"' in response.text
+    assert 'value="$195,000"' in response.text
 
 
 def test_a_complete_form_post_goes_through(
@@ -250,7 +289,7 @@ def test_a_missing_box_and_a_bad_number_are_both_reported(
     response = client.post("/intake/team", data=posted, follow_redirects=False)
 
     assert response.status_code == 422
-    assert "Loan requested is required." in response.text
+    assert "Loan Amount is required." in response.text
     assert "purchase_price" in response.text
 
 
@@ -265,15 +304,34 @@ def test_the_deal_fills_in_every_box_the_form_renders(stored_deal: Deal) -> None
 def test_the_filled_form_carries_what_was_entered(stored_deal: Deal) -> None:
     values = intake_form_values(stored_deal)
     assert values["borrower_name"] == "Rafael Ortiz"
-    assert values["borrower_phone"] == "+17205550192"  # normalized, as stored
     assert values["entity_name"] == "Ortiz Builds LLC"
     assert values["credit_range"] == "T1"
     assert values["experience_bucket"] == "6_PLUS"
     assert values["repeat_borrower"] == "false"
-    assert values["purchase_price"] == "200000.00"
     assert values["address"] == "3320 Meade St, Denver, CO 80211"
-    assert values["interest_rate"] == "0.12000"  # NUMERIC(7,5), as stored
     assert values["closing_date"] == "2026-10-01"
+
+
+def test_the_filled_form_is_masked_the_way_the_boxes_take_it(stored_deal: Deal) -> None:
+    """SPEC §8.1: a phone is ###-###-####, money is $#,###, a rate is a percent."""
+    values = intake_form_values(stored_deal)
+    assert values["borrower_phone"] == "720-555-0192"  # stored as digits
+    assert values["purchase_price"] == "$200,000"
+    assert values["loan_requested"] == "$195,000"
+    assert values["interest_rate"] == "12%"  # the deal carries 0.12000
+
+
+def test_a_defaulted_economic_comes_back_pre_filled_with_the_config_number(
+    stored_deal: Deal,
+) -> None:
+    """The four §8.1 economics with a default show it rather than an empty box."""
+    assert stored_deal.contingency_pct is None and stored_deal.origination_fee_pct is None
+    values = intake_form_values(stored_deal)
+    assert values["contingency_pct"] == "0%"
+    assert values["origination_fee_pct"] == "2%"
+    assert values["closing_costs_usd"] == "$1,500"  # the team's own, not the default
+    # the holding cost is a share of the price plus the rehab, so it needs both
+    assert values["holding_costs_total_usd"] == "$9,000"
 
 
 def test_the_payoff_date_box_comes_back_blank(stored_deal: Deal) -> None:

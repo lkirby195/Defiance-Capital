@@ -79,12 +79,23 @@ it.
 to the front of `startCommand`; it is idempotent, but it then runs on every boot and two
 instances can race it, so treat that as a stopgap.
 
-**Migration `0010` deletes rows.** The Phase 5 underwrite (SPEC §8, engine `1.0.0`) shares no
-result shape with the one before it, and no ledger could be reconstructed from a row that
-never had one, so `0010` deletes every `screens` and `underwrites` row written before it. The
-deals themselves keep their intake, their team entry, their status and their whole audit
-trail; re-screening and re-pricing one is two buttons. Take a dump first if the deployed
-database holds runs anybody wants to read again.
+**Migrations `0010` and `0011` delete rows.** The Phase 5 underwrite (SPEC §8, engine
+`1.0.0`) shares no result shape with the one before it, and no ledger could be reconstructed
+from a row that never had one, so `0010` deletes every `screens` and `underwrites` row written
+before it. `0011` does the same for engine `1.1.0`, which dropped `ltv_basis`,
+`as_is_value_source`, `MetricCheck.basis` and the `LTV_AS_IS` / `LTARV` metrics from the
+result (SPEC §7.4): a stored row carrying any of them cannot be rebuilt into a model that
+forbids extras, and the queue list rebuilds every deal's latest run, so one such row would
+take down the page for every deal. The deals themselves keep their intake, their team entry,
+their status and their whole audit trail; re-screening and re-pricing one is two buttons. Take
+a dump first if the deployed database holds runs anybody wants to read again.
+
+**`0011` also rewrites every phone number.** They are stored as digits now
+(`5551234567`, shown and typed `555-123-4567`), where they were E.164 (`+15551234567`), and
+the phone is the borrower match key (SPEC §5). The rewrite skips any row whose digits-only
+form is already taken - the column is unique, and a collision is two rows that were always the
+same borrower, which is a merge rather than a migration. Check for one afterwards if the
+deployed database has borrowers in it.
 
 ### Creating the first user against the deployed database
 

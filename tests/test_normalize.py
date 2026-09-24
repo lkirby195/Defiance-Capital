@@ -29,6 +29,7 @@ from schema.models import (
     State,
     StateSource,
     Status,
+    TermBucket,
 )
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/synthetic/team_entry_complete.json"
@@ -63,7 +64,7 @@ def test_complete_team_entry_is_new_with_nothing_missing() -> None:
     assert record.missing_fields == []
     assert record.status is Status.NEW
     assert record.channel is Channel.TEAM
-    assert record.borrower.phone == "+17205550192"
+    assert record.borrower.phone == "7205550192"  # digits (SPEC §4.1)
     assert record.borrower.entity_name == "Ortiz Builds LLC"
     assert record.property.address_raw == "3320 Meade St, Denver, CO 80211"
     assert record.property.address_normalized == "3320 MEADE ST, DENVER, CO 80211"
@@ -80,9 +81,8 @@ def test_partial_entry_lists_missing_fields_in_asking_order() -> None:
     assert record.missing_fields == [
         "deal.rehab_costs",
         "deal.loan_requested",
-        "deal.term_bucket",
+        "deal.term",
         "borrower.name",
-        "borrower.phone",
         "borrower.credit_range",
         "borrower.experience_bucket",
         "borrower.repeat_borrower",
@@ -118,7 +118,18 @@ def test_blank_strings_count_as_missing() -> None:
     record = normalize(parse_team_form(form), Channel.TEAM, {})
     assert record.borrower.name is None
     assert "borrower.name" in record.missing_fields
-    assert "borrower.phone" in record.missing_fields
+    # ...but not the phone: it is optional (SPEC §4.1), the match key when there is one
+    assert record.borrower.phone is None
+    assert "borrower.phone" not in record.missing_fields
+
+
+def test_the_term_is_one_row_for_two_ways_of_saying_it() -> None:
+    """A bucket from a borrower channel or months from the team form; either answers it."""
+    from_team = normalize(parse_team_form(TeamEntryForm(term_months=7)), Channel.TEAM, {})
+    assert "deal.term" not in from_team.missing_fields
+    from_bucket = normalize(ParsedIntake(deal=DealInfo(term_bucket=TermBucket.M6)), Channel.SMS, {})
+    assert "deal.term" not in from_bucket.missing_fields
+    assert "deal.term" in normalize(ParsedIntake(), Channel.SMS, {}).missing_fields
 
 
 def test_explicit_state_wins_over_address_text() -> None:
@@ -139,10 +150,10 @@ def test_prenormalized_address_is_kept() -> None:
 @pytest.mark.parametrize(
     "raw, expected",
     [
-        ("(918) 555-0100", "+19185550100"),
-        ("918.555.0100", "+19185550100"),
-        ("1-918-555-0100", "+19185550100"),
-        ("+1 918 555 0100", "+19185550100"),
+        ("(918) 555-0100", "9185550100"),
+        ("918.555.0100", "9185550100"),
+        ("1-918-555-0100", "9185550100"),
+        ("+1 918 555 0100", "9185550100"),
         ("+44 20 7946 0958", "+44 20 7946 0958"),
         ("555-0100", "555-0100"),
         ("   ", None),

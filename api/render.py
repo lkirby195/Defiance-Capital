@@ -31,8 +31,9 @@ from starlette.responses import HTMLResponse, RedirectResponse
 from api.security import issue_csrf
 from config.config import get_config
 from db.models import User
-from schema.labels import experience_label, tranche_label
-from schema.models import ExperienceBucket, Tranche
+from schema.labels import enum_label, experience_label, product_definition, tranche_label
+from schema.masks import phone_display
+from schema.models import ExperienceBucket, Product, Tranche
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -83,10 +84,37 @@ def when(value: datetime | date | None) -> str:
 
 
 def plain(value: Any) -> str:
-    """Anything with no filter of its own: enums by value, None as an em dash."""
+    """Anything with no filter of its own: enums by value, None as an em dash.
+
+    The stored code, for the things that are codes a person looks up rather than words a
+    person reads - a flag code, a status, a cap status. The four enums a person does read
+    (loan type, asset type, loan purpose, exit) go through ``label`` instead.
+    """
     if value is None:
         return "—"
     return str(getattr(value, "value", value))
+
+
+def label(value: Any) -> str:
+    """A stored enum as the words a person reads: ``SPLIT_DRAW`` -> ``Split Draw``.
+
+    # SPEC §3, §8.1. One filter for the loan type, the asset type, the loan purpose and the
+    exit, so a select option, a fact row and a flag message all spell them the same way
+    (``schema/labels.py``).
+    """
+    return enum_label(value)
+
+
+def definition(value: Product | str | None) -> str:
+    """The SPEC §3 one-line definition of a loan product; empty when there is no product."""
+    return product_definition(value)
+
+
+def phone(value: str | None) -> str:
+    """A stored phone as ``555-123-4567``; an em dash when there is none.  # SPEC §4.1"""
+    if not value:
+        return "—"
+    return phone_display(value)
 
 
 def tranche(value: Tranche | str | None) -> str:
@@ -121,6 +149,9 @@ templates.env.filters.update(
     yes_no=yes_no,
     when=when,
     plain=plain,
+    label=label,
+    definition=definition,
+    phone=phone,
     tranche=tranche,
     experience=experience,
 )
