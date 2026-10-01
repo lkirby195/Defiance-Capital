@@ -337,7 +337,8 @@ def test_the_deal_page_shows_the_checklist(client: TestClient, deal_with_overrid
         "Payoff date",
     ):
         assert label in body, label
-    assert "TEAM" in body
+    # the source is shown as a word, not the stored code (SPEC §9.2)
+    assert ">Team<" in body and ">TEAM<" not in body
 
 
 def test_the_deal_page_shows_the_holding_cost_as_a_percentage_and_as_dollars(
@@ -388,3 +389,45 @@ def test_the_button_is_off_and_the_page_says_why(
     assert "disabled>Run underwrite</button>" in body
     assert "Run underwrite is off until these are entered" in body
     assert "Interest rate" in body
+
+
+# --- the borrower's own estimates (SPEC §4.2, §6.1) ---------------------------------------------
+
+
+def test_a_borrower_estimate_is_third_in_line_and_says_borrower(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    deal_with_overrides.estimated_sale_price_borrower = D("240000.00")
+    deal_with_overrides.monthly_rent_borrower = D("1500.00")
+    db_session.flush()
+    # the team's numbers are on the deal, so they are what is in force
+    assert rows(deal_with_overrides)["estimated_sale_price"].source is InputSource.TEAM
+    assert rows(deal_with_overrides)["monthly_rent"].source is InputSource.TEAM
+
+    deal_with_overrides.estimated_sale_price_team = None
+    deal_with_overrides.monthly_rent = None
+    db_session.flush()
+    sale = rows(deal_with_overrides)["estimated_sale_price"]
+    assert sale.source is InputSource.BORROWER and sale.value == D("240000.00")
+    rent = rows(deal_with_overrides)["monthly_rent"]
+    assert rent.source is InputSource.BORROWER and rent.value == D("1500.00")
+    # an adapter beats the borrower too
+    pulled = rows(deal_with_overrides, AdapterValues(estimated_sale_price=D("999000.00")))
+    assert pulled["estimated_sale_price"].source is InputSource.ADAPTER
+    # and the assembly runs on the same values the checklist shows
+    assembled = underwrite_inputs(deal_with_overrides, UnderwriteRequest())
+    assert assembled.deal.estimated_sale_price == D("240000.00")
+    assert assembled.monthly_rent == D("1500.00")
+
+
+def test_a_twelve_plus_bucket_seeded_at_twelve_is_the_seed_not_the_team_s(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """SPEC §4.1: 12+ seeds 12 on every channel, and the row says the borrower asked for more."""
+    deal_with_overrides.term_bucket = TermBucket.M12_PLUS
+    deal_with_overrides.term_months = 12
+    db_session.commit()
+    row = rows(deal_with_overrides)["deal.term_months"]
+    assert row.source is InputSource.DEFAULT
+    assert "12+ bucket" in row.note and "asked for more than a year" in row.note
+    assert underwrite_readiness(deal_with_overrides).ready

@@ -304,6 +304,11 @@ class Deal(Base):
     # (SPEC §6). An adapter value always wins; these are never overwritten, so a later
     # reader can see what was entered by hand and what superseded it.
     estimated_sale_price_team: Mapped[Decimal | None] = mapped_column(MONEY)
+    # The borrower's own estimates off the public form (SPEC §4.2): third in line after an
+    # adapter and the team, and never overwritten - a team entry replaces the value in force
+    # and these stay, so the audit trail can show what the borrower claimed.
+    estimated_sale_price_borrower: Mapped[Decimal | None] = mapped_column(MONEY)
+    monthly_rent_borrower: Mapped[Decimal | None] = mapped_column(MONEY)
     court_records_status: Mapped[CourtRecordsStatus | None] = mapped_column(
         _enum(CourtRecordsStatus, "court_records_status")
     )

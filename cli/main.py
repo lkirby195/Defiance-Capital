@@ -96,7 +96,14 @@ def load_config() -> Config:
 
 def command_run(fixture: Path, with_underwrite: bool, config: Config) -> str:
     run = run_fixture(fixture, config, with_underwrite=with_underwrite)
-    return render(run.name, run.description, run.screen_result, run.underwrite_result, config)
+    return render(
+        run.name,
+        run.description,
+        run.screen_result,
+        run.underwrite_result,
+        config,
+        run.underwrite_inputs,
+    )
 
 
 def command_export(fixture: Path, out: Path, config: Config) -> str:

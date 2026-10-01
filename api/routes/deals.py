@@ -157,6 +157,9 @@ class DealView(BaseModel):
     repeat_borrower_self_reported: bool | None
     monthly_rent: Decimal | None
     estimated_sale_price_team: Decimal | None
+    # The borrower's own estimates off the public form (SPEC §4.2); never overwritten.
+    estimated_sale_price_borrower: Decimal | None
+    monthly_rent_borrower: Decimal | None
     court_records_status: CourtRecordsStatus | None
     court_records_as_of: date | None
     court_records_team: list[TeamCourtRecord]
@@ -325,6 +328,8 @@ def deal_view(deal: Deal, session: Session) -> DealView:
         repeat_borrower_self_reported=deal.repeat_borrower_self_reported,
         monthly_rent=deal.monthly_rent,
         estimated_sale_price_team=deal.estimated_sale_price_team,
+        estimated_sale_price_borrower=deal.estimated_sale_price_borrower,
+        monthly_rent_borrower=deal.monthly_rent_borrower,
         court_records_status=deal.court_records_status,
         court_records_as_of=deal.court_records_as_of,
         court_records_team=[

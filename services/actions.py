@@ -233,20 +233,14 @@ def save_overrides(
     Allowed from any status. It is data entry, not a decision - correcting a valuation on a
     declined deal before re-opening it is a real thing to want to do, and the audit row says
     who changed what either way.
+
+    The borrower's own estimates (SPEC §4.2) are not in the block and are not touched by it:
+    a team sale price or rent replaces the borrower's as the value in force
+    (``services/assemble.py``), and the borrower's figure stays in its own column for the
+    audit trail to show what was claimed.
     """
     deal = load_deal(session, deal_id)
-    before: dict[str, Any] = {}
-    after: dict[str, Any] = {}
-    for field in OVERRIDE_FIELDS:
-        current = getattr(deal, field)
-        submitted = _override_value(overrides, field)
-        if current == submitted:
-            continue
-        before[field] = jsonable(current)
-        after[field] = jsonable(submitted)
-        setattr(deal, field, submitted)
-    _apply_product(deal, overrides, before, after)
-    _apply_term(deal, overrides, before, after)
+    before, after = apply_overrides(deal, overrides)
     if not after:
         return deal
     session.flush()
@@ -260,6 +254,29 @@ def save_overrides(
         after=after,
     )
     return deal
+
+
+def apply_overrides(deal: Deal, overrides: TeamOverrides) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Set the block on a deal row; return the before and after of what moved.
+
+    Pure: no session, no audit row, no commit. ``save_overrides`` wraps it with all three,
+    and the CLI applies a fixture's ``team_overrides`` block to an unpersisted row through it
+    (``cli/fixtures.py``), so a web deal the team then corrected can be run with no database
+    behind it, through the same code the queue runs.
+    """
+    before: dict[str, Any] = {}
+    after: dict[str, Any] = {}
+    for field in OVERRIDE_FIELDS:
+        current = getattr(deal, field)
+        submitted = _override_value(overrides, field)
+        if current == submitted:
+            continue
+        before[field] = jsonable(current)
+        after[field] = jsonable(submitted)
+        setattr(deal, field, submitted)
+    _apply_product(deal, overrides, before, after)
+    _apply_term(deal, overrides, before, after)
+    return before, after
 
 
 def _apply_term(

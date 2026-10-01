@@ -76,8 +76,9 @@ def intake_columns(record: IntakeRecord) -> dict[str, Any]:
     One mapping, so creating a deal from an intake and re-applying an edited one
     (``services/intake.py``) can never write different sets of columns. Everything outside
     it - the id, the channel, the status, the web form's ``intake_source`` and
-    ``referral_note``, the borrower and property links - belongs to the row rather than to
-    the intake, and is set by whoever is writing the row.
+    ``referral_note``, the borrower's own estimates (``borrower_columns``), the borrower and
+    property links - belongs to the row rather than to the intake, and is set by whoever is
+    writing the row.
     """
     return {
         "loan_purpose": record.deal.loan_purpose,
@@ -117,6 +118,20 @@ def intake_columns(record: IntakeRecord) -> dict[str, Any]:
     }
 
 
+def borrower_columns(record: IntakeRecord) -> dict[str, Any]:
+    """The ``deals`` columns that hold the borrower's own estimates.  # SPEC §4.2
+
+    Kept apart from ``intake_columns`` on purpose. Those are re-applied whole when the team
+    edits the intake (``services/intake.py``), and the team form has no box for what the
+    borrower claimed - so a borrower's sale price and rent are written once, by the channel
+    that asked, and never cleared by an edit that could not have known them.
+    """
+    return {
+        "estimated_sale_price_borrower": record.deal.estimated_sale_price_borrower,
+        "monthly_rent_borrower": record.deal.monthly_rent_borrower,
+    }
+
+
 def build_deal(record: IntakeRecord, borrower: Borrower | None, prop: Property | None) -> Deal:
     """The ``deals`` row for an ``IntakeRecord``, attached to nothing.
 
@@ -133,6 +148,7 @@ def build_deal(record: IntakeRecord, borrower: Borrower | None, prop: Property |
         intake_source=record.intake_source,
         referral_note=record.referral_note,
         missing_fields=list(record.missing_fields),
+        **borrower_columns(record),
         **intake_columns(record),
     )
 

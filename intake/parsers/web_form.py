@@ -13,18 +13,17 @@ the HTML boundary (``api/apply_form.py``), exactly as they do on the team form. 
 value is the same code or number the team form would have stored - the queue, the engine and
 the audit trail cannot tell which page a deal came in on except by its channel.
 
-**The 12+ bucket seeds a 12-month term.** On the team form a term past a year is the team's
-to set and ``12_PLUS`` names no months (SPEC §8.1); a borrower picking "12+ months" has said
-the floor of what they need, and a deal with no term at all cannot be priced. So the web
-parser seeds ``term_months`` at 12, the deal keeps the ``12_PLUS`` bucket beside it, and the
-deal page says the borrower asked for more so the team can set the real number. The bucket
-seeds the term and does not fix it, on every channel.
+**The 12+ bucket seeds a 12-month term**, as it does on every channel (SPEC §4.1): a
+borrower picking "12+ months" has said the floor of what they need, a deal with no term at
+all cannot be priced, and the deal keeps the ``12_PLUS`` bucket beside the seed so the deal
+page can say the borrower asked for more and the team can set the real number.
 
 The two numbers a borrower may offer about the exit - the sale price after the rehab, and the
-rent if they keep it - land on ``estimated_sale_price_team`` and ``monthly_rent``, the
-stand-ins the team form takes (SPEC §6.1). They are the borrower's own estimates, and the
-screen says so: every value it runs on from those two columns is flagged
-``TEAM_SOURCED_VALUES``, and an adapter value beats either the moment one exists.
+rent if they keep it - land on ``estimated_sale_price_borrower`` and ``monthly_rent_borrower``
+(SPEC §4.2). They are the borrower's own estimates and are stored as such: the engine runs on
+them only when no adapter and no team member has a number (SPEC §6.1), flags the run
+``BORROWER_SOURCED_VALUES`` when it does, and a team entry replaces them as the value in
+force without clearing them.
 """
 
 from __future__ import annotations
@@ -36,7 +35,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from intake.normalize import ParsedIntake
-from schema.models import TWELVE_PLUS_SEED_MONTHS as TWELVE_PLUS_SEED_MONTHS
 from schema.models import (
     BorrowerInfo,
     DealInfo,
@@ -51,12 +49,6 @@ from schema.models import (
 
 # The two-letter codes the state box offers; anything else the borrower could mean is OTHER.
 STATE_NAMES: dict[State, str] = {State.OK: "Oklahoma", State.CO: "Colorado"}
-
-
-def seed_term_months(bucket: TermBucket) -> int:
-    """The months a web submission's bucket seeds: its own number, or 12 for 12+."""
-    named = months_for_bucket(bucket)
-    return TWELVE_PLUS_SEED_MONTHS if named is None else named
 
 
 class WebApplyForm(BaseModel):
@@ -134,9 +126,9 @@ def parse_web_form(form: WebApplyForm) -> ParsedIntake:
             rehab_costs=form.rehab_costs,
             loan_requested=form.loan_requested,
             term_bucket=form.term_bucket,
-            term_months=seed_term_months(form.term_bucket),
+            term_months=months_for_bucket(form.term_bucket),
             closing_date=form.closing_date,
-            estimated_sale_price_team=form.estimated_sale_price,
-            monthly_rent=form.monthly_rent,
+            estimated_sale_price_borrower=form.estimated_sale_price,
+            monthly_rent_borrower=form.monthly_rent,
         ),
     )

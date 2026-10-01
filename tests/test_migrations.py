@@ -107,3 +107,64 @@ def test_0012_turns_each_holding_cost_into_the_share_of_cost_it_was(
     command.downgrade(alembic_cfg, "base")
     with test_engine.begin() as conn:
         conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
+
+
+# A web deal written against 0013, when the public form put the borrower's numbers in the
+# team's columns, and a team deal beside it (SPEC §4.2, §6.1).
+BEFORE_0014 = text(
+    """
+    INSERT INTO deals (id, channel, status, missing_fields, court_records_team,
+                       credit_authorization_signed, created_at, updated_at,
+                       estimated_sale_price_team, monthly_rent)
+    VALUES (:id, :channel, 'NEW', '[]', '[]', false, now(), now(), :sale, :rent)
+    """
+)
+OVERRIDE_ROW = text(
+    """
+    INSERT INTO audit_log (id, actor, action, table_name, row_id, created_at)
+    VALUES (:id, 'sam@glenwood.example', 'OVERRIDES_SAVED', 'deals', :deal_id, now())
+    """
+)
+
+
+def test_0014_moves_an_untouched_web_deal_s_numbers_to_the_borrower_s_columns(
+    alembic_cfg: AlembicConfig, test_engine: Engine
+) -> None:
+    command.upgrade(alembic_cfg, "0013")
+    untouched, corrected, team = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    with test_engine.begin() as conn:
+        for deal_id, channel in ((untouched, "WEB"), (corrected, "WEB"), (team, "TEAM")):
+            conn.execute(
+                BEFORE_0014,
+                {"id": deal_id, "channel": channel, "sale": "210000.00", "rent": "1700.00"},
+            )
+        # the team saved the override block on one of the web deals since it arrived
+        conn.execute(OVERRIDE_ROW, {"id": uuid.uuid4(), "deal_id": str(corrected)})
+
+    command.upgrade(alembic_cfg, "0014")
+
+    with test_engine.connect() as conn:
+        rows = {
+            row.id: row
+            for row in conn.execute(
+                text(
+                    "SELECT id, estimated_sale_price_team, monthly_rent, "
+                    "estimated_sale_price_borrower, monthly_rent_borrower FROM deals"
+                )
+            )
+        }
+    # untouched web deal: the numbers are the borrower's, so that is where they go
+    assert rows[untouched].estimated_sale_price_borrower == Decimal("210000.00")
+    assert rows[untouched].monthly_rent_borrower == Decimal("1700.00")
+    assert rows[untouched].estimated_sale_price_team is None
+    assert rows[untouched].monthly_rent is None
+    # a web deal the team has written to is left alone: the team column is now the team's
+    assert rows[corrected].estimated_sale_price_team == Decimal("210000.00")
+    assert rows[corrected].estimated_sale_price_borrower is None
+    # a team deal is not a web deal
+    assert rows[team].estimated_sale_price_team == Decimal("210000.00")
+    assert rows[team].estimated_sale_price_borrower is None
+
+    command.downgrade(alembic_cfg, "base")
+    with test_engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")

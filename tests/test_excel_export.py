@@ -267,3 +267,17 @@ def test_the_flags_sheet_lists_every_flag_with_its_severity_and_message() -> Non
 def test_a_run_with_no_flags_says_so() -> None:
     sheet = book_for(FIXTURE_DIR / "go_hold_flip_off_denver.json")["Flags"]
     assert sheet.cell(row=4, column=1).value == "(none)"
+
+
+def test_the_inputs_sheet_says_when_a_number_is_the_borrower_s_own() -> None:
+    """SPEC §4.2, §6.1: the workbook names the borrower where that is the source."""
+    book = book_for(FIXTURE_DIR / "go_web_borrower_values_okc.json")
+    sheet = book["Inputs"]
+    notes = {row[0].value: row[2].value for row in sheet.iter_rows(min_col=1, max_col=3)}
+    assert notes["Estimated sale price"] == "borrower, on the public form"
+    assert notes["Monthly rent"] == "borrower, on the public form"
+
+    corrected = book_for(FIXTURE_DIR / "go_web_overridden_by_team_okc.json")["Inputs"]
+    notes = {row[0].value: row[2].value for row in corrected.iter_rows(min_col=1, max_col=3)}
+    assert notes["Estimated sale price"] == "team, by hand"
+    assert notes["Monthly rent"] == "borrower, on the public form"

@@ -48,10 +48,15 @@
       <dt>Submitted in</dt>
       <dd>{% if submitted_language == "es" %}Spanish{% elif submitted_language == "en" %}English
           {%- else %}—{% endif %}</dd>
+      <dt>Their sale price after rehab</dt>
+      <dd>{{ deal.estimated_sale_price_borrower | money }}
+        <span class="small muted">the borrower's own estimate; a team entry replaces it as the
+          value in force and this stays (SPEC §6.1)</span></dd>
+      <dt>Their monthly rent</dt><dd>{{ deal.monthly_rent_borrower | money }}</dd>
     </dl>
     <p class="small muted">
       Nothing has been run on it and the borrower was told only that the team will be in
-      touch. The sale price and rent below, if any, are the borrower's own estimates.
+      touch.
     </p>
   </section>
 {% endif %}
@@ -135,10 +140,13 @@
       {%- if deal.term_stub_days %} and {{ deal.term_stub_days }} day(s){% endif %}
       {% if deal.term_bucket %}<span class="small muted">(the borrower asked for
         {{ deal.term_bucket | bucket }})</span>{% endif %}
+      {#- On every channel that asks the bucket (SPEC §4.1): the seed is the floor of the
+          ask, and the real term is the team's to set. -#}
       {% if deal.term_bucket | plain == "12_PLUS" and deal.term_months == twelve_plus_seed %}
         <div class="small" style="color: var(--soft)">
-          The borrower selected 12+ months. The term was seeded at {{ twelve_plus_seed }}
-          months so the deal can be priced; set the real term in Team entry below.
+          The borrower asked for more than 12 months. The term was seeded at
+          {{ twelve_plus_seed }} months so the deal can be priced; set the real term in Team
+          entry below.
         </div>
       {% endif %}</dd>
     <dt>Payoff Date</dt>
@@ -468,7 +476,7 @@
               {% else %}{{ row.value | plain }}{% endif %}
             </td>
             <td><span class="tag {{ 'HARD' if row.required and not row.satisfied
-                     else ('GO' if row.satisfied else 'INFO') }}">{{ row.source | plain }}</span></td>
+                     else ('GO' if row.satisfied else 'INFO') }}">{{ row.source | label }}</span></td>
             <td class="small">{{ "Required" if row.required else "Optional" }}</td>
             <td class="small muted">{{ row.note }}</td>
           </tr>
@@ -645,7 +653,7 @@
       <dt>Repeat-borrower override</dt>
       <dd>{{ screen.result.components.repeat_borrower_override_applied | yes_no }}</dd>
       <dt>Court records from</dt>
-      <dd>{{ screen.result.components.court_records_source | plain }}</dd>
+      <dd>{{ screen.result.components.court_records_source | label }}</dd>
     </dl>
 
     <h3>Sizing against caps</h3>

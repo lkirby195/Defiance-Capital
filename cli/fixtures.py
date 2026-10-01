@@ -16,6 +16,14 @@ A fixture comes in one of two shapes, and ``tests/test_fixtures.py`` uses the sa
     a fixture proves that a deal the team has valued and searched reaches Go before a single
     enrichment adapter exists.
 
+``web_entry``
+    A public-form payload (SPEC §4.2) in stored units - what ``/apply`` builds after the
+    masks come off - normalized and built into a row the same way, with the borrower's sale
+    price and rent landing in their own columns. An optional ``team_overrides`` block beside
+    either entry is a ``TeamOverrides`` document applied to that row through the same code
+    the queue's override block runs (``services.actions.apply_overrides``): this is how a
+    fixture shows a web deal the team then corrected, with the borrower's figures retained.
+
 Either way there is no database and no network: the CLI can show the math on a deal, and on
 the assembly in front of it, before any of it is wired to anything.
 """
@@ -34,6 +42,7 @@ from engine.screen import screen
 from engine.underwrite import underwrite
 from intake.normalize import normalize
 from intake.parsers.team_form import TeamEntryForm, parse_team_form
+from intake.parsers.web_form import WebApplyForm, parse_web_form
 from schema.models import (
     Channel,
     ScreenInputs,
@@ -41,8 +50,9 @@ from schema.models import (
     UnderwriteInputs,
     UnderwriteResult,
 )
+from services.actions import apply_overrides
 from services.assemble import screen_inputs, underwrite_inputs
-from services.requests import UnderwriteRequest
+from services.requests import TeamOverrides, UnderwriteRequest
 
 
 class FixtureError(ValueError):
@@ -73,17 +83,21 @@ def load_fixture(path: Path) -> dict[str, Any]:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise FixtureError(f"{path} is not valid JSON: {exc}") from exc
-    if not isinstance(data, dict) or not ({"inputs", "team_entry"} & set(data)):
+    if not isinstance(data, dict) or not (ENTRY_BLOCKS & set(data)):
         raise FixtureError(
-            f"{path} has no 'inputs' or 'team_entry' block; it is not a deal fixture"
+            f"{path} has no 'inputs', 'team_entry' or 'web_entry' block; it is not a deal fixture"
         )
     loaded: dict[str, Any] = data
     return loaded
 
 
+# The blocks a fixture may start from; one of the three has to be there.
+ENTRY_BLOCKS: frozenset[str] = frozenset({"inputs", "team_entry", "web_entry"})
+
+
 def is_team_entry(fixture: dict[str, Any]) -> bool:
     """True when the fixture runs through the service assembly rather than straight in."""
-    return "team_entry" in fixture
+    return "team_entry" in fixture or "web_entry" in fixture
 
 
 def has_underwrite(fixture: dict[str, Any]) -> bool:
@@ -91,10 +105,24 @@ def has_underwrite(fixture: dict[str, Any]) -> bool:
 
 
 def deal_from_fixture(fixture: dict[str, Any]) -> Deal:
-    """Normalize the team-entry payload into an unpersisted ``deals`` row."""
-    payload = fixture["team_entry"]
-    record = normalize(parse_team_form(TeamEntryForm(**payload)), Channel.TEAM, raw_payload=payload)
-    return transient_deal(record)
+    """Normalize the entry payload into an unpersisted ``deals`` row, overrides applied."""
+    if "web_entry" in fixture:
+        payload = fixture["web_entry"]
+        record = normalize(
+            parse_web_form(WebApplyForm(**payload)),
+            Channel.WEB,
+            raw_payload=payload,
+            referral_note=payload.get("referral_note"),
+        )
+    else:
+        payload = fixture["team_entry"]
+        record = normalize(
+            parse_team_form(TeamEntryForm(**payload)), Channel.TEAM, raw_payload=payload
+        )
+    deal = transient_deal(record)
+    if "team_overrides" in fixture:
+        apply_overrides(deal, TeamOverrides(**fixture["team_overrides"]))
+    return deal
 
 
 def screen_inputs_for(fixture: dict[str, Any], deal: Deal | None) -> ScreenInputs:
@@ -112,7 +140,7 @@ def underwrite_inputs_for(
     if deal is not None:
         if "request" not in block:
             raise FixtureError(
-                f"{path.name} is a team-entry fixture, so its underwrite block needs a "
+                f"{path.name} is an entry fixture, so its underwrite block needs a "
                 "'request' (an UnderwriteRequest), not 'inputs'"
             )
         return underwrite_inputs(deal, UnderwriteRequest(**block["request"]))

@@ -1,0 +1,148 @@
+{
+  "name": "go_web_borrower_values_okc",
+  "description": "A deal the borrower typed in on the public form and nobody on the team has touched: the sale price and the rent are the borrower's own, so BORROWER_SOURCED_VALUES is raised at both stages and the Go rests on the applicant's claims. The same $120,000 at 13% for 6 months as go_team_overrides_tulsa (WHOLETAIL and the SFR asset type set by hand here, since the form asks neither), so the ledger and its 18.599% IRR are the already-verified numbers; the flip sells at the borrower's $210,000 and the DSCRs rest on the borrower's $1,700 rent. No court search, so COURT_RECORDS_NOT_CHECKED too.",
+  "web_entry": {
+    "borrower_name": "Luis Herrera",
+    "borrower_phone": "4055550133",
+    "borrower_email": "luis@herrerahomes.example",
+    "entity_name": "Herrera Homes LLC",
+    "credit_range": "T1",
+    "experience_bucket": "6_PLUS",
+    "repeat_borrower": false,
+    "address": "2316 NW 21st St",
+    "city": "Oklahoma City",
+    "state": "OK",
+    "purchase_price": "150000.00",
+    "rehab_costs": "5000.00",
+    "loan_requested": "120000.00",
+    "estimated_sale_price": "210000.00",
+    "monthly_rent": "1700.00",
+    "term_bucket": "6",
+    "closing_date": "2027-02-01",
+    "referral_note": "A flyer at the OKC REIA",
+    "consent": true
+  },
+  "team_overrides": {
+    "product": "WHOLETAIL",
+    "asset_type": "SFR",
+    "closing_date": "2027-02-01",
+    "term_months": 6,
+    "interest_rate": "0.13"
+  },
+  "expected": {
+    "verdict": "GO",
+    "flags": [
+      {
+        "code": "COURT_RECORDS_NOT_CHECKED",
+        "severity": "INFO"
+      },
+      {
+        "code": "BORROWER_SOURCED_VALUES",
+        "severity": "INFO"
+      }
+    ],
+    "credit_tranche": "T1",
+    "experience_tier": "E3",
+    "repeat_borrower_override_applied": false,
+    "all_pass": true,
+    "commitment": "120000.00",
+    "funded_at_close": "120000.00",
+    "total_cost": "156000.00",
+    "rehab_adj": "5000.00",
+    "metrics": {
+      "LTC": "PASS",
+      "LTV": "PASS"
+    },
+    "reasons_contain": [
+      "came from the borrower"
+    ],
+    "reply_contains": [
+      "fit on first pass"
+    ],
+    "sources": {
+      "estimated_sale_price": "BORROWER",
+      "court_records": null
+    }
+  },
+  "underwrite": {
+    "request": {},
+    "expected": {
+      "payoff_date": "2027-08-01",
+      "rehab_months": 3,
+      "commitment": "120000.00",
+      "funded_at_close": "120000.00",
+      "sources": {
+        "estimated_sale_price": "BORROWER",
+        "monthly_rent": "BORROWER"
+      },
+      "economics": {
+        "rehab_adj": "5000.00",
+        "contingency": "0.00",
+        "closing_costs": "1000.00",
+        "holding_costs_total": "3100.00",
+        "holding_costs_monthly": "516.67",
+        "origination_at_close": "1200.00",
+        "origination_at_payoff": "1200.00",
+        "holding_costs_pct_of_cost": "0.020000",
+        "holding_costs_basis": "155000.00"
+      },
+      "ledger": {
+        "rows": 7,
+        "first_net": "-118800.00",
+        "last_net": "122500.00",
+        "total_funding": "-120000.00",
+        "total_draws": "0.00",
+        "total_interest": "7800.00",
+        "total_fees": "2400.00",
+        "total_payoff": "120000.00",
+        "total_profit": "10200.00",
+        "irr": "0.18599010"
+      },
+      "flip": {
+        "status": "EVALUATED",
+        "broker_costs": "8400.00",
+        "total_costs": "169300.00",
+        "net_profit": "32300.00",
+        "profit_yield": "0.190786"
+      },
+      "rental": {
+        "status": "EVALUATED",
+        "expenses": "595.00",
+        "net_monthly_income": "588.33",
+        "debt_service_monthly": "758.48",
+        "dscr": "0.775672",
+        "passed": false
+      },
+      "take_back": {
+        "status": "EVALUATED",
+        "lost_interest": "3900.00",
+        "total_cost": "128900.00",
+        "debt_service_monthly": "1425.89",
+        "net_monthly_income": "588.33",
+        "dscr": "0.412607",
+        "passed": false
+      },
+      "flags": [
+        {
+          "code": "DSCR_BELOW_FLOOR",
+          "severity": "SOFT"
+        },
+        {
+          "code": "TAKE_BACK_DSCR_BELOW_FLOOR",
+          "severity": "HARD"
+        },
+        {
+          "code": "COURT_RECORDS_NOT_CHECKED",
+          "severity": "INFO"
+        },
+        {
+          "code": "BORROWER_SOURCED_VALUES",
+          "severity": "INFO"
+        }
+      ],
+      "term_months": 6,
+      "term_stub_days": 0,
+      "term_months_decimal": "6.000000"
+    }
+  }
+}

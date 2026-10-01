@@ -3,6 +3,17 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**1.3.0 (Phase 6a, 2026-10-01) names the borrower as a source.** ``ValueSource`` gains
+``BORROWER``: the estimated sale price and the monthly rent a borrower types on the public
+form (SPEC §4.2) reach the engine as the borrower's own when no adapter and no team member
+has one - adapter over team over borrower, each superseded value kept on the deal in its own
+column. ``UnderwriteInputs`` gains ``monthly_rent_source`` so the underwrite can say where the
+rent its two DSCRs rest on came from. New flag ``BORROWER_SOURCED_VALUES`` (Info, fixed in
+code), raised by both stages and naming which inputs were the borrower's, beside
+``TEAM_SOURCED_VALUES`` when one value is the team's and another the borrower's. No number
+changes: a borrower's sale price sizes LTV exactly as a team's would. Fixtures
+``go_web_borrower_values_okc`` and ``go_web_overridden_by_team_okc`` demonstrate it.
+
 **1.2.0 (Phase 5b, 2026-09-24) prices an arbitrary payoff date, and makes the holding cost a
 percentage.** The term is no longer a whole number of months: ``term_months`` is the count of
 full monthly periods anchored to the closing date's day (clamped to a short month), and
@@ -69,4 +80,4 @@ REHAB_PORTION_EXCEEDS_BUDGET.
 
 from __future__ import annotations
 
-ENGINE_VERSION = "1.2.0"
+ENGINE_VERSION = "1.3.0"

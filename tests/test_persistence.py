@@ -227,7 +227,7 @@ def test_missing_deal_and_incomplete_deal_are_named_not_guessed(
 def test_a_deal_with_no_term_cannot_be_underwritten_silently(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    """A 12+ bucket names no months, so a deal on one carries a term or is refused."""
+    """A deal with no term is refused, whatever bucket it carries (SPEC §8.1)."""
     deal_with_overrides.term_months = None
     deal_with_overrides.term_bucket = TermBucket.M12_PLUS
     db_session.flush()

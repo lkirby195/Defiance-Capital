@@ -13,12 +13,14 @@ import pytest
 
 from config.config import DEFAULT_PATH, Config, load_yaml
 from engine.screen import (
+    borrower_sourced_flags,
     court_flags,
     credit_check,
     experience_check,
     is_below_floor,
     leverage_flags,
     order_flags,
+    provenance_flags,
     reasons_from_flags,
     screen,
     state_flags,
@@ -765,3 +767,64 @@ def test_the_flag_is_information_and_never_moves_a_verdict() -> None:
     assert result.verdict is Verdict.GO
     assert [f.code.value for f in result.flags] == ["TEAM_SOURCED_VALUES"]
     assert result.reasons == [f"Info: {result.flags[0].message}"]
+
+
+# --- BORROWER_SOURCED_VALUES (SPEC §4.2, §6.1) ---------------------------------------------------
+
+
+def test_the_borrower_flag_names_what_the_borrower_claimed() -> None:
+    sale_only = borrower_sourced_flags(sized_with(ValueSource.BORROWER))
+    assert len(sale_only) == 1
+    assert sale_only[0].code is ScreenFlag.BORROWER_SOURCED_VALUES
+    assert sale_only[0].severity is Severity.INFO
+    assert sale_only[0].message.startswith("Estimated sale price came from the borrower")
+    assert "unverified" in sale_only[0].message
+
+    both = borrower_sourced_flags(sized_with(ValueSource.BORROWER), ValueSource.BORROWER)
+    assert both[0].message.startswith(
+        "Estimated sale price and monthly rent came from the borrower"
+    )
+
+    rent_only = borrower_sourced_flags(sized_with(ValueSource.TEAM), ValueSource.BORROWER)
+    assert rent_only[0].message.startswith("Monthly rent came from the borrower")
+
+    assert borrower_sourced_flags(sized_with(ValueSource.TEAM), ValueSource.TEAM) == []
+    assert borrower_sourced_flags(sized_with(ValueSource.ADAPTER), None) == []
+
+
+def test_both_provenance_flags_are_raised_side_by_side() -> None:
+    """One value the team's, another the borrower's: two flags, each naming its own."""
+    flags = provenance_flags(
+        sized_with(ValueSource.TEAM), searched(ValueSource.TEAM), ValueSource.BORROWER
+    )
+    assert [flag.code for flag in flags] == [
+        ScreenFlag.TEAM_SOURCED_VALUES,
+        ScreenFlag.BORROWER_SOURCED_VALUES,
+    ]
+    assert "Estimated sale price and court records" in flags[0].message
+    assert flags[1].message.startswith("Monthly rent came from the borrower")
+
+
+def test_a_borrower_sale_price_sizes_the_screen_and_moves_no_verdict() -> None:
+    inputs = ScreenInputs(
+        deal=deal().model_copy(update={"estimated_sale_price_source": ValueSource.BORROWER}),
+        state=State.OK,
+        borrower=borrower(),
+        court_records=searched(ValueSource.ADAPTER),
+    )
+    result = screen(inputs, CONFIG)
+    assert result.verdict is Verdict.GO
+    assert [f.code.value for f in result.flags] == ["BORROWER_SOURCED_VALUES"]
+    assert result.sizing.estimated_sale_price_source is ValueSource.BORROWER
+    # the number itself is sized exactly as a team number would be
+    as_team = screen(
+        inputs.model_copy(
+            update={
+                "deal": inputs.deal.model_copy(
+                    update={"estimated_sale_price_source": ValueSource.TEAM}
+                )
+            }
+        ),
+        CONFIG,
+    )
+    assert as_team.sizing.metrics == result.sizing.metrics
