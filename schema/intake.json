@@ -232,6 +232,23 @@
           "title": "Court Records Team",
           "type": "array"
         },
+        "estimated_sale_price_borrower": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Estimated Sale Price Borrower"
+        },
         "estimated_sale_price_team": {
           "anyOf": [
             {
@@ -375,6 +392,23 @@
           ],
           "default": null,
           "title": "Monthly Rent"
+        },
+        "monthly_rent_borrower": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Monthly Rent Borrower"
         },
         "origination_fee_pct": {
           "anyOf": [

@@ -30,6 +30,7 @@ from schema.models import (
     ScreenResult,
     SizingResult,
     TakeBackAnalysis,
+    UnderwriteInputs,
     UnderwriteResult,
     ValueSource,
 )
@@ -145,10 +146,14 @@ def render_sizing(sizing: SizingResult, config: Config, title: str = "SIZING") -
 
 
 def source_label(source: ValueSource | None, missing: str = "none") -> str:
-    """How a value reached the engine: an adapter, the team by hand, or not at all."""
+    """How a value reached the engine: an adapter, the team by hand, the borrower, or not at all."""
     if source is None:
         return missing
-    return "team" if source is ValueSource.TEAM else "adapter"
+    if source is ValueSource.TEAM:
+        return "team"
+    if source is ValueSource.BORROWER:
+        return "borrower"
+    return "adapter"
 
 
 def render_provenance(sizing: SizingResult, components: ScreenComponents) -> list[str]:
@@ -162,7 +167,7 @@ def render_provenance(sizing: SizingResult, components: ScreenComponents) -> lis
         row(
             "Estimated sale price from",
             source_label(sizing.estimated_sale_price_source),
-            "team = entered by hand; an adapter value wins",
+            "team = by hand, borrower = the public form; adapter > team > borrower",
         ),
         row(
             "Court records from",
@@ -388,8 +393,28 @@ def render_flags(result: UnderwriteResult) -> list[str]:
     return lines
 
 
+def render_rent_provenance(inputs: UnderwriteInputs | None) -> list[str]:
+    """Where the rent the two DSCRs rest on came from.  # SPEC §4.2, §6.1
+
+    A borrower's own figure for what their property lets for is the one number on the deal
+    that nobody at GLENWOOD has looked at, so the report says when that is what it ran on.
+    """
+    if inputs is None or inputs.monthly_rent is None:
+        return []
+    return [
+        row(
+            "Monthly rent from",
+            source_label(inputs.monthly_rent_source, missing="unstated"),
+            "team = by hand, borrower = the public form; a team entry replaces it",
+        )
+    ]
+
+
 def render_underwrite(
-    result: UnderwriteResult, config: Config, screen_sizing: SizingResult | None = None
+    result: UnderwriteResult,
+    config: Config,
+    screen_sizing: SizingResult | None = None,
+    inputs: UnderwriteInputs | None = None,
 ) -> list[str]:
     """Everything the underwrite produced, in the SPEC §9 order.  # SPEC §8
 
@@ -419,6 +444,7 @@ def render_underwrite(
         *render_return_overview(result.return_overview),
         *render_flip(result.flip),
         *render_rental(result.rental),
+        *render_rent_provenance(inputs),
         *render_take_back(result.take_back),
         *render_flags(result),
     ]
@@ -430,12 +456,15 @@ def render(
     screen_result: ScreenResult,
     underwrite_result: UnderwriteResult | None,
     config: Config,
+    underwrite_inputs: UnderwriteInputs | None = None,
 ) -> str:
     """The whole report: the screen, then the underwrite when one was run."""
     stamp = f"engine {screen_result.engine_version} - config {screen_result.config_hash[:12]}"
     lines = [*banner(f"{name}   [{stamp}]", description)]
     lines += render_screen(screen_result, config)
     if underwrite_result is not None:
-        lines += render_underwrite(underwrite_result, config, screen_result.sizing)
+        lines += render_underwrite(
+            underwrite_result, config, screen_result.sizing, underwrite_inputs
+        )
     lines.append("")
     return "\n".join(lines)

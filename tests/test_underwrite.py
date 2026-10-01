@@ -14,6 +14,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from config.config import Config
 from engine.underwrite import underwrite
@@ -392,3 +393,31 @@ def test_flags_come_back_hard_first_and_every_one_says_what_it_tested() -> None:
     assert order == sorted(order)
     assert all(flag.message.strip() for flag in result.flags)
     assert result.loan_purpose is LoanPurpose.PURCHASE
+
+
+def test_a_borrower_rent_is_named_and_a_team_sale_price_beside_it_is_named_too() -> None:
+    """SPEC §4.2, §6.1: both provenance flags, each naming its own inputs."""
+    by_hand = SizingInputs(
+        product=Product.NO_DRAW,
+        purchase_price=D("200000"),
+        rehab_costs=D("0"),
+        loan_requested=D("150000"),
+        estimated_sale_price=D("260000"),
+        estimated_sale_price_source=ValueSource.TEAM,
+    )
+    result = underwrite(
+        inputs(by_hand, monthly_rent=D("1800"), monthly_rent_source=ValueSource.BORROWER),
+        CONFIG,
+    )
+    borrower = find(result.flags, ScreenFlag.BORROWER_SOURCED_VALUES)
+    assert borrower.severity is Severity.INFO
+    assert borrower.message.startswith("Monthly rent came from the borrower")
+    team = find(result.flags, ScreenFlag.TEAM_SOURCED_VALUES)
+    assert team.message.startswith("Estimated sale price came from the team")
+    # the DSCRs ran on the borrower's rent exactly as they would on anyone's
+    assert result.rental.monthly_rent == D("1800")
+
+
+def test_a_rent_source_needs_a_rent() -> None:
+    with pytest.raises(ValidationError, match="source cannot be recorded without its value"):
+        inputs(monthly_rent=None, monthly_rent_source=ValueSource.BORROWER)

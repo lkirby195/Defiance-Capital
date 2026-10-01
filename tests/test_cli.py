@@ -212,5 +212,23 @@ def test_a_team_entry_fixture_needs_a_request_not_an_inputs_block(tmp_path: Path
 def test_a_file_with_neither_block_is_not_a_fixture(tmp_path: Path) -> None:
     neither = tmp_path / "neither.json"
     neither.write_text('{"name": "x"}', encoding="utf-8")
-    with pytest.raises(FixtureError, match="no 'inputs' or 'team_entry' block"):
+    with pytest.raises(FixtureError, match="no 'inputs', 'team_entry' or 'web_entry' block"):
         run_fixture(neither, CONFIG, with_underwrite=False)
+
+
+def test_a_web_fixture_says_its_numbers_are_the_borrower_s(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    web = FIXTURE_DIR / "go_web_borrower_values_okc.json"
+    assert main(["run", str(web), "--underwrite"]) == 0
+    out = capsys.readouterr().out
+    assert "verdict: GO" in out
+    assert "Estimated sale price from" in out and "borrower" in out
+    assert "Monthly rent from" in out
+    assert "BORROWER_SOURCED_VALUES" in out
+    assert "TEAM_SOURCED_VALUES" not in out
+
+    overridden = FIXTURE_DIR / "go_web_overridden_by_team_okc.json"
+    assert main(["run", str(overridden), "--underwrite"]) == 0
+    out = capsys.readouterr().out
+    assert "TEAM_SOURCED_VALUES" in out and "BORROWER_SOURCED_VALUES" in out

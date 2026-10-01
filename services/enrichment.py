@@ -4,8 +4,10 @@ The adapters are Phase 3. Until they land this returns nothing, and the team's o
 (SPEC §7.2, §8.1) are what the engine runs on. The seam exists now so the precedence rule
 is written down and tested once rather than retrofitted: **an adapter value always wins over
 a team value**, because the team is standing in for a source that does not exist yet, not
-overriding one that does. The team's entry stays on the deal either way, so a later reader
-can see what was entered by hand and what superseded it.
+overriding one that does - and a team value wins over the borrower's own estimate off the
+public form (SPEC §4.2), for the same reason. Every superseded value stays on the deal in
+its own column, so a later reader can see what was entered by hand, what the borrower
+claimed, and what superseded each.
 """
 
 from __future__ import annotations
@@ -24,6 +26,9 @@ class AdapterValues:
     """Enrichment results the engine can use directly; every field is optional."""
 
     estimated_sale_price: Decimal | None = None
+    # No adapter produces a rent yet (SPEC §6 lists one as optional); the field is here so
+    # the precedence rule - adapter, team, borrower - is written once for every value.
+    monthly_rent: Decimal | None = None
     court_records: CourtRecordInputs | None = None
 
 

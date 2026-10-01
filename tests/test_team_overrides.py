@@ -48,6 +48,7 @@ from services import (
 )
 from services.assemble import (
     court_records,
+    resolve_rent,
     resolve_valuation,
     screen_inputs,
     underwrite_inputs,
@@ -452,3 +453,60 @@ def test_an_adapter_court_record_reaches_the_underwrite_over_the_team_search() -
     assert CourtFlag.ACTIVE_FORECLOSURE_AS_OWNER not in {
         f.code for f in underwrite(pulled, CONFIG).flags
     }
+
+
+# --- the borrower's own estimates: third in line, never overwritten (SPEC §4.2, §6.1) -----------
+
+
+def borrower_deal() -> Deal:
+    """A team-entered deal carrying the borrower's own guesses beside the team's."""
+    deal = deal_from()
+    deal.estimated_sale_price_borrower = D("240000.00")
+    deal.monthly_rent_borrower = D("1500.00")
+    return deal
+
+
+def test_a_team_value_wins_over_the_borrower_s_and_an_adapter_over_both() -> None:
+    deal = borrower_deal()
+    assert resolve_valuation(deal).estimated_sale_price_source is ValueSource.TEAM
+    assert resolve_valuation(deal).estimated_sale_price == D("200000.00")
+    deal.estimated_sale_price_team = None
+    only_borrower = resolve_valuation(deal)
+    assert only_borrower.estimated_sale_price == D("240000.00")
+    assert only_borrower.estimated_sale_price_source is ValueSource.BORROWER
+    pulled = resolve_valuation(deal, AdapterValues(estimated_sale_price=D("230000.00")))
+    assert pulled.estimated_sale_price_source is ValueSource.ADAPTER
+    # a request is the team's, and the team outranks the borrower
+    typed = resolve_valuation(deal, request=UnderwriteRequest(estimated_sale_price=D("1")))
+    assert typed.estimated_sale_price_source is ValueSource.TEAM
+    # nothing wrote back: the borrower's figure is where it was
+    assert deal.estimated_sale_price_borrower == D("240000.00")
+
+
+def test_the_rent_resolves_the_same_three_ways() -> None:
+    deal = borrower_deal()
+    assert resolve_rent(deal) == (D("1800.00"), ValueSource.TEAM)
+    deal.monthly_rent = None
+    assert resolve_rent(deal) == (D("1500.00"), ValueSource.BORROWER)
+    assert resolve_rent(deal, request=UnderwriteRequest(monthly_rent=D("1650.00"))) == (
+        D("1650.00"),
+        ValueSource.TEAM,
+    )
+    assert resolve_rent(deal, AdapterValues(monthly_rent=D("1700.00"))) == (
+        D("1700.00"),
+        ValueSource.ADAPTER,
+    )
+    deal.monthly_rent_borrower = None
+    assert resolve_rent(deal) == (None, None)
+
+
+def test_the_underwrite_is_assembled_with_the_rent_s_source() -> None:
+    deal = borrower_deal()
+    deal.monthly_rent = None
+    assembled = underwrite_inputs(deal, UnderwriteRequest())
+    assert assembled.monthly_rent == D("1500.00")
+    assert assembled.monthly_rent_source is ValueSource.BORROWER
+    assert assembled.deal.estimated_sale_price_source is ValueSource.TEAM
+    result = underwrite(assembled, CONFIG)
+    codes = [flag.code.value for flag in result.flags]
+    assert "TEAM_SOURCED_VALUES" in codes and "BORROWER_SOURCED_VALUES" in codes

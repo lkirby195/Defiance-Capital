@@ -102,7 +102,7 @@ glenwood-uw/
 
 **Services own the I/O.** `services/` is the only place that loads a deal, runs the engine on it, and writes the result. `api/` calls services, never the engine directly; services never commit (the caller owns the transaction). `cli/` is the other caller: it reads a fixture off disk and runs the same pure functions with no database at all — a fixture with a `team_entry` block goes through `services/assemble.py` too, so the CLI and the API cannot diverge.
 
-**An adapter value always beats a team value.** Anything the team enters by hand (SPEC §6.1) is a stand-in for a source that does not exist yet. The team's entry is never overwritten, and every value the engine ran on records whether it came from an `ADAPTER` or the `TEAM`.
+**An adapter value always beats a team value, and a team value beats the borrower's.** Anything the team enters by hand (SPEC §6.1) is a stand-in for a source that does not exist yet; anything the borrower typed on the public form (SPEC §4.2) is their own unverified claim and lives in its own columns. Nothing is overwritten - a team entry replaces a borrower value as the one in force and leaves it on the deal - and every value the engine ran on records whether it came from an `ADAPTER`, the `TEAM` or the `BORROWER`.
 
 **No hardcoded thresholds.** Any number a lender might want to change (caps, floors, fees, lookbacks, defaults) lives in `config/glenwood.yaml` and is read through `Config`. If you find yourself typing `0.75` or `620` in `engine/`, stop and move it to config.
 

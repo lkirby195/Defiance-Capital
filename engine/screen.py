@@ -582,6 +582,54 @@ def team_sourced_flags(sizing: SizingResult, court_records: CourtRecordInputs | 
     ]
 
 
+def borrower_sourced_flags(
+    sizing: SizingResult, monthly_rent_source: ValueSource | None = None
+) -> list[Flag]:
+    """BORROWER_SOURCED_VALUES when a value the engine ran on is the borrower's own claim.
+
+    # SPEC §4.2, §6.1. Fixed INFO, and it never moves a verdict, exactly as the team flag
+    does not. The difference is what it warns of: a team value is a person on GLENWOOD's
+    side standing in for a pull, and a borrower value is the applicant's own estimate of
+    what their property will sell for or let for, typed on the public form and verified by
+    nobody. The message names which values it was. Raised beside TEAM_SOURCED_VALUES when
+    one input is the team's and another the borrower's.
+
+    The court record cannot be the borrower's: the public form asks for no search.
+    """
+    claimed = [
+        label
+        for label, source in (
+            ("estimated sale price", sizing.estimated_sale_price_source),
+            ("monthly rent", monthly_rent_source),
+        )
+        if source is ValueSource.BORROWER
+    ]
+    if not claimed:
+        return []
+    named = _join(claimed)
+    return [
+        Flag(
+            code=ScreenFlag.BORROWER_SOURCED_VALUES,
+            severity=Severity.INFO,
+            message=(
+                f"{named[0].upper()}{named[1:]} came from the borrower, typed on the public "
+                "form and unverified; a team entry or an adapter value would take precedence."
+            ),
+        )
+    ]
+
+
+def provenance_flags(
+    sizing: SizingResult,
+    court_records: CourtRecordInputs | None,
+    monthly_rent_source: ValueSource | None = None,
+) -> list[Flag]:
+    """Both provenance flags, each only when something it names applies.  # SPEC §6.1"""
+    return team_sourced_flags(sizing, court_records) + borrower_sourced_flags(
+        sizing, monthly_rent_source
+    )
+
+
 # --- verdict, reasons, reply (SPEC §7.5) --------------------------------------------------------
 
 
@@ -644,7 +692,7 @@ def screen(inputs: ScreenInputs, config: Config) -> ScreenResult:
         + court_flags(inputs.court_records, config)
         + state_flags(inputs.state, config)
         + leverage_flags(sizing)
-        + team_sourced_flags(sizing, inputs.court_records)
+        + provenance_flags(sizing, inputs.court_records)
     )
     verdict = verdict_from_flags(flags)
     return ScreenResult(

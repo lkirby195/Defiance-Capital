@@ -127,7 +127,7 @@ def infer_term_months(bucket: TermBucket | None, entered: int | None) -> int | N
     The bucket is the borrower's answer to "how long do you need the loan?", so it seeds the
     term and does not fix it: the deal is priced on the team's number - typed, or implied by
     a payoff date - and a deal repriced to 7 months on a 6-month ask is a real thing. Without
-    one, the bucket's own number stands, and ``12_PLUS`` names none at all.
+    one, the bucket's own number stands; ``12_PLUS`` seeds 12, the floor of the ask.
     """
     return entered if entered is not None else months_for_bucket(bucket)
 

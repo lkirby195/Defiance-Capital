@@ -36,8 +36,15 @@ from schema.models import (
     TermBucket,
     Tranche,
 )
-from services import InputSource, queue_view, underwrite_readiness
-from tests.conftest import QueueClient, requires_db
+from services import (
+    InputSource,
+    TeamOverrides,
+    queue_view,
+    run_screen,
+    save_overrides,
+    underwrite_readiness,
+)
+from tests.conftest import ACTOR, QueueClient, requires_db
 from tests.test_form_errors import field_error, flagged, top_problems
 
 pytestmark = requires_db
@@ -374,8 +381,10 @@ def test_a_full_submission_lands_in_the_queue_as_a_web_deal(
     assert deal.purchase_price == Decimal("185000")
     assert deal.rehab_costs == Decimal("40000")
     assert deal.loan_requested == Decimal("160000")
-    assert deal.estimated_sale_price_team == Decimal("290000")
-    assert deal.monthly_rent == Decimal("1950")
+    # the borrower's own estimates land in their own columns, not the team's (SPEC §4.2)
+    assert deal.estimated_sale_price_borrower == Decimal("290000")
+    assert deal.monthly_rent_borrower == Decimal("1950")
+    assert deal.estimated_sale_price_team is None and deal.monthly_rent is None
     assert str(deal.closing_date) == "2026-11-15"
     # no loan-type selector: the normalizer inferred one, as on every channel
     assert deal.product is Product.SPLIT_DRAW and deal.product_source is ProductSource.INFERRED
@@ -430,7 +439,7 @@ def test_the_queue_and_the_deal_page_say_it_came_from_the_web(
     assert "A friend at the Tulsa REIA" in deal_body
     assert "<dd>Spanish" in deal_body
     assert "the borrower asked for\n        12+ months" in deal_body or "12+ months" in deal_body
-    assert "The borrower selected 12+ months" in deal_body
+    assert "The borrower asked for more than 12 months" in deal_body
     assert "seeded at 12" in deal_body
     assert ">12_PLUS<" not in deal_body
 
@@ -543,3 +552,65 @@ def test_a_link_that_carries_no_address_still_asks_for_one(
     for name in ("address", "city", "state"):
         assert field_error(response.text, name) == "This is required.", name
     assert deals(db_session) == []
+
+
+# --- the borrower's own numbers are the borrower's (SPEC §4.2, §6.1) -----------------------------
+
+
+def test_the_borrower_estimates_are_third_in_line_and_say_so(
+    anon_client: QueueClient, client: QueueClient, db_session: Session
+) -> None:
+    """Readiness, the deal page and the stored screen all call them the borrower's."""
+    assert post(anon_client).status_code == 303
+    (deal,) = deals(db_session)
+    rows = {row.key: row for row in underwrite_readiness(deal).rows}
+    assert rows["estimated_sale_price"].source is InputSource.BORROWER
+    assert rows["estimated_sale_price"].value == Decimal("290000")
+    assert rows["monthly_rent"].source is InputSource.BORROWER
+    assert rows["monthly_rent"].value == Decimal("1950")
+
+    body = client.get(f"/queue/deals/{deal.id}").text
+    assert ">Borrower<" in body
+    assert "Their sale price after rehab" in body and "$290,000.00" in body
+    assert ">BORROWER<" not in body
+
+    result = run_screen(db_session, deal.id, actor=ACTOR)
+    db_session.commit()
+    assert result.sizing.estimated_sale_price_source.value == "BORROWER"
+    assert "BORROWER_SOURCED_VALUES" in [flag.code.value for flag in result.flags]
+    assert any("came from the borrower" in reason for reason in result.reasons)
+
+
+def test_a_team_entry_replaces_the_borrower_value_and_keeps_it_for_the_record(
+    anon_client: QueueClient, client: QueueClient, db_session: Session
+) -> None:
+    """Adapter over team over borrower, and nothing is overwritten (SPEC §6.1)."""
+    assert post(anon_client).status_code == 303
+    (deal,) = deals(db_session)
+    save_overrides(
+        db_session,
+        deal.id,
+        TeamOverrides(estimated_sale_price_team=Decimal("250000.00")),
+        actor=ACTOR,
+    )
+    db_session.commit()
+    db_session.expire_all()
+    deal = db_session.get(Deal, deal.id)
+    assert deal is not None
+    # the team's number is the one in force...
+    rows = {row.key: row for row in underwrite_readiness(deal).rows}
+    assert rows["estimated_sale_price"].source is InputSource.TEAM
+    assert rows["estimated_sale_price"].value == Decimal("250000")
+    # ...the rent the team left alone is still the borrower's...
+    assert rows["monthly_rent"].source is InputSource.BORROWER
+    # ...and the borrower's sale price is still on the deal, untouched, for the audit trail
+    assert deal.estimated_sale_price_borrower == Decimal("290000")
+    assert deal.estimated_sale_price_team == Decimal("250000")
+    trail = list(db_session.scalars(select(AuditLog).where(AuditLog.action == "OVERRIDES_SAVED")))
+    assert len(trail) == 1 and trail[0].after is not None
+    assert "estimated_sale_price_team" in trail[0].after
+    assert "estimated_sale_price_borrower" not in trail[0].after
+
+    body = client.get(f"/queue/deals/{deal.id}").text
+    assert ">Team<" in body and ">Borrower<" in body
+    assert "$290,000.00" in body  # the borrower's figure, shown as theirs

@@ -139,13 +139,19 @@ NO_VALUATION = Valuation(None, None)
 
 
 def resolve_one(
-    adapter: Decimal | None, team: Decimal | None
+    adapter: Decimal | None, team: Decimal | None, borrower: Decimal | None = None
 ) -> tuple[Decimal | None, ValueSource | None]:
-    """Adapter first, then the team's own number, then nothing.  # SPEC §6"""
+    """Adapter first, then the team's own number, then the borrower's, then nothing.
+
+    # SPEC §4.2, §6.1. Each superseded value stays where it is on the deal; this only picks
+    # which one the engine runs on and says which it was.
+    """
     if adapter is not None:
         return adapter, ValueSource.ADAPTER
     if team is not None:
         return team, ValueSource.TEAM
+    if borrower is not None:
+        return borrower, ValueSource.BORROWER
     return None, None
 
 
@@ -154,19 +160,51 @@ def resolve_valuation(
     adapters: AdapterValues = NO_ADAPTER_VALUES,
     request: UnderwriteRequest | None = None,
 ) -> Valuation:
-    """The valuation in force, adapter over team.  # SPEC §6, §8.1
+    """The valuation in force, adapter over team over borrower.  # SPEC §4.2, §6, §8.1
 
     A team number reaches the engine two ways and both count as TEAM: the one stored on the
     deal at intake, and the one a team member types when they advance the deal to
-    underwrite. The request wins between those two - it is the more recent judgement - and
-    an adapter value wins over both. Nothing here writes back to the deal, so
-    ``estimated_sale_price_team`` survives a run that did not use it.
+    underwrite. The request wins between those two - it is the more recent judgement - an
+    adapter value wins over both, and the borrower's own estimate off the public form stands
+    only when nobody else has one. Nothing here writes back to the deal, so every column
+    survives a run that did not use it.
     """
     team_sale = deal.estimated_sale_price_team
     if request is not None and request.estimated_sale_price is not None:
         team_sale = request.estimated_sale_price
-    sale_price, sale_source = resolve_one(adapters.estimated_sale_price, team_sale)
+    sale_price, sale_source = resolve_one(
+        adapters.estimated_sale_price, team_sale, deal.estimated_sale_price_borrower
+    )
     return Valuation(sale_price, sale_source)
+
+
+class Rent(NamedTuple):
+    """The monthly rent the Rental and Take-Back analyses run on, and where it came from."""
+
+    monthly_rent: Decimal | None
+    monthly_rent_source: ValueSource | None
+
+
+NO_RENT = Rent(None, None)
+
+
+def resolve_rent(
+    deal: Deal,
+    adapters: AdapterValues = NO_ADAPTER_VALUES,
+    request: UnderwriteRequest | None = None,
+) -> Rent:
+    """The rent in force, adapter over team over borrower.  # SPEC §4.2, §6.1, §8.5
+
+    The same three steps as the valuation. No adapter produces a rent yet, so today this is
+    the team's entry - on the deal or on the request - over the borrower's own figure, and
+    nothing at all when neither said: the analyses are then NOT_EVALUATED rather than run
+    on a zero (SPEC §8.5).
+    """
+    team_rent = deal.monthly_rent
+    if request is not None and request.monthly_rent is not None:
+        team_rent = request.monthly_rent
+    rent, source = resolve_one(adapters.monthly_rent, team_rent, deal.monthly_rent_borrower)
+    return Rent(rent, source)
 
 
 def team_court_records(deal: Deal) -> CourtRecordInputs | None:
@@ -370,7 +408,7 @@ def rental_is_on(
     toggle = _first(request.rental_analysis, deal.rental_analysis)
     if toggle is not None:
         return toggle
-    rent = _first(request.monthly_rent, deal.monthly_rent)
+    rent = resolve_rent(deal, request=request).monthly_rent
     return rental_default(resolved_exit(deal, request, term_months, config), rent)
 
 
@@ -405,6 +443,7 @@ def underwrite_inputs(
     """
     core = deal_core(deal)
     valuation = resolve_valuation(deal, adapters, request)
+    rent = resolve_rent(deal, adapters, request)
     closing_date = resolve_closing_date(deal, request)
     term = resolve_term(deal, request)
     interest_rate = _first(request.interest_rate, deal.interest_rate)
@@ -438,7 +477,8 @@ def underwrite_inputs(
         holding_costs_pct_of_cost=_first(
             request.holding_costs_pct_of_cost, deal.holding_costs_pct_of_cost
         ),
-        monthly_rent=_first(request.monthly_rent, deal.monthly_rent),
+        monthly_rent=rent.monthly_rent,
+        monthly_rent_source=rent.monthly_rent_source,
         flip_analysis=_first(request.flip_analysis, deal.flip_analysis),
         rental_analysis=_first(request.rental_analysis, deal.rental_analysis),
         loan_purpose=_first(request.loan_purpose, deal.loan_purpose),

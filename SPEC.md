@@ -110,7 +110,7 @@ Five things. Everything else is derived or requested later, only if the deal cle
 | 2 | Purchase price | Dollars |
 | 3 | Rehab costs | Dollars; 0 allowed |
 | 4 | Loan Amount | Dollars. Borrower-driven — the engine derives leverage from this |
-| 5 | How long do you need the loan? | The term. The borrower channels ask it as a bucket (3 / 6 / 9 / 12 / 12+ months) which seeds `term_months`; the web form seeds 12+ at 12 (§4.2). The team form asks for the term in months or the payoff date directly (§8.1), because a person with the whole deal in front of them knows it |
+| 5 | How long do you need the loan? | The term. The borrower channels ask it as a bucket (3 / 6 / 9 / 12 / 12+ months) which seeds `term_months`; 12+ seeds 12 on every channel, the floor of the ask, and the deal page says the borrower asked for more so the team sets the real term. The team form asks for the term in months or the payoff date directly (§8.1), because a person with the whole deal in front of them knows it |
 | 6 | Who you are | Guarantor name, entity (if any), phone (optional); **credit range** (pick one of the five tranches, §7.1); **real estate experience** (deals completed in last 3 years: 0 / 1–2 / 3–5 / 6+); **repeat borrower** yes/no |
 
 (Numbered as six rows because "who you are" is one question with sub-fields.)
@@ -143,16 +143,18 @@ stores changes with the language. It asks no loan type: the normalizer infers on
 rehab budget as it does on every channel, and the team confirms it. The listing link is
 optional and, when the address boxes are left blank, the address is read off the link's
 slug and never off the page (§4.4). The borrower's own guesses at the sale price after the
-rehab and at the rent, if offered, land on the two §6.1 stand-ins and are flagged
-`TEAM_SOURCED_VALUES` like any hand-entered value.
+rehab and at the rent, if offered, are stored as the borrower's
+(`estimated_sale_price_borrower`, `monthly_rent_borrower`, source `BORROWER`): the engine
+runs on them only when no adapter and no team member has a number, flags the run
+`BORROWER_SOURCED_VALUES` when it does, and a team entry replaces them as the value in force
+without clearing them (§6.1).
 
 Three things are recorded about where a web deal came from: the channel `WEB`; the
 `intake_source`, which is the `?src=` slug on the link the borrower followed; and the
 `referral_note`, their answer to "how did you hear about us?". The deal lands in the queue
 `NEW` or `NEEDS_INFO` with **no screen run**, and the borrower is shown one page saying the
 team will be in touch - never a verdict, a rate or an amount. The 12+ term bucket seeds
-`term_months` at 12 on this channel (the floor of the ask; the deal page says the borrower
-asked for more, and the team sets the real term).
+`term_months` at 12, as on every channel (§4.1).
 
 What stands between the page and the queue is a honeypot field, which drops a post that
 fills it without a word, and a per-address rate limit
@@ -207,6 +209,8 @@ IntakeRecord
     flip_analysis?, rental_analysis?   # §8.1 toggles; null leaves the §3-derived default
     asset_type?: SFR | UNITS_2_4 | UNITS_5_PLUS | OTHER   # drives the §3 exit inference
     stated_exit?: FLIP | HOLD | WHOLETAIL | UNKNOWN
+  borrower estimates (§4.2):     # the public form's own; never overwritten, source BORROWER
+    estimated_sale_price_borrower?, monthly_rent_borrower?
   team overrides (§6):           # stand-ins for enrichment, entered by hand
     estimated_sale_price_team?, monthly_rent?
     court_records_status?: NOT_CHECKED | CLEAN | FLAGS
@@ -291,6 +295,11 @@ their audit trail, and are simply re-run.
 (§4.2). Its downgrade relabels every `WEB` row `TEAM` before rebuilding the enum without the
 value, rather than deleting a deal a borrower typed in.
 
+`0014` adds `deals.estimated_sale_price_borrower` and `deals.monthly_rent_borrower` (§4.2,
+§6.1) and moves each untouched `WEB` deal's two numbers out of the team columns into them.
+No run is deleted: engine `1.3.0` adds to two enums and gives `UnderwriteInputs` one optional
+field, and every stored row still rebuilds.
+
 ---
 
 ## 6. Enrichment adapters
@@ -322,15 +331,28 @@ hand-entered `estimated_sale_price_team` and `monthly_rent`, and a
 lien facts for a subject-property encumbrance — so the config thresholds, not the team,
 decide the outcome).
 
-Precedence is fixed: **an adapter value always wins over a team value**, and the team value
-stays on the deal either way so a later reader can see what was entered by hand and what
-superseded it. Every value the engine ran on records its source, `ADAPTER` or `TEAM`, on the
-stored screen and underwrite (§5) — a Go that rests on a hand-entered valuation and a
-hand-done court search is a different thing from a Go that rests on a pull, and the verdict
-alone does not say which it is.
+Precedence is fixed: **an adapter value always wins over a team value, and a team value
+wins over the borrower's own** — the estimated sale price and monthly rent a borrower types
+on the public form (§4.2), stored in their own columns. Every superseded value stays on the
+deal, so a later reader can see what was entered by hand, what the borrower claimed, and what
+superseded each: a team entry replaces a borrower value as the one the engine runs on and
+does not clear it. Every value the engine ran on records its source, `ADAPTER`, `TEAM` or
+`BORROWER`, on the stored screen and underwrite (§5) — a Go that rests on a hand-entered
+valuation and a hand-done court search is a different thing from a Go that rests on a pull,
+and a Go that rests on the applicant's own guess is a third, and the verdict alone does not
+say which it is. The readiness checklist (§9.2), the deal page, the CLI report and the
+workbook each say "Borrower" where that is where a value came from.
 
 `NOT_CHECKED` is not `CLEAN`: the first is reported as an INFO flag, the second is a clean
 record dated the day the team searched.
+
+Both stages also raise `BORROWER_SOURCED_VALUES` (Info, fixed in code) when a value they ran
+on carries source `BORROWER`, naming which — the estimated sale price, the monthly rent, or
+both — and it sits beside `TEAM_SOURCED_VALUES` when one input is the team's and another the
+borrower's. The court record is never the borrower's: the public form asks for no search.
+The rent is named only by the borrower flag, on purpose: nothing pulls a rent, so a team rent
+is not "by hand rather than pulled", while a borrower's rent is the one number on the deal
+nobody at GLENWOOD has looked at.
 
 Both the screen and the underwrite raise `TEAM_SOURCED_VALUES` (Info, fixed in code) when
 any value they ran on carries source `TEAM`, and the message names which — the estimated sale
@@ -794,7 +816,7 @@ flag's severity. The stored value is untouched — an `<option>` still posts `BA
 and a flag tag is still styled by its code — only the words change.
 
 ### 9.2 Readiness checklist
-Above the Run underwrite button, one row per §8.1 input with the value in force, where it came from (`ADAPTER` / `TEAM` / `DEFAULT` / `MISSING`), whether the run needs it, and what the run does without it. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months` or `payoff_date`, shown as months and, where there is one, the stub days after them), and the loan split on a split product. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
+Above the Run underwrite button, one row per §8.1 input with the value in force, where it came from (`ADAPTER` / `TEAM` / `BORROWER` / `DEFAULT` / `MISSING`, shown as words), whether the run needs it, and what the run does without it. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months` or `payoff_date`, shown as months and, where there is one, the stub days after them), and the loan split on a split product. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
 
 ### 9.3 Credit memo
 Generated from `UnderwriteResult` into GLENWOOD's template (to be supplied; docx). Sections: borrower, property, deal structure, sizing vs caps, the return overview (ledger and IRR), flip, rental, take-back, flags with pass/fail, recommendation. Every flag shows the threshold it was tested against.
@@ -930,8 +952,7 @@ recorded the move into that status.
 - The public form's Spanish (`api/i18n.py`): written for a Latin American audience in the
   `usted` register and pending native-speaker review
 - The public form's rate limit (`web_intake.submissions_per_hour_per_ip`, placeholder 5) and
-  whether the count should survive a restart; and whether the borrower's own sale price and
-  rent should get a source of their own rather than landing on the §6.1 stand-ins
+  whether the count should survive a restart
 - The config placeholders the mechanics walkthrough left open: the contingency, holding-cost
   and broker percentages, the rental expense ratio and takeout rate, the two DSCR floors, the
   take-back's lost-interest months and legal costs, and the stub period's day-count basis

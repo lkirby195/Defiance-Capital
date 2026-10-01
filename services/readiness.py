@@ -8,6 +8,8 @@ per §8.1 input, each with the value in force and where it came from:
 
     ADAPTER   an enrichment adapter or a paid pull produced it (SPEC §6)
     TEAM      somebody entered it by hand, on the intake form or the override block
+    BORROWER  the borrower's own estimate, typed on the public form (SPEC §4.2); a team
+              entry replaces it and the borrower's figure stays on the deal
     DEFAULT   nobody entered it and config has a stand-in (SPEC §8.1)
     MISSING   nobody entered it and there is no stand-in
 
@@ -61,6 +63,7 @@ class InputSource(StrEnum):
 
     ADAPTER = "ADAPTER"
     TEAM = "TEAM"
+    BORROWER = "BORROWER"
     DEFAULT = "DEFAULT"
     MISSING = "MISSING"
 
@@ -126,15 +129,21 @@ def _resolved_row(
     fmt: RowFormat = "money",
     adapter: Decimal | None = None,
     team: Decimal | None = None,
+    borrower: Decimal | None = None,
     default: Decimal | None = None,
     required: bool = False,
     note: str = "",
 ) -> InputRow:
-    """One input resolved adapter over team over config default.  # SPEC §6.1, §8.1"""
+    """One input resolved adapter over team over borrower over config default.
+
+    # SPEC §4.2, §6.1, §8.1. The same order ``services/assemble.py`` runs on.
+    """
     if adapter is not None:
         value, source = adapter, InputSource.ADAPTER
     elif team is not None:
         value, source = team, InputSource.TEAM
+    elif borrower is not None:
+        value, source = borrower, InputSource.BORROWER
     elif default is not None:
         value, source = default, InputSource.DEFAULT
     else:
@@ -158,15 +167,12 @@ def _term_row(deal: Deal) -> InputRow:
     9 months on a 9-month bucket, the bucket did. A term that differs from the bucket, or one
     with a stub, which no bucket names, is a person's own.
 
-    ``12_PLUS`` names no months on the team form, and the public form seeds it at 12
-    (``intake/parsers/web_form.py``): the floor of what the borrower asked for. So a 12-month
-    term on a 12+ bucket is the seed, not a choice, and is reported as DEFAULT with a note
-    saying the borrower asked for more - the team sets the real number.
+    ``12_PLUS`` seeds 12 on every channel (SPEC §4.1): the floor of what the borrower asked
+    for. So a 12-month term on a 12+ bucket is the seed, not a choice, and is reported as
+    DEFAULT with a note saying the borrower asked for more - the team sets the real number.
     """
     term = deal_term(deal)
     named = months_for_bucket(deal.term_bucket)
-    if named is None and deal.term_bucket is TermBucket.M12_PLUS:
-        named = TWELVE_PLUS_SEED_MONTHS
     seeded = named is not None and term == Term(named, 0)
     if term is None:
         source = InputSource.MISSING
@@ -177,8 +183,6 @@ def _term_row(deal: Deal) -> InputRow:
     bucket = deal.term_bucket
     if bucket is None:
         note = "no term bucket on the deal; the team's own number is all there is"
-    elif bucket is TermBucket.M12_PLUS and term is None:
-        note = "the 12+ bucket names no months; enter a term, or a payoff date to imply one"
     elif bucket is TermBucket.M12_PLUS and seeded:
         note = (
             f"seeded at {TWELVE_PLUS_SEED_MONTHS} months by the 12+ bucket; the borrower asked "
@@ -342,6 +346,7 @@ def underwrite_readiness(
             "Estimated sale price",
             adapter=adapters.estimated_sale_price,
             team=deal.estimated_sale_price_team,
+            borrower=deal.estimated_sale_price_borrower,
             note=(
                 "the Flip analysis sells at it and LTV is computed on it; without one the "
                 "flip is not evaluated and LTV is not available (SPEC §7.4, §8.4)"
@@ -352,7 +357,9 @@ def underwrite_readiness(
         _resolved_row(
             "monthly_rent",
             "Monthly rent",
+            adapter=adapters.monthly_rent,
             team=deal.monthly_rent,
+            borrower=deal.monthly_rent_borrower,
             note="without it the Rental and Take-Back analyses are not evaluated (SPEC §8.5)",
         ),
         _resolved_row(

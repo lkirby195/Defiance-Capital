@@ -86,25 +86,26 @@ class TermBucket(StrEnum):
     M12_PLUS = "12_PLUS"
 
 
-# The months each bucket names. 12_PLUS names none: a term past a year is a negotiation,
-# so the team sets the number (SPEC §4.1, §8.1).
+# What a 12_PLUS bucket seeds the term with (SPEC §4.1): the floor of the ask, so the deal
+# can be priced while the team settles the real number. The bucket stays on the deal beside
+# it, and the deal page says the borrower asked for more.
+TWELVE_PLUS_SEED_MONTHS = 12
+
+# The months each bucket seeds ``term_months`` with at intake, on every channel that asks
+# the bucket question (SPEC §4.1). 12_PLUS seeds twelve: a term past a year is a negotiation
+# and the team sets the real number (SPEC §8.1), but a deal with no term cannot be priced.
 TERM_BUCKET_MONTHS: dict[TermBucket, int] = {
     TermBucket.M3: 3,
     TermBucket.M6: 6,
     TermBucket.M9: 9,
     TermBucket.M12: 12,
+    TermBucket.M12_PLUS: TWELVE_PLUS_SEED_MONTHS,
 }
 
 
-# What the public borrower form seeds a 12_PLUS term with (SPEC §4.2): the floor of the ask,
-# so the deal can be priced while the team settles the real number. The bucket stays on the
-# deal beside it, and the deal page says the borrower asked for more.
-TWELVE_PLUS_SEED_MONTHS = 12
-
-
 def months_for_bucket(bucket: TermBucket | None) -> int | None:
-    """The months a bucket names, or None for 12_PLUS and for no bucket at all."""
-    return None if bucket is None else TERM_BUCKET_MONTHS.get(bucket)
+    """The months a bucket seeds, or None for no bucket at all.  # SPEC §4.1"""
+    return None if bucket is None else TERM_BUCKET_MONTHS[bucket]
 
 
 class Channel(StrEnum):
@@ -222,14 +223,17 @@ class LienKind(StrEnum):
 
 
 class ValueSource(StrEnum):
-    """Where a value the engine ran on came from.  # SPEC §6, §8.1
+    """Where a value the engine ran on came from.  # SPEC §4.2, §6, §8.1
 
-    An adapter value always wins over a team value; the team value stays on the deal either
-    way, so a later reader can see what was entered by hand and what superseded it.
+    Precedence is adapter over team over borrower. A team entry replaces a borrower value
+    and an adapter value replaces either; the superseded value stays on the deal in its own
+    column, so a later reader can see what was entered by hand, what the borrower claimed,
+    and what superseded each.
     """
 
     ADAPTER = "ADAPTER"  # an enrichment adapter or a paid pull (SPEC §6)
     TEAM = "TEAM"  # entered by hand in the review queue
+    BORROWER = "BORROWER"  # the borrower's own estimate, typed on the public form (SPEC §4.2)
 
 
 class CourtRecordsStatus(StrEnum):
@@ -546,6 +550,16 @@ class DealInfo(BaseModel):
     estimated_sale_price_team: Decimal | None = Field(
         default=None, gt=0, max_digits=14, decimal_places=2
     )
+    # The borrower's own estimates, typed on the public form (SPEC §4.2): what they expect
+    # the property to sell for after the rehab, and the rent if they keep it. Third in line
+    # after an adapter and the team, flagged BORROWER_SOURCED_VALUES when the engine runs on
+    # one, and never overwritten - a team entry replaces the value in force and these stay.
+    estimated_sale_price_borrower: Decimal | None = Field(
+        default=None, gt=0, max_digits=14, decimal_places=2
+    )
+    monthly_rent_borrower: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
     # Team court search (SPEC §7.2): the outcome, the date it was searched (the engine has
     # no clock, so the lookbacks are measured from it), and one typed entry per matter.
     court_records_status: CourtRecordsStatus | None = None
@@ -642,6 +656,7 @@ class ScreenFlag(StrEnum):
     REPEAT_BORROWER_PAYOFF_NOT_CLEAN = "REPEAT_BORROWER_PAYOFF_NOT_CLEAN"  # INFO
     COURT_RECORDS_NOT_CHECKED = "COURT_RECORDS_NOT_CHECKED"  # INFO
     TEAM_SOURCED_VALUES = "TEAM_SOURCED_VALUES"  # INFO, SPEC §6.1: entered by hand, not pulled
+    BORROWER_SOURCED_VALUES = "BORROWER_SOURCED_VALUES"  # INFO, SPEC §4.2: the borrower's claim
     COMMITMENT_BELOW_REQUEST = "COMMITMENT_BELOW_REQUEST"  # INFO, SPLIT_PRINCIPAL cap, §8.2
     REHAB_PORTION_EXCEEDS_BUDGET = "REHAB_PORTION_EXCEEDS_BUDGET"  # INFO, split products, §8.2
 
@@ -971,12 +986,22 @@ class UnderwriteInputs(BaseModel):
     origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
     holding_costs_pct_of_cost: Decimal | None = Field(default=None, ge=0, le=1)
     monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    # Where the rent came from (SPEC §4.2, §6.1): the team's own entry, or the borrower's
+    # claim on the public form. None when nobody said, which a fixture handed straight to
+    # the engine also leaves unstated; only BORROWER is flagged.
+    monthly_rent_source: ValueSource | None = None
     flip_analysis: bool | None = None
     rental_analysis: bool | None = None
     loan_purpose: LoanPurpose | None = None
     asset_type: AssetType | None = None
     stated_exit: StatedExit = StatedExit.UNKNOWN
     court_records: CourtRecordInputs | None = None
+
+    @model_validator(mode="after")
+    def _rent_source_needs_a_rent(self) -> UnderwriteInputs:
+        if self.monthly_rent_source is not None and self.monthly_rent is None:
+            raise ValueError("a monthly rent source cannot be recorded without its value")
+        return self
 
     @model_validator(mode="after")
     def _a_split_product_carries_its_split(self) -> UnderwriteInputs:

@@ -69,7 +69,11 @@ def _source(source: ValueSource | None) -> str:
     """The provenance note that sits beside a valuation cell.  # SPEC §6"""
     if source is None:
         return "no value available"
-    return "team, by hand" if source is ValueSource.TEAM else "adapter / paid pull"
+    if source is ValueSource.TEAM:
+        return "team, by hand"
+    if source is ValueSource.BORROWER:
+        return "borrower, on the public form"
+    return "adapter / paid pull"
 
 
 def _title(sheet: Worksheet, text: str) -> None:
@@ -175,7 +179,16 @@ def _sheet_inputs(
             MONEY,
             _source(deal.estimated_sale_price_source),
         ),
-        ("Monthly rent", underwrite_inputs.monthly_rent, MONEY, "blank = no DSCR at all"),
+        (
+            "Monthly rent",
+            underwrite_inputs.monthly_rent,
+            MONEY,
+            "blank = no DSCR at all"
+            if underwrite_inputs.monthly_rent is None
+            else _source(underwrite_inputs.monthly_rent_source)
+            if underwrite_inputs.monthly_rent_source is not None
+            else "source unstated",
+        ),
         ("Asset type", enum_label(underwrite_inputs.asset_type), None, "drives the exit"),
         ("Exit (stated)", enum_label(underwrite_inputs.stated_exit), None, "a stated exit wins"),
         (

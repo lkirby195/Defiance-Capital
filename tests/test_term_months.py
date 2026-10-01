@@ -6,8 +6,8 @@ are a person having edited one box and left the other behind, and the form says 
 rather than picking one.
 
 `term_bucket` is the borrower's own answer to "how long do you need the loan?", asked by the
-borrower channels (SPEC §4.1). It seeds `term_months` at intake — every bucket but `12_PLUS`
-names a number — and it does not fix it: a deal repriced to 7 months on a 6-month ask is a
+borrower channels (SPEC §4.1). It seeds `term_months` at intake — `12_PLUS` seeds 12, the
+floor of the ask — and it does not fix it: a deal repriced to 7 months on a 6-month ask is a
 real thing rather than a row to reject. **The team form does not ask it at all** (v0.5): a
 person with the whole deal in front of them knows the term, and a bucket beside it would be a
 second number to keep in step with the first.
@@ -81,10 +81,11 @@ def test_a_bucket_that_names_months_names_them(bucket: TermBucket, months: int) 
     assert infer_term_months(bucket, None) == months
 
 
-def test_twelve_plus_names_none_and_keeps_what_the_team_typed() -> None:
-    assert months_for_bucket(TermBucket.M12_PLUS) is None
+def test_twelve_plus_seeds_twelve_and_keeps_what_the_team_typed() -> None:
+    """The floor of the ask, on every channel (SPEC §4.1); the team's own number wins."""
+    assert months_for_bucket(TermBucket.M12_PLUS) == 12
     assert infer_term_months(TermBucket.M12_PLUS, 18) == 18
-    assert infer_term_months(TermBucket.M12_PLUS, None) is None
+    assert infer_term_months(TermBucket.M12_PLUS, None) == 12
     assert infer_term_months(None, None) is None
 
 
@@ -98,6 +99,11 @@ def test_the_team_form_does_not_ask_the_bucket_at_all() -> None:
 def test_the_bucket_still_seeds_the_term_on_a_borrower_channel_intake() -> None:
     seeded = normalize(parsed(DealInfo(term_bucket=TermBucket.M6)), Channel.SMS, raw_payload={})
     assert seeded.deal.term_months == 6
+    over_a_year = normalize(
+        parsed(DealInfo(term_bucket=TermBucket.M12_PLUS)), Channel.SMS, raw_payload={}
+    )
+    assert over_a_year.deal.term_months == 12  # the seed; the bucket stays beside it
+    assert over_a_year.deal.term_bucket is TermBucket.M12_PLUS
     assert "deal.term" not in seeded.missing_fields
 
     own = normalize(

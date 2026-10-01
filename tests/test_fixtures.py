@@ -94,7 +94,9 @@ def test_every_fixture_states_where_its_valuation_came_from() -> None:
             assert sizing.estimated_sale_price_source in (None, ValueSource.ADAPTER), path.stem
             continue
         assert sizing.estimated_sale_price_source == ValueSource(want["estimated_sale_price"])
-        assert result.components.court_records_source == ValueSource(want["court_records"])
+        # null: nobody searched (the public form asks for no court search, SPEC §4.2)
+        court = None if want["court_records"] is None else ValueSource(want["court_records"])
+        assert result.components.court_records_source == court
 
 
 @pytest.mark.parametrize("path", FIXTURE_FILES, ids=[p.stem for p in FIXTURE_FILES])
@@ -306,3 +308,48 @@ def test_fixture_underwrite_flags_and_recording(path: Path) -> None:
     assert result.config_hash == CONFIG.config_hash
     again = UnderwriteResult.model_validate_json(result.model_dump_json())
     assert again == result
+
+
+# --- the borrower's own numbers, and a team correction on top of them (SPEC §4.2, §6.1) ----------
+
+WEB_FILES = [p for p in FIXTURE_FILES if "web_entry" in load(p)]
+
+
+def test_a_web_fixture_runs_through_the_public_form_s_own_parser() -> None:
+    assert WEB_FILES, "no fixture exercises the WEB channel"
+    for path in WEB_FILES:
+        run = run_fixture(path, CONFIG, with_underwrite=False)
+        assert run.deal is not None
+        assert run.deal.channel.value == "WEB"
+        assert run.deal.referral_note == load(path)["web_entry"]["referral_note"]
+
+
+@pytest.mark.parametrize("path", UNDERWRITE_FILES, ids=[p.stem for p in UNDERWRITE_FILES])
+def test_a_fixture_that_names_its_underwrite_sources_is_held_to_them(path: Path) -> None:
+    run = run_fixture(path, CONFIG, with_underwrite=True)
+    want = load(path)["underwrite"]["expected"].get("sources")
+    if want is None:
+        return
+    assert run.underwrite_inputs is not None
+    assert run.underwrite_inputs.deal.estimated_sale_price_source == ValueSource(
+        want["estimated_sale_price"]
+    )
+    assert run.underwrite_inputs.monthly_rent_source == ValueSource(want["monthly_rent"])
+
+
+def test_the_team_s_correction_replaces_the_borrower_s_number_and_keeps_it() -> None:
+    """The override block is applied through the queue's own code; nothing is overwritten."""
+    path = FIXTURE_DIR / "go_web_overridden_by_team_okc.json"
+    run = run_fixture(path, CONFIG, with_underwrite=True)
+    assert run.deal is not None and run.underwrite_inputs is not None
+    retained = load(path)["expected"]["retained"]
+    assert run.deal.estimated_sale_price_borrower == D(retained["estimated_sale_price_borrower"])
+    assert run.deal.monthly_rent_borrower == D(retained["monthly_rent_borrower"])
+    assert run.deal.estimated_sale_price_team == D("200000.00")
+    # the engine ran on the team's price and the borrower's rent, and said so
+    assert run.screen_inputs.deal.estimated_sale_price == D("200000.00")
+    assert run.screen_inputs.deal.estimated_sale_price_source is ValueSource.TEAM
+    assert run.underwrite_inputs.monthly_rent == D("1700.00")
+    assert run.underwrite_inputs.monthly_rent_source is ValueSource.BORROWER
+    codes = [flag.code.value for flag in run.underwrite_result.flags]  # type: ignore[union-attr]
+    assert "TEAM_SOURCED_VALUES" in codes and "BORROWER_SOURCED_VALUES" in codes

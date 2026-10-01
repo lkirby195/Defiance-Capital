@@ -34,7 +34,7 @@ from engine.screen import (
     money,
     order_flags,
     pct,
-    team_sourced_flags,
+    provenance_flags,
 )
 from engine.sizing import size_deal
 from engine.version import ENGINE_VERSION
@@ -228,7 +228,7 @@ def underwrite(inputs: UnderwriteInputs, config: Config) -> UnderwriteResult:
         + experience.flags
         + leverage_flags(sizing)
         + court_flags(inputs.court_records, config)
-        + team_sourced_flags(sizing, inputs.court_records)
+        + provenance_flags(sizing, inputs.court_records, inputs.monthly_rent_source)
         + structure_flags(loan, config)
         + sale_price_flags(flip)
         + rent_flags(rental, take_back)
