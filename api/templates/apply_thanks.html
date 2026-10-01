@@ -1,0 +1,14 @@
+{% extends "public.html" %}
+{% block title %}{{ t.thanks_title }} — GLENWOOD{% endblock %}
+
+{# The one thing a borrower is told (SPEC §4.2): the team will be in touch. Never a verdict,
+   a rate or an amount — nothing has been decided, and a web page that said otherwise would
+   be saying something nobody at GLENWOOD has said. #}
+
+{% block content %}
+<section class="panel">
+  <h1>{{ t.thanks_title }}</h1>
+  <p class="lede">{{ t.thanks_body }}</p>
+  <p><a href="{{ again_href }}">{{ t.thanks_again }}</a></p>
+</section>
+{% endblock %}

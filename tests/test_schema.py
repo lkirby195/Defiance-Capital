@@ -44,7 +44,7 @@ def test_enum_values_match_spec() -> None:
     assert [m.value for m in ExperienceBucket] == ["0", "1_2", "3_5", "6_PLUS"]
     assert [m.value for m in ExperienceTier] == ["E0", "E1", "E2", "E3"]
     assert [m.value for m in TermBucket] == ["3", "6", "9", "12", "12_PLUS"]
-    assert [m.value for m in Channel] == ["SMS", "LINK", "CONTRACT", "TEAM"]
+    assert [m.value for m in Channel] == ["SMS", "LINK", "CONTRACT", "TEAM", "WEB"]
     assert [m.value for m in StatedExit] == ["FLIP", "HOLD", "WHOLETAIL", "UNKNOWN"]
     assert [m.value for m in State] == ["OK", "CO", "OTHER"]
     assert [m.value for m in Verdict] == ["GO", "CONDITIONAL", "DECLINE"]

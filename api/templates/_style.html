@@ -1,0 +1,171 @@
+{# The stylesheet, included inline by both shells: base.html (the review queue) and
+   public.html (the borrower form). One file so the two cannot drift apart in colour. #}
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #14181f;
+      --muted: #5c6673;
+      --line: #dde1e7;
+      --accent: #1f4f8f;
+      --hard: #8f1f24;
+      --hard-bg: #fbeced;
+      --soft: #8a5a08;
+      --soft-bg: #fdf3e2;
+      --info: #2c5566;
+      --info-bg: #e9f2f6;
+      --go: #1d6236;
+      --go-bg: #e7f3ec;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #14171c;
+        --panel: #1c2027;
+        --ink: #e8eaee;
+        --muted: #9aa4b1;
+        --line: #2c323b;
+        --accent: #7fb0ea;
+        --hard: #f2a3a7; --hard-bg: #3a2124;
+        --soft: #e8c184; --soft-bg: #3a3020;
+        --info: #9fc8d8; --info-bg: #1e2c33;
+        --go: #8fd3aa; --go-bg: #1c2f24;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    header.bar {
+      display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline;
+      padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+    }
+    header.bar .brand { font-weight: 700; letter-spacing: .04em; }
+    header.bar nav { display: flex; flex-wrap: wrap; gap: 14px; }
+    header.bar .who { margin-left: auto; color: var(--muted); font-size: 13px; }
+    header.bar form { display: inline; }
+    main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    h1 { font-size: 22px; margin: 4px 0 16px; }
+    /* The deal's name and the way back into its intake, on one line. */
+    .title { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline;
+             justify-content: space-between; }
+    .title h1 { margin-bottom: 8px; }
+    a.btn {
+      font: inherit; font-weight: 600; font-size: 14px; padding: 7px 13px; border-radius: 5px;
+      border: 1px solid var(--accent); color: var(--accent); text-decoration: none;
+      white-space: nowrap;
+    }
+    h2 { font-size: 17px; margin: 0 0 10px; }
+    h3 { font-size: 14px; margin: 16px 0 6px; color: var(--muted); text-transform: uppercase;
+         letter-spacing: .06em; }
+    a { color: var(--accent); }
+    section.panel {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+      padding: 14px 16px; margin-bottom: 16px;
+    }
+    p.lede { color: var(--muted); margin: 0 0 12px; }
+    .notice, .problem {
+      padding: 10px 12px; border-radius: 6px; margin: 0 0 12px; border: 1px solid;
+    }
+    .notice { background: var(--go-bg); border-color: var(--go); color: var(--go); }
+    .problem { background: var(--hard-bg); border-color: var(--hard); color: var(--hard); }
+    .banner {
+      background: var(--hard-bg); border: 1px solid var(--hard); color: var(--hard);
+      border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;
+    }
+    .banner strong { display: block; margin-bottom: 4px; }
+    .scroll { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line);
+             vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+    dl.facts dt { color: var(--muted); }
+    dl.facts dd { margin: 0; font-variant-numeric: tabular-nums; }
+    .tag {
+      display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 12px;
+      font-weight: 600; border: 1px solid;
+    }
+    .tag.HARD, .tag.DECLINE { background: var(--hard-bg); color: var(--hard); border-color: var(--hard); }
+    .tag.SOFT, .tag.CONDITIONAL { background: var(--soft-bg); color: var(--soft); border-color: var(--soft); }
+    .tag.INFO { background: var(--info-bg); color: var(--info); border-color: var(--info); }
+    .tag.GO { background: var(--go-bg); color: var(--go); border-color: var(--go); }
+    .tag.status { background: var(--info-bg); color: var(--info); border-color: var(--info); }
+    ul.plain { margin: 0; padding-left: 18px; }
+    ul.plain li { margin-bottom: 3px; }
+    form.stack { display: grid; gap: 10px; }
+    fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 12px; padding: 10px 12px; }
+    legend { color: var(--muted); font-size: 13px; padding: 0 4px; }
+    .grid3 { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
+    /* Every box says which it is (api/templates/_fields.html); Required is the one that has
+       to catch the eye, so Optional is deliberately the quieter of the two. */
+    .req, .opt, .cond {
+      font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .req { color: var(--hard); }
+    .opt { color: var(--muted); font-weight: 600; }
+    .cond { color: var(--soft); }
+    /* A box pre-filled with its config default says so, and stops saying so the moment
+       somebody types over it (SPEC 8.1). */
+    .dflt {
+      font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+      color: var(--info); background: var(--info-bg); border: 1px solid var(--info);
+      border-radius: 9px; padding: 0 6px; white-space: nowrap;
+    }
+    /* The complaint the last post made about one box, under that box (_fields.html). The
+       page's top keeps only what is about more than one box. */
+    span.err {
+      display: block; margin-top: 3px; font-size: 12px; font-weight: 600; color: var(--hard);
+    }
+    [aria-invalid="true"] { border-color: var(--hard); }
+    button.linky {
+      background: none; border: none; color: var(--accent); padding: 2px 0; font-size: 12px;
+      font-weight: 600; text-decoration: underline; cursor: pointer; width: auto;
+    }
+    span.cap { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
+    .toggle { display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+              border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px;
+              background: var(--bg); }
+    .toggle label { display: inline-flex; align-items: center; gap: 4px; margin: 0;
+                    font-size: 13px; color: var(--ink); white-space: nowrap; }
+    .toggle input[type="radio"] { width: auto; margin: 0; }
+    /* A control whose help does not fit a grid column takes the whole row instead. */
+    .grid3 > .wide { grid-column: 1 / -1; }
+    .narrow { max-width: 260px; }
+    dl.defs { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px;
+              margin: 8px 0 0; }
+    dl.defs dt { font-weight: 600; white-space: nowrap; }
+    dl.defs dd { margin: 0; }
+    @media (max-width: 640px) {
+      dl.defs { grid-template-columns: 1fr; }
+      dl.defs dt { margin-top: 6px; }
+    }
+    input, select, textarea {
+      width: 100%; padding: 7px 8px; font: inherit; color: var(--ink);
+      background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
+    }
+    textarea { min-height: 70px; resize: vertical; }
+    button {
+      font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 5px; cursor: pointer;
+      border: 1px solid var(--accent); background: var(--accent); color: #fff;
+    }
+    button.quiet { background: transparent; color: var(--accent); }
+    button.danger { background: transparent; color: var(--hard); border-color: var(--hard); }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+    .reply { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line);
+             border-radius: 6px; padding: 10px 12px; margin: 0 0 8px; }
+    .grid-cell.hit { background: var(--go-bg); color: var(--go); font-weight: 600; }
+    .grid-cell.solved { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .muted { color: var(--muted); }
+    .small { font-size: 13px; }
+    @media (max-width: 640px) {
+      main { padding: 12px; }
+      dl.facts { grid-template-columns: 1fr; gap: 0 0; }
+      dl.facts dt { margin-top: 8px; }
+    }
+  </style>

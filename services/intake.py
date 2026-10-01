@@ -66,6 +66,7 @@ def create_deal(session: Session, record: IntakeRecord, *, actor: str) -> Deal:
             "channel": deal.channel.value,
             "status": deal.status.value,
             "missing_fields": list(deal.missing_fields),
+            **({"intake_source": deal.intake_source} if deal.intake_source else {}),
         },
     )
     return deal

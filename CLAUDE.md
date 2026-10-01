@@ -14,7 +14,7 @@ Intake → enrichment → screen → underwrite → outputs pipeline for a hard 
 - Pydantic v2 for all schemas and config
 - pytest; `hypothesis` allowed for engine property tests
 - `python-docx` for memo/LOI generation
-- `ruff` for lint/format, `mypy --strict` on `engine/`, `schema/`, `config/`, `intake/`, `services/`, `api/` and `cli/`
+- `ruff` for lint/format, `mypy --strict` on `engine/`, `schema/`, `config/`, `intake/`, `services/`, `api/`, `cli/` and `adapters/`
 
 ## Layout
 
@@ -50,10 +50,10 @@ glenwood-uw/
     credco.py
     richervalues.py
     linkedphone.py
-    listing_url.py         # URL → address only
+    listing_url.py         # URL → address only; a pure function today, the LINK adapter later
     contract_ocr.py
   intake/
-    parsers/               # sms_llm.py, contract.py, team_form.py
+    parsers/               # sms_llm.py, contract.py, team_form.py, web_form.py (the public form)
     normalize.py           # → IntakeRecord, missing_fields
   db/
     models.py              # SQLAlchemy
@@ -74,12 +74,15 @@ glenwood-uw/
     runner.py              # run_screen, run_underwrite
     users.py               # create / deactivate / authenticate a queue user
   api/
-    main.py, routes/       # auth, queue, intake, deals
+    main.py, routes/       # auth, queue, intake, deals, apply (the public borrower form)
     security.py            # the signed session cookie and the who-is-signed-in dependencies
     forms.py, render.py    # HTML form parsing; the Jinja environment and its filters
     masks.py               # which box holds which kind of number, and the config defaults
     intake_form.py         # the team-entry form: its fields, which are required, a deal as one
-    templates/             # the review queue's own pages (committed; not the docx templates)
+    apply_form.py          # the public form: its fields, which are required, the complaints
+    i18n.py                # every string the public form shows, English and Spanish
+    ratelimit.py           # posts per address per hour on the public form
+    templates/             # the review queue's own pages and the public form's (committed)
   cli/
     main.py, fixtures.py   # `glenwood run` / `glenwood export` on a fixture, no database
   outputs/
@@ -158,8 +161,17 @@ term and the interest rate - are named by the readiness checklist and refused by
   toggle the "default" tag on the four §8.1 economics that have one. The server parses
   `$425,000`, `425000`, `12%` and `12` alike, so a browser that runs none of it still posts a
   deal that saves. Nothing client-side validates, fetches or decides. If a page seems to need
-  script for anything else, it needs a different page.
-- **Every form post carries a CSRF token.** The guard is a router-level dependency (`api/security.py`), so a new route is covered by where it lives rather than by somebody remembering; every `<form method="post">` renders `{{ csrf.field(csrf_token) }}`. `tests/test_csrf.py` posts to every guarded route without one and asserts the refusal — do not add a route that needs an exemption without saying why there.
+  script for anything else, it needs a different page. The public borrower form (`/apply`,
+  SPEC §4.2) adds one more on the same terms: a few lines that keep the submit button off
+  until every required box is filled and lift `required` off the address boxes while the
+  listing link holds a value. Dependency-free, and the server checks every rule again
+  (`api/apply_form.py`), so a browser without it posts a form that is answered the same way.
+- **Every form post carries a CSRF token.** The guard is a router-level dependency (`api/security.py`), so a new route is covered by where it lives rather than by somebody remembering; every `<form method="post">` renders `{{ csrf.field(csrf_token) }}`. `tests/test_csrf.py` posts to every guarded route without one and asserts the refusal — do not add a route that needs an exemption without saying why there. The one exemption is the public borrower form: a token is bound to a signed-in user and a borrower has no account; the honeypot and the rate limit stand in front of it instead, and `tests/test_csrf.py` says so.
+- **The borrower is told nothing.** `/apply/thanks` says the team will be in touch. Never a
+  verdict, a rate, an amount or a status: the screen runs when the team runs it, and what it
+  says stays on the team's side. The page's strings live in `api/i18n.py` in English and
+  Spanish; the Spanish column is marked pending native-speaker review there and stays marked
+  until one has read it.
 
 ## Style
 
@@ -176,8 +188,9 @@ uv sync
 uv run alembic upgrade head
 uv run pytest
 uv run ruff check . && uv run ruff format .
-uv run mypy engine schema config intake services api cli
+uv run mypy engine schema config intake services api cli adapters
 uv run uvicorn api.main:app --reload     # the review queue at http://127.0.0.1:8000/queue
+                                         # the borrower form at http://127.0.0.1:8000/apply
 
 # the first user; there is no self-signup (SPEC 11). Omit --password to be prompted.
 uv run glenwood users create --name "Sam Reed" --email sam@glenwood.example

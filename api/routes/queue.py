@@ -49,7 +49,9 @@ from db.models import Deal
 from db.session import get_session
 from schema.dates import payoff_date_for
 from schema.models import (
+    TWELVE_PLUS_SEED_MONTHS,
     AssetType,
+    Channel,
     CourtFlag,
     CourtRecordsStatus,
     ExperienceBucket,
@@ -79,6 +81,7 @@ from services import (
     deal_trail,
     decline,
     latest_screen,
+    latest_submission,
     latest_underwrite,
     load_deal,
     mark_dead,
@@ -221,6 +224,22 @@ def deal_path(deal_id: UUID) -> str:
     return f"/queue/deals/{deal_id}"
 
 
+def _submitted_language(session: Session, deal: Deal) -> str | None:
+    """The language the borrower filled the public form in, off its submission row.
+
+    None on every other channel: the team form has no language, and a web deal whose intake
+    the team has since re-applied keeps the borrower's choice only as long as the latest
+    submission is still theirs - which is the honest answer.
+    """
+    if deal.channel is not Channel.WEB:
+        return None
+    submission = latest_submission(session, deal.id)
+    if submission is None or not isinstance(submission.raw_payload, dict):
+        return None
+    language = submission.raw_payload.get("language")
+    return language if isinstance(language, str) else None
+
+
 def deal_payoff_date(deal: Deal) -> date | None:
     """The last row of the ledger: closing plus the term, stub days included.  # SPEC §8.1"""
     term = deal_term(deal)
@@ -255,6 +274,9 @@ def render_deal(
         "deal.html",
         {
             "deal": deal,
+            # Where the deal came in and in which language (SPEC §4.2), for a web deal.
+            "submitted_language": _submitted_language(session, deal),
+            "twelve_plus_seed": TWELVE_PLUS_SEED_MONTHS,
             # Derived, not stored (SPEC §8.1): the page shows it beside the term it comes
             # from, and the term is the whole months plus whatever stub sits after them.
             "payoff_date": deal_payoff_date(deal),

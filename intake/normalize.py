@@ -161,9 +161,19 @@ def missing_fields(borrower: BorrowerInfo, prop: PropertyInfo, deal: DealInfo) -
 
 
 def normalize(
-    parsed: ParsedIntake, channel: Channel, raw_payload: dict[str, Any] | str
+    parsed: ParsedIntake,
+    channel: Channel,
+    raw_payload: dict[str, Any] | str,
+    *,
+    intake_source: str | None = None,
+    referral_note: str | None = None,
 ) -> IntakeRecord:
-    """Build the ``IntakeRecord``: light normalization, ``missing_fields``, initial ``status``."""
+    """Build the ``IntakeRecord``: light normalization, ``missing_fields``, initial ``status``.
+
+    ``intake_source`` and ``referral_note`` are the web form's provenance (SPEC §4.2) and ride
+    on the record rather than inside ``parsed``: they say where the submission came from, not
+    what the deal is.
+    """
     borrower = parsed.borrower.model_copy(
         update={
             "name": clean_text(parsed.borrower.name),
@@ -207,6 +217,8 @@ def normalize(
         borrower=borrower,
         property=prop,
         deal=deal,
+        intake_source=clean_text(intake_source),
+        referral_note=clean_text(referral_note),
         missing_fields=missing,
         status=Status.NEEDS_INFO if missing else Status.NEW,
     )

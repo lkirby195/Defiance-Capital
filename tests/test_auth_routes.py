@@ -1,8 +1,10 @@
 """Signing in, signing out, and what an unsigned-in caller gets.  # SPEC §11
 
-Nothing this app serves is public, so "which routes are protected" is answered here by
+Nothing the team reads is public, so "which routes are protected" is answered here by
 enumerating them rather than by spot-checking: a route added without a user dependency shows
-up as a page a stranger can read.
+up as a page a stranger can read. The three routes of the borrower's own form (SPEC §4.2) are
+the deliberate exception, listed as such, and asserted to answer a stranger rather than send
+them to sign in.
 """
 
 from __future__ import annotations
@@ -45,6 +47,13 @@ JSON_ROUTES = [
     ("GET", "/deals/00000000-0000-0000-0000-000000000000"),
     ("POST", "/deals/00000000-0000-0000-0000-000000000000/screen"),
     ("POST", "/deals/00000000-0000-0000-0000-000000000000/underwrite"),
+]
+# The borrower's form (SPEC §4.2): the one thing a stranger reads and the one thing they
+# write. An empty POST is a rejected form (422), not a redirect to sign in.
+PUBLIC_ROUTES = [
+    ("GET", "/apply", 200),
+    ("POST", "/apply", 422),
+    ("GET", "/apply/thanks", 200),
 ]
 
 
@@ -91,6 +100,10 @@ def test_every_route_is_accounted_for() -> None:
             ("GET", "/docs"),
             ("GET", "/docs/oauth2-redirect"),
             ("GET", "/redoc"),
+            # public, on purpose (SPEC §4.2); tests/test_apply.py is what proves them
+            ("GET", "/apply"),
+            ("POST", "/apply"),
+            ("GET", "/apply/thanks"),
         }
         | {
             ("POST", f"/queue/deals/{{deal_id}}/{action}")
@@ -121,6 +134,18 @@ def test_a_page_route_sends_a_stranger_to_sign_in(
     response = anon_client.request(method, path, follow_redirects=False)
     assert response.status_code == 303
     assert response.headers["location"].startswith("/login")
+
+
+@pytest.mark.parametrize(
+    "method,path,expected", PUBLIC_ROUTES, ids=[f"{m} {p}" for m, p, _ in PUBLIC_ROUTES]
+)
+def test_the_borrower_form_answers_a_stranger(
+    anon_client: TestClient, method: str, path: str, expected: int
+) -> None:
+    """The one public page: it is for people who have no account and never will."""
+    response = anon_client.request(method, path, follow_redirects=False)
+    assert response.status_code == expected
+    assert "/login" not in response.headers.get("location", "")
 
 
 @pytest.mark.parametrize("method,path", JSON_ROUTES, ids=[f"{m} {p}" for m, p in JSON_ROUTES])

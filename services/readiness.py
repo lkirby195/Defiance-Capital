@@ -35,7 +35,14 @@ from config.config import Config, get_config
 from db.models import Deal
 from schema.dates import Term, describe, payoff_date_for
 from schema.labels import enum_label
-from schema.models import SPLIT_PRODUCTS, CourtRecordsStatus, Product, months_for_bucket
+from schema.models import (
+    SPLIT_PRODUCTS,
+    TWELVE_PLUS_SEED_MONTHS,
+    CourtRecordsStatus,
+    Product,
+    TermBucket,
+    months_for_bucket,
+)
 from services.assemble import flip_is_on, intake_gaps, rental_is_on
 from services.enrichment import NO_ADAPTER_VALUES, AdapterValues
 from services.requests import UnderwriteRequest
@@ -148,12 +155,18 @@ def _term_row(deal: Deal) -> InputRow:
     """The term on the deal, and where it came from.  # SPEC §8.1
 
     DEFAULT rather than TEAM while the value is still the one the bucket seeded: nobody chose
-    9 months on a 9-month bucket, the bucket did. A term that differs from the bucket - or one
-    on a ``12_PLUS`` bucket, which names none, or one with a stub, which no bucket names - is
-    a person's own.
+    9 months on a 9-month bucket, the bucket did. A term that differs from the bucket, or one
+    with a stub, which no bucket names, is a person's own.
+
+    ``12_PLUS`` names no months on the team form, and the public form seeds it at 12
+    (``intake/parsers/web_form.py``): the floor of what the borrower asked for. So a 12-month
+    term on a 12+ bucket is the seed, not a choice, and is reported as DEFAULT with a note
+    saying the borrower asked for more - the team sets the real number.
     """
     term = deal_term(deal)
     named = months_for_bucket(deal.term_bucket)
+    if named is None and deal.term_bucket is TermBucket.M12_PLUS:
+        named = TWELVE_PLUS_SEED_MONTHS
     seeded = named is not None and term == Term(named, 0)
     if term is None:
         source = InputSource.MISSING
@@ -164,8 +177,13 @@ def _term_row(deal: Deal) -> InputRow:
     bucket = deal.term_bucket
     if bucket is None:
         note = "no term bucket on the deal; the team's own number is all there is"
-    elif named is None:
+    elif bucket is TermBucket.M12_PLUS and term is None:
         note = "the 12+ bucket names no months; enter a term, or a payoff date to imply one"
+    elif bucket is TermBucket.M12_PLUS and seeded:
+        note = (
+            f"seeded at {TWELVE_PLUS_SEED_MONTHS} months by the 12+ bucket; the borrower asked "
+            "for more than a year, so set the real term"
+        )
     elif seeded:
         note = f"seeded by the {bucket.value}-month bucket"
     else:
