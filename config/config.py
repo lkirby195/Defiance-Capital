@@ -230,6 +230,18 @@ class TakeBackConfig(_Section):
     dscr_floor: Annotated[Decimal, Field(gt=0, le=5)]
 
 
+class WebIntakeConfig(_Section):
+    """The public borrower form's one tunable.  # SPEC §4.2
+
+    Posts to ``/apply`` from one address are counted over a sliding hour, and the post that
+    takes the count past this number is turned away with a polite "try again later" rather
+    than stored. A honeypot field handles the dumbest bots for free; this is for the rest,
+    and for a person who keeps pressing the button. No CAPTCHA.
+    """
+
+    submissions_per_hour_per_ip: Annotated[int, Field(ge=1, le=1000)]
+
+
 class StatesConfig(_Section):
     """States served and the court-record adapter per state.  # SPEC §6, §10"""
 
@@ -265,6 +277,7 @@ class Config(_Section):
     rental: RentalConfig
     take_back: TakeBackConfig
     states: StatesConfig
+    web_intake: WebIntakeConfig
 
     @model_validator(mode="after")
     def _caps_grid_is_complete(self) -> Config:

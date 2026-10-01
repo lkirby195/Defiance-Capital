@@ -1,0 +1,197 @@
+{% extends "public.html" %}
+{% block title %}{{ t.page_title }} — GLENWOOD{% endblock %}
+
+{# The public borrower form (SPEC §4.2). Six groups in the order a person would tell the
+   story: who they are, the property, the numbers, the timing, how they found us, and their
+   consent. Every string on the page comes from the translation table (api/i18n.py) through
+   `t`; every stored value is the same code the team form would store.
+
+   Three things are client-side and none is load-bearing: the input masks (_masks.html),
+   the submit button that stays off until every required box is filled, and the listing
+   link lifting `required` off the address boxes. A browser running none of it posts a
+   form the server checks the same way (api/apply_form.py) and answers with the complaint
+   under the box. #}
+
+{% macro badge(name) -%}
+  {%- if name in required %}<span class="req">{{ t.required }}</span>
+  {%- else %}<span class="opt">{{ t.optional }}</span>{% endif -%}
+{%- endmacro %}
+
+{% macro error(name) -%}
+  {%- set messages = errors.get(name) %}
+  {%- if messages %}<span class="err" id="{{ name }}-error">{{ messages | join(" ") }}</span>{% endif -%}
+{%- endmacro %}
+
+{% macro invalid(name) -%}
+  {%- if errors.get(name) %} aria-invalid="true" aria-describedby="{{ name }}-error"{% endif -%}
+{%- endmacro %}
+
+{% macro hint(text) -%}
+  {%- if text %}<span class="hint">{{ text }}</span>{% endif -%}
+{%- endmacro %}
+
+{% macro text_box(name, label, kind="text", mode="", mask="", help="", autocomplete="", maxlength=0, unlocks="") %}
+  <div class="field">
+    <label for="{{ name }}">{{ label }} {{ badge(name) }}</label>
+    <input id="{{ name }}" name="{{ name }}" type="{{ kind }}" value="{{ form[name] }}"
+           {%- if mode %} inputmode="{{ mode }}"{% endif %}
+           {%- if mask %} data-mask="{{ mask }}"{% endif %}
+           {%- if autocomplete %} autocomplete="{{ autocomplete }}"{% endif %}
+           {%- if maxlength %} maxlength="{{ maxlength }}"{% endif %}
+           {%- if unlocks %} data-unlocks="{{ unlocks }}"{% endif %}
+           {%- if name in required %} required{% endif %}{{ invalid(name) }}>
+    {{ hint(help) }}
+    {{ error(name) }}
+  </div>
+{% endmacro %}
+
+{% macro money_box(name, label, help="") %}
+  {{ text_box(name, label, mode="decimal", mask="money", help=help) }}
+{% endmacro %}
+
+{% macro select_box(name, label, choices, help="") %}
+  <div class="field">
+    <label for="{{ name }}">{{ label }} {{ badge(name) }}</label>
+    <select id="{{ name }}" name="{{ name }}"{% if name in required %} required{% endif %}{{ invalid(name) }}>
+      <option value="">{{ t.pick_one }}</option>
+      {%- for value, text in choices %}
+      <option value="{{ value }}"{% if form[name] == value %} selected{% endif %}>{{ text }}</option>
+      {%- endfor %}
+    </select>
+    {{ hint(help) }}
+    {{ error(name) }}
+  </div>
+{% endmacro %}
+
+{% macro choice_group(name, label, choices, help="") %}
+  {#- Radios as tappable rows. `required` on every radio makes the group required, which is
+      what the browser and the script both read. -#}
+  <div class="field" role="group" aria-labelledby="{{ name }}-label">
+    <span class="cap" id="{{ name }}-label">{{ label }} {{ badge(name) }}</span>
+    <div class="choices">
+      {%- for value, text in choices %}
+      <label class="choice">
+        <input type="radio" name="{{ name }}" value="{{ value }}"
+               {%- if form[name] == value %} checked{% endif %}
+               {%- if name in required %} required{% endif %}{{ invalid(name) }}> {{ text }}
+      </label>
+      {%- endfor %}
+    </div>
+    {{ hint(help) }}
+    {{ error(name) }}
+  </div>
+{% endmacro %}
+
+{% block content %}
+<h1>{{ t.heading }}</h1>
+<p class="lede">{{ t.intro }}</p>
+
+<form class="stack" method="post" action="/apply" id="apply-form">
+  <input type="hidden" name="lang" value="{{ language }}">
+  <input type="hidden" name="src" value="{{ source }}">
+  {#- The honeypot. Off the page for a person (public.html .hp), tabbed past, never
+      autofilled; a post that carries a value in it is dropped silently (api/routes/apply.py). -#}
+  <div class="hp" aria-hidden="true">
+    <label for="{{ honeypot }}">{{ t.honeypot }}</label>
+    <input id="{{ honeypot }}" name="{{ honeypot }}" type="text" tabindex="-1" autocomplete="off" value="">
+  </div>
+
+  <fieldset>
+    <legend>{{ t.about_you }}</legend>
+    {{ text_box("borrower_name", t.full_name, autocomplete="name", maxlength=200) }}
+    {{ text_box("entity_name", t.entity_name, autocomplete="organization", maxlength=200) }}
+    {{ text_box("borrower_phone", t.phone, kind="tel", mode="tel", mask="phone", help=t.phone_hint, autocomplete="tel") }}
+    {{ text_box("borrower_email", t.email, kind="email", mode="email", autocomplete="email", maxlength=254) }}
+    {{ select_box("credit_range", t.credit_range, credit_choices, help=t.credit_hint) }}
+    {{ choice_group("experience_bucket", t.experience, experience_choices) }}
+    {{ choice_group("repeat_borrower", t.repeat_borrower, [("true", t.yes), ("false", t.no)]) }}
+  </fieldset>
+
+  <fieldset>
+    <legend>{{ t.the_property }}</legend>
+    {{ text_box("address", t.address, autocomplete="street-address", maxlength=300) }}
+    {{ text_box("city", t.city, autocomplete="address-level2", maxlength=100) }}
+    {{ select_box("state", t.state, state_choices) }}
+    {{ text_box("listing_url", t.listing_url, kind="url", mode="url", help=t.listing_hint,
+                maxlength=2000, unlocks="address city state") }}
+  </fieldset>
+
+  <fieldset>
+    <legend>{{ t.the_deal }}</legend>
+    {{ money_box("purchase_price", t.purchase_price) }}
+    {{ money_box("rehab_costs", t.rehab_costs, help=t.rehab_hint) }}
+    {{ money_box("loan_requested", t.loan_requested) }}
+    {{ money_box("estimated_sale_price", t.estimated_sale_price) }}
+    {{ money_box("monthly_rent", t.monthly_rent) }}
+  </fieldset>
+
+  <fieldset>
+    <legend>{{ t.timing }}</legend>
+    {{ choice_group("term_bucket", t.term_bucket, term_choices) }}
+    {{ text_box("closing_date", t.closing_date, kind="date") }}
+  </fieldset>
+
+  <fieldset>
+    <legend>{{ t.referral_heading }}</legend>
+    {{ text_box("referral_note", t.referral, help=t.referral_hint, maxlength=200) }}
+  </fieldset>
+
+  <fieldset>
+    <legend>{{ t.consent_heading }}</legend>
+    <div class="field">
+      <label class="consent" for="consent">
+        <input id="consent" name="consent" type="checkbox" value="true"
+               {%- if form.consent %} checked{% endif %} required{{ invalid("consent") }}>
+        <span>{{ t.consent }} <span class="req">{{ t.required }}</span></span>
+      </label>
+      {{ error("consent") }}
+    </div>
+    <p class="fine">{{ t.business_purpose }}</p>
+    <p class="fine">{{ t.not_commitment }}</p>
+  </fieldset>
+
+  <div class="field">
+    <button type="submit" data-requires-all>{{ t.submit }}</button>
+    <span class="hint">{{ t.submit_hint }}</span>
+  </div>
+</form>
+{% endblock %}
+
+{% block script %}
+<script>
+  // The submit button stays off until every required box is filled, and the listing link
+  // lifts `required` off the address boxes while it holds a value, because the server reads
+  // the address off the link (api/apply_form.py). Nothing here validates a value - a box with
+  // anything in it counts - and nothing here decides: the server checks every rule again.
+  (function () {
+    var form = document.getElementById("apply-form");
+    var button = form && form.querySelector("[data-requires-all]");
+    if (!form || !button) return;
+    var link = form.querySelector("[data-unlocks]");
+    var unlocked = link ? link.getAttribute("data-unlocks").split(" ") : [];
+    function filled(box) {
+      if (box.type === "checkbox") return box.checked;
+      if (box.type === "radio") {
+        return !!form.querySelector('input[type="radio"][name="' + box.name + '"]:checked');
+      }
+      return box.value.trim() !== "";
+    }
+    function refresh() {
+      var fromLink = !!(link && link.value.trim());
+      for (var u = 0; u < unlocked.length; u++) {
+        var box = form.elements[unlocked[u]];
+        if (box) box.required = !fromLink;
+      }
+      var boxes = form.querySelectorAll("[required]");
+      var complete = true;
+      for (var i = 0; i < boxes.length; i++) {
+        if (!filled(boxes[i])) { complete = false; break; }
+      }
+      button.disabled = !complete;
+    }
+    form.addEventListener("input", refresh);
+    form.addEventListener("change", refresh);
+    refresh();
+  })();
+</script>
+{% endblock %}

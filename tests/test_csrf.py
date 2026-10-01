@@ -309,6 +309,26 @@ def test_the_sign_in_page_has_no_token_to_carry(anon_client: QueueClient) -> Non
     assert 'name="_csrf"' not in body
 
 
+def test_the_borrower_form_has_no_token_to_carry_either(
+    anon_client: QueueClient, db_session: Session
+) -> None:
+    """The one deliberate exemption (SPEC §4.2), and why.
+
+    A token is bound to a signed-in user and the borrower has no account; there is nobody
+    to mint one for. Nor is there anything a forged post could do that an honest one cannot:
+    the form writes one kind of row - a new deal - and reads nothing back but a thank-you.
+    What stands in front of it is the honeypot and the per-address rate limit
+    (``tests/test_apply.py``), not a token.
+    """
+    body = anon_client.get("/apply").text
+    assert forms_on(body), "the borrower form should still be there"
+    assert 'name="_csrf"' not in body
+    # ...and the guard is not attached to it: a post with no token is read, not refused
+    response = anon_client.post("/apply", data={"borrower_name": "Sam"}, follow_redirects=False)
+    assert response.status_code == 422
+    del db_session
+
+
 def test_the_rejection_page_does_not_leak_a_token(
     client: QueueClient, deal_with_overrides: Deal
 ) -> None:

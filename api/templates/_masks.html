@@ -1,0 +1,56 @@
+{# The input masks, included by both shells. Formatting only: what a person types is
+   reshaped, never rejected, and the server parses either shape (schema/masks.py). #}
+  <script>
+    // Input masks. Formatting only: what a person types is reshaped, never rejected, and the
+    // server parses either shape (schema/masks.py). Money and percent reformat on blur so the
+    // mask never fights somebody mid-number; a phone reformats as it is typed, which is the
+    // one place the separators help while typing.
+    (function () {
+      function money(text) {
+        var bits = text.replace(/[^0-9.]/g, "").split(".");
+        var whole = bits.shift().replace(/^0+(?=[0-9])/, "");
+        var cents = bits.join("").slice(0, 2);
+        if (!whole && !cents) return "";
+        var grouped = (whole || "0").replace(/\B(?=([0-9]{3})+(?![0-9]))/g, ",");
+        return "$" + grouped + (cents ? "." + cents : "");
+      }
+      function percent(text) {
+        var cleaned = text.replace(/[^0-9.]/g, "");
+        return cleaned ? cleaned + "%" : "";
+      }
+      function phone(text) {
+        var d = text.replace(/[^0-9]/g, "").slice(0, 10);
+        if (d.length <= 3) return d;
+        if (d.length <= 6) return d.slice(0, 3) + "-" + d.slice(3);
+        return d.slice(0, 3) + "-" + d.slice(3, 6) + "-" + d.slice(6);
+      }
+      var SHAPE = { money: money, pct: percent, phone: phone };
+
+      function tag(box) {
+        return document.querySelector('[data-default-tag="' + box.id + '"]');
+      }
+      function showTag(box) {
+        var badge = tag(box);
+        if (badge) badge.hidden = box.value !== box.dataset.default;
+      }
+      document.querySelectorAll("input[data-mask], input[data-default]").forEach(function (box) {
+        var shape = SHAPE[box.dataset.mask];
+        var live = box.dataset.mask === "phone";
+        if (shape) {
+          box.addEventListener(live ? "input" : "blur", function () {
+            box.value = shape(box.value);
+            showTag(box);
+          });
+        }
+        box.addEventListener("input", function () { showTag(box); });
+        showTag(box);
+      });
+      document.querySelectorAll("[data-reset]").forEach(function (link) {
+        link.addEventListener("click", function () {
+          var box = document.getElementById(link.dataset.reset);
+          box.value = box.dataset.default;
+          showTag(box);
+        });
+      });
+    })();
+  </script>

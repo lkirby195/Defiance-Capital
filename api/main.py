@@ -12,9 +12,11 @@ can act on.
 is not a redirect: a browser that followed one would lose the post and the person would be
 left guessing why their form vanished.
 
-Nothing is public. Every route in every router is behind a session cookie, because there is
-nothing here that is not a deal: credit ranges, court findings, and what GLENWOOD decided
-about a borrower (SPEC §11).
+Nothing the team reads is public. Every route in every router but one is behind a session
+cookie, because there is nothing here that is not a deal: credit ranges, court findings, and
+what GLENWOOD decided about a borrower (SPEC §11). The one is ``/apply`` (``api/routes/apply``),
+the borrower's own form: it writes exactly one kind of row and reads nothing back but a
+thank-you.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from starlette.responses import RedirectResponse, Response
 from starlette.status import HTTP_303_SEE_OTHER, HTTP_403_FORBIDDEN
 
 from api.render import templates
+from api.routes.apply import router as apply_router
 from api.routes.auth import router as auth_router
 from api.routes.deals import router as deals_router
 from api.routes.intake import router as intake_router
@@ -35,6 +38,7 @@ app.include_router(auth_router)
 app.include_router(queue_router)
 app.include_router(intake_router)
 app.include_router(deals_router)
+app.include_router(apply_router)
 
 
 @app.exception_handler(NotSignedIn)

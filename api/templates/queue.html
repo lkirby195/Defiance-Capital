@@ -10,6 +10,9 @@
         {% elif deal.property and deal.property.listing_url %}{{ deal.property.listing_url }}
         {% else %}(no address yet){% endif %}
       </a>
+      {#- A deal the borrower typed in themselves (SPEC §4.2): nobody on the team has read
+          it yet, which is worth a glance at the list. -#}
+      {% if deal.channel | plain == "WEB" %}<span class="tag INFO">Web</span>{% endif %}
       <div class="small muted">
         {{ deal.borrower.name if deal.borrower and deal.borrower.name else "(no borrower name)" }}
         · {{ deal.product | plain }}

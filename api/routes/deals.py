@@ -128,6 +128,8 @@ class DealView(BaseModel):
     status: Status
     missing_fields: list[str]
     credit_authorization_signed: bool
+    intake_source: str | None  # the ?src= slug a web submission followed (SPEC §4.2)
+    referral_note: str | None  # "how did you hear about us?", web submissions only
     loan_purpose: LoanPurpose | None
     product: Product | None
     product_source: ProductSource | None
@@ -294,6 +296,8 @@ def deal_view(deal: Deal, session: Session) -> DealView:
         status=deal.status,
         missing_fields=list(deal.missing_fields),
         credit_authorization_signed=deal.credit_authorization_signed,
+        intake_source=deal.intake_source,
+        referral_note=deal.referral_note,
         loan_purpose=deal.loan_purpose,
         product=deal.product,
         product_source=deal.product_source,

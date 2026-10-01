@@ -75,8 +75,9 @@ def intake_columns(record: IntakeRecord) -> dict[str, Any]:
 
     One mapping, so creating a deal from an intake and re-applying an edited one
     (``services/intake.py``) can never write different sets of columns. Everything outside
-    it - the id, the channel, the status, the borrower and property links - belongs to the
-    row rather than to the intake, and is set by whoever is writing the row.
+    it - the id, the channel, the status, the web form's ``intake_source`` and
+    ``referral_note``, the borrower and property links - belongs to the row rather than to
+    the intake, and is set by whoever is writing the row.
     """
     return {
         "loan_purpose": record.deal.loan_purpose,
@@ -129,6 +130,8 @@ def build_deal(record: IntakeRecord, borrower: Borrower | None, prop: Property |
         property=prop,
         channel=record.channel,
         status=record.status,
+        intake_source=record.intake_source,
+        referral_note=record.referral_note,
         missing_fields=list(record.missing_fields),
         **intake_columns(record),
     )

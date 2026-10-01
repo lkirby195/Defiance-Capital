@@ -82,6 +82,10 @@ states:                                   # SPEC §10
     OK: oscn
     CO: colorado_courts
 
+web_intake:                               # SPEC §4.2 — the public borrower form at /apply
+  submissions_per_hour_per_ip: 5          # posts from one address in a sliding hour; the
+                                          #   next one gets "try again later" and stores nothing
+
 leverage_caps:                            # SPEC §7.4 — product x credit tranche x experience tier
   # PLACEHOLDER GRID: every cell carries the same dummy caps so it is obvious nothing is tuned.
   # GLENWOOD fills this. Each cell: ltc, ltv (fractions of 1). LTV is the commitment over

@@ -1,0 +1,61 @@
+{# The shell for the pages a borrower sees: the form at /apply and its thank-you page.
+   Not base.html, because that shell is the queue's — its header links to the queue and the
+   new-deal form and carries the sign-out button, and none of that belongs in front of a
+   borrower. Same stylesheet (_style.html), same input masks (_masks.html), and one header
+   with the name and the language toggle.
+
+   Phone first: one column, 16px controls (so a phone does not zoom in on focus), and tap
+   targets at least 44px tall. The page is used by contractors standing on a job site. #}
+<!doctype html>
+<html lang="{{ language }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}GLENWOOD{% endblock %}</title>
+  {% include "_style.html" %}
+  <style>
+    main.apply { max-width: 560px; }
+    main.apply h1 { font-size: 24px; margin: 8px 0 6px; }
+    main.apply p.lede { font-size: 16px; }
+    main.apply fieldset { padding: 12px 14px 4px; margin-bottom: 14px; }
+    main.apply legend { font-size: 16px; font-weight: 700; color: var(--ink); text-transform: none;
+                        letter-spacing: 0; padding: 0 6px; }
+    main.apply .field { margin-bottom: 14px; }
+    main.apply label { font-size: 15px; color: var(--ink); }
+    main.apply input, main.apply select, main.apply textarea { font-size: 16px; min-height: 44px; }
+    main.apply textarea { min-height: 64px; }
+    main.apply .hint { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; }
+    /* A set of choices as tappable rows rather than a dropdown, which is what a thumb wants. */
+    main.apply .choices { display: grid; gap: 6px; }
+    main.apply .choice { display: flex; align-items: center; gap: 10px; min-height: 44px;
+                         padding: 0 12px; border: 1px solid var(--line); border-radius: 6px;
+                         background: var(--bg); font-size: 16px; color: var(--ink); margin: 0;
+                         cursor: pointer; }
+    main.apply .choice input { width: 20px; height: 20px; min-height: 0; margin: 0; flex: none; }
+    main.apply .consent { display: flex; align-items: flex-start; gap: 10px; font-size: 16px;
+                          color: var(--ink); margin: 0 0 10px; }
+    main.apply .consent input { width: 22px; height: 22px; min-height: 0; margin: 2px 0 0; flex: none; }
+    main.apply .fine { font-size: 13px; color: var(--muted); margin: 0 0 8px; }
+    main.apply button[type="submit"] { width: 100%; min-height: 48px; font-size: 17px; }
+    main.apply button[type="submit"]:disabled { opacity: .45; cursor: not-allowed; }
+    /* The honeypot: off the page for a person, in the page for a bot. Not display:none, which
+       the better bots skip. */
+    .hp { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
+    header.bar .lang { margin-left: auto; font-size: 15px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <span class="brand">GLENWOOD</span>
+    <a class="lang" href="{{ toggle_href }}" hreflang="{{ 'es' if language == 'en' else 'en' }}"
+       lang="{{ 'es' if language == 'en' else 'en' }}" aria-label="{{ t.toggle_aria }}">{{ t.toggle }}</a>
+  </header>
+  <main class="apply">
+    {% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+    {% for problem in problems %}<p class="problem">{{ problem }}</p>{% endfor %}
+    {% block content %}{% endblock %}
+  </main>
+  {% include "_masks.html" %}
+  {% block script %}{% endblock %}
+</body>
+</html>

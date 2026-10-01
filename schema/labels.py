@@ -26,7 +26,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from enum import StrEnum
 
-from schema.models import AssetType, ExperienceBucket, Product, Tranche
+from schema.models import AssetType, ExperienceBucket, Product, TermBucket, Tranche
 
 # En dashes: these are ranges, and the form and the screen summary read as prose.
 EXPERIENCE_BUCKET_LABELS: Mapping[ExperienceBucket, str] = {
@@ -34,6 +34,15 @@ EXPERIENCE_BUCKET_LABELS: Mapping[ExperienceBucket, str] = {
     ExperienceBucket.ONE_TO_TWO: "1–2",
     ExperienceBucket.THREE_TO_FIVE: "3–5",
     ExperienceBucket.SIX_PLUS: "6+",
+}
+
+# The borrower's answer to "how long do you need the loan?" (SPEC §4.1), as they read it.
+TERM_BUCKET_LABELS: Mapping[TermBucket, str] = {
+    TermBucket.M3: "3 months",
+    TermBucket.M6: "6 months",
+    TermBucket.M9: "9 months",
+    TermBucket.M12: "12 months",
+    TermBucket.M12_PLUS: "12+ months",
 }
 
 # The codes ``str.title()`` gets wrong. Everything else - NO_DRAW, CASH_OUT, WHOLETAIL -
@@ -99,6 +108,13 @@ def experience_label(bucket: ExperienceBucket | None) -> str:
     if bucket is None:
         return DASH
     return EXPERIENCE_BUCKET_LABELS[bucket]
+
+
+def term_bucket_label(bucket: TermBucket | None) -> str:
+    """``9 months`` / ``12+ months``; an em dash when no borrower channel asked.  # SPEC §4.1"""
+    if bucket is None:
+        return DASH
+    return TERM_BUCKET_LABELS[bucket]
 
 
 def tranche_label(tranche: Tranche | None, cutoffs: Mapping[Tranche, int]) -> str:

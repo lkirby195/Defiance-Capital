@@ -18,7 +18,10 @@ uv run glenwood users create --name "Your Name" --email you@example.com
 uv run uvicorn api.main:app --reload
 ```
 
-Then <http://127.0.0.1:8000/queue>, which will send you to `/login`.
+Then <http://127.0.0.1:8000/queue>, which will send you to `/login`. The borrower's own form
+is at <http://127.0.0.1:8000/apply> and needs no sign-in; `/apply?lang=es` is the Spanish
+page and `/apply?src=<slug>` records where the link was posted (a flyer, a partner, a
+campaign) on the deal as its source.
 
 `SESSION_SECRET` has no default and the app refuses to start a session without one — a
 default would be a signing key every copy of this repository knows. Generate one with:
@@ -44,7 +47,7 @@ Omit `--password` and it prompts twice, which keeps the password out of your she
 ```bash
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
-uv run mypy engine schema config intake services api cli
+uv run mypy engine schema config intake services api cli adapters
 ```
 
 The database-backed tests need a throwaway Postgres. They find one on their own — an embedded
@@ -157,8 +160,17 @@ Two things worth knowing before you do it:
 
 ## Operational notes
 
-- **Nothing the app serves is public.** Every route is behind a session cookie. Pages redirect
-  to `/login`; the JSON routes under `/deals` answer 401.
+- **Nothing the team reads is public.** Every route but the borrower form is behind a session
+  cookie. Pages redirect to `/login`; the JSON routes under `/deals` answer 401.
+- **`/apply` is the one public page.** It writes a new deal and reads nothing back; the
+  borrower sees only "we will be in touch". A hidden honeypot box drops a bot's post without
+  a word, and `web_intake.submissions_per_hour_per_ip` in `config/glenwood.yaml` (placeholder
+  5) turns the next post from one address in an hour away with a polite line. The count is
+  per process and starts over on a restart, which is fine for what it protects. Behind a
+  proxy the address is the last entry in `X-Forwarded-For`, which is the one the proxy added.
+- **The Spanish on `/apply` is pending native-speaker review.** Every string is in
+  `api/i18n.py`; the `es` column is marked there and should be read by a native speaker before
+  the link goes on a flyer.
 - **Every form post carries a CSRF token** bound to the signed-in user and expiring with their
   session. A post without one is refused with a 403 and writes nothing. JSON bodies are exempt
   and only JSON bodies — a cross-site HTML form cannot produce one.

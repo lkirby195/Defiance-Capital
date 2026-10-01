@@ -36,9 +36,15 @@ from api.problems import NO_PROBLEMS, FormProblems
 from api.security import issue_csrf
 from config.config import get_config
 from db.models import User
-from schema.labels import enum_label, experience_label, product_definition, tranche_label
+from schema.labels import (
+    enum_label,
+    experience_label,
+    product_definition,
+    term_bucket_label,
+    tranche_label,
+)
 from schema.masks import phone_display
-from schema.models import ExperienceBucket, Product, Tranche
+from schema.models import ExperienceBucket, Product, TermBucket, Tranche
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -156,6 +162,11 @@ def experience(value: ExperienceBucket | str | None) -> str:
     return experience_label(None if value is None else ExperienceBucket(value))
 
 
+def bucket(value: TermBucket | str | None) -> str:
+    """A term bucket as the borrower read it: ``12+ months``.  # SPEC §4.1"""
+    return term_bucket_label(None if value is None else TermBucket(value))
+
+
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.filters.update(
     money=money,
@@ -173,6 +184,7 @@ templates.env.filters.update(
     phone=phone,
     tranche=tranche,
     experience=experience,
+    bucket=bucket,
 )
 # A missing name in a template is a bug in the template, not an empty string on the page.
 templates.env.undefined = jinja2.StrictUndefined

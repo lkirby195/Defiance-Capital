@@ -34,6 +34,27 @@
     · {{ deal.borrower.entities | map(attribute="name") | join(", ") }}{% endif %}
   · entered {{ deal.created_at | when }} via {{ deal.channel | plain }}
 </p>
+{% if deal.channel | plain == "WEB" %}
+  {#- The borrower typed this one in themselves (SPEC §4.2). What the team wants to know
+      before calling: which link they came in on, how they say they heard of us, and which
+      language to call them back in. Nothing was screened and nothing was said to them. -#}
+  <section class="panel">
+    <h2>From the public form <span class="tag INFO">Web</span></h2>
+    <dl class="facts">
+      <dt>Source link</dt>
+      <dd>{{ deal.intake_source | plain }}
+        <span class="small muted">the ?src= slug on the link they followed</span></dd>
+      <dt>How they heard about us</dt><dd>{{ deal.referral_note | plain }}</dd>
+      <dt>Submitted in</dt>
+      <dd>{% if submitted_language == "es" %}Spanish{% elif submitted_language == "en" %}English
+          {%- else %}—{% endif %}</dd>
+    </dl>
+    <p class="small muted">
+      Nothing has been run on it and the borrower was told only that the team will be in
+      touch. The sale price and rent below, if any, are the borrower's own estimates.
+    </p>
+  </section>
+{% endif %}
 
 {% set result = underwrite.result if underwrite else none %}
 
@@ -113,7 +134,13 @@
     <dd>{{ deal.term_months | plain }}{% if deal.term_months is not none %} month(s){% endif %}
       {%- if deal.term_stub_days %} and {{ deal.term_stub_days }} day(s){% endif %}
       {% if deal.term_bucket %}<span class="small muted">(the borrower asked for
-        {{ deal.term_bucket | plain }})</span>{% endif %}</dd>
+        {{ deal.term_bucket | bucket }})</span>{% endif %}
+      {% if deal.term_bucket | plain == "12_PLUS" and deal.term_months == twelve_plus_seed %}
+        <div class="small" style="color: var(--soft)">
+          The borrower selected 12+ months. The term was seeded at {{ twelve_plus_seed }}
+          months so the deal can be priced; set the real term in Team entry below.
+        </div>
+      {% endif %}</dd>
     <dt>Payoff Date</dt>
     <dd>{{ payoff_date | when }}
       <span class="small muted">derived: closing plus the term</span></dd>

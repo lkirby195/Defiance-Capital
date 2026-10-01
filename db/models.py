@@ -316,6 +316,11 @@ class Deal(Base):
     credit_authorization_signed: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    # The public form's provenance (SPEC §4.2): the ``?src=`` slug on the link the borrower
+    # followed, and what they typed under "how did you hear about us?". NULL on every other
+    # channel. Neither is part of the intake's content, so an edited intake leaves them be.
+    intake_source: Mapped[str | None] = mapped_column(String(64))
+    referral_note: Mapped[str | None] = mapped_column(String(200))
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 

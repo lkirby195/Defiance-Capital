@@ -102,12 +102,13 @@
       "type": "object"
     },
     "Channel": {
-      "description": "Intake channel.  # SPEC \u00a74.2",
+      "description": "Intake channel.  # SPEC \u00a74.2\n\n``WEB`` is the public borrower form at ``/apply``: the borrower types the deal in\nthemselves, in English or Spanish, and it lands in the queue as NEW or NEEDS_INFO with no\nscreen run and nothing said back to them but \"we will be in touch\".",
       "enum": [
         "SMS",
         "LINK",
         "CONTRACT",
-        "TEAM"
+        "TEAM",
+        "WEB"
       ],
       "title": "Channel",
       "type": "string"
@@ -936,6 +937,19 @@
       "title": "Id",
       "type": "string"
     },
+    "intake_source": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Intake Source"
+    },
     "missing_fields": {
       "items": {
         "type": "string"
@@ -957,6 +971,19 @@
         }
       ],
       "title": "Raw Payload"
+    },
+    "referral_note": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Referral Note"
     },
     "status": {
       "$ref": "#/$defs/Status",

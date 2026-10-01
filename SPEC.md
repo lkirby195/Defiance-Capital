@@ -25,7 +25,7 @@ GLENWOOD receives a meaningful volume of loan inquiries, mostly via phone/SMS (L
 
 Mortgage Automator is downstream only. This system is the system of record from inquiry through LOI.
 
-**Non-goals for v1:** borrower-facing web page (goes on GLENWOOD's site later), automated outbound SMS, MLS/portfolio monitoring, public-filing monitoring on the existing book, servicing.
+**Non-goals for v1:** automated outbound SMS, MLS/portfolio monitoring, public-filing monitoring on the existing book, servicing.
 
 **Standalone.** No code dependency on any other project. Patterns may be copied, never imported.
 
@@ -110,7 +110,7 @@ Five things. Everything else is derived or requested later, only if the deal cle
 | 2 | Purchase price | Dollars |
 | 3 | Rehab costs | Dollars; 0 allowed |
 | 4 | Loan Amount | Dollars. Borrower-driven — the engine derives leverage from this |
-| 5 | How long do you need the loan? | The term. The borrower channels ask it as a bucket (3 / 6 / 9 / 12 / 12+ months) which seeds `term_months`; the team form asks for the term in months or the payoff date directly (§8.1), because a person with the whole deal in front of them knows it |
+| 5 | How long do you need the loan? | The term. The borrower channels ask it as a bucket (3 / 6 / 9 / 12 / 12+ months) which seeds `term_months`; the web form seeds 12+ at 12 (§4.2). The team form asks for the term in months or the payoff date directly (§8.1), because a person with the whole deal in front of them knows it |
 | 6 | Who you are | Guarantor name, entity (if any), phone (optional); **credit range** (pick one of the five tranches, §7.1); **real estate experience** (deals completed in last 3 years: 0 / 1–2 / 3–5 / 6+); **repeat borrower** yes/no |
 
 (Numbered as six rows because "who you are" is one question with sub-fields.)
@@ -134,8 +134,31 @@ Self-reported credit and experience are used for the screen only and are verifie
 | Listing / auction link | Borrower texts or pastes a URL | URL → address only. No page scraping (see §4.4) |
 | Contract photo / PDF | Borrower texts a photo or sends a PDF of the purchase agreement | OCR + LLM extraction: address, price, close date, buyer entity, seller concessions |
 | Team entry | Review-queue page, same fields with extra ones unlocked | Direct |
+| Web form | The public page at `/apply`, no sign-in; linked from GLENWOOD's site, a flyer, a partner. English and Spanish | Direct; `intake/parsers/web_form.py` |
 
-Borrower-facing web page is out of scope for v1; the intake schema is designed so GLENWOOD's site can post to the same endpoint later.
+**The web form** asks the §4.1 minimum in plain language and in the borrower's own
+language - every string on the page is in a translation table with an English and a
+Spanish column, the page defaults from `Accept-Language` and has a toggle, and nothing it
+stores changes with the language. It asks no loan type: the normalizer infers one from the
+rehab budget as it does on every channel, and the team confirms it. The listing link is
+optional and, when the address boxes are left blank, the address is read off the link's
+slug and never off the page (§4.4). The borrower's own guesses at the sale price after the
+rehab and at the rent, if offered, land on the two §6.1 stand-ins and are flagged
+`TEAM_SOURCED_VALUES` like any hand-entered value.
+
+Three things are recorded about where a web deal came from: the channel `WEB`; the
+`intake_source`, which is the `?src=` slug on the link the borrower followed; and the
+`referral_note`, their answer to "how did you hear about us?". The deal lands in the queue
+`NEW` or `NEEDS_INFO` with **no screen run**, and the borrower is shown one page saying the
+team will be in touch - never a verdict, a rate or an amount. The 12+ term bucket seeds
+`term_months` at 12 on this channel (the floor of the ask; the deal page says the borrower
+asked for more, and the team sets the real term).
+
+What stands between the page and the queue is a honeypot field, which drops a post that
+fills it without a word, and a per-address rate limit
+(`web_intake.submissions_per_hour_per_ip`, §10) that turns the next post away with a polite
+line. No CAPTCHA. The page carries no CSRF token: there is no session to bind one to, and
+nothing a forged post could do that an honest one cannot (§11).
 
 ### 4.3 SMS handling
 
@@ -154,8 +177,9 @@ Zillow, Redfin, Realtor.com, Hubzu, Auction.com, Xome, etc. prohibit scraping in
 
 ```
 IntakeRecord
-  id, created_at, channel: SMS | LINK | CONTRACT | TEAM
+  id, created_at, channel: SMS | LINK | CONTRACT | TEAM | WEB
   raw_payload                    # original message / file ref / form data
+  intake_source?, referral_note? # the web form's provenance (§4.2); on no other channel
   borrower:
     name, phone?, email?, entity_name?     # name is the guarantor's; phone is digits (§4.1)
     credit_range?: T1..T5        # self-reported; the screen needs one and names it when absent
@@ -262,6 +286,10 @@ their audit trail, and are simply re-run.
 `0011` also drops `deals.as_is_value_team` and `deals.guarantor_name` (§7.4, §8.1) and makes
 `borrowers.phone` nullable, rewriting every NANP number already in it from `+15551234567` to
 `5551234567` (§4.1).
+
+`0013` adds `WEB` to the `channel` enum and `deals.intake_source` / `deals.referral_note`
+(§4.2). Its downgrade relabels every `WEB` row `TEAM` before rebuilding the enum without the
+value, rather than deleting a deal a borrower typed in.
 
 ---
 
@@ -816,6 +844,7 @@ so the math can be checked by hand against a spreadsheet; neither is shown to a 
 - take-back: `lost_interest_months` (3), `legal_costs_usd` (5,000), `amortization_years` (30), `dscr_floor` (1.00)
 - underwrite flag severities: `DSCR_BELOW_FLOOR`, `TAKE_BACK_DSCR_BELOW_FLOOR`. The informational codes (§8.8) are fixed `Info` in code and the loader refuses to grade them
 - states served and court-record adapter per state
+- `web_intake.submissions_per_hour_per_ip` (placeholder 5): posts to the public form from one address in a sliding hour before the next is turned away (§4.2)
 
 Gone with the v0.2 §8, and rejected by the loader if a stale yaml still carries them:
 `returns` (target IRR, rate grid, month window), `takeout` (DSCR takeout LTV, rate,
@@ -838,7 +867,7 @@ Config is versioned; each `screens`/`underwrites` row records the config hash us
 - **Listing sites:** address extraction from URLs only; no page scraping.
 - **Business-purpose lending:** intake and LOI language reflect business-purpose loans; no consumer-purpose features.
 - **Court/lien data:** used for underwriting decisions on business-purpose loans; retained with source and timestamp.
-- **Access:** the review queue is behind a session cookie and nothing it serves is public. No
+- **Access:** the review queue is behind a session cookie and nothing it serves is public but the borrower's own form at `/apply` (§4.2), which writes one new deal and reads nothing back. No
   self-signup and no password reset in v1 — a user is created and deactivated from the command
   line, so the list of people who can read credit and court findings is maintained on purpose.
   Deactivating ends every live session at once, because the user row is read on each request.
@@ -874,6 +903,12 @@ actions, and the team-entry form. Its SMS ingestion and contract OCR wait on the
 recon (§13) — there is nothing to parse until the webhook shape is known, and a parser written
 against a guess is a parser rewritten.
 
+The public borrower form (§4.2, migration `0013`) was built ahead of the Phase 6 handoff: it
+is the first borrower channel, it needs nothing the recon is waiting on, and a deal it stores
+is a deal the queue already knows how to work. The URL-address parser it reads a listing link
+with (`adapters/listing_url.py`) is the pure half of Phase 3's LINK adapter, built early for
+the same reason.
+
 The queue list pins one thing above the status groups: a deal that picked up a Hard flag
 **after** it reached `LOI_SENT` or `HANDED_OFF`. Past that point a Decline no longer closes a
 deal (§4.6) — a person owns it and the flags are recorded for them to read — so nothing else
@@ -892,6 +927,11 @@ recorded the move into that status.
   is no cap at all, and the LTV cell is a 75% placeholder)
 - LOI and credit memo templates
 - Historical deals for fixtures
+- The public form's Spanish (`api/i18n.py`): written for a Latin American audience in the
+  `usted` register and pending native-speaker review
+- The public form's rate limit (`web_intake.submissions_per_hour_per_ip`, placeholder 5) and
+  whether the count should survive a restart; and whether the borrower's own sale price and
+  rent should get a source of their own rather than landing on the §6.1 stand-ins
 - The config placeholders the mechanics walkthrough left open: the contingency, holding-cost
   and broker percentages, the rental expense ratio and takeout rate, the two DSCR floors, the
   take-back's lost-interest months and legal costs, and the stub period's day-count basis

@@ -96,18 +96,30 @@ TERM_BUCKET_MONTHS: dict[TermBucket, int] = {
 }
 
 
+# What the public borrower form seeds a 12_PLUS term with (SPEC §4.2): the floor of the ask,
+# so the deal can be priced while the team settles the real number. The bucket stays on the
+# deal beside it, and the deal page says the borrower asked for more.
+TWELVE_PLUS_SEED_MONTHS = 12
+
+
 def months_for_bucket(bucket: TermBucket | None) -> int | None:
     """The months a bucket names, or None for 12_PLUS and for no bucket at all."""
     return None if bucket is None else TERM_BUCKET_MONTHS.get(bucket)
 
 
 class Channel(StrEnum):
-    """Intake channel.  # SPEC §4.2"""
+    """Intake channel.  # SPEC §4.2
+
+    ``WEB`` is the public borrower form at ``/apply``: the borrower types the deal in
+    themselves, in English or Spanish, and it lands in the queue as NEW or NEEDS_INFO with no
+    screen run and nothing said back to them but "we will be in touch".
+    """
 
     SMS = "SMS"
     LINK = "LINK"
     CONTRACT = "CONTRACT"
     TEAM = "TEAM"
+    WEB = "WEB"
 
 
 class StatedExit(StrEnum):
@@ -597,6 +609,12 @@ class IntakeRecord(BaseModel):
     borrower: BorrowerInfo = Field(default_factory=BorrowerInfo)
     property: PropertyInfo = Field(default_factory=PropertyInfo)
     deal: DealInfo = Field(default_factory=DealInfo)
+    # Where a web submission came from and what the borrower said about it (SPEC §4.2):
+    # the ``?src=`` slug on the link they followed, and their answer to "how did you hear
+    # about us?". Both belong to the record rather than to the intake's content - an edit on
+    # the team form re-applies the content and leaves these where they are.
+    intake_source: str | None = Field(default=None, max_length=64)
+    referral_note: str | None = Field(default=None, max_length=200)
     missing_fields: list[str] = Field(default_factory=list)
     status: Status = Status.NEW
 
