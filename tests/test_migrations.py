@@ -109,6 +109,73 @@ def test_0012_turns_each_holding_cost_into_the_share_of_cost_it_was(
         conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
 
 
+# A deal written against 0015 with the two columns 0016 drops, and an underwrite row on it.
+BEFORE_0016 = text(
+    """
+    INSERT INTO deals (id, channel, status, missing_fields, court_records_team,
+                       credit_authorization_signed, created_at, updated_at,
+                       asset_type, stated_exit, defaulted_fields)
+    VALUES (:id, 'TEAM', :status, '[]', '[]', false, now(), now(), 'SFR', 'FLIP', '[]')
+    """
+)
+UNDERWRITE_ROW = text(
+    """
+    INSERT INTO underwrites (id, deal_id, engine_version, config_hash, inputs, outputs, irr,
+                             created_at)
+    VALUES (:id, :deal_id, '1.3.0', 'abc', '{}', '{}', 0.15, now())
+    """
+)
+PAUSE_ROW = text(
+    """
+    INSERT INTO audit_log (id, actor, action, table_name, row_id, before, after, created_at)
+    VALUES (:id, 'sam@glenwood.example', 'PAUSED', 'deals', :deal_id,
+            '{"status": "IN_REVIEW"}', '{"status": "PAUSED"}', now())
+    """
+)
+
+
+def test_0016_adds_paused_drops_the_exit_columns_and_deletes_the_underwrites(
+    alembic_cfg: AlembicConfig, test_engine: Engine
+) -> None:
+    command.upgrade(alembic_cfg, "0015")
+    worked, scripted = uuid.uuid4(), uuid.uuid4()
+    with test_engine.begin() as conn:
+        conn.execute(BEFORE_0016, {"id": worked, "status": "IN_REVIEW"})
+        conn.execute(BEFORE_0016, {"id": scripted, "status": "NEW"})
+        conn.execute(UNDERWRITE_ROW, {"id": uuid.uuid4(), "deal_id": worked})
+
+    command.upgrade(alembic_cfg, "0016")
+
+    with test_engine.connect() as conn:
+        columns = {column["name"] for column in inspect(conn).get_columns("deals")}
+        assert "asset_type" not in columns and "stated_exit" not in columns
+        enums = {e["name"]: e["labels"] for e in inspect(conn).get_enums()}
+        assert "asset_type" not in enums and "stated_exit" not in enums
+        assert "PAUSED" in enums["deal_status"]
+        assert conn.execute(text("SELECT count(*) FROM underwrites")).scalar() == 0
+        assert conn.execute(text("SELECT count(*) FROM deals")).scalar() == 2
+    # ...and the new value is usable: pause both deals, one with the row that says whence
+    with test_engine.begin() as conn:
+        conn.execute(text("UPDATE deals SET status = 'PAUSED'"))
+        conn.execute(PAUSE_ROW, {"id": uuid.uuid4(), "deal_id": str(worked)})
+
+    command.downgrade(alembic_cfg, "0015")
+
+    with test_engine.connect() as conn:
+        statuses = dict(conn.execute(text("SELECT id, status FROM deals")).all())
+        assert statuses[worked] == "IN_REVIEW"  # back where its PAUSED row says it came from
+        assert statuses[scripted] == "NEW"  # nothing said, so NEW rather than nowhere
+        enums = {e["name"]: e["labels"] for e in inspect(conn).get_enums()}
+        assert "PAUSED" not in enums["deal_status"]
+        assert "asset_type" in enums and "stated_exit" in enums
+        columns = {column["name"] for column in inspect(conn).get_columns("deals")}
+        assert {"asset_type", "stated_exit"} <= columns
+
+    command.downgrade(alembic_cfg, "base")
+    with test_engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
+
+
 # A web deal written against 0013, when the public form put the borrower's numbers in the
 # team's columns, and a team deal beside it (SPEC §4.2, §6.1).
 BEFORE_0014 = text(

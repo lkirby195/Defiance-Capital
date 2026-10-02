@@ -49,12 +49,6 @@ fees:                                     # SPEC §3, §8.1, §8.4
   holding_costs_default_pct_of_cost: 0.02 # of purchase_price + rehab_costs, TOTAL over the hold
   broker_selling_pct: 0.04                # the flip's cost of selling (SPEC §8.4); not an input
 
-exit:                                     # SPEC §3 exit inference; a team-stated exit always wins
-  resale_max_term_months: 9               # term <= this on an SFR / 2-4 infers a resale (flip, or
-                                          #   wholetail on that product), which defaults flip on
-  hold_min_term_months: 12                # term >= this infers a hold, which defaults rental on;
-                                          #   the gap between the two infers nothing (UNKNOWN)
-
 draws:                                    # SPEC §8.3
   listing_months: 3                       # rehab_months = term_months - this, floored at 0;
                                           #   the last months of the term are listing / sale

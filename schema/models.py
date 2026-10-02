@@ -3,7 +3,7 @@
 Two kinds of optional field live on ``IntakeRecord``:
 
 * Fields the spec marks ``?`` (email, entity_name, address_normalized,
-  listing_url, county, stated_exit) are never required.
+  listing_url, county) are never required.
 * Minimum-viable fields (SPEC §4.1) are ``Optional`` only because an intake may
   arrive incomplete. ``missing_fields`` names the ones the team still has to
   ask for; ``intake/normalize.py`` is the sole writer of that list.
@@ -123,31 +123,6 @@ class Channel(StrEnum):
     WEB = "WEB"
 
 
-class StatedExit(StrEnum):
-    """Borrower-stated exit, confirmed by the team.  # SPEC §3, §4.5"""
-
-    FLIP = "FLIP"
-    HOLD = "HOLD"
-    WHOLETAIL = "WHOLETAIL"
-    UNKNOWN = "UNKNOWN"
-
-
-class AssetType(StrEnum):
-    """Subject-property asset type; drives the exit inference with the term.  # SPEC §3"""
-
-    SFR = "SFR"
-    UNITS_2_4 = "UNITS_2_4"
-    UNITS_5_PLUS = "UNITS_5_PLUS"
-    OTHER = "OTHER"
-
-
-class ExitSource(StrEnum):
-    """Whether the exit was stated by the team or inferred from term x asset type.  # SPEC §3"""
-
-    STATED = "STATED"
-    INFERRED = "INFERRED"
-
-
 class State(StrEnum):
     """Property state; anything outside OK/CO is OTHER.  # SPEC §4.5"""
 
@@ -171,7 +146,13 @@ class ProductSource(StrEnum):
 
 
 class Status(StrEnum):
-    """Deal lifecycle status.  # SPEC §4.5"""
+    """Deal lifecycle status.  # SPEC §4.5, §4.6
+
+    ``PAUSED`` is a deal set aside by a person: it keeps its runs and its intake, nothing
+    automatic runs on it, and Progress returns it to the status it was paused from (the
+    ``audit_log`` row that paused it says which). It sits between the live statuses and the
+    two closed ones because that is what it is - neither being worked nor over.
+    """
 
     NEW = "NEW"
     NEEDS_INFO = "NEEDS_INFO"
@@ -180,6 +161,7 @@ class Status(StrEnum):
     UNDERWRITING = "UNDERWRITING"
     LOI_SENT = "LOI_SENT"
     HANDED_OFF = "HANDED_OFF"
+    PAUSED = "PAUSED"
     DECLINED = "DECLINED"
     DEAD = "DEAD"
 
@@ -268,9 +250,11 @@ class AuditAction(StrEnum):
     every row already written under the old name.
 
     ``LOI_SENT`` and ``HANDED_OFF`` are written by the SPEC §12 Phase 5 and 6 actions, which
-    do not exist yet. They are named here because the queue already reads them: a Hard flag
-    raised *after* a deal reached one of those states is the case worth pinning to the top,
-    and "after" is measured against the row that recorded the move (SPEC §12).
+    do not exist yet; they are named so the codes are settled before the rows are.
+
+    ``PAUSED`` and ``RESUMED`` are the two halves of setting a deal aside (SPEC §4.6): the
+    first row's ``before.status`` is where ``RESUMED`` sends the deal back to.
+    ``DEALS_PURGED`` is the one row the one-time ``glenwood deals purge`` leaves behind.
     """
 
     # Deals
@@ -284,7 +268,10 @@ class AuditAction(StrEnum):
     DECLINED = "DECLINED"
     MARKED_DEAD = "MARKED_DEAD"
     REOPENED = "REOPENED"
+    PAUSED = "PAUSED"  # SPEC §4.6: set aside; before.status is where it goes back to
+    RESUMED = "RESUMED"  # SPEC §4.6: Progress on a paused deal
     NOTE_ADDED = "NOTE_ADDED"
+    DEALS_PURGED = "DEALS_PURGED"  # the one-time cleanup (README); row_id is "*"
     LOI_SENT = "LOI_SENT"  # SPEC §9.3, Phase 5
     HANDED_OFF = "HANDED_OFF"  # SPEC §9.4, Phase 6
     # Users and access (SPEC §11: credit data access is logged)
@@ -292,11 +279,6 @@ class AuditAction(StrEnum):
     USER_DEACTIVATED = "USER_DEACTIVATED"
     SIGNED_IN = "SIGNED_IN"
     SIGNED_OUT = "SIGNED_OUT"
-
-
-# The statuses a deal is pinned out of when a Hard flag lands after it got there (SPEC §12),
-# and the audit actions that record it getting there.
-PINNED_AFTER_ACTIONS: tuple[AuditAction, ...] = (AuditAction.LOI_SENT, AuditAction.HANDED_OFF)
 
 
 # What the screen tests each court code on (SPEC §7.2), so a team-entered matter can be
@@ -489,11 +471,10 @@ class DealInfo(BaseModel):
     them, and None is what tells the engine to use the config default rather than a number
     somebody chose. ``interest_rate`` has no default and is required to price a deal.
 
-    ``payoff_date`` is deliberately not here. It is ``closing_date`` plus ``term_months``
-    plus ``term_stub_days`` (``schema/dates.py``), so storing it would be storing the same
-    fact twice and inviting them to disagree; the team-entry form and the queue's override
-    block take a payoff date as an alternative way to say the term, and both split it into
-    the two numbers before they get here.
+    ``payoff_date`` is deliberately not here. It is the last day of the month that is the
+    closing month plus ``term_months``, plus ``term_stub_days`` (``schema/dates.py``), so
+    storing it would be storing the same fact twice and inviting them to disagree. The team
+    enters the term in months; no form takes a payoff date (SPEC §8.1).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -530,16 +511,13 @@ class DealInfo(BaseModel):
     # dollar figure is that share of that cost and is computed wherever it is shown.
     holding_costs_pct_of_cost: Decimal | None = Field(default=None, ge=0, le=1)
     origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
-    # Asset type from intake; with the term it drives the exit inference (SPEC §3). None
-    # means unknown, which only ever leaves the exit UNKNOWN - it never forces one.
-    asset_type: AssetType | None = None
-    stated_exit: StatedExit | None = None
     # Product: entered by the team, or inferred by the normalizer (NO_DRAW when rehab_costs
     # is 0, else SPLIT_DRAW). WHOLETAIL and SPLIT_PRINCIPAL are never inferred.  # SPEC §3
     product: Product | None = None
     product_source: ProductSource | None = None
-    # The two analysis toggles (SPEC §8.1). None leaves the §3-derived default in force; a
-    # team member turning one on or off by hand wins over it, in either direction.
+    # The two analysis toggles (SPEC §8.1). None leaves the default in force - the flip is on
+    # when there is a sale price, the rental when there is a rent - and a team member turning
+    # one on or off by hand wins over it, in either direction.
     flip_analysis: bool | None = None
     rental_analysis: bool | None = None
     # The monthly rent the Rental and Take-Back analyses are computed on (SPEC §8.5, §8.6).
@@ -606,7 +584,7 @@ class DealInfo(BaseModel):
 
     @property
     def payoff_date(self) -> date | None:
-        """``closing_date`` + the term, or None until both are known.  # SPEC §8.1"""
+        """The end of the month that is the closing month plus the term, or None.  # SPEC §8.1"""
         if self.closing_date is None or self.term_months is None:
             return None
         return payoff_date_for(self.closing_date, self.term_months, self.term_stub_days or 0)
@@ -953,11 +931,13 @@ class UnderwriteInputs(BaseModel):
     underwrite derives the caps cell from them exactly as the screen does.
 
     ``closing_date``, the term and ``interest_rate`` are the three the ledger cannot be laid
-    out without, and all three are required here. The term is ``term_months`` whole monthly
-    periods plus ``term_stub_days`` (SPEC §8.1): a payoff date that falls between two anchors
-    leaves a stub of days, which accrues its own prorated interest and carries the payoff.
-    ``payoff_date`` is not a field - it is the closing date plus that term
-    (``schema/dates.py``) - and the property below is the single place it is worked out.
+    out without, and all three are required here. The closing date is the day the deal
+    closes; the ledger anchors to the end of that month (SPEC §8.3). The term is
+    ``term_months`` whole monthly periods plus ``term_stub_days`` (SPEC §8.1): a payoff date
+    that falls between two anchors leaves a stub of days, which accrues its own prorated
+    interest and carries the payoff. ``payoff_date`` is not a field - it is the end of the
+    month that is the closing month plus the term, plus the stub (``schema/dates.py``) - and
+    the property below is the single place it is worked out.
 
     ``origination_fee_pct`` and ``holding_costs_pct_of_cost`` are SPEC §8.1 inputs with config
     defaults, so ``None`` means "use the default" rather than "zero". ``monthly_rent`` has no
@@ -965,7 +945,8 @@ class UnderwriteInputs(BaseModel):
     and Take-Back analyses NOT_EVALUATED (SPEC §8.5, §8.6) rather than computed on a zero.
 
     ``flip_analysis`` and ``rental_analysis`` are the SPEC §8.1 toggles. ``None`` leaves the
-    default the §3 exit implies; a bool is the team overriding it either way.
+    default - on when the sale price, or the rent, is present; a bool is the team overriding
+    it either way.
 
     ``court_records`` is the latest source in force at underwrite time, adapter over team,
     exactly as at the screen (SPEC §6.1, §8.1). The underwrite re-runs the SPEC §7.2 tests on
@@ -994,8 +975,6 @@ class UnderwriteInputs(BaseModel):
     flip_analysis: bool | None = None
     rental_analysis: bool | None = None
     loan_purpose: LoanPurpose | None = None
-    asset_type: AssetType | None = None
-    stated_exit: StatedExit = StatedExit.UNKNOWN
     court_records: CourtRecordInputs | None = None
 
     @model_validator(mode="after")
@@ -1037,7 +1016,7 @@ class UnderwriteInputs(BaseModel):
 
     @property
     def payoff_date(self) -> date:
-        """``closing_date`` + the whole periods + the stub days.  # SPEC §8.1"""
+        """The month end the term lands on, plus the stub days.  # SPEC §8.1"""
         return payoff_date_for(self.closing_date, self.term_months, self.term_stub_days)
 
 
@@ -1060,17 +1039,15 @@ class AnalysisStatus(StrEnum):
     OFF = "OFF"
 
 
-class ExitInference(BaseModel):
-    """The §3 exit and the two analysis toggles it defaulted.  # SPEC §3, §8.1"""
+class AnalysisToggles(BaseModel):
+    """The two analysis toggles as the run used them, and what each defaulted to.  # SPEC §8.1"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    type: StatedExit  # stated by the team, else inferred from term x asset type
-    exit_source: ExitSource  # STATED when the team set it, INFERRED when the engine did
     flip_analysis: bool  # the toggle in force
     rental_analysis: bool
-    flip_analysis_default: bool  # what the exit implied, before any team override
-    rental_analysis_default: bool
+    flip_analysis_default: bool  # on when a sale price was present, before any override
+    rental_analysis_default: bool  # on when a rent was present, before any override
 
 
 class DealEconomics(BaseModel):
@@ -1272,7 +1249,7 @@ class UnderwriteResult(BaseModel):
     term_stub_days: int  # days past the last anchor; 0 on a whole-month term
     term_months_decimal: Decimal  # the two as one number; what the monthly carry divides by
     rehab_months: int
-    exit: ExitInference
+    analyses: AnalysisToggles
     sizing: SizingResult
     economics: DealEconomics
     return_overview: ReturnOverview

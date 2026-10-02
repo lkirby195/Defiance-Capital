@@ -1,6 +1,6 @@
 {
   "name": "go_team_overrides_tulsa",
-  "description": "WHOLETAIL in Tulsa, entered on the team form and assembled the way the API assembles a stored deal: the valuation, the rent and the court search are all the team's own, so TEAM_SOURCED_VALUES is raised and the Go rests on hand-entered numbers. $120,000 at 13% for 6 months, the whole commitment at close; IRR 18.599%. The holding costs are the config default, 2% of the $155,000 price-plus-rehab.",
+  "description": "WHOLETAIL in Tulsa, entered on the team form and assembled the way the API assembles a stored deal: the valuation, the rent and the court search are all the team's own, so TEAM_SOURCED_VALUES is raised and the Go rests on hand-entered numbers. $120,000 at 13% for 6 months from a 1 February 2027 closing (the ledger anchors to 28 February and pays off 31 August), the whole commitment at close; IRR 18.263%. The holding costs are the config default, 2% of the $155,000 price-plus-rehab.",
   "team_entry": {
     "borrower_name": "Dana Whitlock",
     "borrower_phone": "918-555-0147",
@@ -23,7 +23,6 @@
     "beds": 3,
     "baths": "2.0",
     "garage_spaces": 1,
-    "asset_type": "SFR",
     "purchase_price": "150000.00",
     "rehab_costs": "5000.00",
     "loan_requested": "120000.00",
@@ -68,7 +67,7 @@
   "underwrite": {
     "request": {},
     "expected": {
-      "payoff_date": "2027-08-01",
+      "payoff_date": "2027-08-31",
       "rehab_months": 3,
       "commitment": "120000.00",
       "funded_at_close": "120000.00",
@@ -93,7 +92,7 @@
         "total_fees": "2400.00",
         "total_payoff": "120000.00",
         "total_profit": "10200.00",
-        "irr": "0.18599010"
+        "irr": "0.18263021"
       },
       "flip": {
         "status": "EVALUATED",

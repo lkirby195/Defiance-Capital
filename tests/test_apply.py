@@ -39,8 +39,9 @@ from schema.models import (
 )
 from services import (
     InputSource,
+    Section,
     TeamOverrides,
-    queue_view,
+    home_view,
     run_screen,
     save_overrides,
     underwrite_readiness,
@@ -438,10 +439,11 @@ def test_a_full_submission_lands_in_the_queue_as_a_web_deal(
     assert created.after["intake_source"] == "tulsa-reia"
     assert created.after["defaults"]["interest_rate"] == "0.12"
     assert screened.actor == "system" and priced.actor == "system"
-    # in the queue, under UNDERWRITING
-    view = queue_view(db_session)
-    assert [group.status for group in view.groups] == [Status.UNDERWRITING]
-    assert view.groups[0].entries[0].deal.id == deal.id
+    # on Home, under Borrower Submissions, at UNDERWRITING
+    view = home_view(db_session)
+    [entry] = view.section(Section.BORROWER).entries
+    assert entry.deal.id == deal.id and entry.deal.status is Status.UNDERWRITING
+    assert view.section(Section.DCF).entries == []
 
 
 def test_the_queue_and_the_deal_page_say_it_came_from_the_web(
@@ -450,8 +452,10 @@ def test_the_queue_and_the_deal_page_say_it_came_from_the_web(
     assert post(anon_client, lang="es").status_code == 303
     (deal,) = deals(db_session)
 
-    queue_body = client.get("/queue").text
-    assert '<span class="tag INFO">Web</span>' in queue_body
+    home_body = client.get("/queue").text
+    assert "Web · tulsa-reia" in home_body  # the Source column: the channel and the slug
+    assert home_body.index("Borrower Submissions") < home_body.index(str(deal.id))
+    assert home_body.index(str(deal.id)) < home_body.index("DCF New Deals")
 
     deal_body = client.get(f"/queue/deals/{deal.id}").text
     assert "From the public form" in deal_body

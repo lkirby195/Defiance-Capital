@@ -21,6 +21,10 @@ Every row an automatic run writes is recorded against the actor ``system``: nobo
 it, and a trail that named the borrower or the team member who saved an override as the
 person who priced the deal would be wrong about who decided (SPEC §11).
 
+A paused deal is never run on. Pause means "leave it where it is" (SPEC §4.6), and an edit
+on a paused deal is stored and waits for Progress to bring the deal back; the buttons on
+the deal page still work, because a person pressing one has not left it alone.
+
 Nothing here commits; the caller owns the transaction, as every service does.
 """
 
@@ -45,8 +49,11 @@ from services.runner import run_screen, run_underwrite
 # The actor every automatic run is recorded as (SPEC §11): not a person, on purpose.
 SYSTEM_ACTOR = "system"
 
-# A deal in one of these is not run on at all: its intake is not finished, or it is closed.
-NOT_RUN_FROM: frozenset[Status] = UNDERWRITE_REFUSED_UNTIL_COMPLETE | UNDERWRITE_REFUSED_FROM
+# A deal in one of these is not run on at all: its intake is not finished, it is closed, or
+# a person has set it aside (SPEC §4.6) - a paused deal is left exactly as it was paused.
+NOT_RUN_FROM: frozenset[Status] = (
+    UNDERWRITE_REFUSED_UNTIL_COMPLETE | UNDERWRITE_REFUSED_FROM | {Status.PAUSED}
+)
 
 
 @dataclass(frozen=True)

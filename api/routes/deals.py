@@ -29,7 +29,6 @@ from db.models import Deal
 from db.session import get_session
 from schema.dates import payoff_date_for
 from schema.models import (
-    AssetType,
     Channel,
     CourtRecordsStatus,
     ExperienceBucket,
@@ -38,7 +37,6 @@ from schema.models import (
     ProductSource,
     ScreenResult,
     State,
-    StatedExit,
     Status,
     TeamCourtRecord,
     TermBucket,
@@ -137,7 +135,7 @@ class DealView(BaseModel):
     term_bucket: TermBucket | None
     term_months: int | None  # whole monthly periods (SPEC §8.1)
     term_stub_days: int | None  # days past the last anchor; null on a whole-month term
-    payoff_date: date | None  # derived: closing_date + the term (SPEC §8.1)
+    payoff_date: date | None  # derived: the month end term_months after closing (SPEC §8.1)
     purchase_price: Decimal | None
     rehab_costs: Decimal | None
     loan_requested: Decimal | None
@@ -148,8 +146,6 @@ class DealView(BaseModel):
     closing_costs_usd: Decimal | None
     holding_costs_pct_of_cost: Decimal | None  # of purchase_price + rehab_costs (SPEC §8.1)
     origination_fee_pct: Decimal | None
-    asset_type: AssetType | None
-    stated_exit: StatedExit | None
     flip_analysis: bool | None
     rental_analysis: bool | None
     credit_range_self_reported: Tranche | None
@@ -319,8 +315,6 @@ def deal_view(deal: Deal, session: Session) -> DealView:
         closing_costs_usd=deal.closing_costs_usd,
         holding_costs_pct_of_cost=deal.holding_costs_pct_of_cost,
         origination_fee_pct=deal.origination_fee_pct,
-        asset_type=deal.asset_type,
-        stated_exit=deal.stated_exit,
         flip_analysis=deal.flip_analysis,
         rental_analysis=deal.rental_analysis,
         credit_range_self_reported=deal.credit_range_self_reported,

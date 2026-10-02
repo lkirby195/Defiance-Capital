@@ -36,7 +36,6 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from schema.models import (
-    AssetType,
     Channel,
     CourtRecordsStatus,
     DocumentKind,
@@ -45,7 +44,6 @@ from schema.models import (
     Product,
     ProductSource,
     State,
-    StatedExit,
     StateSource,
     Status,
     TermBucket,
@@ -260,8 +258,9 @@ class Deal(Base):
     )
     repeat_borrower_self_reported: Mapped[bool | None] = mapped_column(Boolean)
     loan_purpose: Mapped[LoanPurpose | None] = mapped_column(_enum(LoanPurpose, "loan_purpose"))
-    # Month 0 of the ledger (SPEC §8.3). The payoff date is this plus term_months and is
-    # derived wherever it is shown, never stored: one fact, one column.
+    # The day the deal closes, any date (SPEC §8.1); the ledger's month 0 is the last day of
+    # its month (SPEC §8.3). The payoff date is the last day of the month term_months later
+    # and is derived wherever it is shown, never stored: one fact, one column.
     closing_date: Mapped[date | None] = mapped_column(Date)
     purchase_price: Mapped[Decimal | None] = mapped_column(MONEY)
     rehab_costs: Mapped[Decimal | None] = mapped_column(MONEY)
@@ -290,12 +289,10 @@ class Deal(Base):
     # a price or a rehab budget that moves moves the carry with it.
     holding_costs_pct_of_cost: Mapped[Decimal | None] = mapped_column(RATE)
     origination_fee_pct: Mapped[Decimal | None] = mapped_column(RATE)
-    # The two SPEC §8.1 analysis toggles. NULL leaves the default the §3 exit implies.
+    # The two SPEC §8.1 analysis toggles. NULL leaves the default: the flip is on when there
+    # is a sale price, the rental when there is a rent.
     flip_analysis: Mapped[bool | None] = mapped_column(Boolean)
     rental_analysis: Mapped[bool | None] = mapped_column(Boolean)
-    # Asset type from intake; with the term it drives the exit inference (SPEC §3).
-    asset_type: Mapped[AssetType | None] = mapped_column(_enum(AssetType, "asset_type"))
-    stated_exit: Mapped[StatedExit | None] = mapped_column(_enum(StatedExit, "stated_exit"))
     # The monthly rent the Rental and Take-Back analyses run on (SPEC §8.5, §8.6). No
     # config default and no adapter behind it, so the queue collects it once on the deal
     # rather than asking again on every run; an UnderwriteRequest still outranks it.

@@ -37,7 +37,7 @@ glenwood-uw/
     sizing.py              # LTC / LTV, product-specific commitment split
     screen.py              # score components + verdict + reasons
     calc/                  # the v0.3 ledger model: terms.py, ledger.py, irr.py,
-                           #   flip.py, rental.py, exit.py
+                           #   flip.py, rental.py, analyses.py
     version.py             # ENGINE_VERSION string, bump on any math change
   adapters/
     base.py                # Adapter Protocol + AdapterResult
@@ -60,7 +60,7 @@ glenwood-uw/
     repository.py          # intake -> rows
     migrations/            # Alembic
   services/                # the seam: load a deal, run the pure engine, persist, return
-    actions.py             # the team actions: advance, decline, mark dead, reopen, note, overrides
+    actions.py             # the team actions: progress, pause, decline, kill, reopen, note, overrides
     assemble.py            # deals row -> ScreenInputs / UnderwriteInputs; adapter-over-team
     audit.py               # append audit_log rows; read one deal's trail
     autorun.py             # the screen and the underwrite, run on arrival and after an edit, as `system`
@@ -70,7 +70,8 @@ glenwood-uw/
     lifecycle.py           # the two automatic status transitions (SPEC 4.6)
     passwords.py           # PBKDF2 hash / verify; pure
     persistence.py         # append screens / underwrites rows; rebuild results from them
-    queue.py               # the review-queue list: grouping, ordering, the pin rule
+    home.py                # the Home page: the four sections, their membership, the ordering
+    purge.py               # the one-time `glenwood deals purge`; every deal table, users kept
     readiness.py           # the SPEC 8.1 checklist: every input, its value, where it came from
     requests.py            # UnderwriteRequest / TeamOverrides: what the team supplies by hand
     runner.py              # run_screen, run_underwrite
@@ -86,7 +87,8 @@ glenwood-uw/
     ratelimit.py           # posts per address per hour on the public form
     templates/             # the review queue's own pages and the public form's (committed)
   cli/
-    main.py, fixtures.py   # `glenwood run` / `glenwood export` on a fixture, no database
+    main.py, fixtures.py   # `glenwood run` / `glenwood export` on a fixture, no database;
+                           #   `glenwood users`, `glenwood deals purge` open it
   outputs/
     console.py             # text report for the CLI
     excel.py               # .xlsx workbook for checking the math by hand
@@ -131,9 +133,20 @@ checklist and refused by name.
 
 **The runs are automatic, and the page is labels and values.** A complete intake is screened
 and priced on arrival on every channel and again after every team edit, as the actor
-`system` (`services/autorun.py`, SPEC §4.6); a route that stores or edits a deal calls it. The
-deal page prints no explanatory prose beside a value: a definition that is still useful goes
-behind the (?) on its label, as a hover title (`_fields.html`, `help`).
+`system` (`services/autorun.py`, SPEC §4.6); a route that stores or edits a deal calls it. A
+paused deal is left out until Progress brings it back. The deal page prints no explanatory
+prose beside a value: a definition that is still useful goes behind the (?) on its label, as
+a hover title (`_fields.html`, `help`). The team form prints nothing but labels and boxes,
+each marked Required or Optional in plain text, and asks only for the Overview, the Property
+Overview and seven Deal Economics boxes; everything with a default populates from config and
+is edited on the deal page, and Edit Intake writes only the columns the form has a box for
+(`db/repository.form_columns`).
+
+**The ledger anchors to month ends.** A deal closes on whatever date the team enters; the
+model treats closing as the last day of that month, every period is a month end, and the
+payoff date is the last day of the month that is the closing month plus the term
+(`schema/dates.py`). The team enters the term in months and no form takes a payoff date; the
+stub arithmetic stays in the engine for a future actual-payoff entry.
 
 **Record everything.** Every enrichment call writes an `enrichment_runs` row with the raw response. Every screen and underwrite records `ENGINE_VERSION` and the config hash. Nothing is overwritten; re-runs create new rows.
 
@@ -152,8 +165,8 @@ behind the (?) on its label, as a hover title (`_fields.html`, `help`).
 - **No dependency on any other repo.** See top of file.
 - **No self-signup and no password reset.** Users are created and deactivated from the command line. Do not add a registration page, an invite link, or a reset-by-email flow to v1.
 - **A code the model stores is never a label a person reads.** `Tranche` and
-  `ExperienceBucket` are grid coordinates and stored values; `Product`, `AssetType`,
-  `LoanPurpose` and `StatedExit` are SCREAMING_SNAKE for the same reason. `schema/labels.py`
+  `ExperienceBucket` are grid coordinates and stored values; `Product` and `LoanPurpose`
+  are SCREAMING_SNAKE for the same reason. `schema/labels.py`
   turns each into the words somebody actually picked - the FICO range, the deal count, "Split
   Draw" - and every rendered page and flag message goes through it. The credit labels are
   derived from the config cutoffs, so moving a cutoff moves the label. The one exception is
@@ -200,7 +213,7 @@ uv run alembic upgrade head
 uv run pytest
 uv run ruff check . && uv run ruff format .
 uv run mypy engine schema config intake services api cli adapters
-uv run uvicorn api.main:app --reload     # the review queue at http://127.0.0.1:8000/queue
+uv run uvicorn api.main:app --reload     # Home at http://127.0.0.1:8000/queue
                                          # the borrower form at http://127.0.0.1:8000/apply
 
 # the first user; there is no self-signup (SPEC 11). Omit --password to be prompted.
@@ -208,6 +221,8 @@ uv run glenwood users create --name "Sam Reed" --email sam@glenwood.example
 uv run glenwood users deactivate --email sam@glenwood.example
 uv run glenwood users list
 
+# the one-time cleanup (README): every deal and everything hanging off it; the users stay.
+uv run glenwood deals purge --all --confirm
 
 # run the engine on a fixture deal, no database:
 uv run glenwood run fixtures/synthetic/deals/go_split_draw_denver.json --underwrite

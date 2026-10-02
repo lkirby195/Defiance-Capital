@@ -1,21 +1,26 @@
-"""``glenwood`` command line: run a fixture deal, export one, or manage queue users.
+"""``glenwood`` command line: run a fixture deal, export one, manage users, purge the deals.
 
     uv run glenwood run fixtures/synthetic/deals/go_split_draw_denver.json --underwrite
     uv run glenwood export fixtures/synthetic/deals/go_split_draw_denver.json out.xlsx
     uv run glenwood users create --name "Sam Reed" --email sam@glenwood.example
     uv run glenwood users deactivate --email sam@glenwood.example
     uv run glenwood users list
+    uv run glenwood deals purge --all --confirm
 
 ``run`` and ``export`` read a fixture off disk, load ``config/glenwood.yaml``, and call the
 pure engine. No database, no network. The point is to check the math by hand before it is
 wired to anything, so nothing is rounded for presentation beyond the place it is printed at.
 
-``users`` is the other kind of command and the only one that opens the database. It is here
-rather than in the queue because there is no self-signup and no password reset (SPEC §11):
-the set of people who can read credit and court findings is a list someone maintains
-deliberately, from a shell, on the machine that holds the data. Deactivating is not
-deleting - ``audit_log.actor`` names people who have left, and the row has to keep resolving
-to someone.
+``users`` and ``deals`` are the other kind of command and the only ones that open the
+database. ``users`` is here rather than in the queue because there is no self-signup and no
+password reset (SPEC §11): the set of people who can read credit and court findings is a list
+someone maintains deliberately, from a shell, on the machine that holds the data.
+Deactivating is not deleting - ``audit_log.actor`` names people who have left, and the row
+has to keep resolving to someone.
+
+``deals purge`` is the one-time cleanup the README describes: every deal and everything
+hanging off it goes, the users stay, and it refuses to run without both ``--all`` and
+``--confirm`` on the line. It is not an everyday command and it is not undoable.
 """
 
 from __future__ import annotations
@@ -33,7 +38,13 @@ from config.config import Config, ConfigError, get_config
 from db.session import get_engine
 from outputs.console import render
 from outputs.excel import write_workbook
-from services import ServiceError, create_user, deactivate_user, list_users
+from services import (
+    ServiceError,
+    create_user,
+    deactivate_user,
+    list_users,
+    purge_deals,
+)
 from services.passwords import MIN_LENGTH, WeakPassword
 
 PROGRAM = "glenwood"
@@ -86,6 +97,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     users.add_parser("list", help="every user, active first")
+
+    deals_cmd = commands.add_parser("deals", help="the one-time cleanup of every deal")
+    deals = deals_cmd.add_subparsers(dest="deals_command", required=True)
+    purge_cmd = deals.add_parser(
+        "purge",
+        help="delete every deal and everything hanging off it; the users stay (README)",
+    )
+    purge_cmd.add_argument(
+        "--all", action="store_true", dest="purge_all", help="every deal, not a selection"
+    )
+    purge_cmd.add_argument(
+        "--confirm", action="store_true", help="yes, really; there is no undo and no backup"
+    )
+    purge_cmd.add_argument(
+        "--actor", default=DEFAULT_ACTOR, help="who to record on the one audit row it leaves"
+    )
     return parser
 
 
@@ -124,7 +151,7 @@ def ask_for_password() -> str:
 
 
 def command_users(args: argparse.Namespace) -> str:
-    """The user commands. The only place the CLI opens the database."""
+    """The user commands. One of the two places the CLI opens the database."""
     with Session(get_engine()) as session:
         if args.users_command == "create":
             password = args.password if args.password is not None else ask_for_password()
@@ -150,12 +177,34 @@ def command_users(args: argparse.Namespace) -> str:
         )
 
 
+def command_deals(args: argparse.Namespace) -> str:
+    """The deal commands: today, the purge and nothing else.
+
+    Both flags are checked before the database is opened, so a half-typed command costs
+    nothing and touches nothing.
+    """
+    if not (args.purge_all and args.confirm):
+        raise ValueError(
+            "deals purge deletes every deal, borrower, property, submission, screen, "
+            "underwrite, enrichment run, document, ma_sync and audit row and cannot be undone; "
+            "pass both --all and --confirm to run it"
+        )
+    with Session(get_engine()) as session:
+        deleted = purge_deals(session, actor=args.actor)
+        session.commit()
+    lines = [f"  {table}: {count}" for table, count in deleted.items()]
+    return "\n".join(["purged every deal; rows deleted per table:", *lines, "users kept"])
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point; returns the process exit status rather than raising at the user."""
     args = build_parser().parse_args(argv)
     try:
         if args.command == "users":
             print(command_users(args))
+            return 0
+        if args.command == "deals":
+            print(command_deals(args))
             return 0
         config = load_config()
         if args.command == "run":

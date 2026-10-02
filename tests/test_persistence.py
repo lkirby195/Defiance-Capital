@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from config.config import Config
 from db.models import Deal, Screen
 from engine.version import ENGINE_VERSION
-from schema.models import AssetType, ExitSource, StatedExit, TermBucket, Verdict
+from schema.models import AnalysisStatus, TermBucket, Verdict
 from services import (
     DealNotFound,
     DealNotReady,
@@ -145,7 +145,7 @@ def test_underwrite_row_drops_nothing_the_result_carried(
     rebuilt = underwrite_result(row)
     assert rebuilt.economics == result.economics
     assert rebuilt.return_overview == result.return_overview
-    assert rebuilt.exit == result.exit
+    assert rebuilt.analyses == result.analyses
     assert rebuilt.flip == result.flip
     assert rebuilt.rental == result.rental
     assert rebuilt.take_back == result.take_back
@@ -186,27 +186,20 @@ def test_underwrite_falls_back_to_the_deals_own_economics(
     db_session.commit()
 
 
-def test_underwrite_uses_the_deals_asset_type_and_stated_exit(
+def test_underwrite_defaults_the_toggles_from_what_is_on_the_deal(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    assert deal_with_overrides.asset_type is AssetType.SFR
-    assert deal_with_overrides.stated_exit is None
-    inferred = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
-    # 6 months on an SFR resells, and the product is WHOLETAIL, so the exit is too (SPEC §3)
-    assert inferred.exit.type is StatedExit.WHOLETAIL
-    assert inferred.exit.exit_source is ExitSource.INFERRED
+    """A sale price turns the flip on, a rent the rental; a hand setting wins (SPEC §8.1)."""
+    both = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
+    assert both.analyses.flip_analysis is True and both.analyses.flip_analysis_default is True
+    assert both.analyses.rental_analysis is True
+    assert both.flip.status is AnalysisStatus.EVALUATED
 
-    longer = run_underwrite(
-        db_session, deal_with_overrides.id, request(term_months=12), CONFIG, actor=ACTOR
-    )
-    assert longer.exit.type is StatedExit.HOLD  # 12 months infers a hold instead
-    assert longer.exit.exit_source is ExitSource.INFERRED
-
-    deal_with_overrides.stated_exit = StatedExit.HOLD
+    deal_with_overrides.flip_analysis = False
     db_session.flush()
-    stated = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
-    assert stated.exit.type is StatedExit.HOLD  # a stated exit wins over the term
-    assert stated.exit.exit_source is ExitSource.STATED
+    off = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
+    assert off.analyses.flip_analysis is False and off.analyses.flip_analysis_default is True
+    assert off.flip.status is AnalysisStatus.OFF
     db_session.commit()
 
 

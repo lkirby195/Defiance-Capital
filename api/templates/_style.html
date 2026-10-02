@@ -43,7 +43,7 @@
       padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
     }
     header.bar .brand { font-weight: 700; letter-spacing: .04em; }
-    header.bar nav { display: flex; flex-wrap: wrap; gap: 14px; }
+    header.bar nav { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
     header.bar .who { margin-left: auto; color: var(--muted); font-size: 13px; }
     header.bar form { display: inline; }
     main { max-width: 1100px; margin: 0 auto; padding: 16px; }
@@ -52,11 +52,16 @@
     .title { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline;
              justify-content: space-between; }
     .title h1 { margin-bottom: 8px; }
-    a.btn {
-      font: inherit; font-weight: 600; font-size: 14px; padding: 7px 13px; border-radius: 5px;
-      border: 1px solid var(--accent); color: var(--accent); text-decoration: none;
-      white-space: nowrap;
+    a.btn, span.btn {
+      display: inline-block; font: inherit; font-weight: 600; font-size: 14px; padding: 7px 13px;
+      border-radius: 5px; border: 1px solid var(--accent); color: var(--accent);
+      text-decoration: none; white-space: nowrap;
     }
+    .btn.small, button.small { font-size: 12px; padding: 3px 9px; }
+    .btn.danger { color: var(--hard); border-color: var(--hard); }
+    /* The three controls on a Home row sit on one line. */
+    td.controls { white-space: nowrap; }
+    td.controls form { display: inline; margin-right: 4px; }
     h2 { font-size: 17px; margin: 0 0 10px; }
     h3 { font-size: 14px; margin: 16px 0 6px; color: var(--muted); text-transform: uppercase;
          letter-spacing: .06em; }
@@ -101,15 +106,9 @@
     legend { color: var(--muted); font-size: 13px; padding: 0 4px; }
     .grid3 { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
     label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
-    /* Every box says which it is (api/templates/_fields.html); Required is the one that has
-       to catch the eye, so Optional is deliberately the quieter of the two. */
-    .req, .opt, .cond {
-      font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-      white-space: nowrap;
-    }
-    .req { color: var(--hard); }
-    .opt { color: var(--muted); font-weight: 600; }
-    .cond { color: var(--soft); }
+    /* Every box says which it is (api/templates/_fields.html), in the label's own type:
+       plain text, no weight and no colour of its own. */
+    .mark { font: inherit; color: inherit; white-space: nowrap; }
     /* A box pre-filled with its config default says so, and stops saying so the moment
        somebody types over it (SPEC 8.1). */
     .dflt {
@@ -141,17 +140,6 @@
     .toggle label { display: inline-flex; align-items: center; gap: 4px; margin: 0;
                     font-size: 13px; color: var(--ink); white-space: nowrap; }
     .toggle input[type="radio"] { width: auto; margin: 0; }
-    /* A control whose help does not fit a grid column takes the whole row instead. */
-    .grid3 > .wide { grid-column: 1 / -1; }
-    .narrow { max-width: 260px; }
-    dl.defs { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px;
-              margin: 8px 0 0; }
-    dl.defs dt { font-weight: 600; white-space: nowrap; }
-    dl.defs dd { margin: 0; }
-    @media (max-width: 640px) {
-      dl.defs { grid-template-columns: 1fr; }
-      dl.defs dt { margin-top: 6px; }
-    }
     input, select, textarea {
       width: 100%; padding: 7px 8px; font: inherit; color: var(--ink);
       background: var(--bg); border: 1px solid var(--line); border-radius: 5px;

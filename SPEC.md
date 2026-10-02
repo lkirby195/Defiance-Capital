@@ -1,4 +1,4 @@
-# GLENWOOD Underwriting Platform — SPEC v0.6
+# GLENWOOD Underwriting Platform — SPEC v0.7
 
 Status: **v0.6**, 2026-10-02, engine `1.3.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
 
@@ -71,32 +71,24 @@ Stack: Python 3.12, FastAPI, Postgres, SQLAlchemy + Alembic, Pydantic, pytest. D
 Common to all products:
 
 - Interest paid current, monthly interest-only, at the deal's `interest_rate` (§8.1). No accrual, no deferral.
-- A stated loan term. The loan runs to `payoff_date` and pays off there: v0.3 models no early payoff, and there is no minimum-interest exercise and no extension in the math.
+- A stated loan term in whole months. The loan runs to `payoff_date` - the last day of the month that is the closing month plus the term (§8.1) - and pays off there: v0.3 models no early payoff, and there is no minimum-interest exercise and no extension in the math.
 - Origination fee `origination_fee_pct` of the commitment (default 2.0%, config): half at close, half at payoff.
 - The rehab side is drawn straight-line over `rehab_months = term_months − listing_months` (config, placeholder 3), floored at 0 — the last months of the term are listing and sale. A term at or inside the listing period leaves no rehab period, and the rehab money is advanced at close instead (`NO_REHAB_PERIOD`, §8.8).
 - `NO_DRAW` and `WHOLETAIL` carry no rehab portion: `loan_rehab_portion` is 0 and the whole commitment is funded at close.
 
-Borrower intent and exit are inferred from term and asset type, then confirmed by the team.
-`asset_type` is `SFR | UNITS_2_4 | UNITS_5_PLUS | OTHER`, captured at intake. The engine
-applies these rules in order and records `exit_source`:
+**There is no exit inference and no asset type** (v0.7). A deal used to carry an asset type
+and a stated exit, and a resale exit turned the Flip analysis on while a hold exit turned the
+Rental analysis on. Both columns are gone from the form, the deal page and the model
+(migration `0016`). What sets the **default** state of the two analysis toggles (§8.1) is what
+is on the deal: the Flip analysis is on when there is an estimated sale price to sell at, the
+Rental analysis is on when there is a monthly rent to carry a loan with, and the Take-Back
+analysis runs on every deal. A toggle set by hand wins over its default either way.
 
-| # | Rule | Exit | `exit_source` |
-|---|---|---|---|
-| 1 | Team states an exit (anything but `UNKNOWN`) | as stated | `STATED` |
-| 2 | Term ≤ 9 months and asset type is `SFR` or `UNITS_2_4` | resale: `WHOLETAIL` for the `WHOLETAIL` product, else `FLIP` | `INFERRED` |
-| 3 | Term ≥ 12 months | `HOLD` | `INFERRED` |
-| 4 | Neither fires (e.g. a 10-month term, or a ≤ 9-month term on `UNITS_5_PLUS`) | `UNKNOWN` | `INFERRED` |
-
-A team-stated exit always wins, including a stated `HOLD` on a short term. The exit type
-gates nothing and flags nothing. All it does is set the **default** state of the two
-analysis toggles (§8.1): a resale exit turns the Flip analysis on, a hold exit turns the
-Rental analysis on, and the Take-Back analysis runs on every deal whatever the exit says.
-
-Each product's row above is shown as a one-line definition under the Loan Type box and beside
-the chosen product on the deal page, so a person picking one is told what they are picking.
-Every enum a person reads — the loan type, the asset type, the loan purpose and the exit — is
-rendered in title case with spaces (`SPLIT_DRAW` is "Split Draw") wherever it appears
-(`schema/labels.py`); the stored value does not change.
+Each product's row above is shown behind the (?) on the Loan Type label on the deal page, so a
+person reading one is told what it is; the team form prints the labels and nothing else.
+Every enum a person reads — the loan type and the loan purpose — is rendered in title case
+with spaces (`SPLIT_DRAW` is "Split Draw") wherever it appears (`schema/labels.py`); the
+stored value does not change.
 
 ---
 
@@ -112,7 +104,7 @@ Five things. Everything else is derived or requested later, only if the deal cle
 | 2 | Purchase price | Dollars |
 | 3 | Rehab costs | Dollars; 0 allowed |
 | 4 | Loan Amount | Dollars. Borrower-driven — the engine derives leverage from this |
-| 5 | How long do you need the loan? | The term. The borrower channels ask it as a bucket (3 / 6 / 9 / 12 / 12+ months) which seeds `term_months`; 12+ seeds 12 on every channel, the floor of the ask, and the deal page says the borrower asked for more so the team sets the real term. The team form asks for the term in months or the payoff date directly (§8.1), because a person with the whole deal in front of them knows it |
+| 5 | How long do you need the loan? | The term. The borrower channels ask it as a bucket (3 / 6 / 9 / 12 / 12+ months) which seeds `term_months`; 12+ seeds 12 on every channel, the floor of the ask, and the deal page says the borrower asked for more so the team sets the real term. The team form asks for the term in months (§8.1), because a person with the whole deal in front of them knows it; the payoff date derives |
 | 6 | Who you are | Guarantor name, entity (if any), phone (optional); **credit range** (pick one of the five tranches, §7.1); **real estate experience** (deals completed in last 3 years: 0 / 1–2 / 3–5 / 6+); **repeat borrower** yes/no |
 
 (Numbered as six rows because "who you are" is one question with sub-fields.)
@@ -204,16 +196,16 @@ IntakeRecord
                                                          #   "Advance at Closing"
     term_bucket?: 3 | 6 | 9 | 12 | 12_PLUS               # borrower channels only; it seeds term_months
     term_months?, term_stub_days?, payoff_date?
-                                 # enter a term or a payoff date; the other derives from
-                                 #   closing_date. term_months is whole monthly periods and
-                                 #   term_stub_days is the days a mid-month payoff leaves (§8.1)
-    closing_date?                # month 0 of the ledger (§8.3)
+                                 # the term in whole months; payoff_date derives: the last day
+                                 #   of the month that is the closing month plus the term
+                                 #   (§8.1). term_stub_days is kept for a future actual-payoff
+                                 #   entry and no form writes it
+    closing_date?                # any date; the ledger's month 0 is the end of its month (§8.3)
     interest_rate?               # annual; required to underwrite (§8.1)
     contingency_pct?, closing_costs_usd?, holding_costs_pct_of_cost?, origination_fee_pct?
                                  # §8.1 deal economics; each falls back to its config default
-    flip_analysis?, rental_analysis?   # §8.1 toggles; null leaves the §3-derived default
-    asset_type?: SFR | UNITS_2_4 | UNITS_5_PLUS | OTHER   # drives the §3 exit inference
-    stated_exit?: FLIP | HOLD | WHOLETAIL | UNKNOWN
+    flip_analysis?, rental_analysis?   # §8.1 toggles; null is the default: on with a
+                                       #   sale price / with a rent
   borrower estimates (§4.2):     # the public form's own; never overwritten, source BORROWER
     estimated_sale_price_borrower?, monthly_rent_borrower?
   team overrides (§6):           # stand-ins for enrichment, entered by hand
@@ -222,7 +214,7 @@ IntakeRecord
     court_records_as_of?         # the day the team searched; required for CLEAN and FLAGS
     court_records_team: [..]     # one typed matter per entry, §7.2
   missing_fields: [..]           # what the team still needs to ask for
-  status: NEW | NEEDS_INFO | SCREENED | IN_REVIEW | UNDERWRITING | LOI_SENT | HANDED_OFF | DECLINED | DEAD
+  status: NEW | NEEDS_INFO | SCREENED | IN_REVIEW | UNDERWRITING | LOI_SENT | HANDED_OFF | PAUSED | DECLINED | DEAD
 ```
 
 ### 4.6 Status transitions
@@ -261,6 +253,21 @@ deal is short of a closing date or a term, when the engine will not price what i
 when the screen declined it; the edit that triggered the run is kept either way, and the page
 says what ran. Every automatic run is recorded against the actor `system` (§11). The buttons
 stay: a person can re-run either stage whenever they like.
+
+**The three controls on a Home row** (§9.1) are team actions, and each writes an `audit_log`
+row (§5):
+
+| Control | From | To |
+|---|---|---|
+| Progress | `SCREENED` | `IN_REVIEW`, as advancing to review always did |
+| Progress | `PAUSED` | the status the deal was paused from, read off the `PAUSED` audit row's `before` |
+| Pause | any live status (not `PAUSED`, `DECLINED`, `DEAD`) | `PAUSED` |
+| Kill | anything but `DEAD`, after a confirmation page | `DEAD` |
+
+**A `PAUSED` deal is set aside.** Nothing automatic runs on it - an edit on a paused deal is
+stored and waits - a re-screen or a re-underwrite a person presses leaves its status alone,
+and Progress returns it to where it was. It is not closed: it can be edited, declined or
+killed, and it sits in its own section of the Home page until somebody brings it back.
 
 ---
 
@@ -500,8 +507,8 @@ Descriptive: captured, stored on `properties`, and reported. None of them feeds 
 |---|---|---|
 | `loan_purpose` | — | `PURCHASE` \| `REFINANCE` \| `CASH_OUT` \| `CONSTRUCTION`, team-selected. Recorded and reported; it feeds no math |
 | `loan_type` | — | The §3 product, labelled "Loan Type" wherever a person reads it, with that product's §3 one-liner under the box |
-| `closing_date` | — | Month 0 of the ledger. **Required to underwrite** |
-| `term_months` / `payoff_date` | — | Enter either and the other derives; enter both and they have to agree. `term_months` is the count of **full monthly periods**, and a payoff date between two of them leaves a stub of days beside it. **Required to underwrite** |
+| `closing_date` | — | Any date. The model treats closing as the **last day of that month**: month 0 of the ledger is that month end (§8.3). **Required to underwrite** |
+| `term_months` | — | Whole months. **Required to underwrite**; the team form requires the box. `payoff_date` derives: the last day of the month that is the closing month plus the term, shown read-only on the deal page |
 | `purchase_price` | — | |
 | `rehab_costs` | — | 0 allowed |
 | `loan_requested` | — | Labelled **Loan Amount** wherever it is shown |
@@ -512,27 +519,26 @@ Descriptive: captured, stored on `properties`, and reported. None of them feeds 
 | `holding_costs_pct_of_cost` | `fees.holding_costs_default_pct_of_cost` (2%) | A **percentage of `purchase_price` + `rehab_costs`**, over the whole hold. The dollar figure is that percentage of that cost and is computed, never entered: `holding_costs_total = (purchase_price + rehab_costs) × holding_costs_pct_of_cost`, shown beside the box and everywhere holding costs appear. The monthly figure is `holding_costs_total / term_months` as a decimal (below) |
 | `origination_fee_pct` | `fees.origination_default_pct` (2.0%) | Half at close, half at payoff, both on the commitment |
 
-**The term is whole monthly periods plus a stub.** Periods are anchored to `closing_date`'s
-day of the month, clamped to the end of a short one (31 January + 1 month is 28 February).
-`term_months` is how many anchors fit on or before the payoff date, and `term_stub_days` is the
-days between the last anchor and the payoff date:
+**The ledger anchors to month ends.** Closing is treated as the last day of its month,
+whatever day the deal closes on, and every period after it is the last day of a later month:
 
 ```
-payoff_date  = closing_date + term_months months + term_stub_days days
-term_months  = the largest m with closing_date + m months <= payoff_date
-term_stub_days = payoff_date − (closing_date + term_months months)      # 0 .. 30
+anchor(m)    = the last day of the month that is closing_date's month + m      # m = 0 ..
+payoff_date  = anchor(term_months) + term_stub_days days
 term in months (decimal) = term_months + term_stub_days / interest.day_count_basis
 ```
 
-**Entering only a term keeps deriving a whole-month payoff date**: a term said in months has no
-stub, and its payoff date is the anchor. Entering a payoff date allows any date after closing.
-A payoff date on or before the closing date is refused — a term runs forwards — and a term and
-a payoff date that disagree are refused, naming both: that is a person having edited one box
-and left the other behind. `term_months` may be 0 only alongside a stub, which is a loan that
-pays off inside its first month; 0 months and 0 days is not a term.
+A nine-month term on a deal closing 15 October pays off on 31 July. The team enters the term
+in months and nothing else; the payoff date is derived and shown read-only. **No form
+produces a stub.** The engine keeps the stub arithmetic — a payoff date between two anchors is
+`term_months` whole periods plus `term_stub_days` days, measured from the month-end anchor — for
+a future actual-payoff entry, and the JSON underwrite request can still name a payoff date for
+it; a payoff date on or before the end of the closing month is refused, because the ledger's
+month 0 is that month end. `term_months` may be 0 only alongside a stub; 0 months and 0 days is
+not a term.
 
 `term_stub_days` is a column on `deals` beside `term_months` (migration `0012`); the payoff
-date is still derived from the two and never stored.
+date is derived from the two and never stored.
 
 `term_bucket` (§4.1) is the borrower's own answer to "how long do you need the loan?" and
 still seeds `term_months` on a borrower-channel intake. **The team form does not ask it**: a
@@ -578,20 +584,27 @@ With one value ratio there is nothing left for it to feed.
 
 | Toggle | On by default when |
 |---|---|
-| `flip_analysis` | The §3 exit is a resale — `FLIP` or `WHOLETAIL` |
-| `rental_analysis` | The §3 exit is `HOLD`, or a `monthly_rent` has been entered |
+| `flip_analysis` | An `estimated_sale_price` is in force |
+| `rental_analysis` | A `monthly_rent` is in force |
 | Take-Back | Always. Not a toggle |
 
 A toggle the team sets by hand wins over its default, in either direction. Both are a visible
-three-state control — Default / On / Off — on the team form and on the deal page's override
-block, and each analysis panel shows the state it ran under. Take-Back has no toggle anywhere,
-because it has none at all.
+three-state control — Default / On / Off — on the deal page's override block, and each
+analysis panel shows the state it ran under. The team form does not show them. Take-Back has
+no toggle anywhere, because it has none at all.
 
-Also from intake and enrichment, unchanged: `asset_type` and the team-stated exit (the §3
-inference), the verified `credit_score` and deal count, and `court_records` — the §7.2 court
-and filing tests are re-run here on the source in force at underwrite time, adapter over
-team (§6.1). They are not copied from the `screens` row: weeks can pass between the two
-stages and a pull that has since landed supersedes the hand search Stage 1 ran on.
+Also from intake and enrichment, unchanged: the verified `credit_score` and deal count, and
+`court_records` — the §7.2 court and filing tests are re-run here on the source in force at
+underwrite time, adapter over team (§6.1). They are not copied from the `screens` row: weeks
+can pass between the two stages and a pull that has since landed supersedes the hand search
+Stage 1 ran on.
+
+**The team form** asks for the Overview, the Property Overview, and seven Deal Economics
+boxes in this order: Purchase Price, Rehab Costs, Loan Amount, Loan Purpose, Loan Type, Closing
+Date, Term (months). Labels only, each marked Required or Optional in plain text. Everything
+else above — the five defaulted economics, the loan split, the valuation, the rent, the
+toggles, the court search — populates from the defaults when the deal is stored and is edited
+on the deal page, and Edit Intake leaves all of it where it is.
 
 ### 8.2 Sizing
 
@@ -622,9 +635,13 @@ The lender's dated monthly cash flows from `closing_date`, and their XIRR. Signs
 ```
 rehab_months   = max(0, term_months − listing_months)              # whole periods only
 draw_per_month = rehab_portion / rehab_months                      # rehab_months > 0
-month m date   = closing_date + m calendar months, m = 0 .. term_months
+month m date   = anchor(m), the last day of the closing month + m, m = 0 .. term_months
 stub row       = month term_months + 1, dated payoff_date          # when term_stub_days > 0
 ```
+
+Month 0 is dated the end of the closing month, not the closing date: a deal closing on the
+15th and one closing on the 1st lay out the same ledger. The closing date itself is reported
+beside it for the record.
 
 **The stub.** A term whose payoff date falls between two anchors gets one more row after the
 last one, dated the payoff date itself. It is a period like any other, only shorter: it accrues
@@ -671,7 +688,8 @@ balance(m)  = commitment                                        # NO_DRAW, WHOLE
 `SPLIT_DRAW` pays on the full commitment from close even though the holdback has not gone out yet — that is the product (§3), and the ledger shows it as a real difference from `SPLIT_PRINCIPAL` rather than a constant.
 
 **The last row — payoff.** Month `term_months` on a whole-month term, the stub row on any
-other; either way it is dated the actual payoff date the team entered.
+other; either way it is dated the payoff date — the month end the term lands on, or the actual
+date an eventual actual-payoff entry names.
 
 ```
 payoff = +outstanding principal      # funded_at_close + every draw = commitment
@@ -766,7 +784,8 @@ UnderwriteResult
   engine_version, config_hash
   loan_purpose?, closing_date, payoff_date, term_months, term_stub_days,
     term_months_decimal, rehab_months
-  exit: {type, exit_source}                                    # §3, informational
+  analyses: {flip_analysis, rental_analysis,                    # §8.1, the toggles in force
+             flip_analysis_default, rental_analysis_default}    #   and what each defaulted to
   sizing: {LTC, LTV, caps, pass/fail each, commitment, split}   # §8.2
   economics: {interest_rate, contingency_pct, rehab_adj, closing_costs,
               holding_costs_pct_of_cost, holding_costs_basis, holding_costs_total,
@@ -846,7 +865,7 @@ flag's severity. The stored value is untouched — an `<option>` still posts `BA
 and a flag tag is still styled by its code — only the words change.
 
 ### 9.2 Readiness checklist
-Above the Run underwrite button, one row per §8.1 input with the value in force, where it came from (`ADAPTER` / `TEAM` / `BORROWER` / `DEFAULT` / `MISSING`, shown as words), and whether the run needs it; what the run does with or without it sits behind the (?) on the row's label. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months` or `payoff_date`, shown as months and, where there is one, the stub days after them), and the loan split on a split product. **A `DEFAULT` counts as present**: the rate and the split always have one (§8.1, §8.2), so the two that can turn the button off are the closing date and the term. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
+Above the Run underwrite button, one row per §8.1 input with the value in force, where it came from (`ADAPTER` / `TEAM` / `BORROWER` / `DEFAULT` / `MISSING`, shown as words), and whether the run needs it; what the run does with or without it sits behind the (?) on the row's label. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months`, shown as months and, where there is one, the stub days after them), and the loan split on a split product. **A `DEFAULT` counts as present**: the rate and the split always have one (§8.1, §8.2), so the two that can turn the button off are the closing date and the term. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
 
 ### 9.3 Credit memo
 Generated from `UnderwriteResult` into GLENWOOD's template (to be supplied; docx). Sections: borrower, property, deal structure, sizing vs caps, the return overview (ledger and IRR), flip, rental, take-back, flags with pass/fail, recommendation. Every flag shows the threshold it was tested against.
@@ -892,7 +911,6 @@ so the math can be checked by hand against a spreadsheet; neither is shown to a 
 - `draws.listing_months` (3): `rehab_months = term_months − listing_months`, whole periods only
 - `interest.default_annual_rate` (12%, placeholder): the **default for `interest_rate`** (§8.1), populated on every deal until the team enters its own
 - `interest.day_count_basis` (30): the days a whole monthly period counts as, for the final stub period's prorated interest (§8.3)
-- exit inference term boundaries (resale max term, hold min term, §3)
 - rental takeout: `expenses_pct_of_rent` (35%), `takeout_rate` (6.5%), `amortization_years` (30), `dscr_floor` (1.20)
 - take-back: `lost_interest_months` (3), `legal_costs_usd` (5,000), `amortization_years` (30), `dscr_floor` (1.00)
 - underwrite flag severities: `DSCR_BELOW_FLOOR`, `TAKE_BACK_DSCR_BELOW_FLOOR`. The informational codes (§8.8) are fixed `Info` in code and the loader refuses to grade them
@@ -970,11 +988,16 @@ is a deal the queue already knows how to work. The URL-address parser it reads a
 with (`adapters/listing_url.py`) is the pure half of Phase 3's LINK adapter, built early for
 the same reason.
 
-The queue list pins one thing above the status groups: a deal that picked up a Hard flag
-**after** it reached `LOI_SENT` or `HANDED_OFF`. Past that point a Decline no longer closes a
-deal (§4.6) — a person owns it and the flags are recorded for them to read — so nothing else
-surfaces a Hard flag raised that late. "After" is measured against the `audit_log` row that
-recorded the move into that status.
+Phase 7 (engine `1.4.0`, migration `0016`) is the Home page and the month-end ledger. The
+queue list is **Home**: four sections — Borrower Submissions (channel `WEB`), DCF New Deals
+(every other channel), On Pause (`PAUSED`), Dead (`DEAD` or `DECLINED`) — most recently touched
+first within each, every row carrying the borrower, the address, the loan amount, the loan
+type, the latest verdict and IRR, the source and the last activity, and the three controls
+(§4.6): Progress, Pause, Kill. The pinned-banner section is gone with the status groups.
+`PAUSED` joined the status enum. The team form is labels and boxes and asks only for the
+Overview, the Property Overview and seven Deal Economics boxes (§8.1); the asset type and the
+exit are gone with the §3 inference; the ledger anchors to month ends (§8.3) and the payoff
+date is read-only. `glenwood deals purge --all --confirm` is the one-time cleanup (README).
 
 ---
 
@@ -1000,3 +1023,13 @@ recorded the move into that status.
   and broker percentages, the rental expense ratio and takeout rate, the two DSCR floors, the
   take-back's lost-interest months and legal costs, and the stub period's day-count basis
   (`interest.day_count_basis`, placeholder 30 — 30/360; a lender who accrues actual/365 sets 365)
+- Home's second section is every deal that did not come in on the public form, not only
+  `channel = TEAM`: the SMS, link and contract channels do not exist yet, and a deal on one of
+  them would otherwise be in no section at all. Rename or split it when they do
+- The purge leaves one `audit_log` row (`DEALS_PURGED`, the counts it deleted) rather than
+  none, so the one write that erases the record is itself on the record. Confirm that is wanted
+- Edit Intake no longer touches the §8.1 economics, the valuation, the rent, the toggles or the
+  court search (they have no box on the form); the JSON half of `POST /intake/team` still takes
+  them at creation. Confirm the JSON body should go on accepting them
+- The actual-payoff entry the stub arithmetic is kept for (§8.1): where it lives and what it
+  records when it comes

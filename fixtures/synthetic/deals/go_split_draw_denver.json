@@ -1,6 +1,6 @@
 {
   "name": "go_split_draw_denver",
-  "description": "SPLIT_DRAW flip in Denver, CO; T1 / 6+ deals; both metrics under cap. Go. Underwrite: 9 months at 12% on a $195,000 commitment, $147,000 at close and six $8,000 draws over the rehab period, interest on the full commitment throughout; IRR 17.631%. Holding costs are 3% of the $248,000 price-plus-rehab; the flip nets $38,410 on $278,390 of costs. Both DSCRs fall short.",
+  "description": "SPLIT_DRAW flip in Denver, CO; T1 / 6+ deals; both metrics under cap. Go. Underwrite: 9 months at 12% on a $195,000 commitment, closing 15 October 2026 - month 0 of the ledger is 31 October and the payoff is 31 July 2027, the last day of the ninth month after - $147,000 at close and six $8,000 draws over the rehab period, interest on the full commitment throughout; IRR 17.620%. Holding costs are 3% of the $248,000 price-plus-rehab; the flip nets $38,410 on $278,390 of costs. Both DSCRs fall short.",
   "inputs": {
     "deal": {
       "product": "SPLIT_DRAW",
@@ -66,19 +66,18 @@
         "verified_credit_score": 760,
         "verified_deals_36mo": 7
       },
-      "closing_date": "2026-10-01",
+      "closing_date": "2026-10-15",
       "term_months": 9,
       "interest_rate": "0.12",
       "court_records": {
         "as_of": "2026-09-09"
       },
       "monthly_rent": "2800.00",
-      "asset_type": "SFR",
       "loan_purpose": "PURCHASE",
       "holding_costs_pct_of_cost": "0.03"
     },
     "expected": {
-      "payoff_date": "2027-07-01",
+      "payoff_date": "2027-07-31",
       "rehab_months": 6,
       "commitment": "195000.00",
       "funded_at_close": "147000.00",
@@ -103,7 +102,7 @@
         "total_fees": "3900.00",
         "total_payoff": "195000.00",
         "total_profit": "21450.00",
-        "irr": "0.17631235"
+        "irr": "0.17619845"
       },
       "flip": {
         "status": "EVALUATED",

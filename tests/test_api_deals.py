@@ -68,8 +68,10 @@ def test_underwrite_route_takes_the_spec_8_1_inputs(
     assert body["term_months"] == 6  # from the deal's term bucket
     assert body["rehab_months"] == 3
     assert body["engine_version"] == ENGINE_VERSION
-    # no stated exit on this deal: 6 months on an SFR resells, and the product is WHOLETAIL
-    assert body["exit"]["type"] == "WHOLETAIL" and body["exit"]["exit_source"] == "INFERRED"
+    # a sale price and a rent are on the deal, so both analyses are on by default (SPEC §8.1)
+    assert body["analyses"]["flip_analysis"] is True
+    assert body["analyses"]["rental_analysis_default"] is True
+    assert "exit" not in body
     # the ledger runs closing to payoff, one row a month
     assert len(body["return_overview"]["entries"]) == body["term_months"] + 1
     assert body["closing_date"] and body["payoff_date"]
@@ -97,8 +99,12 @@ def test_underwrite_route_runs_without_a_valuation_and_says_what_it_lost(
     """SPEC §8.4: the sale price is not a gate; the flip is what goes missing without one."""
     stored_deal.status = Status.SCREENED
     db_session.flush()
+    # the flip is off by default without a sale price (SPEC §8.1); asked for by hand, it is
+    # what goes missing
     body = {key: value for key, value in UNDERWRITE_BODY.items() if key != "estimated_sale_price"}
-    response = client.post(f"/deals/{stored_deal.id}/underwrite", json=body)
+    response = client.post(
+        f"/deals/{stored_deal.id}/underwrite", json={**body, "flip_analysis": True}
+    )
     assert response.status_code == 201, response.text
     result = response.json()
     assert result["flip"]["status"] == "NOT_EVALUATED"
@@ -117,11 +123,10 @@ def test_read_deal_returns_the_deal_with_its_latest_screen_and_underwrite(
     body = before.json()
     assert body["screen"] is None and body["underwrite"] is None
     assert body["status"] == "NEW"
-    assert body["asset_type"] == "SFR"
-    assert body["stated_exit"] is None  # the exit is inferred, not stated (SPEC §3)
+    assert "asset_type" not in body and "stated_exit" not in body
     assert body["term_bucket"] is None and body["term_months"] == 6
-    assert body["term_months"] == 6
-    assert body["payoff_date"] == "2027-08-01"  # derived: closing plus the term
+    assert body["closing_date"] == "2027-02-01"
+    assert body["payoff_date"] == "2027-08-31"  # derived: the month end six months on
     assert body["product"] == "WHOLETAIL" and body["product_source"] == "ENTERED"
     assert body["borrower"]["phone"] == "9185550147"
     assert body["borrower"]["entities"] == ["Whitlock Homes LLC"]

@@ -3,6 +3,20 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**1.4.0 (Phase 7, 2026-10-02) anchors the ledger to month ends and drops the exit
+inference.** Closing is treated as the last day of its month: month 0 of the ledger is dated
+that month end, month ``m`` the last day of the month ``m`` later, and the payoff date is the
+last day of the month that is the closing month plus the term (``schema/dates.anchor_date``).
+A deal closing 15 October for nine months pays off on 31 July, where it paid off on 15 July.
+Whole-month interest is unchanged - a period's interest is a twelfth of the annual rate
+whatever its days - so every fixture's totals stand and only its dates and its XIRR move.
+The stub arithmetic is kept, measured from the month-end anchor, for a future actual-payoff
+entry; no form produces one. ``asset_type``, ``stated_exit`` and the §3 exit inference are
+gone from the engine and the model: ``UnderwriteResult.exit`` is ``analyses``
+(``AnalysisToggles``), and the Flip analysis defaults on when a sale price is present, the
+Rental analysis when a rent is present (``engine/calc/analyses.py``). Migration ``0016``
+drops the two columns and deletes the stored underwrites, whose shape no longer loads.
+
 **1.3.0 (Phase 6a, 2026-10-01) names the borrower as a source.** ``ValueSource`` gains
 ``BORROWER``: the estimated sale price and the monthly rent a borrower types on the public
 form (SPEC §4.2) reach the engine as the borrower's own when no adapter and no team member
@@ -80,4 +94,4 @@ REHAB_PORTION_EXCEEDS_BUDGET.
 
 from __future__ import annotations
 
-ENGINE_VERSION = "1.3.0"
+ENGINE_VERSION = "1.4.0"

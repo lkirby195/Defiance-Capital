@@ -14,9 +14,9 @@ and loses their typing.
 **And the complaint sits under the box.** ``api/problems.py`` files each message by field and
 ``_fields.html`` prints it there, with ``aria-describedby`` pointing at it, so a person fixing
 three boxes reads three lines in three places rather than a list at the top they have to match
-up themselves. What stays at the top is what is genuinely about more than one box: the term
-against the payoff date against the closing date is the example, because there is no single
-box a message about three of them belongs under.
+up themselves. What stays at the top is what is genuinely about more than one box, or about a
+box the page does not have: a payoff date posted to the override block is the example, because
+the payoff date is derived and there is no box for a message about it to sit under.
 """
 
 from __future__ import annotations
@@ -40,7 +40,8 @@ QUEUE_POSTS: tuple[tuple[str, dict[str, str]], ...] = (
     ("intake", {}),
     ("advance", {}),
     ("decline", {"reason": "not for us"}),
-    ("dead", {"reason": "gone quiet"}),
+    ("pause", {}),
+    ("kill", {"confirm": "yes", "reason": "gone quiet"}),
     ("reopen", {"reason": "back on"}),
     ("note", {"note": "a note"}),
 )
@@ -68,13 +69,13 @@ def top_problems(body: str) -> list[str]:
     ]
 
 
-# --- the payoff date: the case that used to be refused, and the one still refused ---------------
+# --- the term: months in, a month-end payoff date out (SPEC §8.1) --------------------------------
 
 
-def test_a_payoff_date_that_contradicts_the_term_re_renders_the_deal_page(
+def test_a_payoff_date_posted_to_the_override_block_is_refused_at_the_top(
     client: QueueClient, db_session: Session, stored_deal: Deal
 ) -> None:
-    """The payoff-date case. A 500 here would lose the block somebody had just filled in."""
+    """No box takes a payoff date now; one that arrives anyway is named, above the block."""
     response = client.post(
         f"/queue/deals/{stored_deal.id}/overrides",
         data={
@@ -88,44 +89,42 @@ def test_a_payoff_date_that_contradicts_the_term_re_renders_the_deal_page(
 
     assert response.status_code == 422
     body = response.text
-    # It is about three boxes at once, so it goes to the top rather than under any one.
-    assert len(top_problems(body)) == 1
-    complaint = top_problems(body)[0]
-    assert "disagree" in complaint
-    assert "6 month(s)" in complaint and "2027-10-01" in complaint
-    assert "Clear whichever one you did not mean" in complaint
+    assert any("payoff_date" in line for line in top_problems(body))
     # ...and what was typed is still in the boxes.
     assert 'id="term_months"' in body and 'value="6"' in body
     db_session.expire_all()
     assert db_session.get(Deal, stored_deal.id).term_months == 9  # type: ignore[union-attr]
 
 
-def test_a_mid_month_payoff_date_is_now_accepted_and_stored_as_a_stub(
+def test_a_term_in_months_derives_a_month_end_payoff_date(
     client: QueueClient, db_session: Session, stored_deal: Deal
 ) -> None:
-    """The other half of the same change: SPEC §8.1 takes any date after closing."""
+    """Closing 15 March, nine months: the payoff is 31 December, the ninth month end on."""
     response = client.post(
         f"/queue/deals/{stored_deal.id}/overrides",
-        data={"closing_date": "2027-03-15", "payoff_date": "2027-12-26", "interest_rate": "12%"},
+        data={"closing_date": "2027-03-15", "term_months": "9", "interest_rate": "12%"},
         follow_redirects=False,
     )
     assert response.status_code == 303, response.text
     db_session.expire_all()
     deal = db_session.get(Deal, stored_deal.id)
     assert deal is not None
-    assert (deal.term_months, deal.term_stub_days) == (9, 11)
+    assert (deal.term_months, deal.term_stub_days) == (9, None)
+    page = client.get(f"/queue/deals/{stored_deal.id}").text
+    assert re.search(r"<dt>Payoff Date.*?</dt>\s*<dd>2027-12-31</dd>", page, re.S)
 
 
-def test_a_payoff_date_before_the_closing_date_is_still_refused_by_name(
+def test_a_term_of_no_months_is_answered_under_the_term_box(
     client: QueueClient, stored_deal: Deal
 ) -> None:
     response = client.post(
         f"/queue/deals/{stored_deal.id}/overrides",
-        data={"closing_date": "2027-03-15", "payoff_date": "2027-01-01"},
+        data={"closing_date": "2027-03-15", "term_months": "0"},
         follow_redirects=False,
     )
     assert response.status_code == 422
-    assert any("on or before the closing date" in line for line in top_problems(response.text))
+    assert field_error(response.text, "term_months") is not None
+    assert flagged(response.text, "term_months")
 
 
 # --- and one other: a box whose own value is wrong -----------------------------------------------
@@ -178,14 +177,21 @@ def test_several_wrong_boxes_are_all_answered_at_once(
         assert field_error(response.text, name), name
 
 
-def test_a_court_matter_names_the_row_it_is_in(
-    client: QueueClient, team_entry: dict[str, Any]
-) -> None:
-    """A repeated row has no box of its own to sit under, so it says which row it is."""
-    body = form_body(team_entry)
-    body["matter_code"] = "BANKRUPTCY_IN_LOOKBACK"  # a lookback code with no date on it
+def test_a_court_matter_names_the_row_it_is_in(client: QueueClient, stored_deal: Deal) -> None:
+    """A repeated row has no box of its own to sit under, so it says which row it is.
 
-    response = client.post("/intake/team", data=body, follow_redirects=False)
+    The court-matter table is on the deal page's override block; the team form has no box
+    for it (SPEC §8.1).
+    """
+    response = client.post(
+        f"/queue/deals/{stored_deal.id}/overrides",
+        data={
+            "court_records_status": "FLAGS",
+            "court_records_as_of": "2026-09-16",
+            "matter_code": "BANKRUPTCY_IN_LOOKBACK",  # a lookback code with no date on it
+        },
+        follow_redirects=False,
+    )
 
     assert response.status_code == 422
     assert any("Matters found, row 1" in line for line in top_problems(response.text))
@@ -208,11 +214,10 @@ def test_edit_intake_re_renders_with_the_complaint_under_the_box(
     assert db_session.get(Deal, stored_deal.id).loan_requested is not None  # type: ignore[union-attr]
 
 
-def test_edit_intake_takes_a_mid_month_payoff_date(
+def test_edit_intake_takes_a_term_in_months_and_the_payoff_date_derives(
     client: QueueClient, db_session: Session, stored_deal: Deal, team_entry: dict[str, Any]
 ) -> None:
-    body = form_body(team_entry, closing_date="2027-03-15", payoff_date="2027-12-26")
-    del body["term_months"]
+    body = form_body(team_entry, closing_date="2027-03-15", term_months="9")
 
     response = client.post(
         f"/queue/deals/{stored_deal.id}/intake", data=body, follow_redirects=False
@@ -222,7 +227,8 @@ def test_edit_intake_takes_a_mid_month_payoff_date(
     db_session.expire_all()
     deal = db_session.get(Deal, stored_deal.id)
     assert deal is not None
-    assert (deal.term_months, deal.term_stub_days) == (9, 11)
+    assert (deal.term_months, deal.term_stub_days) == (9, None)
+    assert "2027-12-31" in client.get(f"/queue/deals/{stored_deal.id}").text
 
 
 # --- the underwrite request: a deal the engine will not price ------------------------------------

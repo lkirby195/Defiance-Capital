@@ -5,25 +5,19 @@
 {% import "_fields.html" as fields with context %}
 {% block title %}{{ heading }} — GLENWOOD{% endblock %}
 
-{# The three groups below are the SPEC §8.1 input groups, in the order §9 shows a run back:
-   Overview, Property Overview, Deal Economics. The Overview is who the borrower is and
-   nothing else; the loan's own terms — its purpose, its type, its closing date and its term —
-   are Deal Economics, beside the money they describe. The two blocks after them are the
-   interim team sources (SPEC §6.1) — the valuation, the rent, and the court search. #}
+{# Labels and boxes, three groups (SPEC §8.1): Overview, Property Overview, Deal Economics.
+   No helper text: every box says Required or Optional and nothing else. The §8.1 economics
+   with a default, the loan split, the valuation, the rent, the analysis toggles and the
+   court search are not here - they populate from the defaults when the deal is stored and
+   are edited on the deal page (api/intake_form.py). #}
 
 {% block content %}
 <h1>{{ heading }}</h1>
-<p class="lede">{{ intro }}</p>
 
 <form class="stack" method="post" action="{{ action }}">
   {{ csrf.field(csrf_token) }}
   <section class="panel">
     <h2>Overview</h2>
-    <p class="small muted">
-      Who is on the loan. The guarantor's name is the one name a deal carries; the phone is
-      the borrower match key when there is one (SPEC §5) and is optional, because a deal that
-      arrives by email has a name and no number.
-    </p>
     <div class="grid3">
       {{ fields.text_box("entity_name", "Entity Name", form.entity_name) }}
       {{ fields.text_box("borrower_name", "Guarantor Name", form.borrower_name, required=true) }}
@@ -40,18 +34,11 @@
 
   <section class="panel">
     <h2>Property Overview</h2>
-    <p class="small muted">
-      Everything but the address is descriptive: it is stored, it is shown on the deal page
-      and in the credit memo, and no part of the math reads it (SPEC §8.1).
-    </p>
     <div class="grid3">
       {{ fields.text_box("address", "Address", form.address, required=true) }}
-      {{ fields.text_box("listing_url",
-                         "Listing or auction link — the address is read off the URL",
-                         form.listing_url) }}
+      {{ fields.text_box("listing_url", "Listing or auction link", form.listing_url) }}
       {{ fields.text_box("city", "City", form.city) }}
-      {{ fields.select_box("state", "State — blank is inferred from the address", enums.state,
-                           form.state) }}
+      {{ fields.select_box("state", "State", enums.state, form.state) }}
       {{ fields.text_box("units", "Units", form.units, mode="numeric") }}
       {{ fields.text_box("structures", "Structures", form.structures, mode="numeric") }}
       {{ fields.text_box("sf", "SF", form.sf, mode="numeric") }}
@@ -61,103 +48,25 @@
       {{ fields.text_box("beds", "Beds", form.beds, mode="numeric") }}
       {{ fields.text_box("baths", "Baths", form.baths, mode="decimal") }}
       {{ fields.text_box("garage_spaces", "Garage Spaces", form.garage_spaces, mode="numeric") }}
-      {{ fields.enum_box("asset_type", "Asset Type", enums.asset_type, form.asset_type) }}
-      {{ fields.enum_box("stated_exit", "Exit", enums.stated_exit, form.stated_exit) }}
     </div>
   </section>
 
   <section class="panel">
     <h2>Deal Economics</h2>
-    <p class="small muted">
-      One term, said either way: enter a term in months or a payoff date and the other
-      derives — the payoff date is the closing date plus the term, to the day (SPEC §8.1).
-      A payoff date may be any date after closing: the term is the whole months that fit
-      inside it and the days left over are a stub, which the ledger prices as a short final
-      period (SPEC §8.3). Enter both boxes and they have to agree, which means a term in
-      months lands on its own month.
-    </p>
-    <p class="small muted">
-      A Split Draw or Split Principal loan is advanced in two parts; enter both portions,
-      adding up to the Loan Amount, or leave both blank and the deal takes the SPEC §8.2
-      default - the contingency-adjusted rehab budget as the rehab portion, the rest at
-      closing. A No Draw or Wholetail loan is one advance and carries neither. The boxes
-      tagged <span class="dflt">default</span> are pre-filled from config and editable; leave
-      one alone and the deal follows config, type over it and the deal carries your number.
-      Holding costs are a percentage of the price plus the rehab and the dollars it comes to
-      are shown under the box.
-    </p>
     <div class="grid3">
-      {{ fields.enum_box("loan_purpose", "Loan Purpose", enums.loan_purpose,
-                         form.loan_purpose) }}
-      {{ fields.product_box("product", "Loan Type — blank is inferred from the rehab costs",
-                            enums.product, form.product) }}
-      {{ fields.text_box("closing_date", "Closing Date — month 0 of the ledger",
-                         form.closing_date, required=true, kind="date") }}
-      {{ fields.text_box("term_months", "Term (months)", form.term_months,
-                         mark="Required, or a payoff date", mode="numeric") }}
-      {{ fields.text_box("payoff_date", "Payoff Date", form.payoff_date,
-                         mark="Required, or a term", kind="date") }}
       {{ fields.money_box("purchase_price", "Purchase Price", form.purchase_price,
                           required=true) }}
-      {{ fields.money_box("rehab_costs", "Rehab Costs — 0 is a No Draw", form.rehab_costs,
-                          required=true) }}
+      {{ fields.money_box("rehab_costs", "Rehab Costs", form.rehab_costs, required=true) }}
       {{ fields.money_box("loan_requested", "Loan Amount", form.loan_requested,
                           required=true) }}
-      {{ fields.money_box("loan_purchase_portion",
-                          "Advance at Closing — the Principal Note on Split Principal",
-                          form.loan_purchase_portion,
-                          default=defaults.get("loan_purchase_portion", "")) }}
-      {{ fields.money_box("loan_rehab_portion", "Rehab Portion — the holdback, or Tranche A",
-                          form.loan_rehab_portion,
-                          default=defaults.get("loan_rehab_portion", "")) }}
-      {{ fields.pct_box("interest_rate", "Interest Rate — annual", form.interest_rate,
-                        default=defaults.interest_rate) }}
-      {{ fields.pct_box("contingency_pct", "Contingency", form.contingency_pct,
-                        default=defaults.contingency_pct) }}
-      {{ fields.money_box("closing_costs_usd", "Closing Costs", form.closing_costs_usd,
-                          default=defaults.closing_costs_usd) }}
-      {{ fields.pct_box("holding_costs_pct_of_cost",
-                        "Holding Costs — % of price + rehab, over the whole hold",
-                        form.holding_costs_pct_of_cost,
-                        default=defaults.holding_costs_pct_of_cost,
-                        note=holding_costs_hint) }}
-      {{ fields.pct_box("origination_fee_pct", "Origination Fee", form.origination_fee_pct,
-                        default=defaults.origination_fee_pct) }}
-    </div>
-  </section>
-
-  <section class="panel">
-    <h2>Valuation, rent and analyses
-      <span class="muted small">(SPEC §6.1 — until the adapters land)</span></h2>
-    <p class="small muted">
-      The estimated sale price is what LTV is computed on (SPEC §7.4) and what the Flip
-      analysis sells at. Without it the screen goes Conditional and the flip is not evaluated;
-      nothing else about the deal depends on it. Without a monthly rent the Rental and
-      Take-Back analyses are not evaluated — nothing stands in for what a property lets for.
-      Each toggle on Default takes what the §3 exit implies: flip on for a resale, rental on
-      for a hold or whenever a rent is entered. The Take-Back analysis has no toggle; it runs
-      on every deal (SPEC §8.6).
-    </p>
-    <div class="grid3">
-      {{ fields.money_box("estimated_sale_price_team", "Estimated Sale Price",
-                          form.estimated_sale_price_team) }}
-      {{ fields.money_box("monthly_rent", "Monthly Rent — no default", form.monthly_rent) }}
-      {{ fields.toggle_box("flip_analysis", "Flip Analysis", form.flip_analysis,
-                           "Default: on for a resale exit") }}
-      {{ fields.toggle_box("rental_analysis", "Rental Analysis", form.rental_analysis,
-                           "Default: on for a hold exit, or with a rent") }}
-      {{ fields.enum_box("court_records_status", "Court search — Not Checked is not Clean",
-                         enums.court_records_status, form.court_records_status) }}
-      {{ fields.text_box("court_records_as_of", "Searched on", form.court_records_as_of,
+      {{ fields.enum_box("loan_purpose", "Loan Purpose", enums.loan_purpose,
+                         form.loan_purpose) }}
+      {{ fields.product_box("product", "Loan Type", enums.product, form.product) }}
+      {{ fields.text_box("closing_date", "Closing Date", form.closing_date, required=true,
                          kind="date") }}
+      {{ fields.text_box("term_months", "Term (months)", form.term_months, required=true,
+                         mode="numeric") }}
     </div>
-
-    <h3>Matters found</h3>
-    <p class="small muted">
-      Every column is optional. A matter that carries a code has to carry the fact its code is
-      tested on — the date for a lookback, the amount for a threshold — or the form says so.
-    </p>
-    {{ fields.matter_table(enums, matters) }}
   </section>
 
   <div class="actions">

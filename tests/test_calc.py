@@ -1,4 +1,4 @@
-"""The v0.3 calc layer: the ledger, the three analyses, and the exit that toggles two of them.
+"""The v0.3 calc layer: the ledger, the three analyses, and the two toggles.
 
 # SPEC §8.3-§8.6
 
@@ -15,7 +15,7 @@ from decimal import Decimal
 import pytest
 
 from config.config import Config
-from engine.calc.exit import exit_inference, flip_default, infer_exit, rental_default
+from engine.calc.analyses import analysis_toggles, flip_default, rental_default
 from engine.calc.flip import financing_costs, flip_analysis
 from engine.calc.ledger import (
     build_ledger,
@@ -40,14 +40,11 @@ from engine.calc.terms import (
 from engine.sizing import size_deal
 from schema.models import (
     AnalysisStatus,
-    AssetType,
     BorrowerInputs,
-    ExitSource,
     ExperienceBucket,
     ExperienceTier,
     Product,
     SizingInputs,
-    StatedExit,
     Tranche,
     UnderwriteInputs,
 )
@@ -282,9 +279,22 @@ def test_the_ledger_has_a_row_for_every_month_from_closing_to_payoff() -> None:
     loan = terms(inputs(term_months=12))
     entries = build_ledger(loan)
     assert [e.month for e in entries] == list(range(13))
-    assert entries[0].date == CLOSING
-    assert entries[-1].date == date(2028, 1, 1)
-    assert loan.payoff_date == date(2028, 1, 1)
+    # month 0 is the end of the closing month, not the closing date (SPEC §8.3)
+    assert entries[0].date == date(2027, 1, 31)
+    assert entries[-1].date == date(2028, 1, 31)
+    assert loan.payoff_date == date(2028, 1, 31)
+    assert loan.closing_date == CLOSING
+
+
+def test_the_ledger_is_the_same_whichever_day_of_the_month_the_deal_closes() -> None:
+    """Closing on the 1st and on the 15th lay out the same month-end rows (SPEC §8.3)."""
+    first = build_ledger(terms(inputs(closing_date=date(2026, 10, 1), term_months=9)))
+    fifteenth = build_ledger(terms(inputs(closing_date=date(2026, 10, 15), term_months=9)))
+    assert [e.date for e in first] == [e.date for e in fifteenth]
+    assert first[0].date == date(2026, 10, 31) and first[-1].date == date(2027, 7, 31)
+    assert return_overview(terms(inputs(closing_date=date(2026, 10, 1), term_months=9))).irr == (
+        return_overview(terms(inputs(closing_date=date(2026, 10, 15), term_months=9))).irr
+    )
 
 
 def test_month_zero_is_the_money_out_and_the_close_half_of_the_fee() -> None:
@@ -502,7 +512,8 @@ def test_both_analyses_share_one_net_monthly_income() -> None:
 
 
 def stub_deal(**extra: object) -> UnderwriteInputs:
-    """150,000 at 12% for nine months and eleven days, closing on the 15th."""
+    """150,000 at 12% for nine months and eleven days: closing 15 March, anchored to month
+    ends from 31 March, so the ninth anchor is 31 December and the payoff is 11 January."""
     return inputs(closing_date=date(2027, 3, 15), term_months=9, term_stub_days=11, **extra)
 
 
@@ -510,7 +521,7 @@ def test_the_term_carries_its_stub_and_the_payoff_date_lands_on_it() -> None:
     loan = terms(stub_deal())
     assert (loan.term_months, loan.stub_days) == (9, 11)
     assert loan.has_stub
-    assert loan.payoff_date == date(2027, 12, 26)
+    assert loan.payoff_date == date(2028, 1, 11)
     assert loan.term_description == "9 month(s) and 11 day(s)"
     # The stub is eleven thirtieths of a period on the config day-count basis.
     assert loan.day_count_basis == CONFIG.interest.day_count_basis == 30
@@ -537,9 +548,9 @@ def test_the_ledger_ends_on_a_short_row_dated_the_payoff_date() -> None:
     # Ten anchors (months 0..9) plus the stub.
     assert len(entries) == 11
     assert [entry.month for entry in entries] == list(range(11))
-    assert entries[9].date == date(2027, 12, 15) and entries[9].stub_days == 0
+    assert entries[9].date == date(2027, 12, 31) and entries[9].stub_days == 0
     last = entries[-1]
-    assert last.date == date(2027, 12, 26) and last.stub_days == 11
+    assert last.date == date(2028, 1, 11) and last.stub_days == 11
     assert last.interest == D("550")
     # The payoff and the fee's payoff half land on the stub row, not on the anchor before it.
     assert last.payoff == D("150000") and last.fees == D("1500")
@@ -579,7 +590,8 @@ def test_a_term_inside_its_first_month_is_all_stub_and_still_prices() -> None:
     assert loan.rehab_months == 0
     entries = build_ledger(loan)
     assert len(entries) == 2
-    assert entries[1].date == date(2027, 1, 21) and entries[1].stub_days == 20
+    # twenty days past month 0, which is the end of the closing month
+    assert entries[1].date == date(2027, 2, 20) and entries[1].stub_days == 20
     assert entries[1].interest == D("1500") * D(20) / D(30) == D("1000")
     assert entries[1].payoff == D("150000")
 
@@ -597,95 +609,32 @@ def test_the_stub_rows_interest_keeps_the_ledgers_two_identities() -> None:
     assert -(overview.total_funding + overview.total_draws) == overview.total_payoff
 
 
-# --- the exit inference and the toggles it defaults (SPEC §3, §8.1) ------------------------------
+# --- the two toggles and what each defaults to (SPEC §8.1) ---------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("stated", "asset", "term", "product", "expected", "source"),
-    [
-        (StatedExit.HOLD, AssetType.SFR, 6, Product.NO_DRAW, StatedExit.HOLD, ExitSource.STATED),
-        (
-            StatedExit.UNKNOWN,
-            AssetType.SFR,
-            6,
-            Product.NO_DRAW,
-            StatedExit.FLIP,
-            ExitSource.INFERRED,
-        ),
-        (
-            StatedExit.UNKNOWN,
-            AssetType.SFR,
-            6,
-            Product.WHOLETAIL,
-            StatedExit.WHOLETAIL,
-            ExitSource.INFERRED,
-        ),
-        (
-            StatedExit.UNKNOWN,
-            AssetType.SFR,
-            12,
-            Product.NO_DRAW,
-            StatedExit.HOLD,
-            ExitSource.INFERRED,
-        ),
-        (
-            StatedExit.UNKNOWN,
-            AssetType.SFR,
-            10,
-            Product.NO_DRAW,
-            StatedExit.UNKNOWN,
-            ExitSource.INFERRED,
-        ),
-        (
-            StatedExit.UNKNOWN,
-            AssetType.UNITS_5_PLUS,
-            6,
-            Product.NO_DRAW,
-            StatedExit.UNKNOWN,
-            ExitSource.INFERRED,
-        ),
-        (StatedExit.UNKNOWN, None, 6, Product.NO_DRAW, StatedExit.UNKNOWN, ExitSource.INFERRED),
-    ],
-)
-def test_the_exit_is_stated_or_inferred_from_term_and_asset_type(
-    stated: StatedExit,
-    asset: AssetType | None,
-    term: int,
-    product: Product,
-    expected: StatedExit,
-    source: ExitSource,
-) -> None:
-    assert infer_exit(stated, asset, term, product, CONFIG) == (expected, source)
+def test_the_flip_defaults_on_with_a_sale_price_and_the_rental_with_a_rent() -> None:
+    assert flip_default(D("260000")) is True
+    assert flip_default(None) is False
+    assert rental_default(D("2000")) is True
+    assert rental_default(None) is False
 
 
-def test_a_resale_exit_defaults_the_flip_on_and_a_hold_defaults_the_rental_on() -> None:
-    assert flip_default(StatedExit.FLIP) is True
-    assert flip_default(StatedExit.WHOLETAIL) is True
-    assert flip_default(StatedExit.HOLD) is False
-    assert flip_default(StatedExit.UNKNOWN) is False
-    assert rental_default(StatedExit.HOLD, None) is True
-    assert rental_default(StatedExit.FLIP, None) is False
-    # a rent the team went and looked up turns the rental on whatever the exit says
-    assert rental_default(StatedExit.FLIP, D("2000")) is True
+def test_the_defaults_read_what_is_on_the_deal() -> None:
+    both = analysis_toggles(inputs())
+    assert (both.flip_analysis, both.rental_analysis) == (True, True)
+    assert (both.flip_analysis_default, both.rental_analysis_default) == (True, True)
+    neither = analysis_toggles(inputs(estimated_sale_price=None, monthly_rent=None))
+    assert (neither.flip_analysis, neither.rental_analysis) == (False, False)
+    rent_only = analysis_toggles(inputs(estimated_sale_price=None))
+    assert (rent_only.flip_analysis, rent_only.rental_analysis) == (False, True)
 
 
-def test_a_toggle_set_by_hand_wins_over_the_exit_in_either_direction() -> None:
-    hold = inputs(term_months=12, asset_type=AssetType.SFR, monthly_rent=None)
-    derived = exit_inference(hold, CONFIG)
-    assert derived.type is StatedExit.HOLD
-    assert (derived.flip_analysis, derived.rental_analysis) == (False, True)
-    assert (derived.flip_analysis_default, derived.rental_analysis_default) == (False, True)
-
-    forced = exit_inference(
-        inputs(
-            term_months=12,
-            asset_type=AssetType.SFR,
-            monthly_rent=None,
-            flip_analysis=True,
-            rental_analysis=False,
-        ),
-        CONFIG,
+def test_a_toggle_set_by_hand_wins_over_the_default_in_either_direction() -> None:
+    forced = analysis_toggles(
+        inputs(estimated_sale_price=None, monthly_rent=None, flip_analysis=True)
     )
-    assert (forced.flip_analysis, forced.rental_analysis) == (True, False)
+    assert forced.flip_analysis is True and forced.flip_analysis_default is False
+    turned_off = analysis_toggles(inputs(rental_analysis=False))
+    assert turned_off.rental_analysis is False and turned_off.rental_analysis_default is True
     # the defaults are still reported, so a reader can see what was overridden
-    assert (forced.flip_analysis_default, forced.rental_analysis_default) == (False, True)
+    assert turned_off.flip_analysis is True

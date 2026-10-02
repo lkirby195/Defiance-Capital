@@ -61,9 +61,8 @@ def test_every_spec_8_1_input_has_a_row(deal_with_overrides: Deal) -> None:
         "rental_analysis",
         "verified_credit_score",
         "court_records",
-        "asset_type",
-        "stated_exit",
     } <= keys
+    assert "asset_type" not in keys and "stated_exit" not in keys
 
 
 def test_a_hand_entered_value_says_team(deal_with_overrides: Deal) -> None:

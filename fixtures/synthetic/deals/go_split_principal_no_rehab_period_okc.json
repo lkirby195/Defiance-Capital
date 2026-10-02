@@ -1,6 +1,6 @@
 {
   "name": "go_split_principal_no_rehab_period_okc",
-  "description": "SPLIT_PRINCIPAL on a 3-month term in OKC, which is the listing period, so there is no rehab period at all: the $25,000 of Tranche A is advanced at close rather than drawn, and interest runs on the whole $110,000 from month 1 (NO_REHAB_PERIOD). Closing 31 March, so the payoff lands 30 June - the month-end clamp. IRR 22.088%.",
+  "description": "SPLIT_PRINCIPAL on a 3-month term in OKC, which is the listing period, so there is no rehab period at all: the $25,000 of Tranche A is advanced at close rather than drawn, and interest runs on the whole $110,000 from month 1 (NO_REHAB_PERIOD). Closing 31 March, so the payoff lands 30 June, the end of the third month after. IRR 22.088%.",
   "inputs": {
     "deal": {
       "product": "SPLIT_PRINCIPAL",
@@ -71,7 +71,6 @@
         "as_of": "2026-09-09"
       },
       "monthly_rent": "1600.00",
-      "asset_type": "SFR",
       "loan_purpose": "PURCHASE"
     },
     "expected": {

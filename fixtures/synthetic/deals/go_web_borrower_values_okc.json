@@ -1,6 +1,6 @@
 {
   "name": "go_web_borrower_values_okc",
-  "description": "A deal the borrower typed in on the public form and nobody on the team has touched: the sale price and the rent are the borrower's own, so BORROWER_SOURCED_VALUES is raised at both stages and the Go rests on the applicant's claims. The same $120,000 at 13% for 6 months as go_team_overrides_tulsa (WHOLETAIL and the SFR asset type set by hand here, since the form asks neither), so the ledger and its 18.599% IRR are the already-verified numbers; the flip sells at the borrower's $210,000 and the DSCRs rest on the borrower's $1,700 rent. No court search, so COURT_RECORDS_NOT_CHECKED too.",
+  "description": "A deal the borrower typed in on the public form and nobody on the team has touched: the sale price and the rent are the borrower's own, so BORROWER_SOURCED_VALUES is raised at both stages and the Go rests on the applicant's claims. The same $120,000 at 13% for 6 months as go_team_overrides_tulsa (WHOLETAIL set by hand here, since the form asks no loan type), so the ledger and its 18.599% IRR are the already-verified numbers; the flip sells at the borrower's $210,000 and the DSCRs rest on the borrower's $1,700 rent. No court search, so COURT_RECORDS_NOT_CHECKED too.",
   "web_entry": {
     "borrower_name": "Luis Herrera",
     "borrower_phone": "4055550133",
@@ -24,7 +24,6 @@
   },
   "team_overrides": {
     "product": "WHOLETAIL",
-    "asset_type": "SFR",
     "closing_date": "2027-02-01",
     "term_months": 6,
     "interest_rate": "0.13"
@@ -67,7 +66,7 @@
   "underwrite": {
     "request": {},
     "expected": {
-      "payoff_date": "2027-08-01",
+      "payoff_date": "2027-08-31",
       "rehab_months": 3,
       "commitment": "120000.00",
       "funded_at_close": "120000.00",
@@ -96,7 +95,7 @@
         "total_fees": "2400.00",
         "total_payoff": "120000.00",
         "total_profit": "10200.00",
-        "irr": "0.18599010"
+        "irr": "0.18263021"
       },
       "flip": {
         "status": "EVALUATED",

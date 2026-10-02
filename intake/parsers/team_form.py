@@ -9,17 +9,23 @@ Economics - because that is the order the page asks for them in and the order ev
 shows them back. The Overview is who the borrower is; the loan's own terms - its purpose, its
 type, its closing date and its term - are Deal Economics, beside the money they describe.
 
-The team form asks for the term in months or as a payoff date and not as the SPEC §4.1
-bucket. The bucket is the borrower's own answer to "how long do you need the loan?", which is
-a question the borrower channels ask and a person with the whole deal in front of them does
-not: they know the term, and entering a bucket beside it would be a second number to keep
-in step with the first.
+The HTML form (``api/intake_form.py``) renders a subset of this model: the Overview, the
+Property Overview, and seven Deal Economics boxes. The §8.1 economics with a config default,
+the loan split, the valuation, the rent, the analysis toggles and the court search have no
+box on it - they populate from defaults and are edited on the deal page - and stay on the
+model for the JSON half of ``POST /intake/team`` and for the fixtures the CLI runs.
+
+The team form asks for the term in months and not as the SPEC §4.1 bucket. The bucket is the
+borrower's own answer to "how long do you need the loan?", which is a question the borrower
+channels ask and a person with the whole deal in front of them does not: they know the term,
+and entering a bucket beside it would be a second number to keep in step with the first. Nor
+does it take a payoff date: that is derived, the last day of the month that is the closing
+month plus the term (``schema/dates.py``), and shown read-only on the deal page.
 
 The team-only block also carries the stand-ins for enrichment (SPEC §6): a valuation, a rent
 and a court search the team did by hand. They are used only where no adapter has produced the
-same value, and the form validates them the same way the engine would - a court search with
-findings has to say what it found and when, and a payoff date has to fall after the closing
-date and to agree with any term entered beside it.
+same value, and the model validates them the same way the engine would - a court search with
+findings has to say what it found and when.
 """
 
 from __future__ import annotations
@@ -30,9 +36,8 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from intake.normalize import ParsedIntake, infer_product
-from schema.dates import Term, term_from_dates
+from schema.dates import Term
 from schema.models import (
-    AssetType,
     BorrowerInfo,
     CourtRecordsStatus,
     DealInfo,
@@ -42,7 +47,6 @@ from schema.models import (
     ProductSource,
     PropertyInfo,
     State,
-    StatedExit,
     StateSource,
     TeamCourtRecord,
     Tranche,
@@ -78,25 +82,20 @@ class TeamEntryForm(BaseModel):
     beds: int | None = Field(default=None, ge=0)
     baths: Decimal | None = Field(default=None, ge=0, max_digits=4, decimal_places=1)
     garage_spaces: int | None = Field(default=None, ge=0)
-    asset_type: AssetType | None = None  # with the term, drives the exit inference (SPEC §3)
-    stated_exit: StatedExit | None = None
     # Deal Economics (SPEC §8.1). Everything but the price, the costs, the loan and the rate
     # falls back to a config default when the box is left blank.
     loan_purpose: LoanPurpose | None = None
     product: Product | None = None  # "Loan Type"; inferred from the rehab costs when omitted
-    closing_date: date | None = None  # month 0 of the ledger (SPEC §8.3)
-    # Enter either; the other derives (SPEC §8.1). ``payoff_date`` is not stored as a date -
-    # it is the closing date plus the term's whole months and stub days - so the box is an
-    # alternative way of saying the term, and any date after closing is allowed. The team
-    # form does not ask for the SPEC §4.1 bucket at all; see the module docstring.
+    closing_date: date | None = None  # any date; the ledger's month 0 is its month end (§8.3)
+    # Whole months; the payoff date derives (SPEC §8.1). The form requires it
+    # (``api/intake_form.py``); a JSON post of a partial intake may leave it out.
     term_months: int | None = Field(default=None, ge=1, le=60)
-    payoff_date: date | None = None
     purchase_price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     rehab_costs: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     loan_requested: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
-    # The split of the loan requested, on the two split products only (SPEC §8.2). The web
-    # form requires both when the product is one of those (``api/intake_form.py``); a JSON
-    # post of a partial intake may carry neither, which is a deal nobody has divided yet.
+    # The split of the loan requested, on the two split products only (SPEC §8.2). No box
+    # on the form: the deal is populated with the §8.2 formula split and the deal page edits
+    # it. A JSON post may carry one.
     loan_purchase_portion: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
@@ -108,7 +107,7 @@ class TeamEntryForm(BaseModel):
     # figure is computed from it and is never entered.
     holding_costs_pct_of_cost: Decimal | None = Field(default=None, ge=0, le=1)
     origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
-    # The two analysis toggles (SPEC §8.1); blank leaves the §3-derived default in force.
+    # The two analysis toggles (SPEC §8.1); blank leaves the default in force.
     flip_analysis: bool | None = None
     rental_analysis: bool | None = None
     # Team-supplied valuation, rent and court search, used until the Phase 3 adapters land
@@ -137,19 +136,12 @@ class TeamEntryForm(BaseModel):
 
     @property
     def effective_term(self) -> Term | None:
-        """The term this form produces: the one typed, else the one the payoff date implies.
+        """The term this form produces: whole months, no stub.  # SPEC §8.1
 
-        # SPEC §8.1. ``None`` when neither box was filled in, which the form refuses
-        (``api/intake_form.py``): a deal nobody has said the length of cannot be priced. A
-        payoff date between two monthly anchors gives a term with a stub, which is a term.
+        ``None`` when the box was left blank, which the HTML form refuses
+        (``api/intake_form.py``): a deal nobody has said the length of cannot be priced.
         """
-        return term_from_dates(self.closing_date, self.term_months, self.payoff_date)
-
-    @model_validator(mode="after")
-    def _term_and_payoff_agree(self) -> TeamEntryForm:
-        """A payoff date that contradicts the term beside it says so at the door."""
-        _ = self.effective_term
-        return self
+        return None if self.term_months is None else Term(self.term_months, 0)
 
     @model_validator(mode="after")
     def _loan_split_is_coherent(self) -> TeamEntryForm:
@@ -209,14 +201,12 @@ def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
             loan_rehab_portion=form.loan_rehab_portion,
             term_months=term.full_months if term is not None else None,
             # NULL rather than 0: a term said in months has no stub on the end of it.
-            term_stub_days=(term.stub_days or None) if term is not None else None,
+            term_stub_days=None,
             interest_rate=form.interest_rate,
             contingency_pct=form.contingency_pct,
             closing_costs_usd=form.closing_costs_usd,
             holding_costs_pct_of_cost=form.holding_costs_pct_of_cost,
             origination_fee_pct=form.origination_fee_pct,
-            asset_type=form.asset_type,
-            stated_exit=form.stated_exit,
             product=form.product,
             product_source=ProductSource.ENTERED if form.product is not None else None,
             flip_analysis=form.flip_analysis,

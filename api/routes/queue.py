@@ -1,4 +1,4 @@
-"""The review queue: the list, the deal page, and every action on it.  # SPEC §9.1, §12
+"""The review queue: the Home page, the deal page, and every action on it.  # SPEC §9.1, §12
 
 Server-rendered HTML, form posts, POST-redirect-GET. No frontend framework and no client-side
 state: the page a person is looking at is a render of the database, and the only script in
@@ -9,6 +9,13 @@ an action runs from, what the audit row says, where a re-opened deal lands - and
 only turns their refusals into something readable on the page. A successful action redirects,
 so a refresh re-reads the deal instead of re-running the action; a failed one re-renders with
 the reason, because a failure usually has something to fix on the page.
+
+The three controls on a Home row - Progress, Pause, Kill - post to the same routes the deal
+page's buttons do, carrying ``return_to=home`` so the redirect lands back on the list. Kill
+goes through a confirmation page first (``kill.html``): a dead deal is not re-opened, and a
+button that does that in one click on a list is a button somebody will press by mistake.
+Server-rendered, like everything else here - a ``confirm()`` dialog would be script that
+decides something, which the queue does not have (CLAUDE.md).
 
 Two edits run the engine again on their way out - the override block and Edit Intake
 (``services/autorun.py``, SPEC §4.6) - so the verdict and the ledger on the page are never
@@ -57,7 +64,6 @@ from db.session import get_session
 from schema.dates import payoff_date_for
 from schema.models import (
     SPLIT_PRODUCTS,
-    AssetType,
     Channel,
     CourtFlag,
     CourtRecordsStatus,
@@ -66,15 +72,15 @@ from schema.models import (
     LoanPurpose,
     Product,
     State,
-    StatedExit,
     Tranche,
 )
 from services import (
-    ADVANCE_TO_REVIEW_FROM,
     DECLINE_FROM,
     DEFAULTABLE,
     EDIT_INTAKE_FROM,
     MARK_DEAD_FROM,
+    PAUSE_FROM,
+    PROGRESS_FROM,
     REOPEN_FROM,
     SYSTEM_ACTOR,
     ActionNotAllowed,
@@ -86,18 +92,19 @@ from services import (
     TeamOverrides,
     UnderwriteRequest,
     add_note,
-    advance_to_review,
     apply_defaults,
     auto_run,
     deal_trail,
     decline,
+    home_view,
     is_defaulted,
     latest_screen,
     latest_submission,
     latest_underwrite,
     load_deal,
     mark_dead,
-    queue_view,
+    pause,
+    progress,
     reopen,
     run_screen,
     run_underwrite,
@@ -116,6 +123,11 @@ router = APIRouter(tags=["queue"], dependencies=[Depends(require_csrf)])
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
+HOME_PATH = "/queue"
+# The hidden field a Home row's controls carry, so the action goes back to the list.
+RETURN_TO = "return_to"
+HOME = "home"
+
 # Spare rows on the court-matter table. Plain HTML cannot add a row without script, so the
 # form ships with room to type into; empty rows are dropped on the way in.
 SPARE_MATTER_ROWS = 3
@@ -133,7 +145,6 @@ MATTER_FIELDS: tuple[str, ...] = (
 def enum_values() -> dict[str, list[str]]:
     """The choices every select on the queue offers, by their stored values."""
     return {
-        "asset_type": [member.value for member in AssetType],
         "court_flag": [member.value for member in CourtFlag],
         "court_records_status": [member.value for member in CourtRecordsStatus],
         "experience_bucket": [member.value for member in ExperienceBucket],
@@ -141,7 +152,6 @@ def enum_values() -> dict[str, list[str]]:
         "loan_purpose": [member.value for member in LoanPurpose],
         "product": [member.value for member in Product],
         "state": [member.value for member in State],
-        "stated_exit": [member.value for member in StatedExit],
         "tranche": [member.value for member in Tranche],
     }
 
@@ -160,8 +170,6 @@ OVERRIDE_NAMES: tuple[str, ...] = (
     "loan_rehab_portion",
     "estimated_sale_price_team",
     "monthly_rent",
-    "asset_type",
-    "stated_exit",
     "flip_analysis",
     "rental_analysis",
     "court_records_status",
@@ -171,7 +179,7 @@ OVERRIDE_NAMES: tuple[str, ...] = (
 
 # Every box the override block renders, so a complaint about one of them lands under it and
 # anything else Pydantic names goes to the top (``api/problems.py``).
-OVERRIDE_BOX_NAMES: frozenset[str] = frozenset({*OVERRIDE_NAMES, "payoff_date"})
+OVERRIDE_BOX_NAMES: frozenset[str] = frozenset(OVERRIDE_NAMES)
 
 
 def override_form(deal: Deal) -> dict[str, str]:
@@ -187,10 +195,7 @@ def override_form(deal: Deal) -> dict[str, str]:
     for name, default in deal_defaults(deal).items():
         if values.get(name) is None:
             values[name] = default
-    # ``payoff_date`` is rendered blank on purpose: it is not a column, it is the closing
-    # date plus the term (SPEC §8.1), and the box is an alternative way of saying the term
-    # rather than a value to edit. The derived date is shown beside it as a hint.
-    return {**{name: mask_one(name, value) for name, value in values.items()}, "payoff_date": ""}
+    return {name: mask_one(name, value) for name, value in values.items()}
 
 
 def blank_matter() -> dict[str, str]:
@@ -226,9 +231,10 @@ def redisplay(matters: list[dict[str, str]]) -> list[dict[str, str]]:
 def _allowed(deal: Deal) -> dict[str, bool]:
     """Which action buttons this deal's status leaves live.  # SPEC §4.6"""
     return {
-        "advance": deal.status in ADVANCE_TO_REVIEW_FROM,
+        "progress": deal.status in PROGRESS_FROM,
+        "pause": deal.status in PAUSE_FROM,
         "decline": deal.status in DECLINE_FROM,
-        "dead": deal.status in MARK_DEAD_FROM,
+        "kill": deal.status in MARK_DEAD_FROM,
         "reopen": deal.status in REOPEN_FROM,
         "edit_intake": deal.status in EDIT_INTAKE_FROM,
     }
@@ -236,6 +242,11 @@ def _allowed(deal: Deal) -> dict[str, bool]:
 
 def deal_path(deal_id: UUID) -> str:
     return f"/queue/deals/{deal_id}"
+
+
+def return_path(deal_id: UUID, return_to: str | None) -> str:
+    """Where an action sends the browser afterwards: the list it came from, else the deal."""
+    return HOME_PATH if return_to == HOME else deal_path(deal_id)
 
 
 def _submitted_language(session: Session, deal: Deal) -> str | None:
@@ -255,7 +266,7 @@ def _submitted_language(session: Session, deal: Deal) -> str | None:
 
 
 def deal_payoff_date(deal: Deal) -> date | None:
-    """The last row of the ledger: closing plus the term, stub days included.  # SPEC §8.1"""
+    """The last row of the ledger: the month end the term lands on, stub included.  # SPEC §8.1"""
     term = deal_term(deal)
     if deal.closing_date is None or term is None or not term.is_positive:
         return None
@@ -314,8 +325,8 @@ def render_deal(
             "deal": deal,
             # Where the deal came in and in which language (SPEC §4.2), for a web deal.
             "submitted_language": _submitted_language(session, deal),
-            # Derived, not stored (SPEC §8.1): the page shows it beside the term it comes
-            # from, and the term is the whole months plus whatever stub sits after them.
+            # Derived, not stored (SPEC §8.1): the last day of the month the term lands on,
+            # shown read-only beside the term it comes from.
             "payoff_date": deal_payoff_date(deal),
             # The §8.1 economics as the run reads them, and which of them are stand-ins
             # (SPEC §8.1, §8.2), for the "default" tag beside each.
@@ -376,28 +387,13 @@ def render_deal(
 
 @router.get("/", include_in_schema=False, response_model=None)
 def home() -> RedirectResponse:
-    return redirect("/queue")
+    return redirect(HOME_PATH)
 
 
 @router.get("/queue", response_class=HTMLResponse, response_model=None)
-def queue_page(request: Request, session: SessionDep, user: PageUser) -> HTMLResponse:
-    """Deals grouped by status, newest first, Hard flags after LOI pinned on top.  # SPEC §12"""
-    return page(request, "queue.html", {"view": queue_view(session)}, user=user)
-
-
-NEW_DEAL_INTRO = (
-    "The team-entry channel (SPEC §4.2). The Required boxes are what a run cannot proceed "
-    "without — the minimum viable intake (SPEC §4.1) plus the closing date and the term the "
-    "ledger has no stand-in for. Everything marked Optional can follow later. A complete "
-    "deal is screened and priced as soon as it is saved. It posts to the same route the API "
-    "takes."
-)
-EDIT_INTAKE_INTRO = (
-    "The same form the deal was entered on, filled in with what it currently says. Saving "
-    "stores a new submission and leaves the old one on the record, immutable; the deal keeps "
-    "its id, its screens and its underwrites, and the screen and the underwrite run again "
-    "on what you saved."
-)
+def home_page(request: Request, session: SessionDep, user: PageUser) -> HTMLResponse:
+    """Home: every deal in one of four sections, most recently touched first.  # SPEC §9.1"""
+    return page(request, "home.html", {"view": home_view(session)}, user=user)
 
 
 def team_entry_page(
@@ -406,14 +402,10 @@ def team_entry_page(
     *,
     action: str,
     heading: str,
-    intro: str,
     submit_label: str,
     back_url: str,
     form: dict[str, str],
-    matters: list[dict[str, str]],
     complaints: FormProblems,
-    holding_costs_hint: str,
-    defaults: dict[str, str] | None = None,
     status_code: int = status.HTTP_200_OK,
 ) -> HTMLResponse:
     """The team-entry form, blank or filled in, for whichever route is showing it.
@@ -422,7 +414,6 @@ def team_entry_page(
     what a rejected submission was carrying - so the two forms cannot drift into asking for
     different things.
     """
-    defaults = defaults if defaults is not None else default_marks(None)
     return page(
         request,
         "team_entry.html",
@@ -430,14 +421,10 @@ def team_entry_page(
             "enums": enum_values(),
             "action": action,
             "heading": heading,
-            "intro": intro,
             "submit_label": submit_label,
             "back_url": back_url,
             # Every name the template renders, so a dropped blank is still a blank box.
             "form": {**blank_form_values(), **form},
-            "defaults": defaults,
-            "holding_costs_hint": holding_costs_hint,
-            "matters": matters,
             "problems": complaints,
         },
         user=user,
@@ -452,14 +439,11 @@ def new_deal_page(request: Request, user: PageUser) -> HTMLResponse:
         request,
         user,
         action="/intake/team",
-        heading="New deal",
-        intro=NEW_DEAL_INTRO,
+        heading="New Deal",
         submit_label="Create deal",
         back_url="",
         form={},
-        matters=[blank_matter() for _ in range(SPARE_MATTER_ROWS)],
         complaints=NO_PROBLEMS,
-        holding_costs_hint=deal_holding_costs_hint(None),
     )
 
 
@@ -478,7 +462,7 @@ def deal_page(
             session.commit()
         return render_deal(request, session, deal_id, user)
     except DealNotFound:
-        return redirect("/queue", "That deal does not exist.")
+        return redirect(HOME_PATH, "That deal does not exist.")
 
 
 # --- runs ----------------------------------------------------------------------------------------
@@ -492,7 +476,7 @@ def screen_action(
     try:
         result = run_screen(session, deal_id, actor=user.email)
     except DealNotFound:
-        return redirect("/queue", "That deal does not exist.")
+        return redirect(HOME_PATH, "That deal does not exist.")
     except (DealNotReady, DealNotPriceable) as exc:
         session.rollback()
         return render_deal(
@@ -520,7 +504,7 @@ def underwrite_action(
     try:
         result = run_underwrite(session, deal_id, UnderwriteRequest(), actor=user.email)
     except DealNotFound:
-        return redirect("/queue", "That deal does not exist.")
+        return redirect(HOME_PATH, "That deal does not exist.")
     except DealNotUnderwritable as exc:
         # A refusal can arrive with a real screen behind it: an unscreened deal is screened
         # first (SPEC §8), and that screen ran. Keep it, exactly as the JSON route does.
@@ -572,25 +556,18 @@ def _edit_page(
     deal_id: UUID,
     *,
     form: dict[str, str],
-    matters: list[dict[str, str]],
     complaints: FormProblems,
-    holding_costs_hint: str,
-    defaults: dict[str, str] | None = None,
     status_code: int = status.HTTP_200_OK,
 ) -> HTMLResponse:
     return team_entry_page(
         request,
         user,
         action=f"{deal_path(deal_id)}/intake",
-        heading="Edit intake",
-        intro=EDIT_INTAKE_INTRO,
+        heading="Edit Intake",
         submit_label="Save intake",
         back_url=deal_path(deal_id),
         form=form,
-        matters=matters,
         complaints=complaints,
-        holding_costs_hint=holding_costs_hint,
-        defaults=defaults,
         status_code=status_code,
     )
 
@@ -603,7 +580,7 @@ def edit_intake_page(
     try:
         deal = load_deal(session, deal_id)
     except DealNotFound:
-        return redirect("/queue", "That deal does not exist.")
+        return redirect(HOME_PATH, "That deal does not exist.")
     if deal.status not in EDIT_INTAKE_FROM:
         return redirect(
             deal_path(deal_id),
@@ -614,10 +591,7 @@ def edit_intake_page(
         user,
         deal_id,
         form=intake_form_values(deal),
-        matters=matter_rows(deal.court_records_team),
         complaints=NO_PROBLEMS,
-        holding_costs_hint=deal_holding_costs_hint(deal),
-        defaults=default_marks(deal),
     )
 
 
@@ -631,9 +605,8 @@ def edit_intake_action(
     screen and the underwrite run again on what was saved (``services/autorun.py``); the
     notice says what ran.
     """
-    submitted = fields(form, skip=("matter_",))
-    matters = submitted_matters(form)
-    entry, complaints = read_form(submitted, matters)
+    submitted = fields(form)
+    entry, complaints = read_form(submitted)
 
     def back(problems: FormProblems, code: int) -> HTMLResponse:
         return _edit_page(
@@ -641,9 +614,7 @@ def edit_intake_action(
             user,
             deal_id,
             form=redisplay_values(submitted),
-            matters=redisplay(matters),
             complaints=problems,
-            holding_costs_hint=submitted_holding_costs_hint(submitted),
             status_code=code,
         )
 
@@ -653,7 +624,7 @@ def edit_intake_action(
         deal = update_intake(session, deal_id, intake_record(entry), actor=user.email)
     except DealNotFound:
         session.rollback()
-        return redirect("/queue", "That deal does not exist.")
+        return redirect(HOME_PATH, "That deal does not exist.")
     except ActionNotAllowed as exc:
         session.rollback()
         return back(at_top(str(exc)), status.HTTP_409_CONFLICT)
@@ -690,7 +661,7 @@ def overrides_action(
     try:
         deal = load_deal(session, deal_id)
     except DealNotFound:
-        return redirect("/queue", "That deal does not exist.")
+        return redirect(HOME_PATH, "That deal does not exist.")
     values = unmasked(submitted)
 
     def back(problems: FormProblems, code: int) -> HTMLResponse:
@@ -735,13 +706,19 @@ def _act(
     user: PageUser,
     run: Any,
     done: str,
+    return_to: str | None = None,
 ) -> HTMLResponse | RedirectResponse:
-    """Apply one action, commit it, and say so; or re-render with why it did not apply."""
+    """Apply one action, commit it, and say so; or re-render with why it did not apply.
+
+    ``return_to`` is where the browser goes afterwards: Home when the action came off a Home
+    row, the deal page otherwise. A refusal is always the deal page, because that is where
+    the reason reads beside the deal it is about.
+    """
     try:
         run()
     except DealNotFound:
         session.rollback()
-        return redirect("/queue", "That deal does not exist.")
+        return redirect(HOME_PATH, "That deal does not exist.")
     except (ActionNotAllowed, ReasonRequired) as exc:
         session.rollback()
         return render_deal(
@@ -753,20 +730,37 @@ def _act(
             status_code=status.HTTP_409_CONFLICT,
         )
     session.commit()
-    return redirect(deal_path(deal_id), done)
+    return redirect(return_path(deal_id, return_to), done)
 
 
 @router.post("/queue/deals/{deal_id}/advance", response_model=None)
 def advance_action(
-    request: Request, deal_id: UUID, session: SessionDep, user: PageUser
+    request: Request, deal_id: UUID, session: SessionDep, user: PageUser, form: FormDep
+) -> HTMLResponse | RedirectResponse:
+    """Progress: the next status, or the prior one off a pause (``services.actions.progress``)."""
+    return _act(
+        request,
+        session,
+        deal_id,
+        user,
+        lambda: progress(session, deal_id, actor=user.email),
+        "Progressed.",
+        fields(form).get(RETURN_TO),
+    )
+
+
+@router.post("/queue/deals/{deal_id}/pause", response_model=None)
+def pause_action(
+    request: Request, deal_id: UUID, session: SessionDep, user: PageUser, form: FormDep
 ) -> HTMLResponse | RedirectResponse:
     return _act(
         request,
         session,
         deal_id,
         user,
-        lambda: advance_to_review(session, deal_id, actor=user.email),
-        "Advanced to review.",
+        lambda: pause(session, deal_id, actor=user.email),
+        "Paused.",
+        fields(form).get(RETURN_TO),
     )
 
 
@@ -785,18 +779,71 @@ def decline_action(
     )
 
 
-@router.post("/queue/deals/{deal_id}/dead", response_model=None)
-def dead_action(
+def kill_page(
+    request: Request,
+    session: Session,
+    deal_id: UUID,
+    user: PageUser,
+    *,
+    return_to: str | None,
+    status_code: int = status.HTTP_200_OK,
+) -> HTMLResponse | RedirectResponse:
+    """The confirmation in front of Kill: the deal by name, and the two ways out."""
+    try:
+        deal = load_deal(session, deal_id)
+    except DealNotFound:
+        return redirect(HOME_PATH, "That deal does not exist.")
+    return page(
+        request,
+        "kill.html",
+        {
+            "deal": deal,
+            "allowed": _allowed(deal),
+            "return_to": return_to or "",
+            "back_url": return_path(deal_id, return_to),
+        },
+        user=user,
+        status_code=status_code,
+    )
+
+
+@router.get("/queue/deals/{deal_id}/kill", response_class=HTMLResponse, response_model=None)
+def kill_confirm_page(
+    request: Request, deal_id: UUID, session: SessionDep, user: PageUser
+) -> HTMLResponse | RedirectResponse:
+    """Ask before killing: a dead deal is not re-opened (SPEC §4.6)."""
+    return kill_page(request, session, deal_id, user, return_to=request.query_params.get(RETURN_TO))
+
+
+@router.post("/queue/deals/{deal_id}/kill", response_model=None)
+def kill_action(
     request: Request, deal_id: UUID, session: SessionDep, user: PageUser, form: FormDep
 ) -> HTMLResponse | RedirectResponse:
-    reason = fields(form).get("reason")
+    """Kill the deal, once the confirmation page's own form has said so.
+
+    A post that does not carry the confirmation - a stale link, a form from somewhere else -
+    is answered with the confirmation page rather than a dead deal.
+    """
+    posted = fields(form)
+    return_to = posted.get(RETURN_TO)
+    if posted.get("confirm") != "yes":
+        return kill_page(
+            request,
+            session,
+            deal_id,
+            user,
+            return_to=return_to,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    reason = posted.get("reason")
     return _act(
         request,
         session,
         deal_id,
         user,
         lambda: mark_dead(session, deal_id, actor=user.email, reason=reason),
-        "Marked dead.",
+        "Killed.",
+        return_to,
     )
 
 

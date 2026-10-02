@@ -54,8 +54,9 @@ GUARDED: list[tuple[str, dict[str, Any]]] = [
     ("/queue/deals/{deal}/underwrite", {}),
     ("/queue/deals/{deal}/overrides", {"estimated_sale_price_team": "$250,000"}),
     ("/queue/deals/{deal}/advance", {}),
+    ("/queue/deals/{deal}/pause", {}),
     ("/queue/deals/{deal}/decline", {"reason": "leverage"}),
-    ("/queue/deals/{deal}/dead", {"reason": "went quiet"}),
+    ("/queue/deals/{deal}/kill", {"confirm": "yes", "reason": "went quiet"}),
     ("/queue/deals/{deal}/reopen", {"reason": "new ARV"}),
     ("/queue/deals/{deal}/note", {"note": "spoke to the broker"}),
     ("/intake/team", COMPLETE_INTAKE),
@@ -278,7 +279,14 @@ def forms_on(body: str) -> list[str]:
 
 
 @pytest.mark.parametrize(
-    "path", ["/queue", "/queue/new", "/queue/deals/{deal}", "/queue/deals/{deal}/intake"]
+    "path",
+    [
+        "/queue",
+        "/queue/new",
+        "/queue/deals/{deal}",
+        "/queue/deals/{deal}/intake",
+        "/queue/deals/{deal}/kill",
+    ],
 )
 def test_every_post_form_on_a_page_carries_the_field(
     client: QueueClient, deal_with_overrides: Deal, path: str
@@ -297,7 +305,8 @@ def test_every_post_form_on_a_page_carries_the_field(
 def test_the_deal_page_carries_one_on_every_action(
     client: QueueClient, deal_with_overrides: Deal
 ) -> None:
-    """Eight forms: two runs, four actions, the note and the override block."""
+    """Eight forms: two runs, Progress, Pause, Decline, Re-open, the note and the override
+    block. Kill is a link to its confirmation page, which carries its own form."""
     body = client.get(f"/queue/deals/{deal_with_overrides.id}").text
     assert len(forms_on(body)) == 9  # the eight above plus sign-out in the header
 

@@ -18,7 +18,6 @@
   "beds": 3,
   "baths": "2.0",
   "garage_spaces": 1,
-  "asset_type": "SFR",
   "purchase_price": "200000.00",
   "rehab_costs": "48000.00",
   "loan_requested": "195000.00",

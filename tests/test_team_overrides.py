@@ -380,10 +380,14 @@ def test_an_underwrite_with_no_valuation_anywhere_is_priced_and_says_what_it_los
     stored_deal.status = Status.SCREENED  # the screen gate is a separate test
     stored_deal.estimated_sale_price_team = None
     db_session.flush()
+    # the flip is off by default without a sale price (SPEC §8.1); asked for by hand, it
+    # is what goes missing
     result = run_underwrite(
         db_session,
         stored_deal.id,
-        UnderwriteRequest(monthly_rent=D("1500.00"), holding_costs_pct_of_cost=D("0.025")),
+        UnderwriteRequest(
+            monthly_rent=D("1500.00"), holding_costs_pct_of_cost=D("0.025"), flip_analysis=True
+        ),
         CONFIG,
         actor=ACTOR,
     )

@@ -1,6 +1,6 @@
 {
   "name": "go_hold_flip_off_denver",
-  "description": "A 2-4 unit hold in Denver on an 18-month term, which infers HOLD - so the Flip analysis is off and the Rental analysis is on by default. $210,000 at 10% for 18 months, IRR 11.894%. The rent carries both tests: rental DSCR 1.68 and take-back DSCR 1.15. No flags at all.",
+  "description": "A hold in Denver on an 18-month term: the team turned the Flip analysis off by hand (it would be on by default, since a sale price is on the deal), and the Rental analysis is on by default because a rent is. Closing 1 May 2027, so the ledger anchors to 31 May and pays off 30 November 2028. $210,000 at 10% for 18 months, IRR 11.917%. The rent carries both tests: rental DSCR 1.68 and take-back DSCR 1.15. No flags at all.",
   "inputs": {
     "deal": {
       "product": "NO_DRAW",
@@ -61,12 +61,12 @@
         "as_of": "2026-09-09"
       },
       "monthly_rent": "4200.00",
-      "asset_type": "UNITS_2_4",
       "loan_purpose": "REFINANCE",
-      "holding_costs_pct_of_cost": "0.03"
+      "holding_costs_pct_of_cost": "0.03",
+      "flip_analysis": false
     },
     "expected": {
-      "payoff_date": "2028-11-01",
+      "payoff_date": "2028-11-30",
       "rehab_months": 15,
       "commitment": "210000.00",
       "funded_at_close": "210000.00",
@@ -91,7 +91,7 @@
         "total_fees": "4200.00",
         "total_payoff": "210000.00",
         "total_profit": "35700.00",
-        "irr": "0.11893828"
+        "irr": "0.11916685"
       },
       "flip": {
         "status": "OFF",

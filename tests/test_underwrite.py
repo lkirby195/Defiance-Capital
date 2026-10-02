@@ -20,11 +20,9 @@ from config.config import Config
 from engine.underwrite import underwrite
 from schema.models import (
     AnalysisStatus,
-    AssetType,
     BorrowerInputs,
     CourtFlag,
     CourtRecordInputs,
-    ExitSource,
     ExperienceBucket,
     ExperienceTier,
     Flag,
@@ -35,7 +33,6 @@ from schema.models import (
     Severity,
     SizingInputs,
     State,
-    StatedExit,
     Tranche,
     UnderwriteFlag,
     UnderwriteInputs,
@@ -118,7 +115,7 @@ def test_the_result_carries_the_dates_the_term_and_the_version() -> None:
     result = underwrite(inputs(term_months=9), CONFIG)
     assert result.engine_version and result.config_hash == CONFIG.config_hash
     assert result.closing_date == CLOSING
-    assert result.payoff_date == date(2027, 10, 1)
+    assert result.payoff_date == date(2027, 10, 31)  # the month end the term lands on
     assert result.term_months == 9
     assert result.rehab_months == 6
     assert len(result.return_overview.entries) == 10
@@ -163,13 +160,15 @@ def test_the_economics_are_the_resolved_inputs_not_the_raw_ones() -> None:
     assert economics.loan_purchase_portion is None  # NO_DRAW has no split
 
 
-def test_the_exit_and_both_toggles_are_reported() -> None:
-    result = underwrite(inputs(term_months=6, asset_type=AssetType.SFR), CONFIG)
-    assert result.exit.type is StatedExit.FLIP
-    assert result.exit.exit_source is ExitSource.INFERRED
-    assert result.exit.flip_analysis is True
-    assert result.exit.rental_analysis is True  # a rent was entered
+def test_both_toggles_and_their_defaults_are_reported() -> None:
+    result = underwrite(inputs(term_months=6), CONFIG)
+    assert result.analyses.flip_analysis is True  # a sale price is on the deal
+    assert result.analyses.rental_analysis is True  # and a rent
+    assert result.analyses.flip_analysis_default is True
     assert result.flip.status is AnalysisStatus.EVALUATED
+    quiet = underwrite(inputs(deal(estimated_sale_price=None), monthly_rent=None), CONFIG)
+    assert (quiet.analyses.flip_analysis, quiet.analyses.rental_analysis) == (False, False)
+    assert quiet.flip.status is AnalysisStatus.OFF and quiet.rental.status is AnalysisStatus.OFF
 
 
 def test_a_result_round_trips_through_json_exactly() -> None:
@@ -267,7 +266,9 @@ def test_a_take_back_over_the_floor_is_not_flagged() -> None:
 
 
 def test_no_rent_replaces_both_dscr_tests_with_one_informational_flag() -> None:
-    result = underwrite(inputs(monthly_rent=None), CONFIG)
+    # the rental is off by default without a rent (SPEC §8.1); turned on by hand it has
+    # nothing to run on either, and the one flag says so for both analyses
+    result = underwrite(inputs(monthly_rent=None, rental_analysis=True), CONFIG)
     flag = find(result.flags, UnderwriteFlag.MONTHLY_RENT_MISSING)
     assert flag.severity is Severity.INFO
     assert "nothing stands in for what a property lets for" in flag.message
