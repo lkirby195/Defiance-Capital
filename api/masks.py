@@ -17,15 +17,15 @@ sends the stored form — a rate is a fraction, a price is a number — which is
 always taken and what ``schema/intake.json`` documents; the percent convention is a thing a
 person types, not a change to what the deal carries.
 
-**Defaults.** Four of the §8.1 economics have a config default (SPEC §8.1), and the form
-pre-fills each box with it rather than leaving a blank that quietly means the same thing. The
-deal still stores nothing: ``drop_defaults`` removes a submitted value that is exactly the
-default, so the column stays NULL, the engine still reads the config, and the readiness
-checklist still says DEFAULT rather than claiming somebody chose it. A person who wants the
-default gets it by leaving the box alone; a person who wants 2.5% types 2.5 and the deal
-carries it. The "default" tag on the page is that rule, said out loud.
+**Defaults.** Five of the §8.1 economics have a config default (SPEC §8.1) - the rate and
+the four fees - and the form pre-fills each box with it rather than leaving a blank that
+quietly means the same thing. The deal stores what comes back and ``services/defaults.py``
+marks a value equal to the default as the default, so the readiness checklist says DEFAULT
+rather than claiming somebody chose it. A person who wants the default gets it by leaving
+the box alone; a person who wants 2.5% types 2.5 and the deal carries it as theirs. The
+"default" tag on the page is that rule, said out loud.
 
-All four are flat config values, so all four pre-fill on a blank new-deal form. Holding costs
+All five are flat config values, so all five pre-fill on a blank new-deal form. Holding costs
 are a percentage of the price plus the rehab (SPEC §8.1), and the dollar figure it comes to is
 shown beside the box rather than typed into it — ``holding_costs_amount`` is that arithmetic,
 and it has an answer only once the price and the rehab are both on the page.
@@ -46,6 +46,7 @@ from schema.masks import (
     phone_digits,
     phone_display,
 )
+from services.defaults import ECONOMICS, economics_defaults
 
 # Every box that holds dollars, on either form.
 MONEY_FIELDS: frozenset[str] = frozenset(
@@ -66,13 +67,8 @@ PERCENT_FIELDS: frozenset[str] = frozenset(
 )
 PHONE_FIELDS: frozenset[str] = frozenset({"borrower_phone"})
 
-# The four §8.1 economics with a config default, and what the page calls each of them.
-DEFAULTED_FIELDS: tuple[str, ...] = (
-    "contingency_pct",
-    "closing_costs_usd",
-    "holding_costs_pct_of_cost",
-    "origination_fee_pct",
-)
+# The five §8.1 economics with a flat config default (``services/defaults.py``).
+DEFAULTED_FIELDS: tuple[str, ...] = ECONOMICS
 
 ZERO = Decimal(0)
 
@@ -152,41 +148,15 @@ def holding_costs_amount(
 
 
 def config_defaults(config: Config) -> dict[str, Decimal | None]:
-    """The four defaulted §8.1 economics, as numbers.  # SPEC §8.1
+    """The five defaulted §8.1 economics, as numbers.  # SPEC §8.1
 
-    Four flat config values now that holding costs are a percentage: none of them depends on
-    anything else on the deal, so a blank new-deal form pre-fills all four.
+    Flat config values: none of them depends on anything else on the deal, so a blank
+    new-deal form pre-fills all five. The loan split's default does depend on the deal
+    (``services.defaults.defaults_for``) and is not here.
     """
-    fees = config.fees
-    return {
-        "contingency_pct": fees.contingency_default_pct,
-        "closing_costs_usd": fees.closing_costs_default_usd,
-        "holding_costs_pct_of_cost": fees.holding_costs_default_pct_of_cost,
-        "origination_fee_pct": fees.origination_default_pct,
-    }
+    return dict(economics_defaults(config))
 
 
 def default_text(defaults: Mapping[str, Decimal | None]) -> dict[str, str]:
-    """The same four as the masked strings their boxes are pre-filled with."""
+    """Defaults as the masked strings their boxes are pre-filled with."""
     return {name: mask_one(name, value) for name, value in defaults.items()}
-
-
-def drop_defaults(
-    submitted: Mapping[str, str], defaults: Mapping[str, Decimal | None]
-) -> dict[str, str]:
-    """Remove a submitted value that is exactly its config default.
-
-    The comparison is numeric, not textual: ``2%`` unmasks to ``0.02`` and the default is
-    ``Decimal("0.02")``, and ``$1,000`` and ``1000.00`` are the same thousand dollars. Run
-    after ``unmasked``, so both sides are already the stored form.
-    """
-    out = dict(submitted)
-    for name in DEFAULTED_FIELDS:
-        default = defaults.get(name)
-        text = out.get(name)
-        if default is None or text is None:
-            continue
-        value = _decimal(text)
-        if value is not None and value == default:
-            del out[name]
-    return out

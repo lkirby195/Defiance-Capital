@@ -19,6 +19,7 @@ a term has answered the question, and one with neither has not.
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -311,8 +312,8 @@ def test_the_deal_page_shows_the_term_in_deal_economics(
 ) -> None:
     deal = stored(client, db_session, payload())
     body = client.get(f"/queue/deals/{deal.id}").text
-    assert "<dt>Term</dt>" in body
-    assert "<dt>Payoff Date</dt>" in body
+    assert "<dt>Term" in body
+    assert "<dt>Payoff Date" in body
     assert 'name="term_months"' in body  # and the override block carries a box
 
 
@@ -328,8 +329,10 @@ def test_the_deal_page_shows_a_stub_term_and_the_date_it_pays_off_on(
     assert (deal.term_months, deal.term_stub_days) == (9, 11)
     body = client.get(f"/queue/deals/{deal.id}").text
     assert "9 month(s) and 11 day(s)" in body
-    assert "2027-12-26" in body
-    assert "2027-12-15" not in body  # the ninth anchor is not the payoff date
+    payoff = re.search(r"<dt>Payoff Date.*?</dt>\s*<dd>([^<]*)</dd>", body, re.S)
+    assert payoff is not None and payoff.group(1).strip() == "2027-12-26"
+    # the ninth anchor is a ledger row, not the payoff date
+    assert "2027-12-15" not in payoff.group(0)
 
 
 def test_the_page_says_the_button_is_off_on_a_deal_with_no_term(

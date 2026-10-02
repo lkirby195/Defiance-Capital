@@ -63,6 +63,8 @@ glenwood-uw/
     actions.py             # the team actions: advance, decline, mark dead, reopen, note, overrides
     assemble.py            # deals row -> ScreenInputs / UnderwriteInputs; adapter-over-team
     audit.py               # append audit_log rows; read one deal's trail
+    autorun.py             # the screen and the underwrite, run on arrival and after an edit, as `system`
+    defaults.py            # the SPEC 8.1 defaults every deal is populated with, and which are defaults
     enrichment.py          # what the adapters produced (Phase 3); the precedence rule
     intake.py              # store an IntakeRecord with an actor; re-apply an edited one
     lifecycle.py           # the two automatic status transitions (SPEC 4.6)
@@ -116,13 +118,22 @@ inputs checklist from the same rules `services/assemble.py` raises `DealNotReady
 page that calls a deal ready and a run that then refuses it cannot both exist. A new required
 input goes in one place and both readers pick it up.
 
-**A missing input is not a failing one.** Where an input has a defensible stand-in, use it
-and record the source as `DEFAULT` (the four SPEC §8.1 economics with a config default).
-Where it has none - the monthly rent is the example - report the thing it feeds as
-`NOT_EVALUATED`, with the figure `None` rather than `False` or `0`. A DSCR nobody could
-compute has not fallen short, and a zero would manufacture a shortfall on every deal whose
-rent nobody looked up. The three the ledger cannot run without at all - the closing date, the
-term and the interest rate - are named by the readiness checklist and refused by name.
+**A missing input is not a failing one.** Where an input has a defensible stand-in, the deal
+is populated with it at intake and the source recorded as `DEFAULT` (`services/defaults.py`:
+the rate, the four fees, and the loan split on a split product). The value is stored, so the
+engine runs on what the page shows; `deals.defaulted_fields` is what says it was nobody's
+choice, and a value equal to the default is the default. Where there is no stand-in - the
+monthly rent is the example - report the thing it feeds as `NOT_EVALUATED`, with the figure
+`None` rather than `False` or `0`. A DSCR nobody could compute has not fallen short, and a
+zero would manufacture a shortfall on every deal whose rent nobody looked up. The two the
+ledger cannot run without at all - the closing date and the term - are named by the readiness
+checklist and refused by name.
+
+**The runs are automatic, and the page is labels and values.** A complete intake is screened
+and priced on arrival on every channel and again after every team edit, as the actor
+`system` (`services/autorun.py`, SPEC §4.6); a route that stores or edits a deal calls it. The
+deal page prints no explanatory prose beside a value: a definition that is still useful goes
+behind the (?) on its label, as a hover title (`_fields.html`, `help`).
 
 **Record everything.** Every enrichment call writes an `enrichment_runs` row with the raw response. Every screen and underwrite records `ENGINE_VERSION` and the config hash. Nothing is overwritten; re-runs create new rows.
 
@@ -158,7 +169,7 @@ term and the interest rate - are named by the readiness checklist and refused by
   Server-rendered Jinja, plain form posts, POST-redirect-GET. The two exceptions are
   conveniences and neither is load-bearing: the copy button on the suggested reply, and the
   masks in `base.html` that format a price, a percent and a phone as they are typed and
-  toggle the "default" tag on the four §8.1 economics that have one. The server parses
+  toggle the "default" tag on the §8.1 economics that have one. The server parses
   `$425,000`, `425000`, `12%` and `12` alike, so a browser that runs none of it still posts a
   deal that saves. Nothing client-side validates, fetches or decides. If a page seems to need
   script for anything else, it needs a different page. The public borrower form (`/apply`,
@@ -168,10 +179,10 @@ term and the interest rate - are named by the readiness checklist and refused by
   (`api/apply_form.py`), so a browser without it posts a form that is answered the same way.
 - **Every form post carries a CSRF token.** The guard is a router-level dependency (`api/security.py`), so a new route is covered by where it lives rather than by somebody remembering; every `<form method="post">` renders `{{ csrf.field(csrf_token) }}`. `tests/test_csrf.py` posts to every guarded route without one and asserts the refusal — do not add a route that needs an exemption without saying why there. The one exemption is the public borrower form: a token is bound to a signed-in user and a borrower has no account; the honeypot and the rate limit stand in front of it instead, and `tests/test_csrf.py` says so.
 - **The borrower is told nothing.** `/apply/thanks` says the team will be in touch. Never a
-  verdict, a rate, an amount or a status: the screen runs when the team runs it, and what it
-  says stays on the team's side. The page's strings live in `api/i18n.py` in English and
-  Spanish; the Spanish column is marked pending native-speaker review there and stays marked
-  until one has read it.
+  verdict, a rate, an amount or a status: the screen and the underwrite run on arrival
+  (SPEC §4.6), and what they say stays on the team's side. The page's strings live in
+  `api/i18n.py` in English and Spanish; the Spanish column is marked pending native-speaker
+  review there and stays marked until one has read it.
 
 ## Style
 

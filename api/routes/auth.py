@@ -12,10 +12,17 @@ undo it.
 Both writes record an ``audit_log`` row. SPEC §11 requires access to be logged, and a sign-in
 is the access: every deal action after it carries the same actor, so the trail runs from the
 sign-in through what the person then did.
+
+The sign-in also writes two lines to the process log, one when the credentials are accepted
+and one when the cookie goes out with the redirect. They are there for the deploy's own
+logs: a 500 that lands on the request *after* a sign-in has nothing on the deal page to say
+what went wrong, and the two lines bracket exactly where the request before it ended - so a
+traceback that follows them belongs to the redirected page, not to the sign-in.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, status
@@ -33,6 +40,7 @@ router = APIRouter(tags=["auth"])
 
 SessionDep = Annotated[Session, Depends(get_session)]
 QUEUE_PATH = "/queue"
+log = logging.getLogger("glenwood.auth")
 WRONG = "Email or password is wrong, or the account is no longer active."
 
 
@@ -68,6 +76,7 @@ def sign_in(
             {"email": email, "next_url": target, "problems": [WRONG]},
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
+    log.info("sign-in accepted for user %s", user.id)
     record_audit(
         session,
         actor=user.email,
@@ -79,6 +88,12 @@ def sign_in(
     session.commit()
     response = redirect(target)
     attach(response, user, secure=over_https(request))
+    log.info(
+        "sign-in recorded for user %s; redirecting to %s (cookie secure=%s)",
+        user.id,
+        target,
+        over_https(request),
+    )
     return response
 
 

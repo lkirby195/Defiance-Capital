@@ -77,13 +77,14 @@
       months lands on its own month.
     </p>
     <p class="small muted">
-      A Split Draw or Split Principal loan is advanced in two parts, so both portions are
-      required and have to add up to the Loan Amount (SPEC §8.2). A No Draw or Wholetail loan
-      is one advance and carries neither. The four boxes tagged <span class="dflt">default</span>
-      are pre-filled from config and editable; leave one alone and the deal follows config,
-      type over it and the deal carries your number. Holding costs are a percentage of the
-      price plus the rehab and the dollars it comes to are shown under the box. The interest
-      rate has no default and the ledger cannot be laid out without it.
+      A Split Draw or Split Principal loan is advanced in two parts; enter both portions,
+      adding up to the Loan Amount, or leave both blank and the deal takes the SPEC §8.2
+      default - the contingency-adjusted rehab budget as the rehab portion, the rest at
+      closing. A No Draw or Wholetail loan is one advance and carries neither. The boxes
+      tagged <span class="dflt">default</span> are pre-filled from config and editable; leave
+      one alone and the deal follows config, type over it and the deal carries your number.
+      Holding costs are a percentage of the price plus the rehab and the dollars it comes to
+      are shown under the box.
     </p>
     <div class="grid3">
       {{ fields.enum_box("loan_purpose", "Loan Purpose", enums.loan_purpose,
@@ -104,11 +105,13 @@
                           required=true) }}
       {{ fields.money_box("loan_purchase_portion",
                           "Advance at Closing — the Principal Note on Split Principal",
-                          form.loan_purchase_portion, mark="Required for a split") }}
+                          form.loan_purchase_portion,
+                          default=defaults.get("loan_purchase_portion", "")) }}
       {{ fields.money_box("loan_rehab_portion", "Rehab Portion — the holdback, or Tranche A",
-                          form.loan_rehab_portion, mark="Required for a split") }}
+                          form.loan_rehab_portion,
+                          default=defaults.get("loan_rehab_portion", "")) }}
       {{ fields.pct_box("interest_rate", "Interest Rate — annual", form.interest_rate,
-                        required=true) }}
+                        default=defaults.interest_rate) }}
       {{ fields.pct_box("contingency_pct", "Contingency", form.contingency_pct,
                         default=defaults.contingency_pct) }}
       {{ fields.money_box("closing_costs_usd", "Closing Costs", form.closing_costs_usd,

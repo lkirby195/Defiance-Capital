@@ -11,7 +11,9 @@ created, which is what a person wants. A rejected form is re-rendered with the v
 in it and one line per problem, rather than Pydantic's own error document.
 
 The write takes an actor and records an ``audit_log`` row like every other service write, so
-a deal in the queue can be traced to whoever typed it in.
+a deal in the queue can be traced to whoever typed it in. A deal stored complete is then
+screened and priced on the way in (``services/autorun.py``, SPEC §4.6), recorded as the
+system's own runs, so the page it redirects to opens on a verdict.
 """
 
 from __future__ import annotations
@@ -45,7 +47,7 @@ from db.models import User
 from db.session import get_session
 from intake.parsers.team_form import TeamEntryForm
 from schema.models import IntakeRecord
-from services import create_deal
+from services import AutoRun, auto_run, create_deal
 
 # The form half of this route is a browser post like any other, so it is guarded like
 # one. A JSON caller signs in the same way and carries the same token.
@@ -54,12 +56,18 @@ router = APIRouter(prefix="/intake", tags=["intake"], dependencies=[Depends(requ
 SessionDep = Annotated[Session, Depends(get_session)]
 
 
-def store(session: Session, form: TeamEntryForm, actor: str) -> IntakeRecord:
-    """Normalize, persist, audit, commit. The same path for both content types."""
+def store(session: Session, form: TeamEntryForm, actor: str) -> tuple[IntakeRecord, AutoRun]:
+    """Normalize, persist, audit, run, commit. The same path for both content types.
+
+    The record comes back carrying the status the deal ended in: a complete intake has been
+    screened by the time this returns, and a JSON client that read ``NEW`` would be reading
+    the status the deal had for a moment nobody saw.
+    """
     record = intake_record(form)
-    create_deal(session, record, actor=actor)
+    deal = create_deal(session, record, actor=actor)
+    run = auto_run(session, deal)
     session.commit()
-    return record
+    return record.model_copy(update={"status": deal.status}), run
 
 
 @router.post(
@@ -79,7 +87,7 @@ async def submit_team_entry(request: Request, session: SessionDep, user: PostedU
         # also takes a form. Re-raising as FastAPI's own error keeps the 422 document a JSON
         # client already expects, rather than a 500 or a shape of our own invention.
         raise RequestValidationError(exc.errors()) from exc
-    record = store(session, form, user.email)
+    record, _ = store(session, form, user.email)
     return JSONResponse(record.model_dump(mode="json"), status_code=status.HTTP_201_CREATED)
 
 
@@ -121,11 +129,11 @@ def _from_form(
     if form is None:
         return back(complaints)
     try:
-        record = store(session, form, user.email)
+        record, run = store(session, form, user.email)
     except ValueError as exc:
         # The form validated and the stored shape did not: the normalizer infers a product
         # and the split is re-checked against that, and the database has rules of its own.
         # Either way it is something on this page, and the page is where it is said.
         session.rollback()
         return back(at_top(str(exc)))
-    return redirect(f"/queue/deals/{record.id}", "Deal created.")
+    return redirect(f"/queue/deals/{record.id}", f"Deal created. {run.summary()}".strip())

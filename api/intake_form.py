@@ -6,16 +6,18 @@ the same form filled in from the deal, and ``POST`` of either decides whether wh
 is complete.
 
 **Required is what an engine run cannot proceed without**, and nothing else. That is the
-SPEC §4.1 minimum viable intake, less the credit range, plus the three SPEC §8.1 inputs the
-ledger has no stand-in for: the closing date, the term, and the interest rate. The credit
-range is not a required box because a person on the phone often does not have it yet - the
-screen names it by hand when it runs without one (``services/assemble.py``), which is a
-better answer than a form that will not submit. Nor is the phone: it is the borrower match
-key when there is one (SPEC §5), and a deal that arrived by email has a name and no number.
-Everything else is a thing the team may or may not have: an email, a square footage, a
-valuation the adapters will eventually produce. The page marks every field one way or the
-other, the browser refuses to post without the required ones, and this module refuses again
-on the server - the attribute is a courtesy to a person typing, not a control.
+SPEC §4.1 minimum viable intake, less the credit range, plus the two SPEC §8.1 inputs the
+ledger has no stand-in for: the closing date and the term. The interest rate is not one of
+them any more - it has a config default like the four fees (``services/defaults.py``) and
+the box is pre-filled with it. The credit range is not a required box because a person on
+the phone often does not have it yet - the screen names it by hand when it runs without one
+(``services/assemble.py``), which is a better answer than a form that will not submit. Nor
+is the phone: it is the borrower match key when there is one (SPEC §5), and a deal that
+arrived by email has a name and no number. Everything else is a thing the team may or may
+not have: an email, a square footage, a valuation the adapters will eventually produce. The
+page marks every field one way or the other, the browser refuses to post without the
+required ones, and this module refuses again on the server - the attribute is a courtesy to
+a person typing, not a control.
 
 A partial capture is still a real thing (SPEC §4.1, ``NEEDS_INFO``): it arrives through the
 channels that take one, which is every channel but this form, and through ``POST
@@ -37,10 +39,8 @@ from typing import Any
 from pydantic import ValidationError
 
 from api.masks import (
-    DEFAULTED_FIELDS,
     config_defaults,
     default_text,
-    drop_defaults,
     holding_costs_amount,
     mask_one,
     masked,
@@ -51,9 +51,9 @@ from config.config import Config, get_config
 from db.models import Deal
 from intake.normalize import normalize
 from intake.parsers.team_form import TeamEntryForm, parse_team_form
-from schema.labels import enum_label
 from schema.masks import money_parse
-from schema.models import SPLIT_PRODUCTS, Channel, IntakeRecord, ProductSource, StateSource
+from schema.models import Channel, IntakeRecord, ProductSource, StateSource
+from services.defaults import defaults_for
 
 # Every name the form renders, grouped as SPEC §8.1 groups them, so a blank the browser
 # dropped is still a blank box. The Overview is who the borrower is; the loan's own terms -
@@ -120,16 +120,14 @@ REQUIRED_FIELDS: tuple[tuple[str, str], ...] = (
     ("purchase_price", "Purchase Price"),
     ("rehab_costs", "Rehab Costs"),
     ("loan_requested", "Loan Amount"),
-    ("interest_rate", "Interest Rate"),
 )
 REQUIRED_NAMES: frozenset[str] = frozenset(name for name, _ in REQUIRED_FIELDS)
 # Every box this form renders. A complaint about one of these sits under it; anything else
 # Pydantic names has nowhere to sit and goes to the top (``api/problems.py``).
 TEAM_ENTRY_NAMES: frozenset[str] = frozenset(TEAM_ENTRY_FIELDS)
 
-# Required, but only on a split product (SPEC §8.2). The product box may be blank - the
-# normalizer infers one from the rehab costs - so the browser cannot be told which of these
-# two states the form is in, and it is marked "Required for a split" and checked here.
+# The loan split on a split product (SPEC §8.2). Optional on the form: left blank, the deal
+# is populated with the §8.2 formula split and tagged as a default (``services/defaults.py``).
 SPLIT_FIELDS: tuple[tuple[str, str], ...] = (
     ("loan_purchase_portion", "Advance at Closing"),
     ("loan_rehab_portion", "Rehab Portion"),
@@ -146,8 +144,6 @@ PAYOFF_DATE = "payoff_date"
 # template renders these strings and ``tests/test_intake_form.py`` asserts it does, so the
 # marker and the rule behind it cannot drift apart.
 CONDITIONAL_MARKS: dict[str, str] = {
-    "loan_purchase_portion": "Required for a split",
-    "loan_rehab_portion": "Required for a split",
     TERM_MONTHS: "Required, or a payoff date",
     PAYOFF_DATE: "Required, or a term",
 }
@@ -165,26 +161,6 @@ def missing_required(submitted: Mapping[str, str]) -> FormProblems:
             name: [f"{label} is required."]
             for name, label in REQUIRED_FIELDS
             if not str(submitted.get(name, "")).strip()
-        }
-    )
-
-
-def split_problems(form: TeamEntryForm) -> FormProblems:
-    """The split the product asks for, or one line per thing wrong with it.  # SPEC §8.2
-
-    Presence only; ``TeamEntryForm`` has already refused a split that does not add up or one
-    on a product that has no split. Presence is the form's own rule rather than the model's,
-    because a borrower-channel intake legitimately carries a loan amount and no split at all
-    - a person filling this form in has the whole loan in front of them.
-    """
-    if form.effective_product not in SPLIT_PRODUCTS:
-        return by_field({})
-    product = enum_label(form.effective_product)
-    return by_field(
-        {
-            name: [f"{label} is required on a {product} loan."]
-            for name, label in SPLIT_FIELDS
-            if getattr(form, name) is None
         }
     )
 
@@ -216,22 +192,16 @@ def text_value(value: Any) -> str:
 
 
 def deal_defaults(deal: Deal | None, config: Config | None = None) -> dict[str, Decimal | None]:
-    """The config default for each of the four §8.1 economics.  # SPEC §8.1
+    """The default for each defaultable §8.1 economic, on this deal.  # SPEC §8.1, §8.2
 
-    Four flat config numbers, so the deal is not consulted at all: the ``deal`` argument is
-    kept because every caller has one and dropping it would make the call sites read as if
-    the defaults came from somewhere else.
+    The five config numbers on every deal and on the blank form; on a split product whose
+    loan amount and rehab are known, the formula loan split as well
+    (``services.defaults.defaults_for``).
     """
-    del deal
-    return config_defaults(config if config is not None else get_config())
-
-
-def submitted_defaults(
-    submitted: Mapping[str, str], config: Config | None = None
-) -> dict[str, Decimal | None]:
-    """The same four; nothing on the submission changes them.  # SPEC §8.1"""
-    del submitted
-    return config_defaults(config if config is not None else get_config())
+    settings = config if config is not None else get_config()
+    if deal is None:
+        return config_defaults(settings)
+    return dict(defaults_for(deal, settings))
 
 
 def money_value(submitted: Mapping[str, str], name: str) -> Decimal | None:
@@ -285,7 +255,7 @@ def submitted_holding_costs_hint(submitted: Mapping[str, str], config: Config | 
 
 
 def default_marks(deal: Deal | None, config: Config | None = None) -> dict[str, str]:
-    """The four defaulted boxes' pre-filled text, for the template's ``default`` tag."""
+    """Each defaulted box's pre-filled text, for the template's ``default`` tag."""
     return default_text(deal_defaults(deal, config))
 
 
@@ -300,11 +270,11 @@ def intake_form_values(deal: Deal, config: Config | None = None) -> dict[str, st
     alternative to the term box beside it rather than a value to edit. A blank re-derives in
     every one of the three cases, which is what the deal currently says.
 
-    The four §8.1 economics with a config default are the opposite case: a blank means the
-    default, so the box is pre-filled with it and tagged rather than left empty for a person
-    to wonder about. A submission that comes back still holding the default stores nothing
-    (``api/masks.py``), so the deal keeps saying "the config decides" until somebody types
-    something else.
+    The §8.1 economics with a default are the opposite case: a blank means the default, so
+    the box is pre-filled with it and tagged rather than left empty for a person to wonder
+    about. A submission that comes back still holding the default is stored and marked as
+    the default (``services/defaults.py``), so the deal keeps saying "the config decides"
+    until somebody types something else.
     """
     borrower = deal.borrower
     prop = deal.property
@@ -358,10 +328,9 @@ def intake_form_values(deal: Deal, config: Config | None = None) -> dict[str, st
         "court_records_status": deal.court_records_status,
         "court_records_as_of": deal.court_records_as_of,
     }
-    defaults = deal_defaults(deal, config)
-    for name in DEFAULTED_FIELDS:
+    for name, default in deal_defaults(deal, config).items():
         if values.get(name) is None:
-            values[name] = defaults[name]
+            values[name] = default
     # Keyed by TEAM_ENTRY_FIELDS rather than by ``values``, so a name that drifts out of one
     # of the two renders as an empty box instead of a StrictUndefined blowing up the page;
     # tests/test_intake_form.py asserts the two agree.
@@ -369,7 +338,7 @@ def intake_form_values(deal: Deal, config: Config | None = None) -> dict[str, st
 
 
 def blank_form_values(config: Config | None = None) -> dict[str, str]:
-    """The new-deal form: every box empty but the four the config has a default for."""
+    """The new-deal form: every box empty but the five the config has a default for."""
     defaults = default_text(deal_defaults(None, config))
     return {**dict.fromkeys(TEAM_ENTRY_FIELDS, ""), **defaults}
 
@@ -381,9 +350,9 @@ def read_form(
 ) -> tuple[TeamEntryForm | None, FormProblems]:
     """The posted form as a model, or the complaints saying why it is not one.
 
-    The masks come off first and the config defaults come out next, so what reaches
-    ``TeamEntryForm`` is what the deal stores: a rate as a fraction, a price as a number, and
-    nothing at all in a box still holding the value config would have supplied anyway.
+    The masks come off first, so what reaches ``TeamEntryForm`` is what the deal stores: a
+    rate as a fraction, a price as a number. A box still holding its default reaches the
+    model as that number and is stored and tagged as the default (``services/defaults.py``).
 
     Both halves of the complaint run: a missing Required box and a price with three decimal
     places are two different problems with the same submission, and a person fixing one at a
@@ -391,13 +360,14 @@ def read_form(
     (``api/problems.py``), and the cross-field rules - the term against the payoff date - go
     to the top of the page, which is the only place a rule about two boxes can sit.
     """
+    del config  # the defaults are applied on the deal, not read off the form
     missing = missing_required(submitted)
-    values = drop_defaults(unmasked(submitted), submitted_defaults(submitted, config))
+    values = unmasked(submitted)
     try:
         form = TeamEntryForm.model_validate({**values, "court_records_team": matters})
     except ValidationError as exc:
         return None, missing.merge(from_validation_error(exc, TEAM_ENTRY_NAMES))
-    complaints = missing.merge(term_problems(form)).merge(split_problems(form))
+    complaints = missing.merge(term_problems(form))
     return (None, complaints) if complaints else (form, NO_PROBLEMS)
 
 

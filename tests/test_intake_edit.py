@@ -10,9 +10,9 @@ What an edit is and is not, which is most of what is tested here:
   immutable (SPEC §5) and every version posted is still on the deal afterwards;
 * it re-runs the normalizer, so ``missing_fields`` is recomputed and a deal that is finally
   complete leaves NEEDS_INFO;
-* it does **not** re-screen. The deal page says the screen is stale and a person decides
-  (SPEC §7); a deal that quietly re-priced itself on an edit would be worse than a stale one
-  that says so;
+* it **re-runs the screen and the underwrite** on what was saved (SPEC §4.6,
+  ``services/autorun.py``), recorded as the system's own runs, so the verdict on the page is
+  never older than the intake beside it;
 * it is refused on a deal that is closed or past LOI, where the numbers on file have to keep
   agreeing with a document that went out.
 """
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from typing import Any
+from urllib.parse import unquote
 
 import pytest
 from sqlalchemy import func, select
@@ -28,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from db.models import AuditLog, Borrower, Deal, IntakeSubmission, Screen
 from schema.models import AuditAction, Status, Tranche
+from services import screen_is_stale
 from tests.conftest import QueueClient, form_body, requires_db
 
 pytestmark = requires_db
@@ -113,40 +115,44 @@ def test_a_completed_intake_leaves_needs_info(
     db_session.expire_all()
     deal = db_session.get(Deal, deal_id)
     assert deal is not None
-    assert deal.status is Status.NEW
+    # ...and, complete at last, it was screened and priced on the way out (SPEC §4.6)
+    assert deal.status is Status.UNDERWRITING
     assert deal.missing_fields == []
     assert deal.credit_range_self_reported is Tranche.T1
     assert deal.term_months == 9
 
 
-def test_an_edit_does_not_drag_a_screened_deal_backwards(
+def test_an_edit_re_runs_the_screen_and_the_underwrite_as_the_system(
     client: QueueClient,
     db_session: Session,
     team_entry_with_overrides: dict[str, Any],
     deal_with_overrides: Deal,
 ) -> None:
-    """Only NEEDS_INFO moves. A SCREENED deal stays SCREENED until somebody re-screens it."""
+    """An edited intake is re-run on what was saved (SPEC §4.6), and never dragged back."""
     deal_id = deal_with_overrides.id
     assert client.post(f"/queue/deals/{deal_id}/screen", follow_redirects=False).status_code == 303
     db_session.expire_all()
-    assert db_session.get(Deal, deal_id).status is not Status.NEEDS_INFO  # type: ignore[union-attr]
-    before = db_session.get(Deal, deal_id)
-    assert before is not None
-    was = before.status
+    assert db_session.scalar(select(func.count()).select_from(Screen)) == 1
 
-    assert (
-        edit(
-            client,
-            deal_id,
-            form_body(team_entry_with_overrides, loan_requested="115000.00"),
-        ).status_code
-        == 303
+    response = edit(
+        client, deal_id, form_body(team_entry_with_overrides, loan_requested="115000.00")
     )
+    assert response.status_code == 303
+    said = unquote(response.headers["location"])
+    assert "Screen recorded: GO." in said and "Underwrite recorded" in said
 
     db_session.expire_all()
     deal = db_session.get(Deal, deal_id)
-    assert deal is not None and deal.status is was
-    assert db_session.scalar(select(func.count()).select_from(Screen)) == 1, "it re-screened"
+    assert deal is not None and deal.status is Status.UNDERWRITING
+    assert db_session.scalar(select(func.count()).select_from(Screen)) == 2, "it did not re-screen"
+    latest = db_session.scalars(select(Screen).order_by(Screen.created_at.desc())).first()
+    assert latest is not None
+    assert Decimal(latest.inputs["deal"]["loan_requested"]) == Decimal("115000"), (
+        "the re-run saw the edit"
+    )
+    actors = {row.actor for row in trail(db_session, AuditAction.SCREEN_RUN)}
+    assert actors == {"sam@glenwood.example", "system"}
+    assert {row.actor for row in trail(db_session, AuditAction.UNDERWRITE_RUN)} == {"system"}
 
 
 def test_an_edit_records_who_did_it_and_what_moved(
@@ -223,7 +229,7 @@ def test_a_new_phone_is_a_different_borrower(
 # --- the stale note -------------------------------------------------------------------------------
 
 
-def test_the_screen_is_called_stale_only_after_the_intake_moves(
+def test_an_edited_deal_is_not_stale_because_the_edit_re_ran_it(
     client: QueueClient,
     db_session: Session,
     team_entry_with_overrides: dict[str, Any],
@@ -238,13 +244,9 @@ def test_the_screen_is_called_stale_only_after_the_intake_moves(
 
     edit(client, deal_id, form_body(team_entry_with_overrides, rehab_costs="6000.00"))
 
-    stale = client.get(f"/queue/deals/{deal_id}").text
-    assert "changed after this screen ran" in stale
-    assert "not automatic" in stale
-
-    client.post(f"/queue/deals/{deal_id}/screen", follow_redirects=False)
-    assert "changed after this screen ran" not in client.get(f"/queue/deals/{deal_id}").text
-    del db_session
+    after = client.get(f"/queue/deals/{deal_id}").text
+    assert "changed after this screen ran" not in after, "the edit re-ran the screen"
+    assert screen_is_stale(db_session, deal_id) is False
 
 
 def test_an_unscreened_deal_is_never_stale(
@@ -291,7 +293,7 @@ def test_a_closed_or_committed_deal_is_not_edited(
     assert trail(db_session, AuditAction.INTAKE_EDITED) == []
     locked = client.get(f"/queue/deals/{stored_deal.id}").text
     assert f'href="/queue/deals/{stored_deal.id}/intake"' not in locked
-    assert "Intake locked on a" in locked
+    assert f"locked on a {status.value} deal" in locked
 
 
 def test_the_edit_form_asks_for_the_same_required_boxes(

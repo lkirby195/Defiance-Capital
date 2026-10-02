@@ -16,9 +16,11 @@ per §8.1 input, each with the value in force and where it came from:
 ``required`` marks the rows the run cannot proceed without, and ``missing`` is exactly those
 of them that are MISSING. It is derived from the same rules the assembly raises
 ``DealNotReady`` on (``services/assemble.py``) rather than a second list beside them, so the
-disabled button and the refusal behind it can never name different things. Four rows are
-required and no more: the closing date, the term, the interest rate and - on a split product
-- the two halves of the loan.
+disabled button and the refusal behind it can never name different things. A DEFAULT is
+present: the rate and the loan split are required rows, and a deal nobody has entered them
+on runs on the config rate and the SPEC §8.2 formula split (``services/defaults.py``). What
+turns the button off is the two inputs nothing stands in for - the closing date and the
+term.
 
 An optional row that is MISSING is not a problem to fix before running - it is a thing the
 underwrite will do without, and the note says what that costs: no DSCR at all without a
@@ -46,6 +48,7 @@ from schema.models import (
     months_for_bucket,
 )
 from services.assemble import flip_is_on, intake_gaps, rental_is_on
+from services.defaults import defaults_for, is_defaulted
 from services.enrichment import NO_ADAPTER_VALUES, AdapterValues
 from services.requests import UnderwriteRequest
 
@@ -246,8 +249,42 @@ def _court_row(deal: Deal, adapters: AdapterValues) -> InputRow:
     )
 
 
-def _split_rows(deal: Deal) -> list[InputRow]:
-    """The two halves of a split loan; nothing at all on a product that has no split."""
+def _defaulted_row(
+    deal: Deal,
+    column: str,
+    key: str,
+    label: str,
+    defaults: dict[str, Decimal],
+    *,
+    fmt: RowFormat = "money",
+    required: bool = False,
+    note: str = "",
+) -> InputRow:
+    """One §8.1 economic with a stand-in: the deal's own number, else the default.  # SPEC §8.1
+
+    DEFAULT when the value on the deal is the one config or the §8.2 formula put there
+    (``deals.defaulted_fields``), or when nobody has populated the deal yet and the engine
+    will read the default in its place; TEAM when a person typed over it.
+    """
+    value = getattr(deal, column)
+    if is_defaulted(deal, column):
+        return _resolved_row(
+            key,
+            label,
+            fmt=fmt,
+            default=value if value is not None else defaults.get(column),
+            required=required,
+            note=note,
+        )
+    return _resolved_row(key, label, fmt=fmt, team=value, required=required, note=note)
+
+
+def _split_rows(deal: Deal, defaults: dict[str, Decimal]) -> list[InputRow]:
+    """The two halves of a split loan; nothing at all on a product that has no split.
+
+    Required, and present on every split product whose loan amount and rehab are known: a
+    deal nobody has divided carries the SPEC §8.2 formula split as its DEFAULT.
+    """
     if deal.product not in SPLIT_PRODUCTS:
         return []
     names = (
@@ -255,19 +292,27 @@ def _split_rows(deal: Deal) -> list[InputRow]:
         if deal.product is Product.SPLIT_PRINCIPAL
         else ("Advance at closing", "Rehab holdback")
     )
-    note = f"a {enum_label(deal.product)} loan is advanced in two parts (SPEC §8.2)"
+    note = (
+        f"a {enum_label(deal.product)} loan is advanced in two parts (SPEC §8.2); the default "
+        "rehab portion is the contingency-adjusted rehab budget capped at the loan amount, and "
+        "the advance is the rest"
+    )
     return [
-        _resolved_row(
+        _defaulted_row(
+            deal,
+            "loan_purchase_portion",
             "deal.loan_purchase_portion",
             names[0],
-            team=deal.loan_purchase_portion,
+            defaults,
             required=True,
             note=note,
         ),
-        _resolved_row(
+        _defaulted_row(
+            deal,
+            "loan_rehab_portion",
             "deal.loan_rehab_portion",
             names[1],
-            team=deal.loan_rehab_portion,
+            defaults,
             required=True,
             note=note,
         ),
@@ -319,6 +364,7 @@ def underwrite_readiness(
     """Every SPEC §8.1 input on one deal, with its value, its source, and whether it is needed."""
     settings = config if config is not None else get_config()
     fees = settings.fees
+    defaults = defaults_for(deal, settings)
     empty = UnderwriteRequest()
     flip_on = flip_is_on(deal, empty, deal.term_months, settings)
     rental_on = rental_is_on(deal, empty, deal.term_months, settings)
@@ -332,15 +378,20 @@ def underwrite_readiness(
         ),
         _term_row(deal),
         _payoff_row(deal),
-        _row(
+        _defaulted_row(
+            deal,
+            "interest_rate",
             "deal.interest_rate",
             "Interest rate",
-            deal.interest_rate,
+            defaults,
             fmt="pct",
             required=True,
-            note="annual; nothing stands in for a rate nobody chose (SPEC §8.1)",
+            note=(
+                f"annual; config default {settings.interest.default_annual_rate:.2%} until the "
+                "team enters the deal's own rate (SPEC §8.1)"
+            ),
         ),
-        *_split_rows(deal),
+        *_split_rows(deal, defaults),
         _resolved_row(
             "estimated_sale_price",
             "Estimated sale price",
@@ -362,35 +413,39 @@ def underwrite_readiness(
             borrower=deal.monthly_rent_borrower,
             note="without it the Rental and Take-Back analyses are not evaluated (SPEC §8.5)",
         ),
-        _resolved_row(
+        _defaulted_row(
+            deal,
+            "contingency_pct",
             "contingency_pct",
             "Contingency",
+            defaults,
             fmt="pct",
-            team=deal.contingency_pct,
-            default=fees.contingency_default_pct,
             note=f"config default: {fees.contingency_default_pct:.2%} of the rehab costs",
         ),
-        _resolved_row(
+        _defaulted_row(
+            deal,
+            "closing_costs_usd",
             "closing_costs_usd",
             "Closing costs",
-            team=deal.closing_costs_usd,
-            default=fees.closing_costs_default_usd,
+            defaults,
             note="the lender's own, inside the LTC denominator (SPEC §8.2)",
         ),
-        _resolved_row(
+        _defaulted_row(
+            deal,
+            "holding_costs_pct_of_cost",
             "holding_costs_pct_of_cost",
             "Holding costs (% of price + rehab)",
+            defaults,
             fmt="pct",
-            team=deal.holding_costs_pct_of_cost,
-            default=fees.holding_costs_default_pct_of_cost,
             note=holding_costs_note(deal, fees.holding_costs_default_pct_of_cost),
         ),
-        _resolved_row(
+        _defaulted_row(
+            deal,
+            "origination_fee_pct",
             "origination_fee_pct",
             "Origination fee",
+            defaults,
             fmt="pct",
-            team=deal.origination_fee_pct,
-            default=fees.origination_default_pct,
             note=(
                 f"config default: {fees.origination_default_pct:.2%}, half at close and half "
                 "at payoff"

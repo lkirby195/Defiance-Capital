@@ -29,11 +29,12 @@ for what it lets for, and a zero rent would not be neutral: it would report a DS
 on every deal whose rent nobody happened to look up. So a deal without one is underwritten
 with the Rental and Take-Back analyses NOT_EVALUATED and an INFO flag saying so.
 
-The loan split is not here at all. It is two columns on the deal, entered on the team-entry
-form (SPEC §8.2), so there is one place it lives and one place it is edited. Nor is the
-payoff date a column: it is the closing date plus the term, whole months and stub days
-together (``schema/dates.py``), and both models below take a payoff date as an alternative
-way of saying that term.
+The loan split is on ``TeamOverrides`` and not on ``UnderwriteRequest``: it is two columns
+on the deal (SPEC §8.2), entered on the team-entry form or the override block and defaulted
+by the §8.2 formula when neither has, and a run reads it off the deal rather than being
+handed one. The payoff date is not a column anywhere: it is the closing date plus the term,
+whole months and stub days together (``schema/dates.py``), and both models below take a
+payoff date as an alternative way of saying that term.
 
 An adapter value, when one exists, wins over every step of that (``services/enrichment.py``).
 """
@@ -55,6 +56,7 @@ from schema.models import (
     StatedExit,
     TeamCourtRecord,
     validate_court_records,
+    validate_loan_split,
 )
 
 
@@ -142,6 +144,14 @@ class TeamOverrides(BaseModel):
     closing_costs_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     holding_costs_pct_of_cost: Decimal | None = Field(default=None, ge=0, le=1)
     origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
+    # The loan split on a split product (SPEC §8.2): both or neither. Neither means the
+    # §8.2 formula split stands in (``services/defaults.py``); whether the two add up to the
+    # loan amount is checked against the deal when the block is applied, because the block
+    # does not carry the loan amount.
+    loan_purchase_portion: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    loan_rehab_portion: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     # Valuation and rent (SPEC §6.1); an adapter value still wins over either of these.
     estimated_sale_price_team: Decimal | None = Field(
         default=None, gt=0, max_digits=14, decimal_places=2
@@ -164,6 +174,12 @@ class TeamOverrides(BaseModel):
         validate_court_records(
             self.court_records_status, self.court_records_as_of, self.court_records_team
         )
+        return self
+
+    @model_validator(mode="after")
+    def _split_is_both_or_neither(self) -> TeamOverrides:
+        """Half a split is refused here; the rest of the rule needs the deal (SPEC §8.2)."""
+        validate_loan_split(None, None, self.loan_purchase_portion, self.loan_rehab_portion)
         return self
 
     @model_validator(mode="after")

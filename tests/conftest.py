@@ -45,7 +45,7 @@ from db.session import get_session  # noqa: E402
 from intake.normalize import normalize  # noqa: E402
 from intake.parsers.team_form import TeamEntryForm, parse_team_form  # noqa: E402
 from schema.models import Channel  # noqa: E402
-from services import create_user  # noqa: E402
+from services import create_user, populate  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/synthetic"
 TEAM_ENTRY = FIXTURES / "team_entry_complete.json"
@@ -121,9 +121,15 @@ def form_body(payload: dict[str, Any], **changes: Any) -> dict[str, str]:
 
 
 def store_deal(session: Session, payload: dict[str, Any]) -> Deal:
-    """Normalize a team-entry payload and store it, as ``POST /intake/team`` does."""
+    """Normalize a team-entry payload and store it, as ``POST /intake/team`` does.
+
+    Populated with the SPEC §8.1 defaults as every stored deal is (``services/defaults.py``),
+    and nothing run on it: the fixture is the deal as it stands before anybody presses a
+    button, which is what most tests want to start from.
+    """
     record = normalize(parse_team_form(TeamEntryForm(**payload)), Channel.TEAM, raw_payload=payload)
     deal = create_deal_from_intake(session, record)
+    populate(deal)
     session.commit()
     return deal
 

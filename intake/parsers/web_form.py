@@ -90,7 +90,8 @@ class WebApplyForm(BaseModel):
     closing_date: date | None = None
     # How they heard about us; stored on the deal as its referral note (SPEC §4.2).
     referral_note: str | None = Field(default=None, max_length=200)
-    # Consent: the box has to be ticked, and the form keeps the fact that it was.
+    # Consent: given by submitting the form, under the line that says so above the button
+    # (``api/i18n.py``); the stored form keeps the fact that it was.
     consent: Literal[True]
 
     @property

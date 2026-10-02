@@ -94,7 +94,7 @@ def run_screen(
     deal = load_deal(session, deal_id)
     before = deal.status
     resolved = adapters or adapter_values(session, deal)
-    inputs = priced(deal.id, lambda: screen_inputs(deal, resolved))
+    inputs = priced(deal.id, lambda: screen_inputs(deal, resolved, cfg))
     result = priced(deal.id, lambda: screen(inputs, cfg))
     row = record_screen(session, deal.id, inputs, result)
     advance_after_screen(deal, result.verdict)
@@ -147,7 +147,7 @@ def run_underwrite(
             )
     check_underwritable(deal)
     before = deal.status
-    inputs = priced(deal.id, lambda: underwrite_inputs(deal, request, resolved))
+    inputs = priced(deal.id, lambda: underwrite_inputs(deal, request, resolved, cfg))
     result = priced(deal.id, lambda: underwrite(inputs, cfg))
     row = record_underwrite(session, deal.id, inputs, result)
     advance_for_underwrite(deal)

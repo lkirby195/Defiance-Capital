@@ -52,6 +52,7 @@ from schema.models import (
 )
 from services.actions import apply_overrides
 from services.assemble import screen_inputs, underwrite_inputs
+from services.defaults import populate
 from services.requests import TeamOverrides, UnderwriteRequest
 
 
@@ -104,8 +105,12 @@ def has_underwrite(fixture: dict[str, Any]) -> bool:
     return "underwrite" in fixture
 
 
-def deal_from_fixture(fixture: dict[str, Any]) -> Deal:
-    """Normalize the entry payload into an unpersisted ``deals`` row, overrides applied."""
+def deal_from_fixture(fixture: dict[str, Any], config: Config) -> Deal:
+    """Normalize the entry payload into an unpersisted ``deals`` row, overrides applied.
+
+    Populated with the SPEC §8.1 defaults exactly as ``services.create_deal`` populates a
+    stored one, so the CLI prices a fixture the way the queue prices the same deal.
+    """
     if "web_entry" in fixture:
         payload = fixture["web_entry"]
         record = normalize(
@@ -120,20 +125,21 @@ def deal_from_fixture(fixture: dict[str, Any]) -> Deal:
             parse_team_form(TeamEntryForm(**payload)), Channel.TEAM, raw_payload=payload
         )
     deal = transient_deal(record)
+    populate(deal, config)
     if "team_overrides" in fixture:
-        apply_overrides(deal, TeamOverrides(**fixture["team_overrides"]))
+        apply_overrides(deal, TeamOverrides(**fixture["team_overrides"]), config)
     return deal
 
 
-def screen_inputs_for(fixture: dict[str, Any], deal: Deal | None) -> ScreenInputs:
+def screen_inputs_for(fixture: dict[str, Any], deal: Deal | None, config: Config) -> ScreenInputs:
     """The screen inputs, assembled from the deal when there is one."""
     if deal is not None:
-        return screen_inputs(deal)
+        return screen_inputs(deal, config=config)
     return ScreenInputs.model_validate(fixture["inputs"])
 
 
 def underwrite_inputs_for(
-    fixture: dict[str, Any], deal: Deal | None, path: Path
+    fixture: dict[str, Any], deal: Deal | None, path: Path, config: Config
 ) -> UnderwriteInputs:
     """The underwrite inputs, assembled from the deal and its request when there is one."""
     block = fixture["underwrite"]
@@ -143,15 +149,15 @@ def underwrite_inputs_for(
                 f"{path.name} is an entry fixture, so its underwrite block needs a "
                 "'request' (an UnderwriteRequest), not 'inputs'"
             )
-        return underwrite_inputs(deal, UnderwriteRequest(**block["request"]))
+        return underwrite_inputs(deal, UnderwriteRequest(**block["request"]), config=config)
     return UnderwriteInputs.model_validate(block["inputs"])
 
 
 def run_fixture(path: Path, config: Config, with_underwrite: bool) -> FixtureRun:
     """Screen the fixture, and underwrite it when asked and the block is there."""
     fixture = load_fixture(path)
-    deal = deal_from_fixture(fixture) if is_team_entry(fixture) else None
-    inputs = screen_inputs_for(fixture, deal)
+    deal = deal_from_fixture(fixture, config) if is_team_entry(fixture) else None
+    inputs = screen_inputs_for(fixture, deal, config)
     underwrite_inputs_used: UnderwriteInputs | None = None
     underwrite_result: UnderwriteResult | None = None
     if with_underwrite:
@@ -160,7 +166,7 @@ def run_fixture(path: Path, config: Config, with_underwrite: bool) -> FixtureRun
                 f"{path.name} has no 'underwrite' block: it names no closing date, term or "
                 "interest rate, and SPEC §8.1 requires all three to lay out the ledger"
             )
-        underwrite_inputs_used = underwrite_inputs_for(fixture, deal, path)
+        underwrite_inputs_used = underwrite_inputs_for(fixture, deal, path, config)
         underwrite_result = underwrite(underwrite_inputs_used, config)
     return FixtureRun(
         name=str(fixture.get("name", path.stem)),

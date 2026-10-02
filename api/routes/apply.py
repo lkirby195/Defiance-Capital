@@ -2,11 +2,12 @@
 
 Three routes and no session: ``GET /apply`` is the form, ``POST /apply`` stores it, and
 ``GET /apply/thanks`` is the one thing a borrower is ever told. A deal posted here lands in
-the queue as ``NEW`` - or ``NEEDS_INFO``, which the normalizer decides (SPEC §4.1) - with no
-screen run and nothing decided; the team runs the screen, and what it says stays on the
-team's side of the wall. The thank-you page says the team will be in touch, and never a
-verdict, a rate or an amount, because a borrower who has been told "Go" by a web page has
-been told something nobody has yet decided.
+the queue as the normalizer decides (SPEC §4.1) - ``NEEDS_INFO`` when something is still
+missing, else screened and priced on the way in (``services/autorun.py``, SPEC §4.6) on the
+config defaults and the borrower's own numbers, so the team opens it on a verdict. What it
+says stays on the team's side of the wall: the thank-you page says the team will be in
+touch, and never a verdict, a rate or an amount, because a borrower who has been told "Go"
+by a web page has been told something nobody at GLENWOOD has decided.
 
 Nothing here is behind the session cookie, which is the whole point, and so nothing here
 carries a CSRF token either: a token is bound to a signed-in user (``api/security.py``) and
@@ -52,7 +53,7 @@ from api.ratelimit import LIMITER, client_address
 from api.render import page, redirect
 from config.config import get_config
 from db.session import get_session
-from services import create_deal
+from services import auto_run, create_deal
 
 router = APIRouter(tags=["apply"])
 
@@ -145,7 +146,9 @@ def apply_submit(
     if entry is None:
         return back(problems, status.HTTP_422_UNPROCESSABLE_CONTENT)
     record = intake_record(entry, language=language, intake_source=source)
-    create_deal(session, record, actor=f"{WEB_ACTOR_PREFIX}{entry.borrower_email}")
+    deal = create_deal(session, record, actor=f"{WEB_ACTOR_PREFIX}{entry.borrower_email}")
+    # Screened and priced on arrival, as the system; the borrower is still told nothing.
+    auto_run(session, deal)
     session.commit()
     return redirect(thanks)
 

@@ -21,11 +21,9 @@ from config.config import Config, get_config
 from db.models import Deal
 from engine.calc.exit import flip_default, infer_exit, rental_default
 from schema.dates import Term
-from schema.labels import enum_label
 from schema.models import (
     AMOUNT_COURT_FLAGS,
     DATED_COURT_FLAGS,
-    SPLIT_PRODUCTS,
     BorrowerInputs,
     CourtFlag,
     CourtRecordInputs,
@@ -42,6 +40,7 @@ from schema.models import (
     UnderwriteInputs,
     ValueSource,
 )
+from services.defaults import default_loan_split
 from services.enrichment import NO_ADAPTER_VALUES, AdapterValues
 from services.errors import DealNotReady
 from services.requests import UnderwriteRequest
@@ -283,26 +282,40 @@ def sizing_inputs(
     core: DealCore,
     valuation: Valuation = NO_VALUATION,
     request: UnderwriteRequest | None = None,
+    config: Config | None = None,
 ) -> SizingInputs:
     """The deal numbers plus the valuation in force and where it came from.
 
     The loan split travels with the deal (SPEC §8.2) rather than being handed in at run
     time: it is a description of the loan, not a judgement made at pricing. Both halves are
-    None on a deal nobody has divided, which the screen sizes without a split and the
-    underwrite refuses (SPEC §8.1).
+    None on a deal nobody has divided and nobody has populated yet, and then the SPEC §8.2
+    default stands in - the same split ``services/defaults.py`` writes on the deal at intake
+    - so both stages size the deal the way the page says they will.
 
     The contingency and the lender's closing costs are here because both stages size on
     them (SPEC §8.2): a request may carry a newer number than the deal does, and None at the
     end of both means the config default.
     """
+    contingency = _first(request.contingency_pct if request else None, core.contingency_pct)
+    purchase, rehab = core.loan_purchase_portion, core.loan_rehab_portion
+    if purchase is None and rehab is None:
+        split = default_loan_split(
+            core.product,
+            core.loan_requested,
+            core.rehab_costs,
+            contingency,
+            config if config is not None else get_config(),
+        )
+        if split is not None:
+            purchase, rehab = split
     return SizingInputs(
         product=core.product,
         purchase_price=core.purchase_price,
         rehab_costs=core.rehab_costs,
         loan_requested=core.loan_requested,
-        loan_purchase_portion=core.loan_purchase_portion,
-        loan_rehab_portion=core.loan_rehab_portion,
-        contingency_pct=_first(request.contingency_pct if request else None, core.contingency_pct),
+        loan_purchase_portion=purchase,
+        loan_rehab_portion=rehab,
+        contingency_pct=contingency,
         closing_costs_usd=_first(
             request.closing_costs_usd if request else None, core.closing_costs_usd
         ),
@@ -323,7 +336,9 @@ def borrower_inputs(core: DealCore, request: UnderwriteRequest | None = None) ->
     )
 
 
-def screen_inputs(deal: Deal, adapters: AdapterValues = NO_ADAPTER_VALUES) -> ScreenInputs:
+def screen_inputs(
+    deal: Deal, adapters: AdapterValues = NO_ADAPTER_VALUES, config: Config | None = None
+) -> ScreenInputs:
     """Assemble ``ScreenInputs`` from the deal.  # SPEC §7
 
     No paid pulls at the screen (SPEC §7), so the valuation and the court record are
@@ -334,7 +349,7 @@ def screen_inputs(deal: Deal, adapters: AdapterValues = NO_ADAPTER_VALUES) -> Sc
     """
     core = deal_core(deal)
     return ScreenInputs(
-        deal=sizing_inputs(core, resolve_valuation(deal, adapters)),
+        deal=sizing_inputs(core, resolve_valuation(deal, adapters), config=config),
         state=core.state,
         borrower=borrower_inputs(core),
         court_records=court_records(deal, adapters),
@@ -413,7 +428,10 @@ def rental_is_on(
 
 
 def underwrite_inputs(
-    deal: Deal, request: UnderwriteRequest, adapters: AdapterValues = NO_ADAPTER_VALUES
+    deal: Deal,
+    request: UnderwriteRequest,
+    adapters: AdapterValues = NO_ADAPTER_VALUES,
+    config: Config | None = None,
 ) -> UnderwriteInputs:
     """Assemble ``UnderwriteInputs`` from the deal plus the team's §8.1 additions.
 
@@ -421,15 +439,14 @@ def underwrite_inputs(
     the engine's own default. The contingency, the closing costs, the holding costs and the
     origination fee end at None, which is the engine's signal to use the config default
     (SPEC §8.1); the monthly rent ends at None too, which leaves the Rental and Take-Back
-    analyses NOT_EVALUATED with an INFO flag rather than computed on a zero.
+    analyses NOT_EVALUATED with an INFO flag rather than computed on a zero. The interest
+    rate ends at ``interest.default_annual_rate``, and the loan split on a split product at
+    the SPEC §8.2 formula - the two stand-ins ``services/defaults.py`` writes on every deal
+    at intake, read again here so a deal stored before that existed is priced the same way.
 
-    Four things have no default and stop the run, and every one that is absent is named at
-    once rather than one per attempt:
-
-    * the closing date, the term and the interest rate, because the ledger is dated months of
-      interest and none of the three has a defensible stand-in (SPEC §8.3);
-    * the loan split on a split product, because SPEC §8.2 advances the two portions
-      differently and the draw schedule is one of them.
+    Two things have no default and stop the run, and both are named at once rather than one
+    per attempt: the closing date and the term, because the ledger is dated months of
+    interest and neither has a defensible stand-in (SPEC §8.3).
 
     The estimated sale price is not one of them any more. A deal without one is priced: the
     ledger, the economics and the Take-Back analysis do not read it, the flip reports
@@ -441,12 +458,15 @@ def underwrite_inputs(
     (SPEC §6.1), and not read off the stored screen: the underwrite runs the SPEC §7.2 tests
     again on whatever is in force now, which may be a pull that landed after Stage 1.
     """
+    settings = config if config is not None else get_config()
     core = deal_core(deal)
     valuation = resolve_valuation(deal, adapters, request)
     rent = resolve_rent(deal, adapters, request)
     closing_date = resolve_closing_date(deal, request)
     term = resolve_term(deal, request)
-    interest_rate = _first(request.interest_rate, deal.interest_rate)
+    interest_rate = _first(
+        request.interest_rate, deal.interest_rate, settings.interest.default_annual_rate
+    )
     needed: list[tuple[str, object | None, str]] = [
         ("deal.closing_date", closing_date, "month 0 of the ledger (SPEC §8.3)"),
         (
@@ -454,19 +474,12 @@ def underwrite_inputs(
             term,
             "the ledger runs closing to payoff; enter a term or a payoff date (SPEC §8.1)",
         ),
-        ("deal.interest_rate", interest_rate, "the ledger's interest rows (SPEC §8.3)"),
     ]
-    if core.product in SPLIT_PRODUCTS:
-        split_why = f"a {enum_label(core.product)} loan is advanced in two parts (SPEC §8.2)"
-        needed += [
-            ("deal.loan_purchase_portion", core.loan_purchase_portion, split_why),
-            ("deal.loan_rehab_portion", core.loan_rehab_portion, split_why),
-        ]
     missing = [f"{name} ({why})" for name, value, why in needed if value is None]
     if missing:
         raise DealNotReady(deal.id, missing)
     return UnderwriteInputs(
-        deal=sizing_inputs(core, valuation, request),
+        deal=sizing_inputs(core, valuation, request, settings),
         state=core.state,
         borrower=borrower_inputs(core, request),
         closing_date=_present(closing_date),
