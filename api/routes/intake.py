@@ -1,9 +1,9 @@
 """Intake endpoints. Phase 1: team entry only.  # SPEC §4.2
 
 One route, two content types. ``POST /intake/team`` takes the JSON body it always took, and
-the same body as an HTML form from the queue's New deal page. It is deliberately not two
-routes: the normalizer decides what is missing and what the initial status is (SPEC §4.1),
-and a second path into that would be a second place for the rule to drift.
+the same body as an HTML form from the New Deal page. It is deliberately not two routes: the
+normalizer decides what is missing and what the initial status is (SPEC §4.1), and a second
+path into that would be a second place for the rule to drift.
 
 What differs between the two is only what the caller gets back. JSON gets the
 ``IntakeRecord``, which is what a client wants; the form gets a redirect to the deal it just
@@ -11,7 +11,7 @@ created, which is what a person wants. A rejected form is re-rendered with the v
 in it and one line per problem, rather than Pydantic's own error document.
 
 The write takes an actor and records an ``audit_log`` row like every other service write, so
-a deal in the queue can be traced to whoever typed it in. A deal stored complete is then
+a deal on the Home page can be traced to whoever typed it in. A deal stored complete is then
 screened and priced on the way in (``services/autorun.py``, SPEC §4.6), recorded as the
 system's own runs, so the page it redirects to opens on a verdict.
 """
@@ -27,21 +27,11 @@ from sqlalchemy.orm import Session
 from starlette.datastructures import FormData
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from api.forms import fields, is_form_post, rows
-from api.intake_form import (
-    intake_record,
-    read_form,
-    redisplay_values,
-    submitted_holding_costs_hint,
-)
+from api.forms import fields, is_form_post
+from api.intake_form import intake_record, read_form, redisplay_values
 from api.problems import FormProblems, at_top
 from api.render import redirect
-from api.routes.queue import (
-    MATTER_FIELDS,
-    NEW_DEAL_INTRO,
-    redisplay,
-    team_entry_page,
-)
+from api.routes.queue import team_entry_page
 from api.security import PostedUser, require_csrf
 from db.models import User
 from db.session import get_session
@@ -106,23 +96,19 @@ def _from_form(
     The masks come off inside ``read_form`` and go back on for a rejection, so a person who
     typed ``$425,000`` gets ``$425,000`` back rather than the number it parsed to.
     """
-    submitted = fields(posted, skip=("matter_",))
-    matters = rows(posted, "matter", MATTER_FIELDS)
-    form, complaints = read_form(submitted, matters)
+    submitted = fields(posted)
+    form, complaints = read_form(submitted)
 
     def back(problems: FormProblems) -> HTMLResponse:
         return team_entry_page(
             request,
             user,
             action="/intake/team",
-            heading="New deal",
-            intro=NEW_DEAL_INTRO,
+            heading="New Deal",
             submit_label="Create deal",
             back_url="",
             form=redisplay_values(submitted),
-            matters=redisplay(matters),
             complaints=problems,
-            holding_costs_hint=submitted_holding_costs_hint(submitted),
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
 

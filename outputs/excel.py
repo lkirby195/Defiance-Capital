@@ -132,7 +132,12 @@ def _sheet_inputs(
         ("DEAL ECONOMICS", None, None, ""),
         ("Loan purpose", enum_label(underwrite_inputs.loan_purpose), None, ""),
         ("Loan type", enum_label(deal.product), None, "the SPEC §3 product"),
-        ("Closing date", underwrite_inputs.closing_date, DATE, "month 0 of the ledger"),
+        (
+            "Closing date",
+            underwrite_inputs.closing_date,
+            DATE,
+            "the ledger's month 0 is the last day of this month",
+        ),
         ("Term (whole months)", result.term_months, INTEGER, ""),
         ("Term (stub days)", result.term_stub_days, INTEGER, "days past the last anchor"),
         (
@@ -141,7 +146,12 @@ def _sheet_inputs(
             RATIO,
             "whole months + stub days / day-count basis; the monthly carry divides by it",
         ),
-        ("Payoff date", result.payoff_date, DATE, "closing date + term"),
+        (
+            "Payoff date",
+            result.payoff_date,
+            DATE,
+            "the last day of the month that is the closing month + the term",
+        ),
         ("Rehab months", result.rehab_months, INTEGER, "whole months only"),
         ("Purchase price", economics.purchase_price, MONEY, ""),
         ("Rehab costs", economics.rehab_costs, MONEY, "before contingency"),
@@ -189,25 +199,18 @@ def _sheet_inputs(
             if underwrite_inputs.monthly_rent_source is not None
             else "source unstated",
         ),
-        ("Asset type", enum_label(underwrite_inputs.asset_type), None, "drives the exit"),
-        ("Exit (stated)", enum_label(underwrite_inputs.stated_exit), None, "a stated exit wins"),
-        (
-            "Exit in force",
-            enum_label(result.exit.type),
-            None,
-            result.exit.exit_source.value.lower(),
-        ),
         (
             "Flip analysis",
-            "on" if result.exit.flip_analysis else "off",
+            "on" if result.analyses.flip_analysis else "off",
             None,
-            f"default for this exit: {'on' if result.exit.flip_analysis_default else 'off'}",
+            "default with a sale price: "
+            f"{'on' if result.analyses.flip_analysis_default else 'off'}",
         ),
         (
             "Rental analysis",
-            "on" if result.exit.rental_analysis else "off",
+            "on" if result.analyses.rental_analysis else "off",
             None,
-            f"default for this exit: {'on' if result.exit.rental_analysis_default else 'off'}",
+            f"default with a rent: {'on' if result.analyses.rental_analysis_default else 'off'}",
         ),
         ("Take-back analysis", "on", None, "always on; not a toggle (SPEC §8.6)"),
         (
@@ -305,10 +308,11 @@ def _sheet_return_overview(book: Workbook, result: UnderwriteResult) -> None:
         value=(
             f"{result.term_months} months"
             + (f" and {result.term_stub_days} days" if result.term_stub_days else "")
-            + f" from {result.closing_date.isoformat()} to "
-            f"{result.payoff_date.isoformat()}; money out is negative. A stub row carries the "
-            "days it covers and earns one month's interest prorated over them (SPEC §8.3). "
-            "The XIRR below is Excel's own, over column A and column I."
+            + f" on a deal closing {result.closing_date.isoformat()}: month 0 is the last "
+            f"day of that month and the payoff is {result.payoff_date.isoformat()}; money out "
+            "is negative. A stub row carries the days it covers and earns one month's "
+            "interest prorated over them (SPEC §8.3). The XIRR below is Excel's own, over "
+            "column A and column I."
         ),
     )
     at = _header(

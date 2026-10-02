@@ -27,8 +27,9 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from api.intake_form import TEAM_ENTRY_FIELDS
 from db.models import AuditLog, Borrower, Deal, IntakeSubmission, Screen
-from schema.models import AuditAction, Status, Tranche
+from schema.models import AuditAction, CourtRecordsStatus, LoanPurpose, Status, Tranche
 from services import screen_is_stale
 from tests.conftest import QueueClient, form_body, requires_db
 
@@ -174,9 +175,11 @@ def test_an_edit_records_who_did_it_and_what_moved(
     [row] = trail(db_session, AuditAction.INTAKE_EDITED)
     assert row.actor == "sam@glenwood.example"
     assert row.table_name == "deals" and row.row_id == str(stored_deal.id)
+    # the loan amount moved, so the split the deal carried no longer added up: it was reset
+    # to the §8.2 formula on the new amount (the rehab half is unchanged and is not listed)
     assert row.after == {
         "loan_requested": "175000",
-        "loan_purchase_portion": "127000",
+        "loan_purchase_portion": "127000.00",
         "borrower.email": "dana.w@example.com",
     }
     assert row.before == {
@@ -184,6 +187,45 @@ def test_an_edit_records_who_did_it_and_what_moved(
         "loan_purchase_portion": "147000.00",
         "borrower.email": "rafael@ortizbuilds.example",
     }
+    db_session.expire_all()
+    deal = db_session.get(Deal, stored_deal.id)
+    assert deal is not None and "loan_purchase_portion" in deal.defaulted_fields
+
+
+def test_an_edit_leaves_the_deal_page_s_own_columns_alone(
+    client: QueueClient,
+    db_session: Session,
+    team_entry_with_overrides: dict[str, Any],
+    deal_with_overrides: Deal,
+) -> None:
+    """The form has no box for the economics, the valuation, the rent, the toggles or the
+    court search, so an edit that could not have known them does not clear them."""
+    deal_id = deal_with_overrides.id
+    assert deal_with_overrides.estimated_sale_price_team == Decimal("200000.00")
+    assert deal_with_overrides.interest_rate == Decimal("0.13")
+    assert deal_with_overrides.court_records_status is CourtRecordsStatus.CLEAN
+    deal_with_overrides.flip_analysis = False
+    db_session.commit()
+    # exactly what the browser posts: the boxes the form renders, and nothing else
+    body = {
+        name: value
+        for name, value in form_body(team_entry_with_overrides, loan_purpose="REFINANCE").items()
+        if name in TEAM_ENTRY_FIELDS
+    }
+
+    assert edit(client, deal_id, body).status_code == 303
+
+    db_session.expire_all()
+    deal = db_session.get(Deal, deal_id)
+    assert deal is not None
+    assert deal.loan_purpose is LoanPurpose.REFINANCE
+    assert deal.estimated_sale_price_team == Decimal("200000.00")
+    assert deal.monthly_rent == Decimal("1800.00")
+    assert deal.interest_rate == Decimal("0.13")
+    assert deal.flip_analysis is False
+    assert deal.court_records_status is CourtRecordsStatus.CLEAN
+    [row] = trail(db_session, AuditAction.INTAKE_EDITED)
+    assert set(row.after or {}) == {"loan_purpose"}
 
 
 def test_completing_an_intake_records_the_status_move(
@@ -306,7 +348,7 @@ def test_the_edit_form_asks_for_the_same_required_boxes(
     response = edit(client, stored_deal.id, body)
 
     assert response.status_code == 422
-    assert "A term is required" in response.text
+    assert "Term (months) is required." in response.text
     db_session.expire_all()
     assert len(list(db_session.scalars(select(IntakeSubmission)))) == 1
     assert trail(db_session, AuditAction.INTAKE_EDITED) == []

@@ -9,6 +9,13 @@ The statuses each action runs from are named below rather than left implicit, be
 button did nothing" is the worst possible answer: ``ActionNotAllowed`` says what the deal is
 and what the action applies to.
 
+The three controls on every Home row are here too (SPEC §4.6). **Progress** advances a deal
+to the next status - a screened deal into review, exactly as before - and, on a paused deal,
+returns it to the status it was paused from. **Pause** sets a live deal aside: nothing
+automatic runs on it until Progress brings it back, and the audit row that paused it is
+where its prior status is kept, so there is no second column to keep in step with the first.
+**Kill** marks a deal dead, with the confirmation page in front of it (``api/routes/queue``).
+
 The one asymmetry worth stating: the automatic Decline stops at UNDERWRITING (SPEC §4.6) so
 that a re-screen cannot yank a deal out from under the person working it. A person declining
 a deal by hand *is* that person, so the manual decline runs from every status still live.
@@ -31,17 +38,25 @@ from schema.models import (
     Status,
     validate_loan_split,
 )
-from services.audit import DEALS, jsonable, record_audit
+from services.audit import DEALS, jsonable, last_action_at, record_audit
 from services.defaults import populate
 from services.errors import ActionNotAllowed, ReasonRequired
 from services.requests import TeamOverrides
 from services.runner import load_deal
 
+# The two closed statuses: a deal that is over, one way or the other.
+CLOSED: frozenset[Status] = frozenset({Status.DECLINED, Status.DEAD})
 # A screened deal is the one a person pulls into review; the screen is Stage 1 and review is
 # what happens to a deal that cleared it.
 ADVANCE_TO_REVIEW_FROM: frozenset[Status] = frozenset({Status.SCREENED})
+# Progress is the advance above, plus the way back off a pause.
+PROGRESS_FROM: frozenset[Status] = ADVANCE_TO_REVIEW_FROM | {Status.PAUSED}
+# A live deal can be set aside; a paused or closed one already is.
+PAUSE_FROM: frozenset[Status] = frozenset(Status) - CLOSED - {Status.PAUSED}
+# Only a paused deal is resumed.
+RESUME_FROM: frozenset[Status] = frozenset({Status.PAUSED})
 # Every status that is still live. A deal already closed out is not closed out again.
-DECLINE_FROM: frozenset[Status] = frozenset(Status) - {Status.DECLINED, Status.DEAD}
+DECLINE_FROM: frozenset[Status] = frozenset(Status) - CLOSED
 # A deal can stop existing from anywhere, including after a decline: the borrower going
 # silent on a deal GLENWOOD had already passed on is still worth recording as dead.
 MARK_DEAD_FROM: frozenset[Status] = frozenset(Status) - {Status.DEAD}
@@ -63,8 +78,6 @@ OVERRIDE_FIELDS: tuple[str, ...] = (
     "origination_fee_pct",
     "estimated_sale_price_team",
     "monthly_rent",
-    "asset_type",
-    "stated_exit",
     "flip_analysis",
     "rental_analysis",
     "court_records_status",
@@ -126,6 +139,61 @@ def advance_to_review(session: Session, deal_id: UUID, *, actor: str) -> Deal:
     )
 
 
+def pause(session: Session, deal_id: UUID, *, actor: str) -> Deal:
+    """Set a live deal aside.  # SPEC §4.6
+
+    The status it had is on the audit row's ``before``, which is what ``resume`` reads; no
+    column on the deal says it, so there is nothing to fall out of step. A paused deal keeps
+    its runs and its intake and is not run on automatically until it is brought back.
+    """
+    deal = load_deal(session, deal_id)
+    _check(deal, "paused", PAUSE_FROM)
+    return _move(session, deal, to=Status.PAUSED, actor=actor, action=AuditAction.PAUSED)
+
+
+def paused_from(session: Session, deal: Deal) -> Status:
+    """Where a paused deal goes back to: the status on the row that paused it.  # SPEC §4.6
+
+    A paused deal with no such row got there some other way (a script, a migration); it
+    lands where a re-opened deal does - SCREENED if it has ever been screened, else NEW -
+    rather than being stuck.
+    """
+    row = last_action_at(session, DEALS, deal.id, AuditAction.PAUSED)
+    before = (row.before or {}).get("status") if row is not None else None
+    if isinstance(before, str) and before in Status.__members__.values():
+        prior = Status(before)
+        if prior is not Status.PAUSED:
+            return prior
+    return reopen_status(session, deal)
+
+
+def resume(session: Session, deal_id: UUID, *, actor: str) -> Deal:
+    """PAUSED -> the status it was paused from.  # SPEC §4.6"""
+    deal = load_deal(session, deal_id)
+    _check(deal, "resumed", RESUME_FROM)
+    return _move(
+        session,
+        deal,
+        to=paused_from(session, deal),
+        actor=actor,
+        action=AuditAction.RESUMED,
+    )
+
+
+def progress(session: Session, deal_id: UUID, *, actor: str) -> Deal:
+    """The Progress control: the next status, or the prior one off a pause.  # SPEC §4.6
+
+    One button for a person, two moves underneath: a paused deal is resumed, anything else
+    is advanced to review. The refusal names ``PROGRESS_FROM``, so a deal that is neither
+    screened nor paused is told both things it could have been.
+    """
+    deal = load_deal(session, deal_id)
+    if deal.status is Status.PAUSED:
+        return resume(session, deal_id, actor=actor)
+    _check(deal, "progressed", PROGRESS_FROM)
+    return advance_to_review(session, deal_id, actor=actor)
+
+
 def decline(session: Session, deal_id: UUID, *, actor: str, reason: str) -> Deal:
     """Close the deal out by hand, with the reason on the record.  # SPEC §4.6
 
@@ -146,14 +214,16 @@ def decline(session: Session, deal_id: UUID, *, actor: str, reason: str) -> Deal
 
 
 def mark_dead(session: Session, deal_id: UUID, *, actor: str, reason: str | None = None) -> Deal:
-    """Mark the deal dead: it stopped, for a reason that is not a credit decision.
+    """Kill the deal: it stopped, for a reason that is not a credit decision.  # SPEC §4.6
 
     A reason is welcome and not required. A decline is GLENWOOD's judgement and has to be
     explainable; dead is usually the borrower going quiet, and forcing a sentence out of the
-    team for that would only produce a column full of "no response".
+    team for that would only produce a column full of "no response". The confirmation in
+    front of this is the page's (``api/routes/queue.py``), not the service's: a script that
+    calls this has already decided.
     """
     deal = load_deal(session, deal_id)
-    _check(deal, "marked dead", MARK_DEAD_FROM)
+    _check(deal, "killed", MARK_DEAD_FROM)
     text = (reason or "").strip() or None
     return _move(
         session,
@@ -336,25 +406,21 @@ def _apply_split(
 def _apply_term(
     deal: Deal, overrides: TeamOverrides, before: dict[str, Any], after: dict[str, Any]
 ) -> None:
-    """Set the term the deal is priced on, however the team said it.  # SPEC §8.1
+    """Set the term the deal is priced on.  # SPEC §8.1
 
-    The block takes a term in months or a payoff date and ``TeamOverrides`` splits the second
-    into whole months and the days left over, so there is one term and two columns holding
-    it. The two move together: a payoff date entered on a deal that had a whole-month term
-    clears the one and sets the other, and a term typed in months clears the stub, because a
-    term said in months has none. The bucket does not come into it: it is the borrower's
-    answer to "how long do you need the loan?", it seeded this at intake, and a deal repriced
-    to 7 months on a 6-month ask is a real thing rather than a row to reject.
+    The block takes a term in months and nothing else: the payoff date is derived - the end
+    of the month that is the closing month plus the term - and is shown read-only beside the
+    box. A term typed in months clears any stub the deal carried, because a term said in
+    months has none; nothing in the queue writes a stub today (``schema/dates.py``). The
+    bucket does not come into it: it is the borrower's answer to "how long do you need the
+    loan?", it seeded this at intake, and a deal repriced to 7 months on a 6-month ask is a
+    real thing rather than a row to reject.
 
     This block is the only place in the queue a team member can set one: the Run underwrite
     button posts no form of its own.
     """
-    wanted = overrides.requested_term
-    months = wanted.full_months if wanted is not None else None
-    # NULL rather than 0 for "no stub": a whole-month term has no days on the end of it, and
-    # a column that says so two ways is a column two readers disagree about.
-    stub = (wanted.stub_days or None) if wanted is not None else None
-    for field, value in (("term_months", months), ("term_stub_days", stub)):
+    months = overrides.term_months
+    for field, value in (("term_months", months), ("term_stub_days", None)):
         if getattr(deal, field) == value:
             continue
         before[field] = getattr(deal, field)

@@ -24,7 +24,6 @@
   },
   "team_overrides": {
     "product": "WHOLETAIL",
-    "asset_type": "SFR",
     "closing_date": "2027-02-01",
     "term_months": 6,
     "interest_rate": "0.13",
@@ -70,7 +69,7 @@
   "underwrite": {
     "request": {},
     "expected": {
-      "payoff_date": "2027-08-01",
+      "payoff_date": "2027-08-31",
       "rehab_months": 3,
       "commitment": "120000.00",
       "funded_at_close": "120000.00",
@@ -99,7 +98,7 @@
         "total_fees": "2400.00",
         "total_payoff": "120000.00",
         "total_profit": "10200.00",
-        "irr": "0.18599010"
+        "irr": "0.18263021"
       },
       "flip": {
         "status": "EVALUATED",

@@ -18,7 +18,7 @@ uv run glenwood users create --name "Your Name" --email you@example.com
 uv run uvicorn api.main:app --reload
 ```
 
-Then <http://127.0.0.1:8000/queue>, which will send you to `/login`. The borrower's own form
+Then <http://127.0.0.1:8000/queue> — Home — which will send you to `/login`. The borrower's own form
 is at <http://127.0.0.1:8000/apply> and needs no sign-in; `/apply?lang=es` is the Spanish
 page and `/apply?src=<slug>` records where the link was posted (a flyer, a partner, a
 campaign) on the deal as its source.
@@ -41,6 +41,20 @@ uv run glenwood users deactivate --email sam@example.com
 ```
 
 Omit `--password` and it prompts twice, which keeps the password out of your shell history.
+
+### The one-time cleanup
+
+```bash
+uv run glenwood deals purge --all --confirm
+```
+
+Deletes **every** deal and everything hanging off it — borrowers, entities, properties,
+submissions, screens, underwrites, enrichment runs, documents, `ma_sync` rows and the audit log
+— and leaves the `users` table alone. It is for wiping the test deals out of a database before
+the real ones arrive, and for nothing else: there is no undo and it takes no backup. It
+refuses to run without both flags on the line, and it opens the database only once they are.
+What it leaves behind, apart from the users, is one `audit_log` row (`DEALS_PURGED`) carrying
+the count of rows it deleted from each table.
 
 ### The checks
 
@@ -90,16 +104,20 @@ it.
 to the front of `startCommand`; it is idempotent, but it then runs on every boot and two
 instances can race it, so treat that as a stopgap.
 
-**Migrations `0010` and `0011` delete rows.** The Phase 5 underwrite (SPEC §8, engine
+**Migrations `0010`, `0011` and `0016` delete rows.** The Phase 5 underwrite (SPEC §8, engine
 `1.0.0`) shares no result shape with the one before it, and no ledger could be reconstructed
 from a row that never had one, so `0010` deletes every `screens` and `underwrites` row written
 before it. `0011` does the same for engine `1.1.0`, which dropped `ltv_basis`,
 `as_is_value_source`, `MetricCheck.basis` and the `LTV_AS_IS` / `LTARV` metrics from the
 result (SPEC §7.4): a stored row carrying any of them cannot be rebuilt into a model that
-forbids extras, and the queue list rebuilds every deal's latest run, so one such row would
-take down the page for every deal. The deals themselves keep their intake, their team entry,
-their status and their whole audit trail; re-screening and re-pricing one is two buttons. Take
-a dump first if the deployed database holds runs anybody wants to read again.
+forbids extras, and one such row would take down the deal page. `0016` deletes every
+`underwrites` row for engine `1.4.0`, which anchors the ledger to month ends (SPEC §8.3) and
+replaces the result's `exit` with `analyses`: a stored ledger no longer says what the engine
+would, and its shape no longer loads. It also drops `deals.asset_type` and
+`deals.stated_exit` and adds `PAUSED` to the status enum. The deals themselves keep their
+intake, their team entry, their screens, their status and their whole audit trail;
+re-pricing one is a button, and every team edit re-prices on its own. Take a dump first if the
+deployed database holds runs anybody wants to read again.
 
 **`0011` also rewrites every phone number.** They are stored as digits now
 (`5551234567`, shown and typed `555-123-4567`), where they were E.164 (`+15551234567`), and
@@ -137,8 +155,8 @@ Check it landed, then sign in at `https://<service>.onrender.com/login`:
 DATABASE_URL='…' uv run glenwood users list
 ```
 
-`glenwood users` is the only command that touches a database; `glenwood run` and
-`glenwood export` read a fixture off disk and never open one.
+`glenwood users` and `glenwood deals purge` are the only commands that touch a database;
+`glenwood run` and `glenwood export` read a fixture off disk and never open one.
 
 ### Rotating SESSION_SECRET
 

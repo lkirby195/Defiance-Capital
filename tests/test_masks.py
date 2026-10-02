@@ -51,7 +51,7 @@ from schema.masks import (
     phone_digits,
     phone_display,
 )
-from schema.models import AssetType, LoanPurpose, Product, StatedExit
+from schema.models import LoanPurpose, Product
 from tests.conftest import QueueClient, requires_db
 
 CONFIG = Config.load()
@@ -186,11 +186,11 @@ def test_all_five_defaults_are_flat_config_numbers_on_a_blank_form() -> None:
     """Five flat config numbers, the rate among them (SPEC §8.1); nothing on the deal is needed."""
     assert deal_defaults(None, CONFIG)["holding_costs_pct_of_cost"] == D("0.02")
     assert deal_defaults(None, CONFIG)["interest_rate"] == D("0.12")
-    assert blank_form_values(CONFIG)["holding_costs_pct_of_cost"] == "2%"
-    assert blank_form_values(CONFIG)["contingency_pct"] == "0%"
-    assert blank_form_values(CONFIG)["origination_fee_pct"] == "2%"
-    assert blank_form_values(CONFIG)["closing_costs_usd"] == "$1,000"
-    assert blank_form_values(CONFIG)["interest_rate"] == "12%"
+    # the blank team form has no box for any of them: they populate when the deal is stored
+    # and are edited on the deal page (SPEC §8.1)
+    for name in ("holding_costs_pct_of_cost", "contingency_pct", "interest_rate"):
+        assert name not in blank_form_values()
+    assert blank_form_values()["purchase_price"] == ""
     # the split's default needs a deal (SPEC §8.2) and is not on a blank form
     assert "loan_purchase_portion" not in deal_defaults(None, CONFIG)
 
@@ -227,7 +227,7 @@ COMPLETE: dict[str, str] = {
 
 
 def test_the_form_reads_a_masked_submission_into_what_the_deal_stores() -> None:
-    form, complaints = read_form(COMPLETE, [], CONFIG)
+    form, complaints = read_form(COMPLETE)
     assert not complaints, complaints.lines
     assert form is not None
     assert form.purchase_price == D("200000")
@@ -249,10 +249,7 @@ def test_the_form_reads_a_masked_submission_into_what_the_deal_stores() -> None:
         (Product.WHOLETAIL, "Wholetail"),
         (LoanPurpose.CASH_OUT, "Cash Out"),
         (LoanPurpose.PURCHASE, "Purchase"),
-        (AssetType.SFR, "SFR"),
-        (AssetType.UNITS_2_4, "Units 2–4"),
-        (AssetType.UNITS_5_PLUS, "Units 5+"),
-        (StatedExit.UNKNOWN, "Unknown"),
+        (LoanPurpose.REFINANCE, "Refinance"),
         (None, "—"),
     ],
 )
@@ -262,7 +259,7 @@ def test_an_enum_a_person_reads_is_title_case_with_spaces(code: Any, label: str)
 
 def test_the_stored_value_is_untouched_by_any_of_it() -> None:
     assert Product.SPLIT_DRAW.value == "SPLIT_DRAW"
-    assert AssetType.UNITS_2_4.value == "UNITS_2_4"
+    assert LoanPurpose.CASH_OUT.value == "CASH_OUT"
 
 
 def test_every_product_has_a_one_line_definition() -> None:
@@ -280,29 +277,37 @@ def test_every_product_has_a_one_line_definition() -> None:
 def test_the_page_tags_a_defaulted_box_and_offers_a_reset(
     client: QueueClient, stored_deal: Deal
 ) -> None:
-    """The tag says "this is the config's number"; the reset link puts it back."""
-    body = client.get("/queue/new").text
+    """The tag says "this is the config's number"; the reset link puts it back.
+
+    The defaulted boxes live on the deal page's override block; the team form has none of
+    them (SPEC §8.1), so it carries no tag and no reset link at all.
+    """
+    form = client.get("/queue/new").text
+    assert re.search(r'data-default-tag="[a-z_]+"', form) is None
+    assert re.search(r'data-reset="[a-z_]+"', form) is None
+    body = client.get(f"/queue/deals/{stored_deal.id}").text
     for name in ("contingency_pct", "origination_fee_pct", "closing_costs_usd", "interest_rate"):
         assert f'data-default-tag="{name}"' in body, name
         assert re.search(rf'id="{name}"[^>]*data-default="[^"]+"', body), name
         assert f'data-reset="{name}"' in body, name
     # a box with no default carries neither
-    assert 'data-default-tag="purchase_price"' not in body
-    assert 'data-reset="purchase_price"' not in body
-    # ...and the same treatment on the deal page's override block
-    deal_page = client.get(f"/queue/deals/{stored_deal.id}").text
-    assert 'data-default-tag="contingency_pct"' in deal_page
-    assert 'data-reset="contingency_pct"' in deal_page
+    assert 'data-default-tag="estimated_sale_price_team"' not in body
+    assert 'data-reset="estimated_sale_price_team"' not in body
 
 
 @requires_db
-def test_the_masked_boxes_are_the_ones_the_script_formats(client: QueueClient) -> None:
+def test_the_masked_boxes_are_the_ones_the_script_formats(
+    client: QueueClient, stored_deal: Deal
+) -> None:
     body = client.get("/queue/new").text
-    for name in ("purchase_price", "loan_requested", "closing_costs_usd"):
+    for name in ("purchase_price", "rehab_costs", "loan_requested"):
         assert re.search(rf'id="{name}"[^>]*data-mask="money"', body), name
-    for name in ("interest_rate", "contingency_pct", "origination_fee_pct"):
-        assert re.search(rf'id="{name}"[^>]*data-mask="pct"', body), name
     assert re.search(r'id="borrower_phone"[^>]*data-mask="phone"', body)
+    # the percent boxes are the deal page's (SPEC §8.1)
+    deal_page = client.get(f"/queue/deals/{stored_deal.id}").text
+    assert re.search(r'id="closing_costs_usd"[^>]*data-mask="money"', deal_page)
+    for name in ("interest_rate", "contingency_pct", "origination_fee_pct"):
+        assert re.search(rf'id="{name}"[^>]*data-mask="pct"', deal_page), name
     # the script is a convenience, not a control: the server parses either shape
     assert "Nothing here validates, fetches, or decides anything." not in body
 

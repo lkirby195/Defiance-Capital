@@ -9,11 +9,14 @@ repository is also used by the CLI, which has no database and no actor: a fixtur
 the same rows in memory and must not need a name to do it.
 
 ``update_intake`` is the second write: the team got the borrower back on the phone and now
-has the rehab budget. It re-applies the whole intake rather than patching a field, because
-that is what the form posts and because ``missing_fields`` and the status are computed from
-the record as a whole (``intake/normalize.py``). Nothing a reader would want back is
-overwritten - every submission is kept on ``intake_submissions``, immutable, and the audit
-row names the columns that moved.
+has the rehab budget. It re-applies the intake form's own columns rather than patching a
+field, because that is what the form posts and because ``missing_fields`` and the status are
+computed from the record as a whole (``intake/normalize.py``). Only the columns the form asks
+for are touched (``db/repository.form_columns``): the §8.1 economics, the valuation, the
+rent, the toggles and the court search are edited on the deal page and have no box on the
+form, so an edit that could not have known them leaves them exactly as they were. Nothing a
+reader would want back is overwritten - every submission is kept on ``intake_submissions``,
+immutable, and the audit row names the columns that moved.
 
 Both writes populate the deal's SPEC §8.1 defaults (``services/defaults.py``) before the
 audit row is written, so a deal is never stored with a blank the engine would have read a
@@ -40,9 +43,9 @@ from db.repository import (
     create_deal_from_intake,
     find_or_create_borrower,
     find_or_create_property,
-    intake_columns,
+    form_columns,
 )
-from schema.models import AuditAction, IntakeRecord, Status
+from schema.models import SPLIT_PRODUCTS, AuditAction, IntakeRecord, Status
 from services.audit import DEALS, jsonable, record_audit
 from services.defaults import populate
 from services.errors import ActionNotAllowed
@@ -115,8 +118,10 @@ def update_intake(
 
     before: dict[str, Any] = {}
     after: dict[str, Any] = {}
-    columns = intake_columns(record)
-    original = {column: getattr(deal, column) for column in columns}
+    columns = form_columns(record)
+    # ...plus the split, which the edit may reset and populate may fill back in.
+    watched = (*columns, "loan_purchase_portion", "loan_rehab_portion")
+    original = {column: getattr(deal, column) for column in watched}
     for column, value in columns.items():
         if getattr(deal, column) == value:
             continue
@@ -125,6 +130,7 @@ def update_intake(
         setattr(deal, column, value)
 
     _relink(session, deal, record, before, after)
+    _reconcile_split(deal, before, after)
     _apply_completeness(deal, record, before, after)
     # A box the form left blank on a defaulted economic is the default again, not nothing -
     # and a column that ends where it started is not a change, so it leaves the audit row.
@@ -149,6 +155,32 @@ def update_intake(
         after=after,
     )
     return deal
+
+
+def _reconcile_split(deal: Deal, before: dict[str, Any], after: dict[str, Any]) -> None:
+    """Clear a loan split the edit has made incoherent, so the default can stand in.  # SPEC §8.2
+
+    The split has no box on the form, so an edit cannot restate it - but an edit can change
+    the loan amount it divides, or the rehab costs the product is inferred from. A split that
+    no longer adds up to the loan amount, or sits on a product that has no split, is cleared
+    here and ``populate`` fills the §8.2 formula split back in on a split product, tagged as
+    the default it is; the audit row carries both halves of that.
+    """
+    purchase, rehab = deal.loan_purchase_portion, deal.loan_rehab_portion
+    if purchase is None and rehab is None:
+        return
+    coherent = (
+        deal.product in SPLIT_PRODUCTS
+        and purchase is not None
+        and rehab is not None
+        and purchase + rehab == deal.loan_requested
+    )
+    if coherent:
+        return
+    for column in ("loan_purchase_portion", "loan_rehab_portion"):
+        before.setdefault(column, jsonable(getattr(deal, column)))
+        after[column] = None
+        setattr(deal, column, None)
 
 
 def _relink(

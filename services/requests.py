@@ -16,8 +16,8 @@ engine default:
     contingency / closing costs   request -> deal -> the config default (§8.1)
     holding costs / origination   request -> deal -> the config default (§8.1)
     monthly_rent                  request -> deal.monthly_rent -> no DSCR at all (§8.5, §8.6)
-    flip / rental toggles         request -> deal -> what the §3 exit implies (§8.1)
-    loan purpose, asset type, exit   request -> deal -> unknown (§3)
+    flip / rental toggles         request -> deal -> on when the price / the rent is there (§8.1)
+    loan purpose                  request -> deal -> unstated
 
 Three have no third step and stop the run: the closing date, the term and the interest rate.
 The ledger is dated months of interest (SPEC §8.3) and there is no defensible stand-in for
@@ -32,9 +32,11 @@ with the Rental and Take-Back analyses NOT_EVALUATED and an INFO flag saying so.
 The loan split is on ``TeamOverrides`` and not on ``UnderwriteRequest``: it is two columns
 on the deal (SPEC §8.2), entered on the team-entry form or the override block and defaulted
 by the §8.2 formula when neither has, and a run reads it off the deal rather than being
-handed one. The payoff date is not a column anywhere: it is the closing date plus the term,
-whole months and stub days together (``schema/dates.py``), and both models below take a
-payoff date as an alternative way of saying that term.
+handed one. The payoff date is not a column anywhere: it is the end of the month that is the
+closing month plus the term, plus the stub days (``schema/dates.py``). ``UnderwriteRequest``
+still takes a payoff date - the JSON route is where an actual payoff will one day be entered,
+and the stub arithmetic stays in the engine for it - and ``TeamOverrides`` does not: the
+override block takes the term in months and shows the payoff date it derives, read-only.
 
 An adapter value, when one exists, wins over every step of that (``services/enrichment.py``).
 """
@@ -48,12 +50,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from schema.dates import Term, term_from_dates
 from schema.models import (
-    AssetType,
     CourtRecordsStatus,
     LoanPurpose,
     Product,
     RepeatBorrowerStatus,
-    StatedExit,
     TeamCourtRecord,
     validate_court_records,
     validate_loan_split,
@@ -91,8 +91,6 @@ class UnderwriteRequest(BaseModel):
     flip_analysis: bool | None = None
     rental_analysis: bool | None = None
     loan_purpose: LoanPurpose | None = None
-    asset_type: AssetType | None = None
-    stated_exit: StatedExit | None = None
 
     @model_validator(mode="after")
     def _term_and_payoff_agree(self) -> UnderwriteRequest:
@@ -129,14 +127,13 @@ class TeamOverrides(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # Overview (SPEC §8.1)
+    # Deal economics (SPEC §8.1): the loan's own terms. The closing date is any date; the
+    # ledger anchors to the end of its month. The term is months, and the payoff date is
+    # derived from the two and shown read-only (``schema/dates.py``).
     loan_purpose: LoanPurpose | None = None
     product: Product | None = None
     closing_date: date | None = None
-    # Enter either; the other derives. ``payoff_date`` is never stored as a date
-    # (``schema/dates.py``): it is the term's whole months plus its stub days.
     term_months: int | None = Field(default=None, ge=1, le=60)
-    payoff_date: date | None = None
     # Deal economics (SPEC §8.1). Blank means the config default, except the rate, which has
     # none and without which the deal cannot be priced at all.
     interest_rate: Decimal | None = Field(default=None, ge=0, le=1)
@@ -157,10 +154,8 @@ class TeamOverrides(BaseModel):
         default=None, gt=0, max_digits=14, decimal_places=2
     )
     monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
-    # Structure (SPEC §3): asset type and the stated exit drive the exit inference, which
-    # defaults the two analysis toggles beside them.
-    asset_type: AssetType | None = None
-    stated_exit: StatedExit | None = None
+    # The two analysis toggles (SPEC §8.1): blank is the default - on when the sale price,
+    # or the rent, is on the deal - and On / Off is a person overriding it.
     flip_analysis: bool | None = None
     rental_analysis: bool | None = None
     # The team's own court search (SPEC §7.2), one typed matter per entry.
@@ -182,17 +177,7 @@ class TeamOverrides(BaseModel):
         validate_loan_split(None, None, self.loan_purchase_portion, self.loan_rehab_portion)
         return self
 
-    @model_validator(mode="after")
-    def _term_and_payoff_agree(self) -> TeamOverrides:
-        """A payoff date that contradicts the term beside it says so at the door."""
-        _ = self.requested_term
-        return self
-
     @property
     def requested_term(self) -> Term | None:
-        """The term this block names: the one typed, else the payoff date's.  # SPEC §8.1
-
-        A payoff date that falls between two monthly anchors gives a term with a stub, which
-        is a term the ledger prices like any other (SPEC §8.3).
-        """
-        return term_from_dates(self.closing_date, self.term_months, self.payoff_date)
+        """The term this block names, whole months and no stub; None when the box was blank."""
+        return None if self.term_months is None else Term(self.term_months, 0)

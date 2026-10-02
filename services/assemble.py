@@ -19,7 +19,7 @@ from typing import NamedTuple
 
 from config.config import Config, get_config
 from db.models import Deal
-from engine.calc.exit import flip_default, infer_exit, rental_default
+from engine.calc.analyses import flip_default, rental_default
 from schema.dates import Term
 from schema.models import (
     AMOUNT_COURT_FLAGS,
@@ -33,7 +33,6 @@ from schema.models import (
     ScreenInputs,
     SizingInputs,
     State,
-    StatedExit,
     SubjectPropertyLien,
     TeamCourtRecord,
     Tranche,
@@ -377,45 +376,25 @@ def resolve_term(deal: Deal, request: UnderwriteRequest) -> Term | None:
     return Term(deal.term_months, deal.term_stub_days or 0)
 
 
-def resolved_exit(
-    deal: Deal, request: UnderwriteRequest, term_months: int | None, config: Config | None = None
-) -> StatedExit:
-    """The §3 exit this deal would be underwritten under, as far as it can be known here.
-
-    UNKNOWN when there is no term or no product yet, which is exactly what the inference
-    would say about a deal it cannot place. The engine runs the same ``infer_exit``; this is
-    here so the readiness checklist and the assembly's own refusal agree with it in advance
-    about which analyses are on (SPEC §8.1).
-    """
-    if term_months is None or deal.product is None:
-        return StatedExit.UNKNOWN
-    exit_type, _ = infer_exit(
-        _first(request.stated_exit, deal.stated_exit) or StatedExit.UNKNOWN,
-        _first(request.asset_type, deal.asset_type),
-        term_months,
-        deal.product,
-        config if config is not None else get_config(),
-    )
-    return exit_type
-
-
 def flip_is_on(
-    deal: Deal, request: UnderwriteRequest, term_months: int | None, config: Config | None = None
+    deal: Deal, request: UnderwriteRequest, adapters: AdapterValues = NO_ADAPTER_VALUES
 ) -> bool:
-    """Whether the Flip analysis would run, which decides if a sale price is required.
+    """Whether the Flip analysis would run.  # SPEC §8.1
 
-    # SPEC §8.1. A toggle set by hand wins; otherwise the §3 exit decides.
+    A toggle set by hand wins; otherwise it is on exactly when there is a sale price in force
+    to sell at - the same rule the engine applies (``engine/calc/analyses.py``), read here so
+    the checklist says in advance what the run will do.
     """
     toggle = _first(request.flip_analysis, deal.flip_analysis)
     if toggle is not None:
         return toggle
-    return flip_default(resolved_exit(deal, request, term_months, config))
+    return flip_default(resolve_valuation(deal, adapters, request).estimated_sale_price)
 
 
 def rental_is_on(
-    deal: Deal, request: UnderwriteRequest, term_months: int | None, config: Config | None = None
+    deal: Deal, request: UnderwriteRequest, adapters: AdapterValues = NO_ADAPTER_VALUES
 ) -> bool:
-    """Whether the Rental analysis would run.  # SPEC §8.1
+    """Whether the Rental analysis would run: by hand, else when a rent is in force.  # SPEC §8.1
 
     Nothing is required by it either way - the Take-Back analysis needs the same rent and
     runs regardless - so this is for the checklist to report rather than for the button.
@@ -423,8 +402,7 @@ def rental_is_on(
     toggle = _first(request.rental_analysis, deal.rental_analysis)
     if toggle is not None:
         return toggle
-    rent = resolve_rent(deal, request=request).monthly_rent
-    return rental_default(resolved_exit(deal, request, term_months, config), rent)
+    return rental_default(resolve_rent(deal, adapters, request).monthly_rent)
 
 
 def underwrite_inputs(
@@ -468,12 +446,12 @@ def underwrite_inputs(
         request.interest_rate, deal.interest_rate, settings.interest.default_annual_rate
     )
     needed: list[tuple[str, object | None, str]] = [
-        ("deal.closing_date", closing_date, "month 0 of the ledger (SPEC §8.3)"),
         (
-            "deal.term_months",
-            term,
-            "the ledger runs closing to payoff; enter a term or a payoff date (SPEC §8.1)",
+            "deal.closing_date",
+            closing_date,
+            "the ledger's month 0 is the end of the closing month (SPEC §8.3)",
         ),
+        ("deal.term_months", term, "the ledger runs closing to payoff (SPEC §8.1)"),
     ]
     missing = [f"{name} ({why})" for name, value, why in needed if value is None]
     if missing:
@@ -495,7 +473,5 @@ def underwrite_inputs(
         flip_analysis=_first(request.flip_analysis, deal.flip_analysis),
         rental_analysis=_first(request.rental_analysis, deal.rental_analysis),
         loan_purpose=_first(request.loan_purpose, deal.loan_purpose),
-        asset_type=_first(request.asset_type, deal.asset_type),
-        stated_exit=_first(request.stated_exit, deal.stated_exit) or StatedExit.UNKNOWN,
         court_records=court_records(deal, adapters),
     )

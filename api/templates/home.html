@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% import "_csrf.html" as csrf %}
+{% block title %}Home — GLENWOOD{% endblock %}
+
+{# Four sections, always in this order and always present (services/home.py): the
+   borrower's own submissions, the deals the team entered, the ones on pause, the dead. A
+   row is who, where, how much, which product, the latest verdict and IRR, where it came
+   from and when it last moved, then the three controls. Each control is a plain form post
+   carrying ``return_to=home`` so the action lands back here; Kill is a link to its
+   confirmation page rather than a one-click post. A control the deal's status rules out is
+   off, with the reason on its hover. #}
+
+{% macro control_button(entry, action, label, live, why) %}
+  <form method="post" action="/queue/deals/{{ entry.deal.id }}/{{ action }}">
+    {{ csrf.field(csrf_token) }}
+    <input type="hidden" name="return_to" value="home">
+    <button class="quiet small" type="submit" title="{{ why }}" {% if not live %}disabled{% endif %}>{{ label }}</button>
+  </form>
+{% endmacro %}
+
+{% macro deal_row(entry) %}
+  {% set deal = entry.deal %}
+  <tr>
+    <td>{{ deal.borrower.name if deal.borrower and deal.borrower.name else "—" }}</td>
+    <td>
+      <a href="/queue/deals/{{ deal.id }}">
+        {% if deal.property and deal.property.address_raw %}{{ deal.property.address_raw }}
+        {% elif deal.property and deal.property.listing_url %}{{ deal.property.listing_url }}
+        {% else %}(no address yet){% endif %}
+      </a>
+      <span class="tag status">{{ deal.status | plain }}</span>
+    </td>
+    <td class="num">{{ deal.loan_requested | money }}</td>
+    <td>{{ deal.product | label }}</td>
+    <td>
+      {% if entry.verdict %}<span class="tag {{ entry.verdict | plain }}">{{ entry.verdict | plain }}</span>
+      {% else %}<span class="muted">—</span>{% endif %}
+    </td>
+    <td class="num">{{ entry.irr | rate }}</td>
+    <td>{{ deal.channel | label }}{% if deal.intake_source %} · {{ deal.intake_source }}{% endif %}</td>
+    <td class="small muted">{{ entry.last_activity | when }}</td>
+    <td class="controls">
+      {{ control_button(entry, "advance", "Progress", entry.can_progress,
+                        "Returns a paused deal to where it was; otherwise the next status") }}
+      {{ control_button(entry, "pause", "Pause", entry.can_pause,
+                        "Sets the deal aside; nothing runs on it until Progress") }}
+      {% if entry.can_kill %}
+        <a class="btn small danger" href="/queue/deals/{{ deal.id }}/kill?return_to=home" title="Marks the deal dead, after a confirmation">Kill</a>
+      {% else %}
+        <span class="btn small danger off" title="A dead deal is already dead">Kill</span>
+      {% endif %}
+    </td>
+  </tr>
+{% endmacro %}
+
+{% block content %}
+<h1>Home</h1>
+
+{% for section in view.sections %}
+  <section class="panel">
+    <h2>{{ section.title }} <span class="muted small">{{ section.entries | length }}</span></h2>
+    {% if section.entries %}
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Borrower</th>
+              <th>Address</th>
+              <th class="num">Loan amount</th>
+              <th>Loan type</th>
+              <th>Verdict</th>
+              <th class="num">IRR</th>
+              <th>Source</th>
+              <th>Last activity</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for entry in section.entries %}{{ deal_row(entry) }}{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="small muted">None.</p>
+    {% endif %}
+  </section>
+{% endfor %}
+
+{% if not view.total %}
+  <p class="lede">No deals yet. <a href="/queue/new">Enter a deal</a>.</p>
+{% endif %}
+{% endblock %}

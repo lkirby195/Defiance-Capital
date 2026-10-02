@@ -9,12 +9,15 @@ resolved here) are each read from config in exactly one place. A deal therefore 
 origination fee and one holding-cost figure everywhere - the ledger's fee rows, the flip's
 financing cost, and the rental's monthly carry all read the same numbers.
 
-The term is whole monthly periods plus a stub (``schema/dates.py``). ``term_months`` is the
-count of full periods and is what the draw schedule and the rehab period are measured in;
-``stub_days`` is whatever a payoff date between two anchors leaves over, and it accrues
-interest prorated over ``interest.day_count_basis``. ``term_months_decimal`` is the two as one
-number, and it is what the monthly holding cost divides by - a hold that runs nine months and
-eleven days carries 9.3667 months of costs, not nine.
+The term is whole monthly periods plus a stub (``schema/dates.py``), and the periods are
+anchored to month ends: closing is treated as the last day of its month, and month ``m`` is
+the last day of the month ``m`` later (``anchor``). ``term_months`` is the count of full
+periods and is what the draw schedule and the rehab period are measured in; ``stub_days`` is
+whatever a payoff date between two anchors leaves over, and it accrues interest prorated over
+``interest.day_count_basis``. No form produces a stub today; the engine keeps the arithmetic
+for a future actual-payoff entry. ``term_months_decimal`` is the two as one number, and it is
+what the monthly holding cost divides by - a hold that runs nine months and eleven days
+carries 9.3667 months of costs, not nine.
 
 The origination split is not a tunable: it is half at close and half at payoff (SPEC §3).
 """
@@ -26,7 +29,7 @@ from decimal import Decimal
 from typing import NamedTuple
 
 from config.config import Config
-from schema.dates import Term, describe, payoff_date_for
+from schema.dates import Term, anchor_date, describe, payoff_date_for
 from schema.models import Product, SizingResult, UnderwriteInputs
 
 ZERO = Decimal(0)
@@ -111,9 +114,17 @@ class LoanTerms(NamedTuple):
         """True when the payoff date falls between two anchors.  # SPEC §8.1"""
         return self.stub_days > 0
 
+    def anchor(self, month: int) -> date:
+        """The date period ``month`` falls on: the last day of the closing month plus ``month``.
+
+        # SPEC §8.3. Month 0 is the end of the closing month, whatever day of it the deal
+        closed on; the closing date itself is kept on ``closing_date`` for the record.
+        """
+        return anchor_date(self.closing_date, month)
+
     @property
     def payoff_date(self) -> date:
-        """The last row of the ledger: the term's anchor, plus the stub days."""
+        """The last row of the ledger: the term's month-end anchor, plus the stub days."""
         return payoff_date_for(self.closing_date, self.term_months, self.stub_days)
 
     @property

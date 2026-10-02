@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% import "_csrf.html" as csrf %}
+{% import "_fields.html" as fields with context %}
+{% block title %}Kill deal — GLENWOOD{% endblock %}
+
+{# The confirmation in front of Kill (SPEC §4.6). A dead deal is not re-opened, so the
+   one-click control on a Home row leads here rather than acting, and the form below is the
+   only thing that posts the confirmation. A reason is welcome and not required. #}
+
+{% block content %}
+<section class="panel" style="max-width: 560px; margin: 40px auto;">
+  <h1>Kill this deal?</h1>
+  <p class="lede">
+    {% if deal.property and deal.property.address_raw %}{{ deal.property.address_raw }}
+    {% elif deal.property and deal.property.listing_url %}{{ deal.property.listing_url }}
+    {% else %}Deal {{ deal.id }}{% endif %}
+    · {{ deal.borrower.name if deal.borrower and deal.borrower.name else "(no guarantor name)" }}
+    · <span class="tag status">{{ deal.status | plain }}</span>
+  </p>
+  <p class="small">A killed deal is marked DEAD and is not re-opened.</p>
+  <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/kill">
+    {{ csrf.field(csrf_token) }}
+    <input type="hidden" name="confirm" value="yes">
+    <input type="hidden" name="return_to" value="{{ return_to }}">
+    {{ fields.text_box("reason", "Reason", "", maxlength=500, id="kill_reason") }}
+    <div class="actions">
+      <button class="danger" type="submit" {% if not allowed.kill %}disabled{% endif %}>Kill</button>
+      <a class="small" href="{{ back_url }}">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

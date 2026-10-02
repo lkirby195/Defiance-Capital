@@ -1,6 +1,6 @@
 {
   "name": "conditional_no_price_no_rent",
-  "description": "NO_DRAW with no estimated sale price and no monthly rent. LTV is the commitment over the sale price and there is no fallback denominator (SPEC §7.4), so it is NOT_AVAILABLE, ESTIMATED_SALE_PRICE_MISSING is raised and the screen goes Conditional on it. The underwrite still runs - the ledger, the economics and the take-back cost do not read a sale price - and reports the Flip analysis NOT_EVALUATED with SALE_PRICE_MISSING beside it, and neither DSCR tested (MONTHLY_RENT_MISSING). Closing 31 March on a 6-month term pays off 30 September.",
+  "description": "NO_DRAW with no estimated sale price and no monthly rent. LTV is the commitment over the sale price and there is no fallback denominator (SPEC §7.4), so it is NOT_AVAILABLE, ESTIMATED_SALE_PRICE_MISSING is raised and the screen goes Conditional on it. The underwrite still runs - the ledger, the economics and the take-back cost do not read a sale price - and, with the Flip analysis turned on by hand (it defaults off with no sale price), reports it NOT_EVALUATED with SALE_PRICE_MISSING beside it, and neither DSCR tested (MONTHLY_RENT_MISSING). Closing 31 March on a 6-month term pays off 30 September.",
   "inputs": {
     "deal": {
       "product": "NO_DRAW",
@@ -66,8 +66,8 @@
       "court_records": {
         "as_of": "2026-09-09"
       },
-      "asset_type": "SFR",
-      "loan_purpose": "PURCHASE"
+      "loan_purpose": "PURCHASE",
+      "flip_analysis": true
     },
     "expected": {
       "payoff_date": "2027-09-30",

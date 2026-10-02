@@ -109,14 +109,17 @@ def test_the_irr_is_printed_at_full_precision(capsys: pytest.CaptureFixture[str]
     """The IRR is a solve, so it is not rounded to a whole basis point."""
     denver = FIXTURE_DIR / "go_split_draw_denver.json"
     assert main(["run", str(denver), "--underwrite"]) == 0
-    assert "17.6312%" in capsys.readouterr().out
+    assert "17.6198%" in capsys.readouterr().out
 
 
 def test_the_ledger_prints_a_row_for_every_month(capsys: pytest.CaptureFixture[str]) -> None:
     denver = FIXTURE_DIR / "go_split_draw_denver.json"
     assert main(["run", str(denver), "--underwrite"]) == 0
     out = capsys.readouterr().out
-    assert "2026-10-01" in out and "2027-07-01" in out  # closing and payoff
+    # the deal closes on the 15th; the ledger anchors to month ends (SPEC §8.3)
+    assert "closes 2026-10-15" in out and "pays off 2027-07-31" in out
+    assert "2026-10-31" in out and "2027-07-31" in out  # month 0 and the payoff row
+    assert "2026-10-15   " not in out  # the closing date itself is not a ledger row
     for month in range(10):
         assert f"  {month:>3}" in out or f"{month} 20" in out
     assert "Total" in out

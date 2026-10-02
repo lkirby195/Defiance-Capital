@@ -144,7 +144,7 @@ def test_a_closed_deal_is_not_declined_again(
 # --- mark dead -----------------------------------------------------------------------------------
 
 
-def test_marking_dead_takes_a_reason_but_does_not_demand_one(
+def test_killing_takes_a_reason_but_does_not_demand_one(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
     """A decline is GLENWOOD's judgement and must be explainable; dead usually is not."""
@@ -373,7 +373,8 @@ def test_each_action_posts_and_records_the_signed_in_person(
     assert post(client, deal_with_overrides, "note", note="spoke to the broker").status_code == 303
     assert post(client, deal_with_overrides, "decline", reason="leverage").status_code == 303
     assert post(client, deal_with_overrides, "reopen", reason="new ARV").status_code == 303
-    assert post(client, deal_with_overrides, "dead", reason="went quiet").status_code == 303
+    killed = post(client, deal_with_overrides, "kill", confirm="yes", reason="went quiet")
+    assert killed.status_code == 303
 
     db_session.expire_all()
     trail = deal_trail(db_session, deal_with_overrides.id)
@@ -396,8 +397,8 @@ def test_an_action_the_status_rules_out_comes_back_as_the_page_saying_why(
     db_session.commit()
     response = post(client, deal_with_overrides, "advance")
     assert response.status_code == 409
-    assert "cannot be advanced to review" in response.text
-    assert "SCREENED" in response.text
+    assert "cannot be progressed" in response.text
+    assert "SCREENED" in response.text and "PAUSED" in response.text  # both it runs from
 
 
 def test_a_reopen_without_a_reason_comes_back_as_the_page_saying_so(

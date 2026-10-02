@@ -25,7 +25,7 @@ term.
 An optional row that is MISSING is not a problem to fix before running - it is a thing the
 underwrite will do without, and the note says what that costs: no DSCR at all without a
 monthly rent, no LTV and no flip without an estimated sale price, the self-reported tranche
-without a verified score, UNKNOWN without a stated exit.
+without a verified score.
 """
 
 from __future__ import annotations
@@ -210,10 +210,10 @@ def _term_row(deal: Deal) -> InputRow:
 def _payoff_row(deal: Deal) -> InputRow:
     """The payoff date, derived from the closing date and the term.  # SPEC §8.1
 
-    Never required and never a reason the button is off: it is not a column, it is the closing
-    date plus the term's whole months and stub days, and the two rows above turn the button off.
-    It is on the checklist because it is the date the ledger's last row carries, and a person
-    wants to see it before they press anything.
+    Never required and never a reason the button is off: it is not a column, it is the last
+    day of the month that is the closing month plus the term (plus any stub), and the two
+    rows above turn the button off. It is on the checklist because it is the date the
+    ledger's last row carries, and a person wants to see it before they press anything.
     """
     term = deal_term(deal)
     payoff = None
@@ -224,7 +224,9 @@ def _payoff_row(deal: Deal) -> InputRow:
         "Payoff date",
         payoff,
         source=InputSource.DEFAULT if payoff is not None else InputSource.MISSING,
-        note="derived: the closing date plus the term, to the day (SPEC §8.1)",
+        note=(
+            "derived: the last day of the month that is the closing month plus the term (SPEC §8.1)"
+        ),
     )
 
 
@@ -346,7 +348,7 @@ def holding_costs_note(deal: Deal, default_pct: Decimal) -> str:
 
 
 def _toggle_row(key: str, label: str, on: bool, chosen: bool | None, default_note: str) -> InputRow:
-    """One analysis toggle: the state it is in, and whether a person or the §3 exit set it."""
+    """One analysis toggle: the state it is in, and whether a person or the default set it."""
     return _row(
         key,
         label,
@@ -366,15 +368,15 @@ def underwrite_readiness(
     fees = settings.fees
     defaults = defaults_for(deal, settings)
     empty = UnderwriteRequest()
-    flip_on = flip_is_on(deal, empty, deal.term_months, settings)
-    rental_on = rental_is_on(deal, empty, deal.term_months, settings)
+    flip_on = flip_is_on(deal, empty, adapters)
+    rental_on = rental_is_on(deal, empty, adapters)
     rows = [
         _row(
             "deal.closing_date",
             "Closing date",
             deal.closing_date,
             required=True,
-            note="month 0 of the ledger (SPEC §8.3)",
+            note="any date; the ledger's month 0 is the last day of its month (SPEC §8.3)",
         ),
         _term_row(deal),
         _payoff_row(deal),
@@ -456,14 +458,14 @@ def underwrite_readiness(
             "Flip analysis",
             flip_on,
             deal.flip_analysis,
-            "on by default for a resale exit (SPEC §8.1)",
+            "on by default when there is a sale price to sell at (SPEC §8.1)",
         ),
         _toggle_row(
             "rental_analysis",
             "Rental analysis",
             rental_on,
             deal.rental_analysis,
-            "on by default for a hold exit, or when a rent is entered (SPEC §8.1)",
+            "on by default when there is a rent to carry a loan with (SPEC §8.1)",
         ),
         _row(
             "verified_credit_score",
@@ -472,17 +474,5 @@ def underwrite_readiness(
             note="no credit adapter yet; the self-reported tranche stands (SPEC §7.1)",
         ),
         _court_row(deal, adapters),
-        _row(
-            "asset_type",
-            "Asset type",
-            deal.asset_type,
-            note="with the term it infers the exit (SPEC §3)",
-        ),
-        _row(
-            "stated_exit",
-            "Stated exit",
-            deal.stated_exit,
-            note="blank leaves the exit to the SPEC §3 inference",
-        ),
     ]
     return UnderwriteReadiness(rows=rows, intake_missing=intake_gaps(deal))

@@ -3,9 +3,10 @@
 
    Every box on every form in the queue says whether it is Required or Optional, because the
    alternative is a person guessing and a submission bouncing. Required here means the
-   minimum viable intake (SPEC §4.1) and the handful of actions that record a reason; the
-   marker and the browser's own `required` attribute come from the same argument, so a box
-   cannot look required and post empty.
+   minimum viable intake (SPEC §4.1) plus the closing date and the term, and the handful of
+   actions that record a reason; the marker and the browser's own `required` attribute come
+   from the same argument, so a box cannot look required and post empty. The marker is plain
+   text in the label's own type - no weight, no colour.
 
    The attribute is a courtesy, not a control: `api/intake_form.py` checks the same list on
    the way in.
@@ -34,14 +35,12 @@
    the reset link puts it back. A box still holding its default stores nothing on the deal,
    so the deal goes on saying "the config decides" (`api/masks.py`). #}
 
-{# Three states, not two. A box can be required only on some deals - the loan split is
-   required on the two split products and forbidden on the other two (SPEC §8.2), the term
-   can be said as months or as a payoff date - so it is marked as what it is and checked on
-   the server. #}
+{# Required or Optional, and a third wording where a box is required only on some deals
+   (``mark``), checked on the server. #}
 {% macro badge(required, mark="") %}
-  {%- if mark %}<span class="cond">{{ mark }}</span>
-  {%- elif required %}<span class="req">Required</span>
-  {%- else %}<span class="opt">Optional</span>{% endif -%}
+  {%- if mark %}<span class="mark">{{ mark }}</span>
+  {%- elif required %}<span class="mark">Required</span>
+  {%- else %}<span class="mark">Optional</span>{% endif -%}
 {% endmacro %}
 
 {% macro default_tag(box, default) %}
@@ -145,9 +144,8 @@
 {% endmacro %}
 
 {% macro enum_box(name, text, choices, chosen, required=false, help="") %}
-  {#- The enums a person reads as words rather than as codes: the loan type, the asset type,
-      the loan purpose, the exit, and the court search's own outcome and matter codes
-      (SPEC §3, §7.2, §8.1). -#}
+  {#- The enums a person reads as words rather than as codes: the loan type, the loan
+      purpose, and the court search's own outcome and matter codes (SPEC §3, §7.2, §8.1). -#}
   {{ select_box(name, text, choices, chosen, required, "label", help=help) }}
 {% endmacro %}
 
@@ -168,25 +166,13 @@
   {{ select_box(name, text, choices, chosen, required, "experience") }}
 {% endmacro %}
 
-{% macro product_box(name, text, choices, chosen, required=false, definitions=true, help="") %}
-  {#- The Loan Type box. On the team-entry form the SPEC §3 definition of every option is
-      printed under it, so a person picking one is told what they are picking; the deal page
-      passes ``definitions=false`` and keeps them behind the (?) on the label instead. -#}
-  <div class="{{ 'wide' if definitions else '' }}">
+{% macro product_box(name, text, choices, chosen, required=false, help="") %}
+  {#- The Loan Type box: the SPEC §3 products by their labels. The deal page keeps each
+      product's definition behind the (?) on the label; the team form prints none. -#}
+  <div>
     {{ caption(name, text, required, default="", help=help) }}
-    {% if definitions %}
-      <div class="narrow">{{ bare_select(name, choices, chosen, required, "label") }}</div>
-    {% else %}
-      {{ bare_select(name, choices, chosen, required, "label") }}
-    {% endif %}
+    {{ bare_select(name, choices, chosen, required, "label") }}
     {{ field_error(name) }}
-    {% if definitions %}
-    <dl class="defs small muted">
-      {%- for choice in choices %}
-        <dt>{{ choice | label }}</dt><dd>{{ choice | definition }}</dd>
-      {%- endfor %}
-    </dl>
-    {% endif %}
   </div>
 {% endmacro %}
 
@@ -211,11 +197,11 @@
 {# --- the analysis toggles (SPEC §8.1) ----------------------------------------------------- #}
 
 {% macro toggle_box(name, text, chosen, note="", help="") %}
-  {#- An on/off toggle with the third state a select hid: Default is what the §3 exit implies
-      and is what a deal nobody has touched carries, On and Off are a person overriding it in
-      either direction. Radios rather than a select because the state is the point of the
-      control and a person should see it without opening anything. Take-Back has no toggle at
-      all - it runs on every deal (SPEC §8.6). -#}
+  {#- An on/off toggle with the third state a select hid: Default is on when the sale price,
+      or the rent, is on the deal and is what a deal nobody has touched carries; On and Off
+      are a person overriding it in either direction. Radios rather than a select because the
+      state is the point of the control and a person should see it without opening anything.
+      Take-Back has no toggle at all - it runs on every deal (SPEC §8.6). -#}
   <div>
     {#- The caption points at the first radio, so the group reads as one labelled control. -#}
     {{ caption(name, text, false, help=help) }}

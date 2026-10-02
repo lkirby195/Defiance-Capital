@@ -111,8 +111,6 @@
     <dt>Baths</dt><dd>{{ deal.property.baths | plain if deal.property else "—" }}</dd>
     <dt>Garage Spaces</dt>
     <dd>{{ deal.property.garage_spaces | plain if deal.property else "—" }}</dd>
-    <dt>Asset Type</dt><dd>{{ deal.asset_type | label }}</dd>
-    <dt>Exit</dt><dd>{{ deal.stated_exit | label }}</dd>
   </dl>
 </section>
 
@@ -123,15 +121,15 @@
     <dt>Loan Purpose</dt><dd>{{ deal.loan_purpose | label }}</dd>
     <dt>Loan Type{{ help(deal.product | definition) }}</dt>
     <dd title="{{ deal.product_source | plain }}">{{ deal.product | label }}</dd>
-    <dt>Closing Date{{ help("Month 0 of the ledger (SPEC §8.3).") }}</dt><dd>{{ deal.closing_date | when }}</dd>
-    <dt>Term{{ help("Whole monthly periods, then the days a mid-month payoff leaves over (SPEC §8.1). Seeded by the borrower's term bucket on a borrower channel; the team's own number wins.") }}</dt>
+    <dt>Closing Date{{ help("Any date; the ledger's month 0 is the last day of this month (SPEC §8.3).") }}</dt><dd>{{ deal.closing_date | when }}</dd>
+    <dt>Term{{ help("Whole monthly periods, anchored to month ends (SPEC §8.1). Seeded by the borrower's term bucket on a borrower channel; the team's own number wins.") }}</dt>
     <dd>{{ deal.term_months | plain }}{% if deal.term_months is not none %} month(s){% endif %}
       {%- if deal.term_stub_days %} and {{ deal.term_stub_days }} day(s){% endif %}</dd>
     {% if deal.term_bucket %}
       <dt>Requested term{{ help("The borrower's own answer to how long they need the loan (SPEC §4.1). 12+ seeds a 12-month term; the team sets the real one.") }}</dt>
       <dd>{{ deal.term_bucket | bucket }}</dd>
     {% endif %}
-    <dt>Payoff Date{{ help("Derived: the closing date plus the term, to the day (SPEC §8.1).") }}</dt>
+    <dt>Payoff Date{{ help("Derived, read-only: the last day of the month that is the closing month plus the term (SPEC §8.1).") }}</dt>
     <dd>{{ payoff_date | when }}</dd>
     <dt>Purchase Price</dt><dd>{{ deal.purchase_price | money }}</dd>
     <dt>Rehab Costs</dt><dd>{{ deal.rehab_costs | money }}</dd>
@@ -180,7 +178,7 @@
       config {{ result.config_hash[:12] }} ·
       {{ result.term_months }} month(s){% if result.term_stub_days %} and
       {{ result.term_stub_days }} day(s){% endif %} · {{ result.rehab_months }} rehab month(s) ·
-      {{ result.closing_date | when }} to {{ result.payoff_date | when }}
+      closes {{ result.closing_date | when }} · pays off {{ result.payoff_date | when }}
     </p>
     <dl class="facts">
       <dt>IRR{{ help("XIRR on the actual dates, annualized and compounded (SPEC §8.3).") }}</dt>
@@ -233,17 +231,15 @@
 {# --- 5. Flip Analysis (SPEC §8.4) ---------------------------------------------------------- #}
 <section class="panel">
   <h2>Flip Analysis
-    <span class="tag {{ 'GO' if result and result.exit.flip_analysis else 'INFO' }}">{{
-      ("ON" if result.exit.flip_analysis else "OFF") if result else "—" }}</span></h2>
+    <span class="tag {{ 'GO' if result and result.analyses.flip_analysis else 'INFO' }}">{{
+      ("ON" if result.analyses.flip_analysis else "OFF") if result else "—" }}</span></h2>
   {% if result %}
     {% set flip = result.flip %}
     <dl class="facts small">
       <dt>Status{{ help("EVALUATED: sold at the estimated sale price. NOT_EVALUATED: no sale price to sell at. OFF: the toggle is off (SPEC §8.4).") }}</dt>
       <dd>{{ flip.status | plain }}</dd>
-      <dt>Toggle{{ help("On by default for a resale exit (SPEC §8.1); a team setting wins either way.") }}</dt>
-      <dd>{{ "On" if result.exit.flip_analysis else "Off" }}{% if deal.flip_analysis is none %} <span class="dflt">default</span>{% endif %}</dd>
-      <dt>Exit</dt>
-      <dd title="{{ result.exit.exit_source | plain }}">{{ result.exit.type | label }}</dd>
+      <dt>Toggle{{ help("On by default when there is a sale price (SPEC §8.1); a team setting wins either way.") }}</dt>
+      <dd>{{ "On" if result.analyses.flip_analysis else "Off" }}{% if deal.flip_analysis is none %} <span class="dflt">default</span>{% endif %}</dd>
       <dt>Estimated Sale Price</dt><dd>{{ flip.estimated_sale_price | money }}</dd>
       <dt>Broker selling costs</dt><dd>{{ flip.broker_costs | money }}</dd>
       <dt>Broker selling %</dt><dd>{{ flip.broker_selling_pct | pct }}</dd>
@@ -267,15 +263,15 @@
 {# --- 6. Rental Analysis (SPEC §8.5) -------------------------------------------------------- #}
 <section class="panel">
   <h2>Rental Analysis
-    <span class="tag {{ 'GO' if result and result.exit.rental_analysis else 'INFO' }}">{{
-      ("ON" if result.exit.rental_analysis else "OFF") if result else "—" }}</span></h2>
+    <span class="tag {{ 'GO' if result and result.analyses.rental_analysis else 'INFO' }}">{{
+      ("ON" if result.analyses.rental_analysis else "OFF") if result else "—" }}</span></h2>
   {% if result %}
     {% set rental = result.rental %}
     <dl class="facts small">
       <dt>Status{{ help("EVALUATED: a DSCR on the monthly rent. NOT_EVALUATED: no monthly rent on the deal, and nothing stands in for one. OFF: the toggle is off (SPEC §8.5).") }}</dt>
       <dd>{{ rental.status | plain }}</dd>
-      <dt>Toggle{{ help("On by default for a hold exit, or when a rent is on the deal (SPEC §8.1); a team setting wins either way.") }}</dt>
-      <dd>{{ "On" if result.exit.rental_analysis else "Off" }}{% if deal.rental_analysis is none %} <span class="dflt">default</span>{% endif %}</dd>
+      <dt>Toggle{{ help("On by default when a rent is on the deal (SPEC §8.1); a team setting wins either way.") }}</dt>
+      <dd>{{ "On" if result.analyses.rental_analysis else "Off" }}{% if deal.rental_analysis is none %} <span class="dflt">default</span>{% endif %}</dd>
       <dt>Monthly Rent</dt><dd>{{ rental.monthly_rent | money }}</dd>
       <dt>Expenses</dt><dd>{{ rental.expenses | money }}</dd>
       <dt>Expenses (% of rent)</dt><dd>{{ rental.expenses_pct | pct }}</dd>
@@ -388,23 +384,27 @@
 <section class="panel">
   <h2>Actions</h2>
   <div class="grid3">
-    <form method="post" action="/queue/deals/{{ deal.id }}/advance">
-      {{ csrf.field(csrf_token) }}
-      <button type="submit" title="From SCREENED only" {% if not allowed.advance %}disabled{% endif %}>Advance to review</button>
-    </form>
+    <div class="actions">
+      <form method="post" action="/queue/deals/{{ deal.id }}/advance">
+        {{ csrf.field(csrf_token) }}
+        <button type="submit" title="A screened deal goes into review; a paused deal goes back where it was" {% if not allowed.progress %}disabled{% endif %}>Progress</button>
+      </form>
+      <form method="post" action="/queue/deals/{{ deal.id }}/pause">
+        {{ csrf.field(csrf_token) }}
+        <button class="quiet" type="submit" title="Sets the deal aside; nothing runs on it until Progress" {% if not allowed.pause %}disabled{% endif %}>Pause</button>
+      </form>
+      {% if allowed.kill %}
+        <a class="btn danger" href="/queue/deals/{{ deal.id }}/kill" title="Marks the deal dead, after a confirmation">Kill</a>
+      {% else %}
+        <span class="btn danger off" title="A dead deal is already dead">Kill</span>
+      {% endif %}
+    </div>
 
     <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/decline">
       {{ csrf.field(csrf_token) }}
       {{ fields.text_box("reason", "Decline — reason", "", required=true, maxlength=500,
                          disabled=not allowed.decline, id="decline_reason") }}
       <button class="danger" type="submit" {% if not allowed.decline %}disabled{% endif %}>Decline</button>
-    </form>
-
-    <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/dead">
-      {{ csrf.field(csrf_token) }}
-      {{ fields.text_box("reason", "Mark dead — reason", "", maxlength=500,
-                         disabled=not allowed.dead, id="dead_reason") }}
-      <button class="danger" type="submit" title="Final: a dead deal is not re-opened" {% if not allowed.dead %}disabled{% endif %}>Mark dead</button>
     </form>
 
     <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/reopen">
@@ -433,16 +433,16 @@
         {{ fields.enum_box("loan_purpose", "Loan Purpose", enums.loan_purpose,
                            form.loan_purpose) }}
         {{ fields.product_box("product", "Loan Type", enums.product, form.product,
-                              definitions=false,
                               help="Blank leaves the inferred one. " ~ (deal.product | definition)) }}
         {{ fields.text_box("closing_date", "Closing Date", form.closing_date, kind="date",
-                           help="Month 0 of the ledger (SPEC §8.3).") }}
+                           help="Any date; the ledger's month 0 is the last day of this month (SPEC §8.3).") }}
         {{ fields.text_box("term_months", "Term (months)", form.term_months, mode="numeric",
-                           help="Whole monthly periods. Enter a term or a payoff date and the other derives; enter both and they have to agree (SPEC §8.1).") }}
-        {#- Rendered blank on purpose: the payoff date is not a column, it is the closing date
-            plus the term (SPEC §8.1). Typing one here is the other way of saying the term. -#}
-        {{ fields.text_box("payoff_date", "Payoff Date", form.payoff_date, kind="date",
-                           help="Blank keeps the term beside it. Any date after closing: the whole months inside it are the term and the days left over are a stub the ledger prices as a short final period (SPEC §8.3).") }}
+                           help="Whole monthly periods, anchored to month ends (SPEC §8.1).") }}
+        {#- Read-only and not posted: the payoff date is not a column, it is the last day of
+            the month that is the closing month plus the term (SPEC §8.1). -#}
+        {{ fields.text_box("payoff_date", "Payoff Date", payoff_date | when if payoff_date else "",
+                           readonly=true, disabled=true,
+                           help="Derived: the last day of the month that is the closing month plus the term (SPEC §8.1).") }}
         {{ fields.pct_box("interest_rate", "Interest Rate", form.interest_rate,
                           default=defaults.interest_rate, help="Annual (SPEC §8.1).") }}
         {{ fields.pct_box("contingency_pct", "Contingency", form.contingency_pct,
@@ -482,14 +482,10 @@
                             help="The ARV: what LTV is computed on and what the Flip analysis sells at (SPEC §7.4, §8.4).") }}
         {{ fields.money_box("monthly_rent", "Monthly Rent", form.monthly_rent,
                             help="No default: without one the Rental and Take-Back analyses are not evaluated (SPEC §8.5).") }}
-        {{ fields.enum_box("asset_type", "Asset Type", enums.asset_type, form.asset_type,
-                           help="With the term, infers the exit (SPEC §3).") }}
-        {{ fields.enum_box("stated_exit", "Exit", enums.stated_exit, form.stated_exit,
-                           help="Blank leaves the exit to the SPEC §3 inference.") }}
         {{ fields.toggle_box("flip_analysis", "Flip Analysis", form.flip_analysis,
-                             help="Default: on for a resale exit (SPEC §8.1).") }}
+                             help="Default: on when there is a sale price (SPEC §8.1).") }}
         {{ fields.toggle_box("rental_analysis", "Rental Analysis", form.rental_analysis,
-                             help="Default: on for a hold exit, or with a rent (SPEC §8.1). The Take-Back analysis has no toggle; it runs on every deal.") }}
+                             help="Default: on when there is a rent (SPEC §8.1). The Take-Back analysis has no toggle; it runs on every deal.") }}
       </div>
     </fieldset>
 

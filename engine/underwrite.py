@@ -21,7 +21,7 @@ therefore self-contained, which is what the credit memo (SPEC §9.3) needs.
 from __future__ import annotations
 
 from config.config import Config
-from engine.calc.exit import exit_inference
+from engine.calc.analyses import analysis_toggles
 from engine.calc.flip import flip_analysis
 from engine.calc.ledger import return_overview
 from engine.calc.rental import rental_analysis, take_back_analysis
@@ -218,10 +218,10 @@ def underwrite(inputs: UnderwriteInputs, config: Config) -> UnderwriteResult:
     experience = experience_check(inputs.borrower, config)
     sizing = size_deal(inputs.deal, credit.tranche, experience.tier, config)
     loan = loan_terms(sizing, inputs, config)
-    exit_result = exit_inference(inputs, config)
+    toggles = analysis_toggles(inputs)
     overview = return_overview(loan)
-    flip = flip_analysis(inputs, loan, overview, exit_result.flip_analysis, config)
-    rental = rental_analysis(inputs, loan, exit_result.rental_analysis, config)
+    flip = flip_analysis(inputs, loan, overview, toggles.flip_analysis, config)
+    rental = rental_analysis(inputs, loan, toggles.rental_analysis, config)
     take_back = take_back_analysis(inputs, loan, config)
     flags = order_flags(
         credit.flags
@@ -245,7 +245,7 @@ def underwrite(inputs: UnderwriteInputs, config: Config) -> UnderwriteResult:
         term_stub_days=loan.stub_days,
         term_months_decimal=loan.term_months_decimal,
         rehab_months=loan.rehab_months,
-        exit=exit_result,
+        analyses=toggles,
         sizing=sizing,
         economics=deal_economics(loan),
         return_overview=overview,

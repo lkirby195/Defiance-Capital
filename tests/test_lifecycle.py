@@ -76,11 +76,19 @@ def test_a_decline_closes_a_deal_nobody_is_pricing_yet(current: Status) -> None:
 
 @pytest.mark.parametrize(
     "current",
-    [Status.UNDERWRITING, Status.LOI_SENT, Status.HANDED_OFF, Status.DECLINED, Status.DEAD],
-    ids=["underwriting", "loi_sent", "handed_off", "declined", "dead"],
+    [
+        Status.UNDERWRITING,
+        Status.LOI_SENT,
+        Status.HANDED_OFF,
+        Status.PAUSED,
+        Status.DECLINED,
+        Status.DEAD,
+    ],
+    ids=["underwriting", "loi_sent", "handed_off", "paused", "declined", "dead"],
 )
 def test_a_decline_leaves_a_deal_someone_is_working_alone(current: Status) -> None:
-    """From UNDERWRITING on, the Hard flags are recorded and a person decides.  # SPEC §4.6"""
+    """From UNDERWRITING on, and on a paused deal, the Hard flags are recorded and a person
+    decides.  # SPEC §4.6"""
     assert status_after_screen(current, Verdict.DECLINE) is current
 
 
@@ -91,6 +99,7 @@ def test_an_underwrite_moves_a_screened_or_in_review_deal() -> None:
     assert status_after_underwrite(Status.UNDERWRITING) is Status.UNDERWRITING
     assert status_after_underwrite(Status.LOI_SENT) is Status.LOI_SENT
     assert status_after_underwrite(Status.NEW) is Status.NEW
+    assert status_after_underwrite(Status.PAUSED) is Status.PAUSED  # set aside stays set aside
 
 
 # --- the rules through the services (SPEC §7, §8) ------------------------------------------------

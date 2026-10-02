@@ -1,6 +1,6 @@
 {
   "name": "go_no_draw_wichita",
-  "description": "NO_DRAW purchase in Wichita, OK; T1 / 6+ deals; every metric under cap. Go. Underwrite: 12 months from 2027-01-01 at 12% on a $150,000 commitment, $1,500 of interest a month, $3,000 of origination split either end; IRR 14.955%. Flip sells at $260,000 for $23,600 of profit on $226,000 of costs. Rental DSCR 1.02 and take-back DSCR 0.59 both fall short.",
+  "description": "NO_DRAW purchase in Wichita, OK; T1 / 6+ deals; every metric under cap. Go. Underwrite: 12 months from a 1 January 2027 closing, anchored to month ends so the payoff is 31 January 2028, at 12% on a $150,000 commitment, $1,500 of interest a month, $3,000 of origination split either end; IRR 14.958%. Flip sells at $260,000 for $23,600 of profit on $226,000 of costs. Rental DSCR 1.02 and take-back DSCR 0.59 both fall short.",
   "inputs": {
     "deal": {
       "product": "NO_DRAW",
@@ -64,12 +64,10 @@
         "as_of": "2026-09-09"
       },
       "monthly_rent": "2000.00",
-      "asset_type": "SFR",
-      "stated_exit": "FLIP",
       "loan_purpose": "PURCHASE"
     },
     "expected": {
-      "payoff_date": "2028-01-01",
+      "payoff_date": "2028-01-31",
       "rehab_months": 9,
       "commitment": "150000.00",
       "funded_at_close": "150000.00",
@@ -94,7 +92,7 @@
         "total_fees": "3000.00",
         "total_payoff": "150000.00",
         "total_profit": "21000.00",
-        "irr": "0.14955320"
+        "irr": "0.14958448"
       },
       "flip": {
         "status": "EVALUATED",

@@ -20,14 +20,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from api.intake_form import (
-    CONDITIONAL_MARKS,
     REQUIRED_FIELDS,
     REQUIRED_NAMES,
-    SPLIT_NAMES,
     TEAM_ENTRY_FIELDS,
     intake_form_values,
 )
 from db.models import Deal
+from db.repository import FORM_COLUMNS
 from schema.models import ExperienceBucket, Tranche
 from tests.conftest import QueueClient, requires_db
 
@@ -107,41 +106,152 @@ def test_the_deal_page_reads_the_same_way(client: QueueClient, stored_deal: Deal
     assert ">T1<" not in body
 
 
-def test_the_four_read_enums_are_words_not_codes(client: QueueClient, stored_deal: Deal) -> None:
+def test_the_two_read_enums_are_words_not_codes(client: QueueClient, stored_deal: Deal) -> None:
     """SPEC §3: title case with spaces wherever a person reads one."""
     body = form_page(client, f"/queue/deals/{stored_deal.id}")
     assert re.search(r"<dd[^>]*>Split Draw", body)  # the inferred product
     # the code stays the stored value on the option, and is never the words on the page
     assert not re.search(r">\s*SPLIT_DRAW\s*<", body)
     assert "<dd>Purchase</dd>" in body  # the loan purpose
-    assert "<dd>SFR</dd>" in body  # an initialism keeps its shape
-    # ...and the §3 definition of the product the deal is on
+    # ...and the §3 definition of the product the deal is on, behind the (?) on its label
     assert "the rehab holdback drawn over the rehab period" in body
 
 
-def test_the_loan_type_box_defines_every_option(client: QueueClient) -> None:
-    """A person picking one is told what they are picking (SPEC §3)."""
+def test_the_loan_type_box_offers_the_products_and_defines_none_of_them(
+    client: QueueClient,
+) -> None:
+    """Labels only on the team form (SPEC §8.1); the definitions live on the deal page."""
     body = form_page(client, "/queue/new")
+    block = re.search(r'name="product"[^>]*>(.*?)</select>', body, re.S)
+    assert block is not None
     for label in ("No Draw", "Split Draw", "Split Principal", "Wholetail"):
-        assert f"<dt>{label}</dt>" in body
-    assert "Purchase only, no rehab funding." in body
-    assert "Buy below market, minimal work, retail resale; short term." in body
+        assert f">{label}<" in block.group(1) or f">{label}\n" in block.group(1), label
+    assert "<dt>No Draw</dt>" not in body
+    assert "Purchase only, no rehab funding." not in body
+    assert "Buy below market, minimal work, retail resale; short term." not in body
 
 
-def test_the_analysis_toggles_are_visible_and_take_back_has_none(
+def test_the_analysis_toggles_are_on_the_deal_page_and_not_on_the_form(
     client: QueueClient, stored_deal: Deal
 ) -> None:
-    """SPEC §8.1: Default / On / Off, and the Take-Back analysis is not a toggle."""
-    for body in (
-        form_page(client, "/queue/new"),
-        form_page(client, f"/queue/deals/{stored_deal.id}"),
-    ):
-        assert '<div class="toggle"' in body
-        for name in ("flip_analysis", "rental_analysis"):
-            assert f'name="{name}" value="true"' in body
-            assert f'name="{name}" value="false"' in body
-            assert f'name="{name}" value=""' in body
-        assert 'name="take_back' not in body
+    """SPEC §8.1: Default / On / Off on the deal page; the Take-Back analysis is not a toggle."""
+    form = form_page(client, "/queue/new")
+    assert '<div class="toggle"' not in form
+    assert 'name="flip_analysis"' not in form and 'name="rental_analysis"' not in form
+    body = form_page(client, f"/queue/deals/{stored_deal.id}")
+    assert '<div class="toggle"' in body
+    for name in ("flip_analysis", "rental_analysis"):
+        assert f'name="{name}" value="true"' in body
+        assert f'name="{name}" value="false"' in body
+        assert f'name="{name}" value=""' in body
+    assert 'name="take_back' not in body
+
+
+# --- the form is exactly the listed boxes, and nothing else (SPEC §8.1) ---------------------------
+
+DEAL_ECONOMICS_IN_ORDER = (
+    "purchase_price",
+    "rehab_costs",
+    "loan_requested",
+    "loan_purpose",
+    "product",
+    "closing_date",
+    "term_months",
+)
+NOT_ON_THE_FORM = (
+    "interest_rate",
+    "contingency_pct",
+    "closing_costs_usd",
+    "holding_costs_pct_of_cost",
+    "origination_fee_pct",
+    "loan_purchase_portion",
+    "loan_rehab_portion",
+    "payoff_date",
+    "estimated_sale_price_team",
+    "monthly_rent",
+    "flip_analysis",
+    "rental_analysis",
+    "court_records_status",
+    "court_records_as_of",
+    "matter_code",
+    "asset_type",
+    "stated_exit",
+)
+
+
+def form_control_names(body: str) -> list[str]:
+    """Every named control inside the form, in document order, the CSRF field aside."""
+    inner = re.search(r'<form class="stack"[^>]*>(.*?)</form>', body, re.S)
+    assert inner is not None
+    names = [re.search(r'name="([^"]+)"', tag) for tag in CONTROL.findall(inner.group(1))]
+    return [m.group(1) for m in names if m is not None and m.group(1) != "_csrf"]
+
+
+@pytest.mark.parametrize("path", ["/queue/new", "deal"])
+def test_the_form_renders_exactly_the_listed_boxes_in_order(
+    client: QueueClient, stored_deal: Deal, path: str
+) -> None:
+    target = f"/queue/deals/{stored_deal.id}/intake" if path == "deal" else path
+    names = form_control_names(form_page(client, target))
+    assert names == list(TEAM_ENTRY_FIELDS)
+    assert tuple(names[-7:]) == DEAL_ECONOMICS_IN_ORDER
+    assert names[:7] == [
+        "entity_name",
+        "borrower_name",
+        "borrower_phone",
+        "borrower_email",
+        "credit_range",
+        "experience_bucket",
+        "repeat_borrower",
+    ]
+    for gone in NOT_ON_THE_FORM:
+        assert gone not in names, gone
+
+
+def test_the_form_s_boxes_are_the_columns_an_edit_writes() -> None:
+    """One list for the form and one for Edit Intake, held together here (SPEC §8.1)."""
+    assert set(FORM_COLUMNS) == {
+        "credit_range_self_reported",
+        "experience_bucket_self_reported",
+        "repeat_borrower_self_reported",
+        "purchase_price",
+        "rehab_costs",
+        "loan_requested",
+        "loan_purpose",
+        "product",
+        "product_source",
+        "closing_date",
+        "term_bucket",
+        "term_months",
+        "term_stub_days",
+    }
+
+
+@pytest.mark.parametrize("path", ["/queue/new", "deal"])
+def test_the_form_prints_labels_only(client: QueueClient, stored_deal: Deal, path: str) -> None:
+    """No helper text, no hints, no inline comments, no (?) marks (SPEC §8.1)."""
+    target = f"/queue/deals/{stored_deal.id}/intake" if path == "deal" else path
+    body = form_page(client, target)
+    inner = re.search(r'<form class="stack".*?</form>', body, re.S)
+    assert inner is not None
+    form = inner.group(0)
+    assert "<p" not in form, "a paragraph of prose inside the form"
+    assert "<dl" not in form and 'class="help"' not in form and "SPEC" not in form
+    for text in labels(body).values():
+        assert "—" not in text and " - " not in text, text
+    # the headings are the three groups and nothing more
+    headings = re.findall(r"<h2>(.*?)</h2>", form)
+    assert headings == ["Overview", "Property Overview", "Deal Economics"]
+    assert "<h3" not in form
+
+
+def test_the_marks_are_plain_text_in_the_label_s_own_type(client: QueueClient) -> None:
+    body = form_page(client, "/queue/new")
+    assert '<span class="mark">Required</span>' in body
+    assert '<span class="mark">Optional</span>' in body
+    for old in ('class="req"', 'class="opt"', 'class="cond"', ".req {", ".opt {", ".cond {"):
+        assert old not in body, old
+    assert re.search(r"\.mark \{[^}]*font: inherit;[^}]*color: inherit;", body)
 
 
 def test_a_screened_deal_names_the_range_in_its_flags_and_caps_cell(
@@ -174,15 +284,12 @@ def test_every_box_on_the_form_says_which_it_is(
     shown = labels(body)
     for name in TEAM_ENTRY_FIELDS:
         assert name in shown, f"{name} has no label"
-        # a third state for a box whose Required-ness depends on another answer: the loan
-        # split on a split product (SPEC §8.2), the term on a 12+ bucket (SPEC §8.1). The
-        # browser cannot be told which, because the answer it depends on is on the same form.
-        marker = CONDITIONAL_MARKS.get(name, "Required" if name in REQUIRED_NAMES else "Optional")
+        marker = "Required" if name in REQUIRED_NAMES else "Optional"
         assert marker in shown[name], f"{name} is not marked {marker}"
-    # the repeated court-matter columns are marked once each, in the header
-    assert body.count('<span class="opt">Optional</span>') >= len(TEAM_ENTRY_FIELDS) - len(
+    assert body.count('<span class="mark">Optional</span>') == len(TEAM_ENTRY_FIELDS) - len(
         REQUIRED_NAMES
     )
+    assert body.count('<span class="mark">Required</span>') == len(REQUIRED_NAMES)
 
 
 def test_the_browser_is_asked_to_hold_the_same_line(client: QueueClient) -> None:
@@ -192,9 +299,6 @@ def test_the_browser_is_asked_to_hold_the_same_line(client: QueueClient) -> None
         assert name in found, f"{name} is not on the page"
         required = re.search(r"\srequired[\s>]", found[name]) is not None
         assert required is (name in REQUIRED_NAMES), name
-    # the conditional boxes carry no attribute: HTML cannot say "required on some deals"
-    assert SPLIT_NAMES.isdisjoint(REQUIRED_NAMES)
-    assert set(CONDITIONAL_MARKS).isdisjoint(REQUIRED_NAMES)
 
 
 def test_the_required_list_is_the_minimum_viable_intake() -> None:
@@ -202,18 +306,19 @@ def test_the_required_list_is_the_minimum_viable_intake() -> None:
 
     The credit range is not on the list: a person on the phone often does not have it yet,
     and the screen names it by hand rather than the form refusing to submit. The two that
-    joined it are the ones the ledger has no stand-in for; the rate has a config default
-    now (SPEC §8.1) and is pre-filled rather than demanded.
+    joined it are the ones the ledger has no stand-in for: the closing date and the term in
+    months. The rate has a config default (SPEC §8.1) and is not on the form at all.
     """
     assert REQUIRED_NAMES == {
         "borrower_name",
         "experience_bucket",
         "repeat_borrower",
         "address",
-        "closing_date",
         "purchase_price",
         "rehab_costs",
         "loan_requested",
+        "closing_date",
+        "term_months",
     }
     assert "interest_rate" not in REQUIRED_NAMES
     # the credit range, because a person on the phone often does not have it yet; the phone,
@@ -231,9 +336,11 @@ def test_the_deal_page_actions_say_which_reasons_are_required(
     """The same treatment off the intake form: a decline records a reason, a dead deal may."""
     shown = labels(form_page(client, f"/queue/deals/{stored_deal.id}"))
     assert "Required" in shown["decline_reason"]
-    assert "Optional" in shown["dead_reason"]
     assert "Required" in shown["reopen_reason"]
     assert "Required" in shown["note"]
+    # Kill asks on a page of its own, and its reason is optional
+    killing = labels(form_page(client, f"/queue/deals/{stored_deal.id}/kill"))
+    assert "Optional" in killing["kill_reason"]
 
 
 # --- and the server says it again -----------------------------------------------------------------
@@ -320,30 +427,18 @@ def test_the_filled_form_is_masked_the_way_the_boxes_take_it(stored_deal: Deal) 
     assert values["borrower_phone"] == "720-555-0192"  # stored as digits
     assert values["purchase_price"] == "$200,000"
     assert values["loan_requested"] == "$195,000"
-    assert values["interest_rate"] == "12%"  # the deal carries 0.12000
+    assert values["term_months"] == "9"
 
 
-def test_a_defaulted_economic_comes_back_pre_filled_with_the_config_number(
-    stored_deal: Deal,
-) -> None:
-    """The four §8.1 economics with a default show it rather than an empty box."""
-    # populated with the config numbers, and tagged as the defaults they are (SPEC §8.1)
+def test_the_defaulted_economics_are_on_the_deal_not_on_the_form(stored_deal: Deal) -> None:
+    """The five §8.1 economics with a default populate when the deal is stored and are
+    edited on the deal page; the form has no box for them (SPEC §8.1)."""
     assert stored_deal.contingency_pct == Decimal("0")
     assert stored_deal.origination_fee_pct == Decimal("0.02")
     assert {"contingency_pct", "origination_fee_pct"} <= set(stored_deal.defaulted_fields)
     values = intake_form_values(stored_deal)
-    assert values["contingency_pct"] == "0%"
-    assert values["origination_fee_pct"] == "2%"
-    assert values["closing_costs_usd"] == "$1,500"  # the team's own, not the default
-    # The holding cost is a percentage now, so the box shows the percentage (SPEC §8.1).
-    assert values["holding_costs_pct_of_cost"] == "3%"
-
-
-def test_the_payoff_date_box_comes_back_blank(stored_deal: Deal) -> None:
-    """It is not a column: it is the closing date plus the term (SPEC §8.1), so the box is
-    an alternative way of saying the term rather than a value to edit."""
-    assert stored_deal.closing_date is not None and stored_deal.term_months is not None
-    assert intake_form_values(stored_deal)["payoff_date"] == ""
+    for name in ("interest_rate", "contingency_pct", "closing_costs_usd", "payoff_date"):
+        assert name not in values, name
 
 
 def test_an_inferred_state_and_product_come_back_blank(stored_deal: Deal) -> None:

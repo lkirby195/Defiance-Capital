@@ -233,10 +233,10 @@ def test_removed_keys_are_rejected(
         Config.from_dict(data)
 
 
-@pytest.mark.parametrize("section", ["returns", "takeout", "downside"])
+@pytest.mark.parametrize("section", ["returns", "takeout", "downside", "exit"])
 def test_a_whole_retired_section_is_rejected(data: dict[str, Any], section: str) -> None:
-    """A stale yaml still carrying the rate grid, the DSCR takeout or the REO downside does
-    not start the service (SPEC §10)."""
+    """A stale yaml still carrying the rate grid, the DSCR takeout, the REO downside or the
+    exit inference's term boundaries does not start the service (SPEC §10)."""
     assert section not in data
     data[section] = {"anything": 1}
     with pytest.raises(ConfigError, match=section):
@@ -323,19 +323,4 @@ def test_config_cannot_grade_an_informational_underwrite_flag(data: dict[str, An
 def test_missing_graded_severity_still_fails(data: dict[str, Any]) -> None:
     del data["flags"]["underwrite_severities"]["TAKE_BACK_DSCR_BELOW_FLOOR"]
     with pytest.raises(ConfigError, match="TAKE_BACK_DSCR_BELOW_FLOOR"):
-        Config.from_dict(data)
-
-
-def test_exit_boundaries_load_and_must_not_overlap(data: dict[str, Any]) -> None:
-    cfg = Config.from_dict(data)
-    assert cfg.exit.resale_max_term_months == 9
-    assert cfg.exit.hold_min_term_months == 12
-    data["exit"]["hold_min_term_months"] = 9
-    with pytest.raises(ConfigError, match="below exit.hold_min_term_months"):
-        Config.from_dict(data)
-
-
-def test_exit_section_is_required(data: dict[str, Any]) -> None:
-    del data["exit"]
-    with pytest.raises(ConfigError, match="exit"):
         Config.from_dict(data)

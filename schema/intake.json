@@ -1,16 +1,5 @@
 {
   "$defs": {
-    "AssetType": {
-      "description": "Subject-property asset type; drives the exit inference with the term.  # SPEC \u00a73",
-      "enum": [
-        "SFR",
-        "UNITS_2_4",
-        "UNITS_5_PLUS",
-        "OTHER"
-      ],
-      "title": "AssetType",
-      "type": "string"
-    },
     "BorrowerInfo": {
       "additionalProperties": false,
       "description": "Who the borrower is; credit and experience are self-reported here.  # SPEC \u00a74.5",
@@ -140,19 +129,8 @@
     },
     "DealInfo": {
       "additionalProperties": false,
-      "description": "Deal terms as requested by the borrower, plus the team's own \u00a78.1 economics.\n\nGrouped as SPEC \u00a78.1 groups them: Deal Economics, then the valuation and rent the\nadapters will eventually supply. Nothing here belongs to the Overview any more - that\ngroup is who the borrower is, and every one of its fields lives on ``BorrowerInfo``.\n\nThe four economics with a config default (``contingency_pct``, ``closing_costs_usd``,\n``holding_costs_pct_of_cost``, ``origination_fee_pct``) are None until somebody overrides\nthem, and None is what tells the engine to use the config default rather than a number\nsomebody chose. ``interest_rate`` has no default and is required to price a deal.\n\n``payoff_date`` is deliberately not here. It is ``closing_date`` plus ``term_months``\nplus ``term_stub_days`` (``schema/dates.py``), so storing it would be storing the same\nfact twice and inviting them to disagree; the team-entry form and the queue's override\nblock take a payoff date as an alternative way to say the term, and both split it into\nthe two numbers before they get here.",
+      "description": "Deal terms as requested by the borrower, plus the team's own \u00a78.1 economics.\n\nGrouped as SPEC \u00a78.1 groups them: Deal Economics, then the valuation and rent the\nadapters will eventually supply. Nothing here belongs to the Overview any more - that\ngroup is who the borrower is, and every one of its fields lives on ``BorrowerInfo``.\n\nThe four economics with a config default (``contingency_pct``, ``closing_costs_usd``,\n``holding_costs_pct_of_cost``, ``origination_fee_pct``) are None until somebody overrides\nthem, and None is what tells the engine to use the config default rather than a number\nsomebody chose. ``interest_rate`` has no default and is required to price a deal.\n\n``payoff_date`` is deliberately not here. It is the last day of the month that is the\nclosing month plus ``term_months``, plus ``term_stub_days`` (``schema/dates.py``), so\nstoring it would be storing the same fact twice and inviting them to disagree. The team\nenters the term in months; no form takes a payoff date (SPEC \u00a78.1).",
       "properties": {
-        "asset_type": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AssetType"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "closing_costs_usd": {
           "anyOf": [
             {
@@ -496,17 +474,6 @@
           "default": null,
           "title": "Rental Analysis"
         },
-        "stated_exit": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/StatedExit"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "term_bucket": {
           "anyOf": [
             {
@@ -806,19 +773,8 @@
       "title": "StateSource",
       "type": "string"
     },
-    "StatedExit": {
-      "description": "Borrower-stated exit, confirmed by the team.  # SPEC \u00a73, \u00a74.5",
-      "enum": [
-        "FLIP",
-        "HOLD",
-        "WHOLETAIL",
-        "UNKNOWN"
-      ],
-      "title": "StatedExit",
-      "type": "string"
-    },
     "Status": {
-      "description": "Deal lifecycle status.  # SPEC \u00a74.5",
+      "description": "Deal lifecycle status.  # SPEC \u00a74.5, \u00a74.6\n\n``PAUSED`` is a deal set aside by a person: it keeps its runs and its intake, nothing\nautomatic runs on it, and Progress returns it to the status it was paused from (the\n``audit_log`` row that paused it says which). It sits between the live statuses and the\ntwo closed ones because that is what it is - neither being worked nor over.",
       "enum": [
         "NEW",
         "NEEDS_INFO",
@@ -827,6 +783,7 @@
         "UNDERWRITING",
         "LOI_SENT",
         "HANDED_OFF",
+        "PAUSED",
         "DECLINED",
         "DEAD"
       ],

@@ -2,9 +2,11 @@
 
 One row per monthly period from closing (month 0) to the last anchor, every month in between
 included even when nothing happens in it - so the table is dense, the dates are contiguous,
-and the workbook's ``XIRR`` formula can run over one unbroken range. When the payoff date
-falls between two anchors there is one more row after them: the **stub**, dated the payoff
-date itself, carrying its own prorated interest and the payoff.
+and the workbook's ``XIRR`` formula can run over one unbroken range. The anchors are month
+ends (``schema/dates.py``): month 0 is dated the last day of the closing month, whatever day
+the deal closed on, and month ``m`` the last day of the month ``m`` later. When the payoff
+date falls between two anchors there is one more row after them: the **stub**, dated the
+payoff date itself, carrying its own prorated interest and the payoff.
 
 Signs are the lender's. Money out is negative (``funding``, ``draws``); money in is positive
 (``interest``, ``fees``, ``payoff``). ``net`` is their sum and is the column the IRR runs on.
@@ -47,7 +49,6 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from engine.calc.irr import xirr
 from engine.calc.terms import LoanTerms
-from schema.dates import add_months
 from schema.models import LedgerEntry, Product, ReturnOverview
 
 ZERO = Decimal(0)
@@ -89,10 +90,10 @@ def last_period(loan: LoanTerms) -> int:
 
 
 def period_date(loan: LoanTerms, month: int) -> date:
-    """The date row ``month`` falls on: its anchor, or the payoff date for the stub."""
+    """The date row ``month`` falls on: its month-end anchor, or the payoff date for the stub."""
     if loan.has_stub and month == last_period(loan):
         return loan.payoff_date
-    return add_months(loan.closing_date, month)
+    return loan.anchor(month)
 
 
 def interest_balance(loan: LoanTerms, schedule: dict[int, Decimal], month: int) -> Decimal:

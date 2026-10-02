@@ -72,10 +72,13 @@ def test_every_member_of_every_court_enum_has_a_label_and_keeps_its_code() -> No
 # --- and on the two pages that render it ---------------------------------------------------------
 
 
-def test_the_team_entry_form_labels_the_outcome_and_the_matter_columns(
-    client: QueueClient,
+def test_the_court_search_is_the_deal_page_s_and_labels_the_outcome_and_the_matter_columns(
+    client: QueueClient, stored_deal: Deal
 ) -> None:
-    body = client.get("/queue/new").text
+    """The team form has no court search on it (SPEC §8.1); the override block does."""
+    form = client.get("/queue/new").text
+    assert 'name="court_records_status"' not in form and 'name="matter_code"' not in form
+    body = client.get(f"/queue/deals/{stored_deal.id}").text
     assert options(body, "court_records_status") == {
         member.value: enum_label(member) for member in CourtRecordsStatus
     }

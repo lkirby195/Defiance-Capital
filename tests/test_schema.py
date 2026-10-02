@@ -23,7 +23,6 @@ from schema.models import (
     PropertyInfo,
     ScreenFlag,
     State,
-    StatedExit,
     StateSource,
     Status,
     TermBucket,
@@ -45,7 +44,6 @@ def test_enum_values_match_spec() -> None:
     assert [m.value for m in ExperienceTier] == ["E0", "E1", "E2", "E3"]
     assert [m.value for m in TermBucket] == ["3", "6", "9", "12", "12_PLUS"]
     assert [m.value for m in Channel] == ["SMS", "LINK", "CONTRACT", "TEAM", "WEB"]
-    assert [m.value for m in StatedExit] == ["FLIP", "HOLD", "WHOLETAIL", "UNKNOWN"]
     assert [m.value for m in State] == ["OK", "CO", "OTHER"]
     assert [m.value for m in Verdict] == ["GO", "CONDITIONAL", "DECLINE"]
     assert [m.value for m in Status] == [
@@ -56,6 +54,7 @@ def test_enum_values_match_spec() -> None:
         "UNDERWRITING",
         "LOI_SENT",
         "HANDED_OFF",
+        "PAUSED",
         "DECLINED",
         "DEAD",
     ]
@@ -148,9 +147,9 @@ def test_a_term_is_whole_months_plus_a_stub_and_runs_for_some_time() -> None:
     assert DealInfo().term_stub_days is None
     stubbed = DealInfo(closing_date=date(2027, 3, 15), term_months=9, term_stub_days=11)
     assert stubbed.term == Term(9, 11)
-    assert stubbed.payoff_date == date(2027, 12, 26)
+    assert stubbed.payoff_date == date(2028, 1, 11)  # 11 days past the ninth month end
     all_stub = DealInfo(closing_date=date(2027, 1, 1), term_months=0, term_stub_days=20)
-    assert all_stub.payoff_date == date(2027, 1, 21)
+    assert all_stub.payoff_date == date(2027, 2, 20)  # 20 days past the closing month's end
     with pytest.raises(ValidationError, match="no months and no days"):
         DealInfo(term_months=0)
     with pytest.raises(ValidationError, match="needs a term in months"):

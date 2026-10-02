@@ -16,7 +16,9 @@ yanked out from under them.
 Everything else keeps the status it has: a non-Decline re-screen never drags a deal
 backwards, and re-underwriting one already in UNDERWRITING is a no-op. A DECLINED or DEAD
 deal is refused outright rather than quietly priced, and so is a NEEDS_INFO one: its intake
-is not finished, so there is nothing to price yet.
+is not finished, so there is nothing to price yet. A PAUSED deal keeps its status through
+either run - a person set it aside, and only Progress brings it back (SPEC §4.6) - and is
+left out of the automatic runs altogether (``services/autorun.py``).
 """
 
 from __future__ import annotations

@@ -162,26 +162,6 @@ class FeesConfig(_Section):
     broker_selling_pct: Pct  # the flip's cost of selling (SPEC §8.4); not an input
 
 
-class ExitConfig(_Section):
-    """Term boundaries of the exit inference.  # SPEC §3
-
-    A term at or below ``resale_max_term_months`` on an SFR or a 2-4 infers a resale; a
-    term at or above ``hold_min_term_months`` infers a hold. The gap between them (10-11
-    months on the placeholders) infers nothing and stays UNKNOWN, which is the point of
-    having two numbers rather than one cut point. All the exit does is default the two
-    analysis toggles (SPEC §8.1).
-    """
-
-    resale_max_term_months: Months
-    hold_min_term_months: Months
-
-    @model_validator(mode="after")
-    def _boundaries_do_not_overlap(self) -> ExitConfig:
-        if self.resale_max_term_months >= self.hold_min_term_months:
-            raise ValueError("exit.resale_max_term_months must be below exit.hold_min_term_months")
-        return self
-
-
 class DrawsConfig(_Section):
     """The draw schedule's one constant.  # SPEC §8.3
 
@@ -277,7 +257,6 @@ class Config(_Section):
     flags: FlagsConfig
     experience: ExperienceConfig
     fees: FeesConfig
-    exit: ExitConfig
     draws: DrawsConfig
     interest: InterestConfig
     rental: RentalConfig

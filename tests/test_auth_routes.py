@@ -38,8 +38,10 @@ PAGE_ROUTES = [
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/underwrite"),
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/overrides"),
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/advance"),
+    ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/pause"),
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/decline"),
-    ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/dead"),
+    ("GET", "/queue/deals/00000000-0000-0000-0000-000000000000/kill"),
+    ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/kill"),
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/reopen"),
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/note"),
 ]
@@ -95,6 +97,7 @@ def test_every_route_is_accounted_for() -> None:
             ("GET", "/queue/new"),
             ("GET", "/queue/deals/{deal_id}"),
             ("GET", "/queue/deals/{deal_id}/intake"),
+            ("GET", "/queue/deals/{deal_id}/kill"),
             ("GET", "/deals/{deal_id}"),
             ("GET", "/openapi.json"),
             ("GET", "/docs"),
@@ -113,8 +116,9 @@ def test_every_route_is_accounted_for() -> None:
                 "underwrite",
                 "overrides",
                 "advance",
+                "pause",
                 "decline",
-                "dead",
+                "kill",
                 "reopen",
                 "note",
             )
@@ -174,7 +178,7 @@ def test_the_root_and_a_protected_page_remember_where_the_caller_was_going(
     assert anon_client.get("/queue/new", follow_redirects=False).headers["location"] == (
         "/login?next=%2Fqueue%2Fnew"
     )
-    # "/" is the queue by another name, so there is nothing worth remembering
+    # "/" is Home by another name, so there is nothing worth remembering
     root = anon_client.get("/", follow_redirects=False)
     assert root.status_code == 303 and root.headers["location"] == "/queue"
 

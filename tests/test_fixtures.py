@@ -27,6 +27,7 @@ from cli.fixtures import run_fixture
 from config.config import Config
 from engine.calc.irr import NPV_TOLERANCE, xnpv
 from engine.version import ENGINE_VERSION
+from schema.dates import month_end
 from schema.models import (
     AnalysisStatus,
     CapStatus,
@@ -261,8 +262,11 @@ def test_fixture_underwrite_ledger_and_irr(path: Path) -> None:
 def test_fixture_underwrite_dates_run_month_by_month(path: Path) -> None:
     _, result = run_underwrite(path)
     entries = result.return_overview.entries
-    assert entries[0].date == result.closing_date
+    # month 0 is the end of the closing month, whatever day the deal closed on (SPEC §8.3)
+    assert entries[0].date == month_end(result.closing_date)
+    assert entries[0].date >= result.closing_date
     assert entries[-1].date == result.payoff_date
+    assert all(entry.date == month_end(entry.date) for entry in entries if not entry.stub_days)
     assert [e.month for e in entries] == list(range(len(entries)))
     assert all(a.date < b.date for a, b in zip(entries, entries[1:], strict=False))
 

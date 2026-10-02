@@ -17,7 +17,6 @@ from datetime import date
 from decimal import Decimal
 
 from config.config import Config
-from schema.labels import enum_label
 from schema.models import (
     SPLIT_PRODUCTS,
     AnalysisStatus,
@@ -214,7 +213,7 @@ def render_economics(result: UnderwriteResult) -> list[str]:
     lines = heading(
         "DEAL ECONOMICS",
         f"{term_text(result)} ({result.rehab_months} rehab), "
-        f"{day(result.closing_date)} to {day(result.payoff_date)}",
+        f"closes {day(result.closing_date)}, pays off {day(result.payoff_date)}",
     )
     lines += [
         row("Purchase price", money(economics.purchase_price)),
@@ -430,16 +429,19 @@ def render_underwrite(
         ]
     else:
         sizing = render_sizing(result.sizing, config, title="SIZING (underwrite: verified)")
-    exit_note = (
-        f"exit {enum_label(result.exit.type)} ({result.exit.exit_source.value}); "
-        f"flip {'on' if result.exit.flip_analysis else 'off'}, "
-        f"rental {'on' if result.exit.rental_analysis else 'off'}, "
+    toggles = result.analyses
+    toggle_note = (
+        f"flip {'on' if toggles.flip_analysis else 'off'}"
+        f"{'' if toggles.flip_analysis == toggles.flip_analysis_default else ' (by hand)'}, "
+        f"rental {'on' if toggles.rental_analysis else 'off'}"
+        f"{'' if toggles.rental_analysis == toggles.rental_analysis_default else ' (by hand)'}, "
         "take-back always on"
     )
     return [
         *sizing,
-        *heading("EXIT", exit_note),
-        "  Informational: all it does is default the two analysis toggles (SPEC §3).",
+        *heading("ANALYSES", toggle_note),
+        "  Flip is on by default with a sale price, rental with a rent; a hand setting wins "
+        "(SPEC §8.1).",
         *render_economics(result),
         *render_return_overview(result.return_overview),
         *render_flip(result.flip),

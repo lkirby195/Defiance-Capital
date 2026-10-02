@@ -3,10 +3,9 @@
 Several of the enums on an ``IntakeRecord`` are stored as codes nobody outside this
 repository speaks. ``Tranche`` is ``T1``..``T5`` and ``ExperienceBucket`` is ``0``/``1_2``/
 ``3_5``/``6_PLUS``; the thing a team member actually picked was a FICO range and a number of
-deals. ``Product``, ``AssetType``, ``LoanPurpose`` and ``StatedExit`` are SCREAMING_SNAKE for
-the same reason - they are stored values and config grid keys - and a person reads "Split
-Draw", not ``SPLIT_DRAW``. The stored value does not change; nothing a person reads says the
-code any more.
+deals. ``Product`` and ``LoanPurpose`` are SCREAMING_SNAKE for the same reason - they are
+stored values and config grid keys - and a person reads "Split Draw", not ``SPLIT_DRAW``. The
+stored value does not change; nothing a person reads says the code any more.
 
 The credit labels are derived from ``credit.tranche_cutoffs`` rather than written out, so a
 lender who moves a cutoff moves the label with it (CLAUDE.md, "No hardcoded thresholds"). The
@@ -14,8 +13,9 @@ cutoffs arrive as a mapping rather than a ``Config`` because ``schema/`` is impo
 ``config/`` and must not import it back.
 
 ``enum_label`` is the general rule - title case with spaces - and ``_ENUM_LABELS`` is the
-short list of codes title-casing gets wrong: an initialism (``SFR``) and two ranges
-(``UNITS_2_4``, ``UNITS_5_PLUS``) that read as "Units 2 4" and "Units 5 Plus" otherwise.
+short list of codes title-casing gets wrong. It is empty today: the asset types that needed
+it (``SFR``, ``UNITS_2_4``) left with the exit inference, and the list stays so the next
+initialism has somewhere to go.
 
 ``PRODUCT_DEFINITIONS`` is the SPEC §3 product table in one line each, shown beside the Loan
 Type box so a person choosing one is told what they are choosing rather than expected to know.
@@ -26,7 +26,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from enum import StrEnum
 
-from schema.models import AssetType, ExperienceBucket, Product, TermBucket, Tranche
+from schema.models import ExperienceBucket, Product, TermBucket, Tranche
 
 # En dashes: these are ranges, and the form and the screen summary read as prose.
 EXPERIENCE_BUCKET_LABELS: Mapping[ExperienceBucket, str] = {
@@ -45,14 +45,10 @@ TERM_BUCKET_LABELS: Mapping[TermBucket, str] = {
     TermBucket.M12_PLUS: "12+ months",
 }
 
-# The codes ``str.title()`` gets wrong. Everything else - NO_DRAW, CASH_OUT, WHOLETAIL -
-# title-cases correctly and is deliberately not listed, so this stays a list of exceptions
-# rather than a second copy of every enum.
-_ENUM_LABELS: Mapping[str, str] = {
-    AssetType.SFR.value: "SFR",
-    AssetType.UNITS_2_4.value: "Units 2–4",
-    AssetType.UNITS_5_PLUS.value: "Units 5+",
-}
+# The codes ``str.title()`` gets wrong. Everything a person reads today - NO_DRAW, CASH_OUT,
+# WHOLETAIL - title-cases correctly and is deliberately not listed, so this stays a list of
+# exceptions rather than a second copy of every enum.
+_ENUM_LABELS: Mapping[str, str] = {}
 
 # SPEC §3, one line each: structure, then how interest is charged. Shown under the Loan Type
 # select and beside the chosen product on the deal page.

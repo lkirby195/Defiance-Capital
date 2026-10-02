@@ -1,6 +1,6 @@
 {
   "name": "go_split_principal_okc",
-  "description": "SPLIT_PRINCIPAL rehab in OKC; a 10% contingency and a 3% origination fee, both team-entered over the config defaults. Go. Underwrite: 12 months at 12%, a $136,000 Principal Note plus $54,000 of Tranche A drawn $6,000 a month over nine months, so the interest climbs $60 a month until the tranche is full; IRR 16.582%. A 12-month term infers HOLD, so the flip is on only because the team turned it on.",
+  "description": "SPLIT_PRINCIPAL rehab in OKC; a 10% contingency and a 3% origination fee, both team-entered over the config defaults. Go. Underwrite: 12 months at 12%, a $136,000 Principal Note plus $54,000 of Tranche A drawn $6,000 a month over nine months, so the interest climbs $60 a month until the tranche is full; IRR 16.587%. The flip is on by default - a sale price is on the deal - and the team has set it on by hand as well. Closing 15 November 2026 anchors the ledger to 30 November, so the payoff is 30 November 2027.",
   "inputs": {
     "deal": {
       "product": "SPLIT_PRINCIPAL",
@@ -75,12 +75,11 @@
       "origination_fee_pct": "0.03",
       "monthly_rent": "2400.00",
       "flip_analysis": true,
-      "asset_type": "SFR",
       "loan_purpose": "CONSTRUCTION",
       "holding_costs_pct_of_cost": "0.05"
     },
     "expected": {
-      "payoff_date": "2027-11-15",
+      "payoff_date": "2027-11-30",
       "rehab_months": 9,
       "commitment": "190000.00",
       "funded_at_close": "136000.00",
@@ -105,7 +104,7 @@
         "total_fees": "5700.00",
         "total_payoff": "190000.00",
         "total_profit": "25800.00",
-        "irr": "0.16582414"
+        "irr": "0.16586990"
       },
       "flip": {
         "status": "EVALUATED",

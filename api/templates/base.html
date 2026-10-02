@@ -2,6 +2,9 @@
    queue is one small internal app and a second request for 4kB of CSS buys nothing. The
    public borrower form has its own shell (public.html) on the same stylesheet.
 
+   The top bar carries two buttons on every page: Home, the list of every deal, and New
+   Deal, the team-entry form.
+
    Two pieces of client-side script exist in the whole queue: the copy button on the
    suggested reply (deal.html), and the input masks (_masks.html). Both are conveniences and
    neither is load-bearing — the server parses `$425,000`, `425000`, `12%` and `12` alike
@@ -21,8 +24,8 @@
   <header class="bar">
     <span class="brand">GLENWOOD</span>
     <nav>
-      <a href="/queue">Queue</a>
-      <a href="/queue/new">New deal</a>
+      <a class="btn" href="/queue">Home</a>
+      <a class="btn" href="/queue/new">New Deal</a>
     </nav>
     {% if user %}
       <span class="who">

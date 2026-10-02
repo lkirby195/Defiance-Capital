@@ -70,15 +70,38 @@ def find_or_create_property(session: Session, info: PropertyInfo) -> Property | 
     return prop
 
 
+# The ``deals`` columns the team-entry form has a box for (``api/intake_form.py``), in the
+# order the form asks. Edit Intake re-applies these and only these
+# (``services/intake.update_intake``): the §8.1 economics, the valuation, the rent, the
+# toggles and the court search are edited on the deal page and have no box on the form, so
+# an edit that could not have known them must not clear them. ``term_stub_days`` is here
+# because the form's term is whole months and a stub beside it would be stale.
+FORM_COLUMNS: tuple[str, ...] = (
+    "credit_range_self_reported",
+    "experience_bucket_self_reported",
+    "repeat_borrower_self_reported",
+    "purchase_price",
+    "rehab_costs",
+    "loan_requested",
+    "loan_purpose",
+    "product",
+    "product_source",
+    "closing_date",
+    "term_bucket",
+    "term_months",
+    "term_stub_days",
+)
+
+
 def intake_columns(record: IntakeRecord) -> dict[str, Any]:
     """The ``deals`` columns an ``IntakeRecord`` owns, by column name.
 
-    One mapping, so creating a deal from an intake and re-applying an edited one
-    (``services/intake.py``) can never write different sets of columns. Everything outside
-    it - the id, the channel, the status, the web form's ``intake_source`` and
-    ``referral_note``, the borrower's own estimates (``borrower_columns``), the borrower and
-    property links - belongs to the row rather than to the intake, and is set by whoever is
-    writing the row.
+    One mapping, so creating a deal from an intake writes one set of columns whatever the
+    channel. Everything outside it - the id, the channel, the status, the web form's
+    ``intake_source`` and ``referral_note``, the borrower's own estimates
+    (``borrower_columns``), the borrower and property links - belongs to the row rather than
+    to the intake, and is set by whoever is writing the row. An edit re-applies the
+    ``FORM_COLUMNS`` subset (``form_columns``).
     """
     return {
         "loan_purpose": record.deal.loan_purpose,
@@ -103,8 +126,6 @@ def intake_columns(record: IntakeRecord) -> dict[str, Any]:
         "origination_fee_pct": record.deal.origination_fee_pct,
         "flip_analysis": record.deal.flip_analysis,
         "rental_analysis": record.deal.rental_analysis,
-        "asset_type": record.deal.asset_type,
-        "stated_exit": record.deal.stated_exit,
         "monthly_rent": record.deal.monthly_rent,
         "estimated_sale_price_team": record.deal.estimated_sale_price_team,
         "court_records_status": record.deal.court_records_status,
@@ -116,6 +137,17 @@ def intake_columns(record: IntakeRecord) -> dict[str, Any]:
             for matter in record.deal.court_records_team
         ],
     }
+
+
+def form_columns(record: IntakeRecord) -> dict[str, Any]:
+    """The columns the team-entry form carries, as the record says them.  # SPEC §4.1, §8.1
+
+    What Edit Intake writes. A subset of ``intake_columns`` by name, so a column added to
+    the form is added in one place and both writers pick it up; ``tests/test_intake_form.py``
+    holds the form's own field list to this one.
+    """
+    every = intake_columns(record)
+    return {column: every[column] for column in FORM_COLUMNS}
 
 
 def borrower_columns(record: IntakeRecord) -> dict[str, Any]:
