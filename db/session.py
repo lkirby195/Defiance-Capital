@@ -6,6 +6,16 @@ and the default is psycopg2, which is not installed here. Left alone that is a d
 fails at the first query with a plugin error naming a library nobody chose, so the prefix is
 rewritten to the driver this project actually depends on rather than documented as a thing
 to remember.
+
+**Every pooled connection is pinged before it is handed out** (``pool_pre_ping``). A managed
+Postgres, and the network between it and the service, drop a connection that has sat idle -
+and the pool does not find out until the next request tries to use it. Without the ping that
+request fails with ``psycopg.OperationalError: server closed the connection unexpectedly``,
+answered as a 500, and only then does the pool throw the dead connection away; the request
+after it gets a fresh one and works. That is a page that fails once after every quiet
+spell and never again until the next one - the first sign-in of the morning, the first deal
+opened after lunch. The ping costs one round trip per checkout and turns the dead
+connection into a reconnect the request never sees.
 """
 
 from __future__ import annotations
@@ -47,9 +57,18 @@ def database_url() -> str:
     return with_driver(url)
 
 
+def make_engine(url: str) -> Engine:
+    """An engine on ``url`` with the pool settings this app runs on.
+
+    One place, so a test can build an engine the way production does and prove the pre-ping
+    recovers a dropped connection rather than taking it on trust.
+    """
+    return create_engine(url, pool_pre_ping=True)
+
+
 @lru_cache(maxsize=1)
 def get_engine() -> Engine:
-    return create_engine(database_url())
+    return make_engine(database_url())
 
 
 def get_session() -> Iterator[Session]:

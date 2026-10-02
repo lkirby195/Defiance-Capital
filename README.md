@@ -61,6 +61,14 @@ you care about.
 and every push to `main` deploys: `uv sync --frozen --no-dev`, then `alembic upgrade head`
 against the live database before the new code serves anything, then uvicorn.
 
+**Idle connections.** The database pool pings a connection before handing it to a request
+(`db/session.py`, `pool_pre_ping`). Without it, a connection the managed Postgres or the
+network dropped during a quiet spell was served to the next request and failed it with
+`psycopg.OperationalError: server closed the connection unexpectedly` - a 500 on the first
+page after the gap, typically right after signing in, that a refresh cleared. If one ever
+comes back, that line in the service log is what to look for, right after the
+`glenwood.auth` lines that bracket the sign-in.
+
 **First time:**
 
 1. Create a Postgres instance on Render, in the same region as the service.

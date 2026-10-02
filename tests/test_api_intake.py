@@ -34,13 +34,15 @@ def test_complete_team_entry_is_stored(client: TestClient, db_session: Session) 
     response = client.post("/intake/team", json=payload)
     assert response.status_code == 201, response.text
     body = response.json()
-    assert body["status"] == "NEW"
+    # a complete intake is screened and priced on the way in (SPEC §4.6), and the JSON
+    # says the status the deal ended in rather than the one it had for a moment
+    assert body["status"] == "UNDERWRITING"
     assert body["missing_fields"] == []
     assert body["borrower"]["phone"] == "7205550192"  # digits (SPEC §4.1)
 
     deal = db_session.get(Deal, body["id"])
     assert deal is not None
-    assert deal.status is Status.NEW
+    assert deal.status is Status.UNDERWRITING
     assert deal.channel is Channel.TEAM
     assert deal.purchase_price == Decimal("200000.00")
     assert deal.term_bucket is None and deal.term_months == 9

@@ -22,14 +22,17 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from config.config import Config
 from db.models import Deal, Screen
 from schema.models import (
     SPLIT_PRODUCTS,
     AuditAction,
     ProductSource,
     Status,
+    validate_loan_split,
 )
 from services.audit import DEALS, jsonable, record_audit
+from services.defaults import populate
 from services.errors import ActionNotAllowed, ReasonRequired
 from services.requests import TeamOverrides
 from services.runner import load_deal
@@ -44,9 +47,12 @@ DECLINE_FROM: frozenset[Status] = frozenset(Status) - {Status.DECLINED, Status.D
 MARK_DEAD_FROM: frozenset[Status] = frozenset(Status) - {Status.DEAD}
 # Only a declined deal is re-opened. DEAD is deliberately final.
 REOPEN_FROM: frozenset[Status] = frozenset({Status.DECLINED})
+# The two columns of the loan split (SPEC §8.2), applied after the product.
+SPLIT_COLUMNS: tuple[str, str] = ("loan_purchase_portion", "loan_rehab_portion")
 
 # The fields the queue's override block owns, in the order the form shows them. ``product``
-# is not here: it carries a source column and is handled on its own (SPEC §3).
+# is not here: it carries a source column and is handled on its own (SPEC §3). Nor is the
+# loan split: it is applied after the product, against the product the deal ends up with.
 OVERRIDE_FIELDS: tuple[str, ...] = (
     "loan_purpose",
     "closing_date",
@@ -221,14 +227,21 @@ def _override_value(overrides: TeamOverrides, field: str) -> Any:
 
 
 def save_overrides(
-    session: Session, deal_id: UUID, overrides: TeamOverrides, *, actor: str
+    session: Session,
+    deal_id: UUID,
+    overrides: TeamOverrides,
+    *,
+    actor: str,
+    config: Config | None = None,
 ) -> Deal:
     """Apply the queue's override block to the deal.  # SPEC §6.1
 
     A replacement, not a patch: the form was rendered with the deal's current values, so what
-    comes back is the state the team means the deal to be in and a blank means no value. Only
-    the fields that actually moved reach the audit row, so a save that changed one number
-    does not read as a save that changed eleven.
+    comes back is the state the team means the deal to be in and a blank means no value -
+    and for the economics that have one, the default, which is written back onto the deal
+    and tagged (``services/defaults.py``) in the same save and the same audit row. Only the
+    fields that actually moved reach the audit row, so a save that changed one number does
+    not read as a save that changed eleven.
 
     Allowed from any status. It is data entry, not a decision - correcting a valuation on a
     declined deal before re-opening it is a real thing to want to do, and the audit row says
@@ -240,7 +253,7 @@ def save_overrides(
     audit trail to show what was claimed.
     """
     deal = load_deal(session, deal_id)
-    before, after = apply_overrides(deal, overrides)
+    before, after = apply_overrides(deal, overrides, config)
     if not after:
         return deal
     session.flush()
@@ -256,16 +269,23 @@ def save_overrides(
     return deal
 
 
-def apply_overrides(deal: Deal, overrides: TeamOverrides) -> tuple[dict[str, Any], dict[str, Any]]:
+def apply_overrides(
+    deal: Deal, overrides: TeamOverrides, config: Config | None = None
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Set the block on a deal row; return the before and after of what moved.
 
     Pure: no session, no audit row, no commit. ``save_overrides`` wraps it with all three,
     and the CLI applies a fixture's ``team_overrides`` block to an unpersisted row through it
     (``cli/fixtures.py``), so a web deal the team then corrected can be run with no database
     behind it, through the same code the queue runs.
+
+    A blank on a defaulted economic, or on the split of a split product, ends as the default
+    rather than as nothing: ``populate`` fills every blank the block left and relabels the
+    rest, and what it wrote lands in ``after`` beside the team's own changes.
     """
     before: dict[str, Any] = {}
     after: dict[str, Any] = {}
+    original = {field: getattr(deal, field) for field in (*OVERRIDE_FIELDS, *SPLIT_COLUMNS)}
     for field in OVERRIDE_FIELDS:
         current = getattr(deal, field)
         submitted = _override_value(overrides, field)
@@ -275,8 +295,42 @@ def apply_overrides(deal: Deal, overrides: TeamOverrides) -> tuple[dict[str, Any
         after[field] = jsonable(submitted)
         setattr(deal, field, submitted)
     _apply_product(deal, overrides, before, after)
+    _apply_split(deal, overrides, before, after)
     _apply_term(deal, overrides, before, after)
+    for field, value in populate(deal, config).items():
+        after[field] = value
+    # A box left blank that the default filled back in has not moved; it leaves the row.
+    for field in list(after):
+        if field in original and getattr(deal, field) == original[field]:
+            del after[field]
+            before.pop(field, None)
     return before, after
+
+
+def _apply_split(
+    deal: Deal, overrides: TeamOverrides, before: dict[str, Any], after: dict[str, Any]
+) -> None:
+    """Set the loan split, against the product the deal now has.  # SPEC §8.2
+
+    After ``_apply_product``, so a split typed beside a move onto a split product is kept
+    and one typed beside a move off one is refused rather than stored. The two halves have
+    to add up to the loan amount, which the block does not carry and the deal does, so the
+    check runs here. Both blank clears the split, which ``populate`` then fills with the
+    §8.2 formula on a split product - the default the page tagged it with.
+    """
+    submitted = (overrides.loan_purchase_portion, overrides.loan_rehab_portion)
+    if deal.product not in SPLIT_PRODUCTS:
+        # The block's split boxes are rendered for a split product; a save that moves the
+        # deal off one posts them too, and a single-note loan carries no split (SPEC §8.2).
+        # ``_apply_product`` has already cleared the old one.
+        return
+    validate_loan_split(deal.product, deal.loan_requested, *submitted)
+    for field, value in zip(SPLIT_COLUMNS, submitted, strict=True):
+        if getattr(deal, field) == value:
+            continue
+        before[field] = jsonable(getattr(deal, field))
+        after[field] = jsonable(value)
+        setattr(deal, field, value)
 
 
 def _apply_term(

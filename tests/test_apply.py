@@ -5,8 +5,9 @@ thing a stranger can write. What is under test is that it reads in both language
 in one; that the browser-side courtesies (the ``required`` attributes, the button that stays
 off) are wired and that the server refuses the same things again by name; that a bot's post
 is dropped and a flood is turned away; and that one honest submission lands in the queue as
-a WEB deal, with its source and its note, unscreened, with the borrower told nothing but
-"we will be in touch".
+a WEB deal, with its source and its note, screened and priced on the way in on the config
+defaults and the borrower's own numbers (SPEC §4.6), with the borrower told nothing but "we
+will be in touch".
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from api.apply_form import APPLY_FIELDS, HONEYPOT, REQUIRED_FIELDS
 from api.i18n import from_accept_language
 from api.ratelimit import LIMITER, RateLimiter
 from config.config import get_config
-from db.models import AuditLog, Borrower, Deal, IntakeSubmission, Screen
+from db.models import AuditLog, Borrower, Deal, IntakeSubmission, Screen, Underwrite
 from schema.models import (
     AuditAction,
     Channel,
@@ -50,7 +51,7 @@ from tests.test_form_errors import field_error, flagged, top_problems
 pytestmark = requires_db
 
 # What a borrower on a phone posts: masked money, a dashed phone, the stored codes on the
-# choices, the hidden language and source, the consent box ticked.
+# choices, the hidden language and source. Sending it is the consent (SPEC §4.2).
 VALID: dict[str, str] = {
     "lang": "en",
     "src": "tulsa-reia",
@@ -73,7 +74,6 @@ VALID: dict[str, str] = {
     "term_bucket": "12_PLUS",
     "closing_date": "2026-11-15",
     "referral_note": "A friend at the Tulsa REIA",
-    "consent": "true",
 }
 ZILLOW = "https://www.zillow.com/homedetails/3320-Meade-St-Denver-CO-80211/13241234_zpid/"
 
@@ -228,14 +228,12 @@ def test_a_required_box_left_empty_is_refused_with_the_complaint_beside_it(
     response = anon_client.post("/apply", data=body, follow_redirects=False)
 
     assert response.status_code == 422, name
-    expected = "Please tick the box" if name == "consent" else "This is required."
     message = field_error(response.text, name)
-    assert message is not None and expected in message, name
+    assert message is not None and "This is required." in message, name
     assert flagged(response.text, name) or name in (
         "experience_bucket",
         "repeat_borrower",
         "term_bucket",
-        "consent",
     )
     assert top_problems(response.text) == []
     for other in REQUIRED_FIELDS:
@@ -253,13 +251,14 @@ def test_the_complaint_is_in_spanish_when_the_page_was(
 ) -> None:
     body = {**VALID, "lang": "es"}
     del body["borrower_name"]
-    del body["consent"]
-    response = anon_client.post("/apply", data=body, follow_redirects=False)
+    response = anon_client.post(
+        "/apply", data={**body, "borrower_phone": "12"}, follow_redirects=False
+    )
     assert response.status_code == 422
     assert '<html lang="es">' in response.text
     assert field_error(response.text, "borrower_name") == "Este campo es obligatorio."
-    assert field_error(response.text, "consent") == (
-        "Marque la casilla para que podamos comunicarnos con usted."
+    assert field_error(response.text, "borrower_phone") == (
+        "Ingrese un número de teléfono de 10 dígitos."
     )
     assert deals(db_session) == []
 
@@ -269,7 +268,6 @@ def test_the_complaint_is_in_spanish_when_the_page_was(
     [
         ("borrower_phone", "555-0142", "10-digit phone"),
         ("purchase_price", "nan", "amount in dollars"),
-        ("consent", "maybe", "tick the box"),
         ("borrower_email", "maria at ortizbuilds", "valid email"),
         ("credit_range", "T9", "choose one"),
         ("state", "TX", "choose one"),
@@ -366,7 +364,8 @@ def test_a_full_submission_lands_in_the_queue_as_a_web_deal(
 
     (deal,) = deals(db_session)
     assert deal.channel is Channel.WEB
-    assert deal.status is Status.NEW
+    # complete on arrival, so screened and priced on the way in (SPEC §4.6)
+    assert deal.status is Status.UNDERWRITING
     assert deal.missing_fields == []
     assert deal.intake_source == "tulsa-reia"
     assert deal.referral_note == "A friend at the Tulsa REIA"
@@ -388,8 +387,21 @@ def test_a_full_submission_lands_in_the_queue_as_a_web_deal(
     assert str(deal.closing_date) == "2026-11-15"
     # no loan-type selector: the normalizer inferred one, as on every channel
     assert deal.product is Product.SPLIT_DRAW and deal.product_source is ProductSource.INFERRED
-    # nothing the team form unlocks was touched
-    assert deal.interest_rate is None and deal.loan_purchase_portion is None
+    # the §8.1 economics the form does not ask were populated as defaults, and say so
+    assert deal.interest_rate == Decimal("0.12")
+    assert (deal.loan_purchase_portion, deal.loan_rehab_portion) == (
+        Decimal("120000"),
+        Decimal("40000"),
+    )
+    assert set(deal.defaulted_fields) == {
+        "interest_rate",
+        "contingency_pct",
+        "closing_costs_usd",
+        "holding_costs_pct_of_cost",
+        "origination_fee_pct",
+        "loan_purchase_portion",
+        "loan_rehab_portion",
+    }
     assert deal.court_records_status is None
     # the borrower row, keyed by the phone's digits
     assert deal.borrower is not None
@@ -404,23 +416,31 @@ def test_a_full_submission_lands_in_the_queue_as_a_web_deal(
     assert deal.property.city == "Tulsa"
     assert deal.property.state is State.OK
     assert deal.property.state_source is StateSource.ENTERED
-    # no screen was run (SPEC §4.2)
-    assert count(db_session, Screen) == 0
+    # the screen and the underwrite ran on arrival, as the system (SPEC §4.6)
+    assert count(db_session, Screen) == 1 and count(db_session, Underwrite) == 1
     # the submission row keeps the stored form and the language, immutable
     assert len(deal.submissions) == 1
     payload = deal.submissions[0].raw_payload
     assert deal.submissions[0].channel is Channel.WEB
-    assert payload["language"] == "en" and payload["consent"] is True
+    assert payload["language"] == "en"
+    assert payload["consent"] is True, "sending the form is the consent, and it is recorded"
     assert payload["purchase_price"] == "185000" and payload["borrower_phone"] == "9185550142"
-    # ...and the audit row names the borrower as the actor
-    (row,) = list(db_session.scalars(select(AuditLog)))
-    assert row.action == AuditAction.INTAKE_CREATED.value
-    assert row.actor == "web:maria@ortizbuilds.example"
-    assert row.after is not None and row.after["channel"] == "WEB"
-    assert row.after["intake_source"] == "tulsa-reia"
-    # in the queue, under NEW
+    # ...and the audit row names the borrower as the actor, and the runs the system
+    rows = list(db_session.scalars(select(AuditLog).order_by(AuditLog.created_at)))
+    assert [row.action for row in rows] == [
+        AuditAction.INTAKE_CREATED.value,
+        AuditAction.SCREEN_RUN.value,
+        AuditAction.UNDERWRITE_RUN.value,
+    ]
+    created, screened, priced = rows
+    assert created.actor == "web:maria@ortizbuilds.example"
+    assert created.after is not None and created.after["channel"] == "WEB"
+    assert created.after["intake_source"] == "tulsa-reia"
+    assert created.after["defaults"]["interest_rate"] == "0.12"
+    assert screened.actor == "system" and priced.actor == "system"
+    # in the queue, under UNDERWRITING
     view = queue_view(db_session)
-    assert [group.status for group in view.groups] == [Status.NEW]
+    assert [group.status for group in view.groups] == [Status.UNDERWRITING]
     assert view.groups[0].entries[0].deal.id == deal.id
 
 
@@ -435,12 +455,10 @@ def test_the_queue_and_the_deal_page_say_it_came_from_the_web(
 
     deal_body = client.get(f"/queue/deals/{deal.id}").text
     assert "From the public form" in deal_body
-    assert "tulsa-reia" in deal_body
-    assert "A friend at the Tulsa REIA" in deal_body
+    assert "Source: tulsa-reia" in deal_body
+    assert "How they heard of us: A friend at the Tulsa REIA" in deal_body
     assert "<dd>Spanish" in deal_body
-    assert "the borrower asked for\n        12+ months" in deal_body or "12+ months" in deal_body
-    assert "The borrower asked for more than 12 months" in deal_body
-    assert "seeded at 12" in deal_body
+    assert re.search(r"<dt>Requested term.*?</dt>\s*<dd>12\+ months</dd>", deal_body, re.S)
     assert ">12_PLUS<" not in deal_body
 
     # the readiness row calls the seeded term what it is

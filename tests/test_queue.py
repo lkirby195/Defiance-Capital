@@ -516,13 +516,13 @@ def test_the_underwrite_button_runs_without_a_rent(
 def test_the_underwrite_button_names_what_the_deal_still_needs(
     client: TestClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    """A deal with no rate on it is screened and not priced.  # SPEC §8.1"""
-    deal_with_overrides.interest_rate = None
+    """A deal with no closing date on it is screened and not priced.  # SPEC §8.1"""
+    deal_with_overrides.closing_date = None
     db_session.commit()
 
     response = client.post(f"/queue/deals/{deal_with_overrides.id}/underwrite")
     assert response.status_code == 422
-    assert "deal.interest_rate" in response.text
+    assert "deal.closing_date" in response.text
     # and the page said so before the button was pressed
     assert "Run underwrite is off until these are entered" in response.text
 

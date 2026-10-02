@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.5
+# GLENWOOD Underwriting Platform — SPEC v0.6
 
-Status: **v0.5**, 2026-09-23, engine `1.1.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.6**, 2026-10-02, engine `1.3.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.6** is the queue running on its own. Every deal is **populated with its §8.1 defaults at intake** — the config rate (new: `interest.default_annual_rate`, placeholder 12%), the four config fees and, on a split product, the §8.2 formula loan split — stored on the deal, tagged `DEFAULT`, editable and resettable; a `DEFAULT` counts as present, so only the closing date and the term can turn Run underwrite off (§8.1, §8.2, §9.2). A complete intake is **screened and priced on the way in** on every channel, and run again after every team edit, as the actor `system` (§4.6). The deal page is labels and values only, with every definition behind a (?) on its label (§9); the public form's consent is the line above its button (§4.2).
 
 **v0.5** is one change to the leverage tests and a pass over the §8.1 form: **LTV is the commitment over the estimated sale price and is the only value ratio** — LTARV is gone, the as-is value is gone with it, and there is no fallback denominator (§7.4, §8.2). The underwrite runs without a sale price (§8.4). The §8.1 Overview is who the borrower is and the loan's own terms moved into Deal Economics; the team form asks for the term rather than the bucket, drops the county and the separate guarantor name, and takes its numbers masked — `$425,000`, `12%`, `555-123-4567` — with the four config-defaulted economics pre-filled and tagged.
 
@@ -152,9 +154,12 @@ without clearing them (§6.1).
 Three things are recorded about where a web deal came from: the channel `WEB`; the
 `intake_source`, which is the `?src=` slug on the link the borrower followed; and the
 `referral_note`, their answer to "how did you hear about us?". The deal lands in the queue
-`NEW` or `NEEDS_INFO` with **no screen run**, and the borrower is shown one page saying the
-team will be in touch - never a verdict, a rate or an amount. The 12+ term bucket seeds
-`term_months` at 12, as on every channel (§4.1).
+as the normalizer decides: `NEEDS_INFO` while something is missing, else **screened and
+priced on the way in** (§4.6) on the config defaults (§8.1) and the borrower's own numbers,
+with no court record. The borrower is shown one page saying the team will be in touch -
+never a verdict, a rate or an amount. The 12+ term bucket seeds `term_months` at 12, as on
+every channel (§4.1). Sending the form is the borrower's consent to being contacted: the
+line above the button says so, in both languages, and the stored submission records it.
 
 What stands between the page and the queue is a honeypot field, which drops a post that
 fills it without a word, and a per-address rate limit
@@ -247,6 +252,15 @@ deals that cleared Stage 1, so `run_underwrite` on a `NEW` deal runs the screen 
 proceeds only if that verdict is not a Decline. The screen it runs is a real one — its row
 is recorded and it moves the status like any other — so a Decline there stops the underwrite
 with the deal left `DECLINED` and the screen kept.
+
+**Both runs are automatic** (`services/autorun.py`). A deal that arrives complete, on any
+channel, is screened and then priced before anyone opens it, on whatever it carries: the
+§8.1 defaults, the borrower's own values, no court record. Saving the override block or
+Edit Intake runs both again on what was saved. The underwrite stands down by name when the
+deal is short of a closing date or a term, when the engine will not price what is there, or
+when the screen declined it; the edit that triggered the run is kept either way, and the page
+says what ran. Every automatic run is recorded against the actor `system` (§11). The buttons
+stay: a person can re-run either stage whenever they like.
 
 ---
 
@@ -491,8 +505,8 @@ Descriptive: captured, stored on `properties`, and reported. None of them feeds 
 | `purchase_price` | — | |
 | `rehab_costs` | — | 0 allowed |
 | `loan_requested` | — | Labelled **Loan Amount** wherever it is shown |
-| `loan_purchase_portion`, `loan_rehab_portion` | — | §8.2; `commitment` is their sum. The first is labelled **Advance at Closing**, the second **Rehab Portion**. The rehab portion is 0 on `NO_DRAW` and `WHOLETAIL` |
-| `interest_rate` | — | Annual. **Required to underwrite** |
+| `loan_purchase_portion`, `loan_rehab_portion` | the §8.2 formula, on a split product | §8.2; `commitment` is their sum. The first is labelled **Advance at Closing**, the second **Rehab Portion**. Nothing on `NO_DRAW` and `WHOLETAIL`: one advance, the whole loan |
+| `interest_rate` | `interest.default_annual_rate` (12%, placeholder) | Annual. **Required to underwrite**; the default stands until the team enters the deal's own rate |
 | `contingency_pct` | `fees.contingency_default_pct` (0.00) | `rehab_adj = rehab_costs × (1 + contingency_pct)` |
 | `closing_costs_usd` | `fees.closing_costs_default_usd` (1,000) | The lender's closing costs. It replaces the 3%-of-price borrower closing assumption, which is gone |
 | `holding_costs_pct_of_cost` | `fees.holding_costs_default_pct_of_cost` (2%) | A **percentage of `purchase_price` + `rehab_costs`**, over the whole hold. The dollar figure is that percentage of that cost and is computed, never entered: `holding_costs_total = (purchase_price + rehab_costs) × holding_costs_pct_of_cost`, shown beside the box and everywhere holding costs appear. The monthly figure is `holding_costs_total / term_months` as a decimal (below) |
@@ -532,13 +546,23 @@ ever draw.
 
 **What a person types is not what the deal stores.** On the team form and the deal page's
 override block, money is typed and shown `$425,000`, a percent `12%` (the deal carries the
-fraction `0.12`), and a phone `555-123-4567` (the deal carries the digits). The four economics
-with a config default — the contingency, the closing costs, the holding costs and the
-origination fee — are **pre-filled with it, tagged "default", and editable**, with a reset
-link beside each. A box still holding its default stores nothing: the column stays null, the
-engine reads config, and the readiness checklist still says `DEFAULT` rather than claiming
-somebody chose it. Small dependency-free client-side script formats what is typed; the server
-parses either shape, so a browser that runs none of it still posts a deal that saves.
+fraction `0.12`), and a phone `555-123-4567` (the deal carries the digits). Small
+dependency-free client-side script formats what is typed; the server parses either shape, so
+a browser that runs none of it still posts a deal that saves.
+
+**Every deal is populated with its defaults** (`services/defaults.py`). The five economics
+with a config default — the interest rate, the contingency, the closing costs, the holding
+costs and the origination fee — and, on a split product, the §8.2 formula loan split are
+written onto the deal at intake on every channel, so the number the engine runs on is the
+number the page shows. `deals.defaulted_fields` names the ones that are stand-ins rather than
+a person's choice; the form and the override block pre-fill each with its default, tag it
+"default", and offer a reset link, and the deal page tags the value. **A value equal to the
+default is the default**: a box left holding the number it was pre-filled with has not been
+chosen. A box typed over is the team's; a box left blank gets the default back. A deal stored
+before this existed is populated the first time it is opened, once, with a team value already
+on it never touched; until then the engine and the checklist read a blank as the default it
+would be given. The readiness checklist (§9.2) says `DEFAULT` for each and counts it as
+present.
 
 **Valuation and rent**
 
@@ -580,12 +604,12 @@ LTC        = commitment / total_cost
 LTV        = commitment / estimated_sale_price      # NOT_AVAILABLE with no price (§7.4)
 ```
 
-The two split products carry an explicit `loan_purchase_portion` ("Advance at Closing") and `loan_rehab_portion` ("Rehab Portion"), entered by the team and adding up to the Loan Amount (§8.1). Nothing is derived: there is no default advance at closing and no override of one.
+The two split products carry an explicit `loan_purchase_portion` ("Advance at Closing") and `loan_rehab_portion` ("Rehab Portion"), entered by the team and adding up to the Loan Amount (§8.1). Left blank, the deal takes the **default split** - `rehab_portion = min(rehab_adj, loan_requested)`, `purchase_portion = loan_requested − rehab_portion` - populated at intake and tagged as a default (§8.1); a typed split is the team's.
 
 - `NO_DRAW`, `WHOLETAIL`: `commitment = loan_requested`; no split
 - `SPLIT_DRAW`: `commitment = loan_requested`; `holdback = min(rehab_adj, loan_rehab_portion)`; `funded_at_close = commitment − holdback`
 - `SPLIT_PRINCIPAL`: `principal_note = loan_purchase_portion`; `tranche_a = min(rehab_adj, loan_rehab_portion)`; `commitment = principal_note + tranche_a`
-- Either split product with **no split entered**: `commitment = loan_requested` and no split is reported. That is a borrower-channel intake nobody has divided yet; the screen runs, the underwrite refuses (§8.1)
+- Either split product with **no split entered** carries the default split above, and both stages size on it (`services/defaults.py`). A deal stored before the default existed and not yet opened is sized on the same formula at run time
 
 Whenever the `rehab_adj` cap bites, `REHAB_PORTION_EXCEEDS_BUDGET` (Info) names the portion entered and the budget it was capped at. On `SPLIT_PRINCIPAL` the cap lowers the commitment below the request, which `COMMITMENT_BELOW_REQUEST` (Info) reports as well; on `SPLIT_DRAW` it does not, because there is one note — the money above the cap is advanced at close instead of held back, so only the timing moves.
 
@@ -798,6 +822,12 @@ result. The deal page keeps its own furniture around that block — the run butt
 readiness checklist, the team-entry block, the screen summary, and the audit trail — and the
 screen summary keeps its structure unchanged (§7).
 
+**The deal page is labels and values only.** No explanatory sub-line, parenthetical or inline
+definition beside a value; where a definition is still useful it sits behind a small (?) on
+the label, as a hover title, and nothing is visible until hovered. A value that is a default
+carries the "default" tag (§8.1). A web deal's provenance reads "Source: <slug>" and "How
+they heard of us: <text>" (§4.2).
+
 ### 9.1 Screen summary
 One page in the review queue: intake facts, enrichment hits, score components, verdict, reasons, suggested reply, missing fields.
 
@@ -816,7 +846,7 @@ flag's severity. The stored value is untouched — an `<option>` still posts `BA
 and a flag tag is still styled by its code — only the words change.
 
 ### 9.2 Readiness checklist
-Above the Run underwrite button, one row per §8.1 input with the value in force, where it came from (`ADAPTER` / `TEAM` / `BORROWER` / `DEFAULT` / `MISSING`, shown as words), whether the run needs it, and what the run does without it. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months` or `payoff_date`, shown as months and, where there is one, the stub days after them), and the loan split on a split product. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
+Above the Run underwrite button, one row per §8.1 input with the value in force, where it came from (`ADAPTER` / `TEAM` / `BORROWER` / `DEFAULT` / `MISSING`, shown as words), and whether the run needs it; what the run does with or without it sits behind the (?) on the row's label. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months` or `payoff_date`, shown as months and, where there is one, the stub days after them), and the loan split on a split product. **A `DEFAULT` counts as present**: the rate and the split always have one (§8.1, §8.2), so the two that can turn the button off are the closing date and the term. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
 
 ### 9.3 Credit memo
 Generated from `UnderwriteResult` into GLENWOOD's template (to be supplied; docx). Sections: borrower, property, deal structure, sizing vs caps, the return overview (ledger and IRR), flip, rental, take-back, flags with pass/fail, recommendation. Every flag shows the threshold it was tested against.
@@ -860,6 +890,7 @@ so the math can be checked by hand against a spreadsheet; neither is shown to a 
   - `holding_costs_default_pct_of_cost` (2%) — the default for `holding_costs_pct_of_cost`, itself a percentage of `purchase_price + rehab_costs` over the whole hold (§8.1)
   - `broker_selling_pct` (4%) — the flip's cost of selling; not an input
 - `draws.listing_months` (3): `rehab_months = term_months − listing_months`, whole periods only
+- `interest.default_annual_rate` (12%, placeholder): the **default for `interest_rate`** (§8.1), populated on every deal until the team enters its own
 - `interest.day_count_basis` (30): the days a whole monthly period counts as, for the final stub period's prorated interest (§8.3)
 - exit inference term boundaries (resale max term, hold min term, §3)
 - rental takeout: `expenses_pct_of_rent` (35%), `takeout_rate` (6.5%), `amortization_years` (30), `dscr_floor` (1.20)
@@ -920,6 +951,14 @@ removed the whole-month requirement on the payoff date — the term is whole per
 every form refusal a page with the message beside the box (§9.1). The credit memo and LOI
 generation Phase 5 also names wait on GLENWOOD's templates (§13).
 
+Phase 6b (migration `0015`) made the queue run on its own: every deal populated with its §8.1
+defaults at intake and tagged (`services/defaults.py`), the screen and the underwrite run on
+arrival and after every team edit as `system` (`services/autorun.py`, §4.6), the deal page
+reduced to labels and values with definitions behind a (?), and the public form's consent
+folded into the line above its button. It also made the database pool ping a connection
+before handing it out, which is what turned the first request after a quiet spell into a
+500 on the deployed service.
+
 Phase 4's review queue is built: sign-in and `users`, the queue list, the deal page, the team
 actions, and the team-entry form. Its SMS ingestion and contract OCR wait on the LinkedPhone
 recon (§13) — there is nothing to parse until the webhook shape is known, and a parser written
@@ -953,6 +992,10 @@ recorded the move into that status.
   `usted` register and pending native-speaker review
 - The public form's rate limit (`web_intake.submissions_per_hour_per_ip`, placeholder 5) and
   whether the count should survive a restart
+- `interest.default_annual_rate`, placeholder 12%: the rate every deal is priced at until the
+  team enters one. Two edges of the default rule to confirm: a typed value equal to the
+  default reads as the default, and a stored default keeps its number if the config default
+  later changes (the deal says `DEFAULT` with the old number; the reset link offers the new)
 - The config placeholders the mechanics walkthrough left open: the contingency, holding-cost
   and broker percentages, the rental expense ratio and takeout rate, the two DSCR floors, the
   take-back's lost-interest months and legal costs, and the stub period's day-count basis

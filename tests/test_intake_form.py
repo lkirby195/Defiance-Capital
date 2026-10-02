@@ -12,6 +12,7 @@ anything can post a form.
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -109,7 +110,7 @@ def test_the_deal_page_reads_the_same_way(client: QueueClient, stored_deal: Deal
 def test_the_four_read_enums_are_words_not_codes(client: QueueClient, stored_deal: Deal) -> None:
     """SPEC §3: title case with spaces wherever a person reads one."""
     body = form_page(client, f"/queue/deals/{stored_deal.id}")
-    assert "<dd>Split Draw" in body  # the inferred product
+    assert re.search(r"<dd[^>]*>Split Draw", body)  # the inferred product
     # the code stays the stored value on the option, and is never the words on the page
     assert not re.search(r">\s*SPLIT_DRAW\s*<", body)
     assert "<dd>Purchase</dd>" in body  # the loan purpose
@@ -200,8 +201,9 @@ def test_the_required_list_is_the_minimum_viable_intake() -> None:
     """What an engine run cannot proceed without, and nothing else (SPEC §4.1, §8.1).
 
     The credit range is not on the list: a person on the phone often does not have it yet,
-    and the screen names it by hand rather than the form refusing to submit. The three that
-    joined it are the ones the ledger has no stand-in for.
+    and the screen names it by hand rather than the form refusing to submit. The two that
+    joined it are the ones the ledger has no stand-in for; the rate has a config default
+    now (SPEC §8.1) and is pre-filled rather than demanded.
     """
     assert REQUIRED_NAMES == {
         "borrower_name",
@@ -212,8 +214,8 @@ def test_the_required_list_is_the_minimum_viable_intake() -> None:
         "purchase_price",
         "rehab_costs",
         "loan_requested",
-        "interest_rate",
     }
+    assert "interest_rate" not in REQUIRED_NAMES
     # the credit range, because a person on the phone often does not have it yet; the phone,
     # because a deal that arrived by email has a name and no number (SPEC §4.1)
     assert "credit_range" not in REQUIRED_NAMES
@@ -325,7 +327,10 @@ def test_a_defaulted_economic_comes_back_pre_filled_with_the_config_number(
     stored_deal: Deal,
 ) -> None:
     """The four §8.1 economics with a default show it rather than an empty box."""
-    assert stored_deal.contingency_pct is None and stored_deal.origination_fee_pct is None
+    # populated with the config numbers, and tagged as the defaults they are (SPEC §8.1)
+    assert stored_deal.contingency_pct == Decimal("0")
+    assert stored_deal.origination_fee_pct == Decimal("0.02")
+    assert {"contingency_pct", "origination_fee_pct"} <= set(stored_deal.defaulted_fields)
     values = intake_form_values(stored_deal)
     assert values["contingency_pct"] == "0%"
     assert values["origination_fee_pct"] == "2%"

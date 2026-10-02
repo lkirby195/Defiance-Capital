@@ -127,11 +127,10 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "referral_heading": ("How you found us", "Cómo nos encontró"),
     "referral": ("How did you hear about us?", "¿Cómo supo de nosotros?"),
     "referral_hint": ("A few words is plenty.", "Con unas pocas palabras basta."),
-    # 6. consent
-    "consent_heading": ("One last thing", "Una última cosa"),
+    # 6. the consent line above the button: sending the form is the consent (SPEC §4.2)
     "consent": (
-        "You may contact me about this request.",
-        "Pueden comunicarse conmigo sobre esta solicitud.",
+        "By submitting, you agree we may contact you about this request.",
+        "Al enviar, usted acepta que podamos comunicarnos con usted sobre esta solicitud.",
     ),
     "business_purpose": (
         "GLENWOOD makes business-purpose loans to real estate investors, secured by property "
@@ -169,10 +168,6 @@ STRINGS: Mapping[str, tuple[str, str]] = {
         "Pegue la dirección web completa, comenzando con http.",
     ),
     "err_too_long": ("Please keep this shorter.", "Por favor, sea más breve."),
-    "err_consent": (
-        "Please tick the box so we may contact you.",
-        "Marque la casilla para que podamos comunicarnos con usted.",
-    ),
     # thanks
     "thanks_title": ("Thank you", "Gracias"),
     "thanks_body": (

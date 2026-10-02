@@ -194,7 +194,12 @@ class DrawsConfig(_Section):
 
 
 class InterestConfig(_Section):
-    """The day-count convention the final stub period accrues on.  # SPEC §8.3
+    """The default note rate, and the day-count convention the stub accrues on.  # SPEC §8.1, §8.3
+
+    ``default_annual_rate`` is the **default for a SPEC §8.1 input**: every deal is populated
+    with it at intake and priced on it until the team enters a rate of its own, and the
+    readiness checklist says DEFAULT while that is the rate in force. A placeholder until
+    GLENWOOD names its own.
 
     A term need not end on a monthly anchor any more: a payoff date between two of them
     leaves a stub of days, and that stub accrues one month's interest scaled by
@@ -203,6 +208,7 @@ class InterestConfig(_Section):
     here and gets a stub scaled by its real days against a year's twelfth.
     """
 
+    default_annual_rate: Pct
     day_count_basis: Annotated[int, Field(ge=1, le=366)]
 
 

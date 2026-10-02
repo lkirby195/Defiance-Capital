@@ -1,10 +1,11 @@
 {% extends "public.html" %}
 {% block title %}{{ t.page_title }} — GLENWOOD{% endblock %}
 
-{# The public borrower form (SPEC §4.2). Six groups in the order a person would tell the
-   story: who they are, the property, the numbers, the timing, how they found us, and their
-   consent. Every string on the page comes from the translation table (api/i18n.py) through
-   `t`; every stored value is the same code the team form would store.
+{# The public borrower form (SPEC §4.2). Five groups in the order a person would tell the
+   story: who they are, the property, the numbers, the timing, how they found us - then the
+   line that says sending it is their consent to being contacted, and the button. Every
+   string on the page comes from the translation table (api/i18n.py) through `t`; every
+   stored value is the same code the team form would store.
 
    Three things are client-side and none is load-bearing: the input masks (_masks.html),
    the submit button that stays off until every required box is filled, and the listing
@@ -136,19 +137,11 @@
     {{ text_box("referral_note", t.referral, help=t.referral_hint, maxlength=200) }}
   </fieldset>
 
-  <fieldset>
-    <legend>{{ t.consent_heading }}</legend>
-    <div class="field">
-      <label class="consent" for="consent">
-        <input id="consent" name="consent" type="checkbox" value="true"
-               {%- if form.consent %} checked{% endif %} required{{ invalid("consent") }}>
-        <span>{{ t.consent }} <span class="req">{{ t.required }}</span></span>
-      </label>
-      {{ error("consent") }}
-    </div>
-    <p class="fine">{{ t.business_purpose }}</p>
-    <p class="fine">{{ t.not_commitment }}</p>
-  </fieldset>
+  <p class="fine">{{ t.business_purpose }}</p>
+  <p class="fine">{{ t.not_commitment }}</p>
+  {#- Sending the form is the consent (api/apply_form.py records it as such); the line says
+      so, right above the button, in the borrower's language. -#}
+  <p class="consent">{{ t.consent }}</p>
 
   <div class="field">
     <button type="submit" data-requires-all>{{ t.submit }}</button>

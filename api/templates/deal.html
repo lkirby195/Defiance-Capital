@@ -9,7 +9,15 @@
 {# The first eight panels are the SPEC §9 order, the same order the CLI prints and the
    workbook writes: the three §8.1 input groups, then the ledger and its IRR, then the three
    analyses, then the flags. The working furniture — the run buttons and their checklist, the
-   team actions, the override block, the screen and the audit trail — sits below them. #}
+   team actions, the override block, the screen and the audit trail — sits below them.
+
+   Labels and values only. Every definition the page used to print beside a value is behind
+   a (?) on its label (``help``), nothing visible until hovered; a value that is a config or
+   formula stand-in rather than a person's number carries the "default" tag (SPEC §8.1). #}
+
+{% macro help(text) -%}{% if text %} <span class="help" title="{{ text }}">?</span>{% endif %}{%- endmacro %}
+{% macro dflt(name) -%}{% if name in economics.defaulted %} <span class="dflt">default</span>{% endif %}{%- endmacro %}
+{% macro passed(flag) -%}{% if flag is none %}Not tested{% elif flag %}Passes{% else %}Below the floor{% endif %}{%- endmacro %}
 
 {% block content %}
 <div class="title">
@@ -19,12 +27,10 @@
     {% else %}Deal {{ deal.id }}{% endif %}
     <span class="tag status">{{ deal.status | plain }}</span>
   </h1>
-  {# The intake is the deal, so the way back to it is beside the deal's name rather than
-     half a page down beside the checklist that reads it. #}
   {% if allowed.edit_intake %}
     <a class="btn" href="/queue/deals/{{ deal.id }}/intake">Edit Intake</a>
   {% else %}
-    <span class="small muted">Intake locked on a {{ deal.status | plain }} deal</span>
+    <span class="btn off" title="The intake is locked on a {{ deal.status | plain }} deal">Edit Intake</span>
   {% endif %}
 </div>
 <p class="lede small">
@@ -35,38 +41,28 @@
   · entered {{ deal.created_at | when }} via {{ deal.channel | plain }}
 </p>
 {% if deal.channel | plain == "WEB" %}
-  {#- The borrower typed this one in themselves (SPEC §4.2). What the team wants to know
-      before calling: which link they came in on, how they say they heard of us, and which
-      language to call them back in. Nothing was screened and nothing was said to them. -#}
   <section class="panel">
     <h2>From the public form <span class="tag INFO">Web</span></h2>
+    <p class="small">Source: {{ deal.intake_source | plain }}</p>
+    <p class="small">How they heard of us: {{ deal.referral_note | plain }}</p>
     <dl class="facts">
-      <dt>Source link</dt>
-      <dd>{{ deal.intake_source | plain }}
-        <span class="small muted">the ?src= slug on the link they followed</span></dd>
-      <dt>How they heard about us</dt><dd>{{ deal.referral_note | plain }}</dd>
       <dt>Submitted in</dt>
       <dd>{% if submitted_language == "es" %}Spanish{% elif submitted_language == "en" %}English
           {%- else %}—{% endif %}</dd>
-      <dt>Their sale price after rehab</dt>
-      <dd>{{ deal.estimated_sale_price_borrower | money }}
-        <span class="small muted">the borrower's own estimate; a team entry replaces it as the
-          value in force and this stays (SPEC §6.1)</span></dd>
-      <dt>Their monthly rent</dt><dd>{{ deal.monthly_rent_borrower | money }}</dd>
+      <dt>Their sale price after rehab{{ help("The borrower's own estimate off the public form. A team entry replaces it as the value in force and this stays on the deal (SPEC §6.1).") }}</dt>
+      <dd>{{ deal.estimated_sale_price_borrower | money }}</dd>
+      <dt>Their monthly rent{{ help("The borrower's own figure off the public form; the same rule as the sale price (SPEC §6.1).") }}</dt>
+      <dd>{{ deal.monthly_rent_borrower | money }}</dd>
     </dl>
-    <p class="small muted">
-      Nothing has been run on it and the borrower was told only that the team will be in
-      touch.
-    </p>
   </section>
 {% endif %}
 
 {% set result = underwrite.result if underwrite else none %}
+{% set values = economics.shown %}
 
 {# --- 1. Overview (SPEC §8.1) --------------------------------------------------------------- #}
 <section class="panel">
   <h2>Overview</h2>
-  <p class="small muted">Who is on the loan. The loan's own terms are Deal Economics below.</p>
   <dl class="facts">
     <dt>Entity Name</dt>
     <dd>{% if deal.borrower and deal.borrower.entities
@@ -86,30 +82,25 @@
     <dt>Credit authorization</dt><dd>{{ deal.credit_authorization_signed | yes_no }}</dd>
   </dl>
 
-  <h3>Still needed from the borrower</h3>
+  <h3>Still needed from the borrower{{ help("The minimum viable intake still outstanding (SPEC §4.1). The deal stays NEEDS_INFO and is not priced until these are in.") }}</h3>
   {% if deal.missing_fields %}
     <ul class="plain small">
       {% for field in deal.missing_fields %}<li>{{ field }}</li>{% endfor %}
     </ul>
-    <p class="small muted">
-      The deal stays NEEDS_INFO and is not priced until these are in (SPEC §4.1).
-    </p>
   {% else %}
-    <p class="small muted">Nothing outstanding — the minimum viable intake is complete.</p>
+    <p class="small">None</p>
   {% endif %}
 </section>
 
 {# --- 2. Property Overview (SPEC §8.1) ------------------------------------------------------ #}
 <section class="panel">
   <h2>Property Overview</h2>
-  <p class="small muted">Descriptive. No part of the §8 math reads any of it.</p>
   <dl class="facts">
     <dt>Address</dt>
     <dd>{{ deal.property.address_raw | plain if deal.property else "—" }}</dd>
     <dt>City</dt><dd>{{ deal.property.city | plain if deal.property else "—" }}</dd>
-    <dt>State</dt>
-    <dd>{{ deal.property.state | plain if deal.property else "—" }}
-      {% if deal.property %}<span class="small muted">({{ deal.property.state_source | plain }})</span>{% endif %}</dd>
+    <dt>State{{ help("Entered by a person, or inferred from the address (SPEC §4.5); the value's hover says which.") }}</dt>
+    <dd{% if deal.property %} title="{{ deal.property.state_source | plain }}"{% endif %}>{{ deal.property.state | plain if deal.property else "—" }}</dd>
     <dt>Units</dt><dd>{{ deal.property.units | plain if deal.property else "—" }}</dd>
     <dt>Structures</dt><dd>{{ deal.property.structures | plain if deal.property else "—" }}</dd>
     <dt>SF</dt><dd>{{ deal.property.sf | whole if deal.property else "—" }}</dd>
@@ -130,85 +121,53 @@
   <h2>Deal Economics</h2>
   <dl class="facts">
     <dt>Loan Purpose</dt><dd>{{ deal.loan_purpose | label }}</dd>
-    <dt>Loan Type</dt>
-    <dd>{{ deal.product | label }}
-      <span class="small muted">({{ deal.product_source | plain }})</span>
-      {% if deal.product %}<div class="small muted">{{ deal.product | definition }}</div>{% endif %}</dd>
-    <dt>Closing Date</dt><dd>{{ deal.closing_date | when }}</dd>
-    <dt>Term</dt>
+    <dt>Loan Type{{ help(deal.product | definition) }}</dt>
+    <dd title="{{ deal.product_source | plain }}">{{ deal.product | label }}</dd>
+    <dt>Closing Date{{ help("Month 0 of the ledger (SPEC §8.3).") }}</dt><dd>{{ deal.closing_date | when }}</dd>
+    <dt>Term{{ help("Whole monthly periods, then the days a mid-month payoff leaves over (SPEC §8.1). Seeded by the borrower's term bucket on a borrower channel; the team's own number wins.") }}</dt>
     <dd>{{ deal.term_months | plain }}{% if deal.term_months is not none %} month(s){% endif %}
-      {%- if deal.term_stub_days %} and {{ deal.term_stub_days }} day(s){% endif %}
-      {% if deal.term_bucket %}<span class="small muted">(the borrower asked for
-        {{ deal.term_bucket | bucket }})</span>{% endif %}
-      {#- On every channel that asks the bucket (SPEC §4.1): the seed is the floor of the
-          ask, and the real term is the team's to set. -#}
-      {% if deal.term_bucket | plain == "12_PLUS" and deal.term_months == twelve_plus_seed %}
-        <div class="small" style="color: var(--soft)">
-          The borrower asked for more than 12 months. The term was seeded at
-          {{ twelve_plus_seed }} months so the deal can be priced; set the real term in Team
-          entry below.
-        </div>
-      {% endif %}</dd>
-    <dt>Payoff Date</dt>
-    <dd>{{ payoff_date | when }}
-      <span class="small muted">derived: closing plus the term</span></dd>
+      {%- if deal.term_stub_days %} and {{ deal.term_stub_days }} day(s){% endif %}</dd>
+    {% if deal.term_bucket %}
+      <dt>Requested term{{ help("The borrower's own answer to how long they need the loan (SPEC §4.1). 12+ seeds a 12-month term; the team sets the real one.") }}</dt>
+      <dd>{{ deal.term_bucket | bucket }}</dd>
+    {% endif %}
+    <dt>Payoff Date{{ help("Derived: the closing date plus the term, to the day (SPEC §8.1).") }}</dt>
+    <dd>{{ payoff_date | when }}</dd>
+    <dt>Purchase Price</dt><dd>{{ deal.purchase_price | money }}</dd>
+    <dt>Rehab Costs</dt><dd>{{ deal.rehab_costs | money }}</dd>
+    <dt>Contingency{{ help("Of the rehab costs: rehab_adj = rehab x (1 + contingency) (SPEC §8.2).") }}</dt>
+    <dd>{{ values.contingency_pct | pct }}{{ dflt("contingency_pct") }}</dd>
+    {% if result %}
+      <dt>Contingency amount</dt><dd>{{ result.economics.contingency | money }}</dd>
+      <dt>Rehab + contingency</dt><dd>{{ result.economics.rehab_adj | money }}</dd>
+    {% endif %}
+    <dt>Closing Costs{{ help("The lender's own closing costs, inside the LTC denominator (SPEC §8.2).") }}</dt>
+    <dd>{{ values.closing_costs_usd | money }}{{ dflt("closing_costs_usd") }}</dd>
+    <dt>Holding Costs{{ help("A percentage of the purchase price plus the rehab costs, over the whole hold (SPEC §8.1).") }}</dt>
+    <dd>{{ values.holding_costs_pct_of_cost | pct }}{{ dflt("holding_costs_pct_of_cost") }}</dd>
+    <dt>Holding Costs (total)</dt>
+    <dd>{% if result %}{{ result.economics.holding_costs_total | money }}{% else %}{{ holding_costs_entered | money }}{% endif %}</dd>
+    {% if result %}
+      <dt>Holding Costs (monthly)</dt><dd>{{ result.economics.holding_costs_monthly | money }}</dd>
+    {% endif %}
+    <dt>Origination Fee{{ help("Of the commitment: half at close, half at payoff (SPEC §3).") }}</dt>
+    <dd>{{ values.origination_fee_pct | pct }}{{ dflt("origination_fee_pct") }}</dd>
+    {% if result %}
+      <dt>Origination at close</dt><dd>{{ result.economics.origination_at_close | money }}</dd>
+      <dt>Origination at payoff</dt><dd>{{ result.economics.origination_at_payoff | money }}</dd>
+    {% endif %}
+    <dt>Interest Rate{{ help("Annual; interest-only, paid current (SPEC §3).") }}</dt>
+    <dd>{{ values.interest_rate | pct }}{{ dflt("interest_rate") }}</dd>
+    <dt>Loan Amount</dt><dd>{{ deal.loan_requested | money }}</dd>
+    {% if result %}
+      <dt>Commitment</dt><dd>{{ result.economics.commitment | money }}</dd>
+      <dt>Funded at close</dt><dd>{{ result.economics.funded_at_close | money }}</dd>
+    {% endif %}
+    <dt>{{ "Principal Note" if deal.product | plain == "SPLIT_PRINCIPAL" else "Advance at closing" }}{{ help("What is advanced at close (SPEC §8.2). On a split product the default is the loan amount less the rehab portion; a single-note loan advances the whole loan.") }}</dt>
+    <dd>{{ values.loan_purchase_portion | money }}{{ dflt("loan_purchase_portion") }}</dd>
+    <dt>{{ "Tranche A" if deal.product | plain == "SPLIT_PRINCIPAL" else "Rehab portion" }}{{ help("What is held back for the rehab (SPEC §8.2). The default is the contingency-adjusted rehab budget capped at the loan amount; nothing on a single-note loan.") }}</dt>
+    <dd>{{ values.loan_rehab_portion | money }}{{ dflt("loan_rehab_portion") }}</dd>
   </dl>
-  {% if result %}
-    {% set economics = result.economics %}
-    <dl class="facts" style="margin-top:10px">
-      <dt>Purchase Price</dt><dd>{{ economics.purchase_price | money }}</dd>
-      <dt>Rehab Costs</dt><dd>{{ economics.rehab_costs | money }}</dd>
-      <dt>Contingency</dt>
-      <dd>{{ economics.contingency | money }}
-        <span class="small muted">({{ economics.contingency_pct | pct }} of rehab)</span></dd>
-      <dt>Rehab + contingency</dt><dd>{{ economics.rehab_adj | money }}</dd>
-      <dt>Closing Costs</dt><dd>{{ economics.closing_costs | money }}</dd>
-      <dt>Holding Costs</dt>
-      <dd>{{ economics.holding_costs_total | money }}
-        <span class="small muted">{{ economics.holding_costs_pct_of_cost | pct }} of
-          {{ economics.holding_costs_basis | money }} (price + rehab);
-          {{ economics.holding_costs_monthly | money }}/mo over
-          {{ result.term_months_decimal | months }}</span></dd>
-      <dt>Origination Fee</dt>
-      <dd>{{ economics.origination_fee_pct | pct }} —
-        {{ economics.origination_at_close | money }} at close,
-        {{ economics.origination_at_payoff | money }} at payoff</dd>
-      <dt>Interest Rate</dt><dd>{{ economics.interest_rate | pct }}</dd>
-      <dt>Loan Amount</dt><dd>{{ economics.loan_requested | money }}</dd>
-      <dt>Commitment</dt><dd>{{ economics.commitment | money }}</dd>
-      <dt>Funded at close</dt><dd>{{ economics.funded_at_close | money }}</dd>
-      {% if economics.loan_purchase_portion is not none %}
-        <dt>Loan split</dt>
-        <dd>{{ economics.loan_purchase_portion | money }} advance at closing +
-          {{ economics.loan_rehab_portion | money }} rehab</dd>
-      {% endif %}
-    </dl>
-  {% else %}
-    <p class="small muted">
-      As entered; the resolved figures — and whatever config stood in for a blank — appear
-      here once the deal has been underwritten.
-    </p>
-    <dl class="facts" style="margin-top:10px">
-      <dt>Purchase Price</dt><dd>{{ deal.purchase_price | money }}</dd>
-      <dt>Rehab Costs</dt><dd>{{ deal.rehab_costs | money }}</dd>
-      <dt>Contingency</dt><dd>{{ deal.contingency_pct | pct }}</dd>
-      <dt>Closing Costs</dt><dd>{{ deal.closing_costs_usd | money }}</dd>
-      <dt>Holding Costs</dt>
-      <dd>{{ deal.holding_costs_pct_of_cost | pct }}
-        <span class="small muted">of the price plus the rehab{% if holding_costs_entered %} —
-          {{ holding_costs_entered | money }} over the hold{% endif %}</span></dd>
-      <dt>Origination Fee</dt><dd>{{ deal.origination_fee_pct | pct }}</dd>
-      <dt>Interest Rate</dt><dd>{{ deal.interest_rate | pct }}</dd>
-      <dt>Loan Amount</dt><dd>{{ deal.loan_requested | money }}</dd>
-      <dt>Loan split</dt>
-      <dd>
-        {% if deal.loan_purchase_portion is not none %}
-          {{ deal.loan_purchase_portion | money }} advance at closing +
-          {{ deal.loan_rehab_portion | money }} rehab
-        {% else %}—{% endif %}
-      </dd>
-    </dl>
-  {% endif %}
 </section>
 
 {# --- 4. Return Overview (SPEC §8.3) -------------------------------------------------------- #}
@@ -220,13 +179,12 @@
       run {{ underwrite.created_at | when }} · engine {{ result.engine_version }} ·
       config {{ result.config_hash[:12] }} ·
       {{ result.term_months }} month(s){% if result.term_stub_days %} and
-      {{ result.term_stub_days }} day(s){% endif %} ({{ result.rehab_months }} rehab) from
+      {{ result.term_stub_days }} day(s){% endif %} · {{ result.rehab_months }} rehab month(s) ·
       {{ result.closing_date | when }} to {{ result.payoff_date | when }}
     </p>
     <dl class="facts">
-      <dt>IRR</dt>
-      <dd><strong>{{ overview.irr | rate }}</strong>
-        <span class="small muted">XIRR on the actual dates, annualized and compounded</span></dd>
+      <dt>IRR{{ help("XIRR on the actual dates, annualized and compounded (SPEC §8.3).") }}</dt>
+      <dd><strong>{{ overview.irr | rate }}</strong></dd>
       <dt>Total interest</dt><dd>{{ overview.total_interest | money }}</dd>
       <dt>Total fees</dt><dd>{{ overview.total_fees | money }}</dd>
       <dt>Total profit</dt><dd>{{ overview.total_profit | money }}</dd>
@@ -244,8 +202,7 @@
           {% for entry in overview.entries %}
             <tr>
               <td>{{ entry.date | when }}</td>
-              <td class="num">{{ entry.month }}{% if entry.stub_days %}<span class="small muted">
-                stub, {{ entry.stub_days }}d</span>{% endif %}</td>
+              <td class="num">{{ entry.month }}{% if entry.stub_days %} <span class="small muted">({{ entry.stub_days }}-day stub)</span>{% endif %}</td>
               <td class="num">{{ entry.funding | money }}</td>
               <td class="num">{{ entry.draws | money }}</td>
               <td class="num">{{ entry.interest | money }}</td>
@@ -280,43 +237,27 @@
       ("ON" if result.exit.flip_analysis else "OFF") if result else "—" }}</span></h2>
   {% if result %}
     {% set flip = result.flip %}
-    <p class="small muted">
-      Toggle {{ "on" if result.exit.flip_analysis else "off" }} —
-      {% if deal.flip_analysis is none %}the §3 default for a
-        {{ result.exit.type | label }} exit ({{ result.exit.exit_source | plain }}); set it by
-        hand in the Team entry block below.
-      {% else %}set by hand, over a §3 default of
-        {{ "on" if result.exit.flip_analysis_default else "off" }}.{% endif %}
-    </p>
-    {% if flip.status | plain == "OFF" %}
-      <p class="small muted">
-        <strong>OFF</strong> — the flip was not asked for. The cost stack below stands
-        either way; turn the toggle on to sell at an estimated sale price.
-      </p>
-    {% elif flip.status | plain == "NOT_EVALUATED" %}
-      <p class="small muted">
-        <strong>NOT_EVALUATED</strong> — no estimated sale price, so there is nothing to sell
-        at. The cost stack below stands, and the run says so with SALE_PRICE_MISSING.
-      </p>
-    {% endif %}
     <dl class="facts small">
+      <dt>Status{{ help("EVALUATED: sold at the estimated sale price. NOT_EVALUATED: no sale price to sell at. OFF: the toggle is off (SPEC §8.4).") }}</dt>
+      <dd>{{ flip.status | plain }}</dd>
+      <dt>Toggle{{ help("On by default for a resale exit (SPEC §8.1); a team setting wins either way.") }}</dt>
+      <dd>{{ "On" if result.exit.flip_analysis else "Off" }}{% if deal.flip_analysis is none %} <span class="dflt">default</span>{% endif %}</dd>
+      <dt>Exit</dt>
+      <dd title="{{ result.exit.exit_source | plain }}">{{ result.exit.type | label }}</dd>
       <dt>Estimated Sale Price</dt><dd>{{ flip.estimated_sale_price | money }}</dd>
-      <dt>Broker selling costs</dt>
-      <dd>{{ flip.broker_costs | money }}
-        <span class="muted">({{ flip.broker_selling_pct | pct }})</span></dd>
-      <dt>Purchase price + closing costs</dt>
-      <dd>{{ flip.purchase_price | money }} + {{ flip.closing_costs | money }}</dd>
+      <dt>Broker selling costs</dt><dd>{{ flip.broker_costs | money }}</dd>
+      <dt>Broker selling %</dt><dd>{{ flip.broker_selling_pct | pct }}</dd>
+      <dt>Purchase price</dt><dd>{{ flip.purchase_price | money }}</dd>
+      <dt>Closing costs</dt><dd>{{ flip.closing_costs | money }}</dd>
       <dt>Holding costs</dt><dd>{{ flip.holding_costs_total | money }}</dd>
       <dt>Rehab costs</dt><dd>{{ flip.rehab_costs | money }}</dd>
       <dt>Contingency</dt><dd>{{ flip.contingency | money }}</dd>
-      <dt>Financing costs</dt>
-      <dd>{{ flip.financing_costs | money }}
-        <span class="muted">interest + both origination halves</span></dd>
+      <dt>Financing costs{{ help("Interest plus both origination halves (SPEC §8.4).") }}</dt>
+      <dd>{{ flip.financing_costs | money }}</dd>
       <dt>Total costs</dt><dd>{{ flip.total_costs | money }}</dd>
       <dt>Net profit</dt><dd><strong>{{ flip.net_profit | money }}</strong></dd>
-      <dt>Yield (Profit / Costs)</dt>
-      <dd>{{ flip.profit_yield | pct }}
-        <span class="muted">a project margin, not an annualized return</span></dd>
+      <dt>Yield (Profit / Costs){{ help("A project margin, not an annualized return (SPEC §8.4).") }}</dt>
+      <dd>{{ flip.profit_yield | pct }}</dd>
     </dl>
   {% else %}
     <p class="small muted">Not underwritten yet.</p>
@@ -330,43 +271,24 @@
       ("ON" if result.exit.rental_analysis else "OFF") if result else "—" }}</span></h2>
   {% if result %}
     {% set rental = result.rental %}
-    <p class="small muted">
-      Toggle {{ "on" if result.exit.rental_analysis else "off" }} —
-      {% if deal.rental_analysis is none %}the default for a
-        {{ result.exit.type | label }} exit ({{ result.exit.exit_source | plain }}) with
-        {{ "a rent" if rental.monthly_rent is not none else "no rent" }} on the deal
-        (SPEC §8.1); set it by hand in the Team entry block below.
-      {% else %}set by hand, over a default of
-        {{ "on" if result.exit.rental_analysis_default else "off" }}.{% endif %}
-    </p>
-    {% if rental.status | plain == "OFF" %}
-      <p class="small muted">
-        <strong>OFF</strong> — nobody turned it on.
-      </p>
-    {% elif rental.status | plain == "NOT_EVALUATED" %}
-      <p class="small muted">
-        <strong>NOT_EVALUATED</strong> — no monthly rent on the deal, so there is no net
-        monthly income to cover a debt service with and nothing stands in for one. Enter a
-        rent and re-run.
-      </p>
-    {% endif %}
     <dl class="facts small">
+      <dt>Status{{ help("EVALUATED: a DSCR on the monthly rent. NOT_EVALUATED: no monthly rent on the deal, and nothing stands in for one. OFF: the toggle is off (SPEC §8.5).") }}</dt>
+      <dd>{{ rental.status | plain }}</dd>
+      <dt>Toggle{{ help("On by default for a hold exit, or when a rent is on the deal (SPEC §8.1); a team setting wins either way.") }}</dt>
+      <dd>{{ "On" if result.exit.rental_analysis else "Off" }}{% if deal.rental_analysis is none %} <span class="dflt">default</span>{% endif %}</dd>
       <dt>Monthly Rent</dt><dd>{{ rental.monthly_rent | money }}</dd>
-      <dt>Expenses</dt>
-      <dd>{{ rental.expenses | money }}
-        <span class="muted">({{ rental.expenses_pct | pct }} of rent)</span></dd>
-      <dt>Monthly holding costs</dt>
-      <dd>{{ rental.holding_costs_monthly | money }}
-        <span class="small muted">total over {{ result.term_months_decimal | months }}</span></dd>
+      <dt>Expenses</dt><dd>{{ rental.expenses | money }}</dd>
+      <dt>Expenses (% of rent)</dt><dd>{{ rental.expenses_pct | pct }}</dd>
+      <dt>Monthly holding costs</dt><dd>{{ rental.holding_costs_monthly | money }}</dd>
       <dt>Net monthly income</dt><dd>{{ rental.net_monthly_income | money }}</dd>
-      <dt>Debt service</dt>
-      <dd>{{ rental.debt_service_monthly | money }}
-        <span class="muted">on {{ rental.loan_amount | money }} at
-          {{ rental.takeout_rate | pct }}, {{ rental.amortization_years }}-yr</span></dd>
-      <dt>DSCR</dt>
-      <dd>{{ rental.dscr | ratio }} against a {{ rental.dscr_floor | ratio }} floor —
-        {% if rental.passed is none %}not tested
-        {% elif rental.passed %}passes{% else %}below it{% endif %}</dd>
+      <dt>Debt service{{ help("Monthly, on the loan amount at the takeout rate over the amortization (SPEC §8.5).") }}</dt>
+      <dd>{{ rental.debt_service_monthly | money }}</dd>
+      <dt>Takeout loan amount</dt><dd>{{ rental.loan_amount | money }}</dd>
+      <dt>Takeout rate</dt><dd>{{ rental.takeout_rate | pct }}</dd>
+      <dt>Amortization (years)</dt><dd>{{ rental.amortization_years | plain }}</dd>
+      <dt>DSCR</dt><dd>{{ rental.dscr | ratio }}</dd>
+      <dt>DSCR floor</dt><dd>{{ rental.dscr_floor | ratio }}</dd>
+      <dt>Result</dt><dd>{{ passed(rental.passed) }}</dd>
     </dl>
   {% else %}
     <p class="small muted">Not underwritten yet.</p>
@@ -375,38 +297,26 @@
 
 {# --- 7. Take-Back Analysis (SPEC §8.6) ----------------------------------------------------- #}
 <section class="panel">
-  <h2>Take-Back Analysis
+  <h2>Take-Back Analysis{{ help("What it costs GLENWOOD to end up owning the property, and whether the rent carries it. No toggle: it runs on every deal (SPEC §8.6).") }}
     <span class="tag GO">ALWAYS ON</span></h2>
   {% if result %}
     {% set take_back = result.take_back %}
-    <p class="small muted">
-      What it costs GLENWOOD to end up owning the property, and whether the rent carries it.
-      It has no toggle: it runs on every deal, whatever the exit says and whatever the Rental
-      toggle is doing (SPEC §8.6).
-    </p>
-    {% if take_back.status | plain == "NOT_EVALUATED" %}
-      <p class="small muted">
-        <strong>NOT_EVALUATED</strong> — no monthly rent, so there is no DSCR to test. The
-        cost below stands.
-      </p>
-    {% endif %}
     <dl class="facts small">
+      <dt>Status{{ help("EVALUATED: a DSCR on the monthly rent. NOT_EVALUATED: no monthly rent, so no DSCR to test; the cost stands (SPEC §8.6).") }}</dt>
+      <dd>{{ take_back.status | plain }}</dd>
       <dt>Loan amount</dt><dd>{{ take_back.loan_amount | money }}</dd>
-      <dt>Lost interest</dt>
-      <dd>{{ take_back.lost_interest | money }}
-        <span class="muted">{{ take_back.lost_interest_months }} months at
-          {{ take_back.interest_rate | pct }}</span></dd>
+      <dt>Lost interest</dt><dd>{{ take_back.lost_interest | money }}</dd>
+      <dt>Lost interest (months)</dt><dd>{{ take_back.lost_interest_months | plain }}</dd>
+      <dt>Interest rate</dt><dd>{{ take_back.interest_rate | pct }}</dd>
       <dt>Legal costs</dt><dd>{{ take_back.legal_costs | money }}</dd>
       <dt>Total cost</dt><dd><strong>{{ take_back.total_cost | money }}</strong></dd>
-      <dt>Debt service</dt>
-      <dd>{{ take_back.debt_service_monthly | money }}
-        <span class="muted">on the total cost at {{ take_back.interest_rate | pct }},
-          {{ take_back.amortization_years }}-yr</span></dd>
+      <dt>Debt service{{ help("Monthly, on the total cost at the deal's own rate over the amortization (SPEC §8.6).") }}</dt>
+      <dd>{{ take_back.debt_service_monthly | money }}</dd>
+      <dt>Amortization (years)</dt><dd>{{ take_back.amortization_years | plain }}</dd>
       <dt>Net monthly income</dt><dd>{{ take_back.net_monthly_income | money }}</dd>
-      <dt>DSCR at loan cost</dt>
-      <dd>{{ take_back.dscr | ratio }} against a {{ take_back.dscr_floor | ratio }} floor —
-        {% if take_back.passed is none %}not tested
-        {% elif take_back.passed %}passes{% else %}below it{% endif %}</dd>
+      <dt>DSCR at loan cost</dt><dd>{{ take_back.dscr | ratio }}</dd>
+      <dt>DSCR floor</dt><dd>{{ take_back.dscr_floor | ratio }}</dd>
+      <dt>Result</dt><dd>{{ passed(take_back.passed) }}</dd>
     </dl>
   {% else %}
     <p class="small muted">Not underwritten yet.</p>
@@ -422,7 +332,7 @@
     <h3>Raised</h3>
     {{ parts.flag_list(result.flags) }}
   {% else %}
-    <p class="small muted">Not underwritten yet — the screen's own flags are below.</p>
+    <p class="small muted">Not underwritten yet.</p>
   {% endif %}
 </section>
 
@@ -432,43 +342,32 @@
   <div class="actions">
     <form method="post" action="/queue/deals/{{ deal.id }}/screen">
       {{ csrf.field(csrf_token) }}
-      <button type="submit">Run screen</button>
+      <button type="submit" title="Stage 1 (SPEC §7): no paid pulls">Run screen</button>
     </form>
     <form method="post" action="/queue/deals/{{ deal.id }}/underwrite">
       {{ csrf.field(csrf_token) }}
-      <button type="submit" {% if not readiness.ready %}disabled{% endif %}>Run underwrite</button>
+      <button type="submit" title="Stage 2 (SPEC §8), on what the deal carries below" {% if not readiness.ready %}disabled{% endif %}>Run underwrite</button>
     </form>
   </div>
-  <p class="small muted" style="margin-top:10px">
-    The screen takes no paid pulls (SPEC §7). The underwrite runs on what the deal already
-    carries — the checklist below is that, in full.
-  </p>
 
-  <h3>Underwrite inputs <span class="muted">(SPEC §8.1)</span></h3>
-  {% if readiness.ready %}
-    <p class="small muted">
-      Everything required is on the deal. Anything below marked MISSING is optional; the note
-      says what the run does without it.
-    </p>
-  {% else %}
+  <h3>Underwrite inputs{{ help("Every SPEC §8.1 input, the value in force and where it came from (SPEC §9.2). A default counts as present; the (?) on each row says what the run does with or without it.") }}</h3>
+  {% if not readiness.ready %}
     <div class="banner">
       <strong>Run underwrite is off until these are entered</strong>
       <ul class="plain small">
         {% for name in readiness.missing %}<li>{{ name }}</li>{% endfor %}
       </ul>
-      Enter them on <a href="/queue/deals/{{ deal.id }}/intake">the intake</a> or in the Team
-      entry block below, then come back.
     </div>
   {% endif %}
   <div class="scroll">
     <table>
       <thead>
-        <tr><th>Input</th><th class="num">Value</th><th>From</th><th>Needed</th><th>Note</th></tr>
+        <tr><th>Input</th><th class="num">Value</th><th>From</th><th>Needed</th></tr>
       </thead>
       <tbody>
         {% for row in readiness.rows %}
           <tr>
-            <td>{{ row.label }}</td>
+            <td>{{ row.label }}{{ help(row.note) }}</td>
             <td class="num">
               {% if row.fmt == "money" %}{{ row.value | money }}
               {% elif row.fmt == "pct" %}{{ row.value | pct }}
@@ -478,18 +377,11 @@
             <td><span class="tag {{ 'HARD' if row.required and not row.satisfied
                      else ('GO' if row.satisfied else 'INFO') }}">{{ row.source | label }}</span></td>
             <td class="small">{{ "Required" if row.required else "Optional" }}</td>
-            <td class="small muted">{{ row.note }}</td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-
-  <p class="small muted" style="margin-top:12px">
-    Anything missing is entered on <strong>Edit Intake</strong>, at the top of this page, or
-    in the Team entry block below. Every version of the intake is kept; a re-screen is
-    not automatic.
-  </p>
 </section>
 
 {# --- team actions (SPEC §4.6) ------------------------------------------------------------- #}
@@ -498,8 +390,7 @@
   <div class="grid3">
     <form method="post" action="/queue/deals/{{ deal.id }}/advance">
       {{ csrf.field(csrf_token) }}
-      <button type="submit" {% if not allowed.advance %}disabled{% endif %}>Advance to review</button>
-      <p class="small muted">{{ "SCREENED only." if not allowed.advance else "Take the deal on." }}</p>
+      <button type="submit" title="From SCREENED only" {% if not allowed.advance %}disabled{% endif %}>Advance to review</button>
     </form>
 
     <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/decline">
@@ -513,15 +404,14 @@
       {{ csrf.field(csrf_token) }}
       {{ fields.text_box("reason", "Mark dead — reason", "", maxlength=500,
                          disabled=not allowed.dead, id="dead_reason") }}
-      <button class="danger" type="submit" {% if not allowed.dead %}disabled{% endif %}>Mark dead</button>
+      <button class="danger" type="submit" title="Final: a dead deal is not re-opened" {% if not allowed.dead %}disabled{% endif %}>Mark dead</button>
     </form>
 
     <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/reopen">
       {{ csrf.field(csrf_token) }}
       {{ fields.text_box("reason", "Re-open — reason", "", required=true, maxlength=500,
                          disabled=not allowed.reopen, id="reopen_reason") }}
-      <button type="submit" {% if not allowed.reopen %}disabled{% endif %}>Re-open</button>
-      <p class="small muted">DECLINED only. DEAD is final.</p>
+      <button type="submit" title="From DECLINED only" {% if not allowed.reopen %}disabled{% endif %}>Re-open</button>
     </form>
   </div>
 
@@ -534,84 +424,85 @@
 
 {# --- team overrides (SPEC §6.1, §8.1) ------------------------------------------------------ #}
 <section class="panel">
-  <h2>Team entry</h2>
-  <p class="lede small">
-    The interim source until the enrichment adapters land (SPEC §6.1). An adapter value always
-    wins over anything here, and what is entered stays on the deal either way. Saving replaces
-    the whole block — a box left blank means the deal carries no such value, and for the four
-    economics with a config default that means the default.
-  </p>
+  <h2>Team entry{{ help("The interim source until the enrichment adapters land (SPEC §6.1): an adapter value wins over anything here, and what is entered stays on the deal. Saving replaces the whole block and runs the screen and the underwrite again. A box left blank on an economic with a default gets the default back.") }}</h2>
   <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/overrides">
       {{ csrf.field(csrf_token) }}
     <fieldset>
-      <legend>Deal Economics — a box tagged
-        <span class="dflt">default</span> is the config's, and stores nothing</legend>
+      <legend>Deal Economics</legend>
       <div class="grid3">
         {{ fields.enum_box("loan_purpose", "Loan Purpose", enums.loan_purpose,
                            form.loan_purpose) }}
-        {{ fields.product_box("product", "Loan Type — blank leaves the inferred one",
-                              enums.product, form.product) }}
-        {{ fields.text_box("closing_date", "Closing Date — month 0 of the ledger",
-                           form.closing_date, kind="date") }}
-        {{ fields.text_box("term_months", "Term (months)", form.term_months, mode="numeric") }}
+        {{ fields.product_box("product", "Loan Type", enums.product, form.product,
+                              definitions=false,
+                              help="Blank leaves the inferred one. " ~ (deal.product | definition)) }}
+        {{ fields.text_box("closing_date", "Closing Date", form.closing_date, kind="date",
+                           help="Month 0 of the ledger (SPEC §8.3).") }}
+        {{ fields.text_box("term_months", "Term (months)", form.term_months, mode="numeric",
+                           help="Whole monthly periods. Enter a term or a payoff date and the other derives; enter both and they have to agree (SPEC §8.1).") }}
         {#- Rendered blank on purpose: the payoff date is not a column, it is the closing date
             plus the term (SPEC §8.1). Typing one here is the other way of saying the term. -#}
-        {{ fields.text_box("payoff_date",
-                           "Payoff Date — blank keeps the term beside it",
-                           form.payoff_date, kind="date") }}
-        {{ fields.pct_box("interest_rate", "Interest Rate — annual", form.interest_rate) }}
+        {{ fields.text_box("payoff_date", "Payoff Date", form.payoff_date, kind="date",
+                           help="Blank keeps the term beside it. Any date after closing: the whole months inside it are the term and the days left over are a stub the ledger prices as a short final period (SPEC §8.3).") }}
+        {{ fields.pct_box("interest_rate", "Interest Rate", form.interest_rate,
+                          default=defaults.interest_rate, help="Annual (SPEC §8.1).") }}
         {{ fields.pct_box("contingency_pct", "Contingency", form.contingency_pct,
-                          default=defaults.contingency_pct) }}
+                          default=defaults.contingency_pct,
+                          help="Of the rehab costs (SPEC §8.2).") }}
         {{ fields.money_box("closing_costs_usd", "Closing Costs", form.closing_costs_usd,
-                            default=defaults.closing_costs_usd) }}
-        {{ fields.pct_box("holding_costs_pct_of_cost",
-                          "Holding Costs — % of price + rehab, over the whole hold",
+                            default=defaults.closing_costs_usd,
+                            help="The lender's own, inside the LTC denominator (SPEC §8.2).") }}
+        {{ fields.pct_box("holding_costs_pct_of_cost", "Holding Costs",
                           form.holding_costs_pct_of_cost,
                           default=defaults.holding_costs_pct_of_cost,
-                          note=holding_costs_hint) }}
+                          note=holding_costs_hint,
+                          help="A percentage of the price plus the rehab, over the whole hold (SPEC §8.1).") }}
         {{ fields.pct_box("origination_fee_pct", "Origination Fee", form.origination_fee_pct,
-                          default=defaults.origination_fee_pct) }}
+                          default=defaults.origination_fee_pct,
+                          help="Of the commitment: half at close, half at payoff (SPEC §3).") }}
+        {% if economics.split_product %}
+          {{ fields.money_box("loan_purchase_portion",
+                              "Principal Note" if deal.product | plain == "SPLIT_PRINCIPAL" else "Advance at Closing",
+                              form.loan_purchase_portion,
+                              default=defaults.get("loan_purchase_portion", ""),
+                              help="With the rehab portion, adds up to the Loan Amount (SPEC §8.2). Both blank: the default split.") }}
+          {{ fields.money_box("loan_rehab_portion",
+                              "Tranche A" if deal.product | plain == "SPLIT_PRINCIPAL" else "Rehab Portion",
+                              form.loan_rehab_portion,
+                              default=defaults.get("loan_rehab_portion", ""),
+                              help="Capped at the contingency-adjusted rehab budget when the deal is priced (SPEC §8.2). Default: that budget, capped at the loan amount.") }}
+        {% endif %}
       </div>
-      <p class="small muted">
-        The payoff date is currently {{ payoff_date | when }}. Enter a term or a payoff date
-        and the other derives; enter both and they have to agree. A payoff date may be any
-        date after closing — the whole months that fit inside it are the term and the days
-        left over are a stub, which the ledger prices as a short final period (SPEC §8.3).
-      </p>
     </fieldset>
 
     <fieldset>
       <legend>Valuation, rent and the analyses</legend>
       <div class="grid3">
         {{ fields.money_box("estimated_sale_price_team", "Estimated Sale Price",
-                            form.estimated_sale_price_team) }}
-        {{ fields.money_box("monthly_rent", "Monthly Rent — no default", form.monthly_rent) }}
-        {{ fields.enum_box("asset_type", "Asset Type", enums.asset_type, form.asset_type) }}
-        {{ fields.enum_box("stated_exit", "Exit", enums.stated_exit, form.stated_exit) }}
+                            form.estimated_sale_price_team,
+                            help="The ARV: what LTV is computed on and what the Flip analysis sells at (SPEC §7.4, §8.4).") }}
+        {{ fields.money_box("monthly_rent", "Monthly Rent", form.monthly_rent,
+                            help="No default: without one the Rental and Take-Back analyses are not evaluated (SPEC §8.5).") }}
+        {{ fields.enum_box("asset_type", "Asset Type", enums.asset_type, form.asset_type,
+                           help="With the term, infers the exit (SPEC §3).") }}
+        {{ fields.enum_box("stated_exit", "Exit", enums.stated_exit, form.stated_exit,
+                           help="Blank leaves the exit to the SPEC §3 inference.") }}
         {{ fields.toggle_box("flip_analysis", "Flip Analysis", form.flip_analysis,
-                             "Default: on for a resale exit") }}
+                             help="Default: on for a resale exit (SPEC §8.1).") }}
         {{ fields.toggle_box("rental_analysis", "Rental Analysis", form.rental_analysis,
-                             "Default: on for a hold exit, or with a rent") }}
+                             help="Default: on for a hold exit, or with a rent (SPEC §8.1). The Take-Back analysis has no toggle; it runs on every deal.") }}
       </div>
-      <p class="small muted">
-        The Take-Back analysis has no toggle here because it has none at all: it runs on every
-        deal (SPEC §8.6).
-      </p>
     </fieldset>
 
     <fieldset>
-      <legend>Court and filing search (SPEC §7.2)</legend>
+      <legend>Court and filing search</legend>
       <div class="grid3">
-        {{ fields.enum_box("court_records_status", "Outcome — Not Checked is not Clean",
-                           enums.court_records_status, form.court_records_status) }}
-        {{ fields.text_box("court_records_as_of", "Searched on — lookbacks run from this date",
-                           form.court_records_as_of, kind="date") }}
+        {{ fields.enum_box("court_records_status", "Outcome",
+                           enums.court_records_status, form.court_records_status,
+                           help="Not Checked is not Clean: the first is an INFO flag, the second a clean record (SPEC §7.2).") }}
+        {{ fields.text_box("court_records_as_of", "Searched on",
+                           form.court_records_as_of, kind="date",
+                           help="The lookbacks run from this date (SPEC §7.2).") }}
       </div>
-      <p class="small muted">
-        One row per matter. Each carries the fact its code is tested on: the date for a
-        lookback, the amount for a threshold, the lien facts for a subject-property
-        encumbrance — so the config thresholds decide the outcome, not the entry.
-      </p>
       {{ fields.matter_table(enums, matters) }}
     </fieldset>
 
@@ -623,11 +514,7 @@
 <section class="panel">
   <h2>Screen</h2>
   {% if screen_is_stale %}
-    <p class="problem">
-      The intake changed after this screen ran, so the verdict below was reached on older
-      numbers. Re-running it is a decision, not something that happens on its own — press
-      Run screen above when you want one.
-    </p>
+    <p class="problem">The intake changed after this screen ran.</p>
   {% endif %}
   {% if screen %}
     <p class="lede small">
@@ -639,17 +526,19 @@
     <h3>Score components</h3>
     <dl class="facts small">
       <dt>Credit tranche</dt>
-      <dd>{{ screen.result.components.credit_tranche | tranche }}
-        <span class="muted">({{ "verified" if screen.result.components.credit_tranche_verified
-          else "self-reported" }})</span></dd>
+      <dd>{{ screen.result.components.credit_tranche | tranche }}</dd>
+      <dt>Credit tranche basis</dt>
+      <dd>{{ "Verified" if screen.result.components.credit_tranche_verified else "Self-reported" }}</dd>
       <dt>Floor tranche</dt>
-      <dd>{{ screen.result.components.floor_tranche | tranche }} —
-        {{ "meets it" if screen.result.components.credit_meets_floor else "below it" }}</dd>
+      <dd>{{ screen.result.components.floor_tranche | tranche }}</dd>
+      <dt>Meets the floor</dt>
+      <dd>{{ screen.result.components.credit_meets_floor | yes_no }}</dd>
       <dt>Experience tier</dt>
-      <dd>{{ screen.result.components.experience_tier | plain }}
-        <span class="muted">(self-reported
-          {{ screen.result.components.experience_tier_self_reported | plain }}, verified
-          {{ screen.result.components.experience_tier_verified | plain }})</span></dd>
+      <dd>{{ screen.result.components.experience_tier | plain }}</dd>
+      <dt>Experience tier (self-reported)</dt>
+      <dd>{{ screen.result.components.experience_tier_self_reported | plain }}</dd>
+      <dt>Experience tier (verified)</dt>
+      <dd>{{ screen.result.components.experience_tier_verified | plain }}</dd>
       <dt>Repeat-borrower override</dt>
       <dd>{{ screen.result.components.repeat_borrower_override_applied | yes_no }}</dd>
       <dt>Court records from</dt>
@@ -667,19 +556,14 @@
       <ul class="plain small">
         {% for reason in screen.result.reasons %}<li>{{ reason }}</li>{% endfor %}
       </ul>
-    {% else %}<p class="small muted">No reasons — nothing was flagged.</p>{% endif %}
+    {% else %}<p class="small">None</p>{% endif %}
 
-    <h3>Suggested reply</h3>
+    <h3>Suggested reply{{ help("A draft, sent by hand from a person's own phone. Nothing on this page sends anything: GLENWOOD does no automated outbound SMS (SPEC §11).") }}</h3>
     <p class="reply" id="suggested-reply">{{ screen.result.suggested_reply }}</p>
     <div class="actions">
       <button class="quiet" type="button" data-copy="suggested-reply">Copy reply</button>
       <span class="small muted" id="copy-state" role="status"></span>
     </div>
-    <p class="small muted">
-      A draft. It must be sent by hand: a person edits it and sends it from their own phone.
-      Nothing on this page sends anything — GLENWOOD does no automated outbound SMS
-      (SPEC §11).
-    </p>
   {% else %}
     <p class="small muted">Not screened yet.</p>
   {% endif %}

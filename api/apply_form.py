@@ -75,11 +75,10 @@ APPLY_FIELDS: tuple[str, ...] = (
     "closing_date",
     # 5. how you heard
     "referral_note",
-    # 6. consent
-    "consent",
 )
 # What the page marks Required and the browser's ``required`` attribute is set on - the
-# SPEC §4.1 minimum, the way to reach the borrower, and their consent to being reached.
+# SPEC §4.1 minimum and the way to reach the borrower. Consent to being reached is the
+# submission itself: the line above the button says so, and the stored form records it.
 REQUIRED_FIELDS: tuple[str, ...] = (
     "borrower_name",
     "borrower_phone",
@@ -94,7 +93,6 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     "rehab_costs",
     "loan_requested",
     "term_bucket",
-    "consent",
 )
 REQUIRED_NAMES: frozenset[str] = frozenset(REQUIRED_FIELDS)
 # The boxes a listing link can fill in, in the order the page shows them.
@@ -112,8 +110,6 @@ POSITIVE_MONEY: frozenset[str] = frozenset(
 )
 MAX_NOTE = 200
 MAX_NAME = 200
-# What a ticked checkbox posts (the page says "true"; a browser with no value says "on").
-CONSENT_GIVEN: frozenset[str] = frozenset({"true", "on"})
 
 # The field a person never sees. A bot filling every box fills this one too, and the post is
 # dropped on the floor with a thank-you page, so the bot learns nothing (``api/routes/apply``).
@@ -202,12 +198,7 @@ def complaints(submitted: Mapping[str, str], t: Mapping[str, str]) -> FormProble
         found.setdefault(name, []).append(t[key])
 
     for name in REQUIRED_FIELDS:
-        if name == "consent":
-            # The box posts "true" when ticked and nothing at all when not; any other value
-            # is not a person ticking a box.
-            if submitted.get("consent", "").strip().lower() not in CONSENT_GIVEN:
-                complain(name, "err_consent")
-        elif not submitted.get(name, "").strip():
+        if not submitted.get(name, "").strip():
             complain(name, "err_required")
 
     if len(submitted.get("borrower_name", "")) > MAX_NAME:
@@ -270,11 +261,12 @@ def stored_values(submitted: Mapping[str, str], state_from_link: bool) -> dict[s
             values[name] = phone_digits(text)
         elif name == "repeat_borrower":
             values[name] = text == "true"
-        elif name == "consent":
-            values[name] = True
         else:
             values[name] = text
     values["state_entered"] = not state_from_link
+    # Sending the form is the consent (the line above the button, ``api/i18n.py``), and the
+    # stored form keeps the fact that it was given, exactly as the checkbox used to.
+    values["consent"] = True
     return values
 
 

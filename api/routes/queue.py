@@ -10,6 +10,12 @@ only turns their refusals into something readable on the page. A successful acti
 so a refresh re-reads the deal instead of re-running the action; a failed one re-renders with
 the reason, because a failure usually has something to fix on the page.
 
+Two edits run the engine again on their way out - the override block and Edit Intake
+(``services/autorun.py``, SPEC §4.6) - so the verdict and the ledger on the page are never
+older than the inputs beside them; the redirect's notice says what ran and what stood down.
+Opening a deal populates its SPEC §8.1 defaults if it was stored before they existed
+(``services/defaults.py``): the one write a GET makes, idempotent, and recorded.
+
 The team-entry form posts to ``/intake/team``, the route the JSON API already uses. It is one
 intake path with two content types, not two paths that can drift. Editing the intake on a deal
 that already exists is the one thing that route cannot do - it creates - so that lives here,
@@ -19,6 +25,7 @@ rendered from the same template through the same ``team_entry_page``.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -41,7 +48,7 @@ from api.intake_form import (
     submitted_holding_costs_hint,
     text_value,
 )
-from api.masks import drop_defaults, holding_costs_amount, mask_one, masked, unmasked
+from api.masks import holding_costs_amount, mask_one, masked, unmasked
 from api.problems import NO_PROBLEMS, FormProblems, at_top, from_validation_error
 from api.render import page, redirect
 from api.security import PageUser, require_csrf
@@ -49,7 +56,7 @@ from db.models import Deal
 from db.session import get_session
 from schema.dates import payoff_date_for
 from schema.models import (
-    TWELVE_PLUS_SEED_MONTHS,
+    SPLIT_PRODUCTS,
     AssetType,
     Channel,
     CourtFlag,
@@ -65,9 +72,11 @@ from schema.models import (
 from services import (
     ADVANCE_TO_REVIEW_FROM,
     DECLINE_FROM,
+    DEFAULTABLE,
     EDIT_INTAKE_FROM,
     MARK_DEAD_FROM,
     REOPEN_FROM,
+    SYSTEM_ACTOR,
     ActionNotAllowed,
     DealNotFound,
     DealNotPriceable,
@@ -78,8 +87,11 @@ from services import (
     UnderwriteRequest,
     add_note,
     advance_to_review,
+    apply_defaults,
+    auto_run,
     deal_trail,
     decline,
+    is_defaulted,
     latest_screen,
     latest_submission,
     latest_underwrite,
@@ -144,6 +156,8 @@ OVERRIDE_NAMES: tuple[str, ...] = (
     "closing_costs_usd",
     "holding_costs_pct_of_cost",
     "origination_fee_pct",
+    "loan_purchase_portion",
+    "loan_rehab_portion",
     "estimated_sale_price_team",
     "monthly_rent",
     "asset_type",
@@ -164,10 +178,10 @@ def override_form(deal: Deal) -> dict[str, str]:
     """The override block as form values, so the page renders what the deal currently says.
 
     Masked on the way out (``api/masks.py``): a rate shows as ``12%`` and a price as
-    ``$425,000``, which is what the box takes back. The four §8.1 economics with a config
-    default are pre-filled with it where the deal carries none, and the page tags them - a
-    box holding the default and a box holding a number somebody chose look different on
-    purpose.
+    ``$425,000``, which is what the box takes back. The §8.1 economics with a default - the
+    rate, the four fees, the loan split on a split product - are pre-filled with it where the
+    deal carries none, and the page tags them - a box holding the default and a box holding a
+    number somebody chose look different on purpose.
     """
     values: dict[str, object | None] = {name: getattr(deal, name) for name in OVERRIDE_NAMES}
     for name, default in deal_defaults(deal).items():
@@ -248,6 +262,30 @@ def deal_payoff_date(deal: Deal) -> date | None:
     return payoff_date_for(deal.closing_date, term.full_months, term.stub_days)
 
 
+def economics_in_force(deal: Deal) -> dict[str, Any]:
+    """Each defaultable §8.1 economic as the deal page shows it, and which are defaults.
+
+    The value on the deal, else the stand-in the engine would read in its place
+    (``services/defaults.py``) - so a deal stored before the defaults existed and not yet
+    opened still shows the numbers it would be priced on. The loan split on a single-note
+    product is the whole loan at closing and nothing held back (SPEC §8.2), shown as the
+    default it is rather than stored.
+    """
+    defaults = deal_defaults(deal)
+    shown: dict[str, Any] = {}
+    for name in DEFAULTABLE:
+        value = getattr(deal, name)
+        shown[name] = value if value is not None else defaults.get(name)
+    defaulted = {name for name in DEFAULTABLE if is_defaulted(deal, name)}
+    split_product = deal.product in SPLIT_PRODUCTS
+    if not split_product and deal.loan_requested is not None:
+        shown["loan_purchase_portion"] = deal.loan_requested
+        shown["loan_rehab_portion"] = Decimal(0)
+    # ``shown`` rather than ``values``: a template reading ``economics.values`` would get the
+    # dict's own method, not the key.
+    return {"shown": shown, "defaulted": defaulted, "split_product": split_product}
+
+
 def render_deal(
     request: Request,
     session: Session,
@@ -276,15 +314,16 @@ def render_deal(
             "deal": deal,
             # Where the deal came in and in which language (SPEC §4.2), for a web deal.
             "submitted_language": _submitted_language(session, deal),
-            "twelve_plus_seed": TWELVE_PLUS_SEED_MONTHS,
             # Derived, not stored (SPEC §8.1): the page shows it beside the term it comes
             # from, and the term is the whole months plus whatever stub sits after them.
             "payoff_date": deal_payoff_date(deal),
+            # The §8.1 economics as the run reads them, and which of them are stand-ins
+            # (SPEC §8.1, §8.2), for the "default" tag beside each.
+            "economics": economics_in_force(deal),
             "allowed": _allowed(deal),
             "enums": enum_values(),
-            # Not "re-screen it": whether an edited intake is worth another Stage 1 run is a
-            # person's call (SPEC §7), and the page's job is to make sure they know there is
-            # one to make.
+            # An edit re-runs the screen (``services/autorun.py``); this is only ever true
+            # when that run could not go ahead, and the page says so.
             "screen_is_stale": screen_is_stale(session, deal.id),
             # What Run underwrite would run on, and why it is off when it is off
             # (SPEC §8.1). The refusal behind the button reads the same rules, so the page
@@ -300,11 +339,11 @@ def render_deal(
                 if holding_costs_hint is not None
                 else deal_holding_costs_hint(deal)
             ),
-            # The same figure for the "as entered" facts above, which show what somebody
-            # typed rather than what a run resolved: None where nobody typed a percentage,
-            # so the row says an em dash rather than quoting the config's own number back.
+            # The same figure for the Deal Economics facts, on the percentage in force.
             "holding_costs_entered": holding_costs_amount(
-                deal.holding_costs_pct_of_cost, deal.purchase_price, deal.rehab_costs
+                economics_in_force(deal)["shown"]["holding_costs_pct_of_cost"],
+                deal.purchase_price,
+                deal.rehab_costs,
             ),
             "screen": (
                 None
@@ -348,14 +387,16 @@ def queue_page(request: Request, session: SessionDep, user: PageUser) -> HTMLRes
 
 NEW_DEAL_INTRO = (
     "The team-entry channel (SPEC §4.2). The Required boxes are what a run cannot proceed "
-    "without — the minimum viable intake (SPEC §4.1) plus the closing date, the term and the "
-    "rate the ledger has no stand-in for. Everything marked Optional can follow later. It "
-    "posts to the same route the API takes."
+    "without — the minimum viable intake (SPEC §4.1) plus the closing date and the term the "
+    "ledger has no stand-in for. Everything marked Optional can follow later. A complete "
+    "deal is screened and priced as soon as it is saved. It posts to the same route the API "
+    "takes."
 )
 EDIT_INTAKE_INTRO = (
     "The same form the deal was entered on, filled in with what it currently says. Saving "
     "stores a new submission and leaves the old one on the record, immutable; the deal keeps "
-    "its id, its screens and its underwrites. A re-screen is not automatic."
+    "its id, its screens and its underwrites, and the screen and the underwrite run again "
+    "on what you saved."
 )
 
 
@@ -426,8 +467,15 @@ def new_deal_page(request: Request, user: PageUser) -> HTMLResponse:
 def deal_page(
     request: Request, deal_id: UUID, session: SessionDep, user: PageUser
 ) -> HTMLResponse | RedirectResponse:
-    """One deal: intake, overrides, the runs, the flags, and what was done to it."""
+    """One deal: intake, overrides, the runs, the flags, and what was done to it.
+
+    A deal stored before the SPEC §8.1 defaults existed is populated with them here, on its
+    next open, and the write committed before the page renders what it wrote. Idempotent:
+    every later open writes nothing (``services/defaults.py``).
+    """
     try:
+        if apply_defaults(session, deal_id, actor=SYSTEM_ACTOR):
+            session.commit()
         return render_deal(request, session, deal_id, user)
     except DealNotFound:
         return redirect("/queue", "That deal does not exist.")
@@ -579,8 +627,9 @@ def edit_intake_action(
 ) -> HTMLResponse | RedirectResponse:
     """Re-apply an edited intake: a new submission row, fresh ``missing_fields``, an audit row.
 
-    The status may move (``NEEDS_INFO`` to ``NEW`` once the intake is complete) but nothing is
-    re-run: the deal page says the screen is stale and a person decides.
+    The status may move (``NEEDS_INFO`` to ``NEW`` once the intake is complete), and the
+    screen and the underwrite run again on what was saved (``services/autorun.py``); the
+    notice says what ran.
     """
     submitted = fields(form, skip=("matter_",))
     matters = submitted_matters(form)
@@ -601,7 +650,7 @@ def edit_intake_action(
     if entry is None:
         return back(complaints, status.HTTP_422_UNPROCESSABLE_CONTENT)
     try:
-        update_intake(session, deal_id, intake_record(entry), actor=user.email)
+        deal = update_intake(session, deal_id, intake_record(entry), actor=user.email)
     except DealNotFound:
         session.rollback()
         return redirect("/queue", "That deal does not exist.")
@@ -618,8 +667,9 @@ def edit_intake_action(
     except ValueError as exc:
         session.rollback()
         return back(at_top(str(exc)), status.HTTP_422_UNPROCESSABLE_CONTENT)
+    run = auto_run(session, deal)
     session.commit()
-    return redirect(deal_path(deal_id), "Intake updated.")
+    return redirect(deal_path(deal_id), f"Intake updated. {run.summary()}".strip())
 
 
 # --- team entry ----------------------------------------------------------------------------------
@@ -629,14 +679,19 @@ def edit_intake_action(
 def overrides_action(
     request: Request, deal_id: UUID, session: SessionDep, user: PageUser, form: FormDep
 ) -> HTMLResponse | RedirectResponse:
-    """Save the team's own valuation, opex, structure and court search.  # SPEC §6.1"""
+    """Save the team's own valuation, opex, structure and court search.  # SPEC §6.1
+
+    A box left holding its default is stored and tagged as the default; a box left blank on
+    a defaulted economic gets the default back (``services/defaults.py``). The screen and
+    the underwrite then run again on the deal as saved (``services/autorun.py``).
+    """
     submitted = fields(form, skip=("matter_",))
     matters = submitted_matters(form)
     try:
         deal = load_deal(session, deal_id)
     except DealNotFound:
         return redirect("/queue", "That deal does not exist.")
-    values = drop_defaults(unmasked(submitted), deal_defaults(deal))
+    values = unmasked(submitted)
 
     def back(problems: FormProblems, code: int) -> HTMLResponse:
         return render_deal(
@@ -658,15 +713,16 @@ def overrides_action(
         problems = from_validation_error(exc, OVERRIDE_BOX_NAMES)
         return back(problems, status.HTTP_422_UNPROCESSABLE_CONTENT)
     try:
-        save_overrides(session, deal_id, overrides, actor=user.email)
+        saved = save_overrides(session, deal_id, overrides, actor=user.email)
     except ValueError as exc:
-        # The database's own rules (a split on a product that has no split, a term of no
-        # time at all) reach here as an integrity error on the flush, which is still a
-        # complaint about what was typed rather than a fault of the server's.
+        # The split against the loan amount (SPEC §8.2), and the database's own rules (a
+        # term of no time at all), reach here as a ValueError or an integrity error on the
+        # flush - still a complaint about what was typed rather than a fault of the server's.
         session.rollback()
         return back(at_top(str(exc)), status.HTTP_422_UNPROCESSABLE_CONTENT)
+    run = auto_run(session, saved)
     session.commit()
-    return redirect(deal_path(deal_id), "Team entry saved.")
+    return redirect(deal_path(deal_id), f"Team entry saved. {run.summary()}".strip())
 
 
 # --- lifecycle actions (SPEC §4.6) ---------------------------------------------------------------

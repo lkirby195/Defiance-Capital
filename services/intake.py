@@ -15,9 +15,15 @@ the record as a whole (``intake/normalize.py``). Nothing a reader would want bac
 overwritten - every submission is kept on ``intake_submissions``, immutable, and the audit
 row names the columns that moved.
 
-**A re-screen is not automatic.** An edited intake is new information, and whether it is
-worth re-running Stage 1 on is a person's call; ``screen_is_stale`` is how the deal page
-tells them there is one to make.
+Both writes populate the deal's SPEC §8.1 defaults (``services/defaults.py``) before the
+audit row is written, so a deal is never stored with a blank the engine would have read a
+config number into: the rate, the four fees and the loan split on a split product are on
+the row, tagged as the stand-ins they are.
+
+Neither write runs the engine. The routes do that, through ``services/autorun.py``, once
+the intake is stored: a deal that arrives complete is screened and priced on the way in,
+and an edited one is re-run (SPEC §4.6). ``screen_is_stale`` still says when a stored screen
+is older than the intake - which, with the re-run, is only when the run could not go ahead.
 """
 
 from __future__ import annotations
@@ -28,6 +34,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from config.config import Config
 from db.models import Deal, IntakeSubmission
 from db.repository import (
     create_deal_from_intake,
@@ -37,6 +44,7 @@ from db.repository import (
 )
 from schema.models import AuditAction, IntakeRecord, Status
 from services.audit import DEALS, jsonable, record_audit
+from services.defaults import populate
 from services.errors import ActionNotAllowed
 from services.persistence import latest_screen
 from services.runner import load_deal
@@ -53,9 +61,17 @@ EDIT_INTAKE_FROM: frozenset[Status] = frozenset(Status) - {
 }
 
 
-def create_deal(session: Session, record: IntakeRecord, *, actor: str) -> Deal:
-    """Create the deal and its immutable submission row, with an audit row. No commit."""
+def create_deal(
+    session: Session, record: IntakeRecord, *, actor: str, config: Config | None = None
+) -> Deal:
+    """Create the deal and its immutable submission row, with an audit row. No commit.
+
+    The deal is populated with its SPEC §8.1 defaults on the way in, whatever the channel,
+    and the audit row names what was written as ``defaults`` beside the intake's own facts.
+    """
     deal = create_deal_from_intake(session, record)
+    defaults = populate(deal, config)
+    session.flush()
     record_audit(
         session,
         actor=actor,
@@ -67,12 +83,20 @@ def create_deal(session: Session, record: IntakeRecord, *, actor: str) -> Deal:
             "status": deal.status.value,
             "missing_fields": list(deal.missing_fields),
             **({"intake_source": deal.intake_source} if deal.intake_source else {}),
+            **({"defaults": defaults} if defaults else {}),
         },
     )
     return deal
 
 
-def update_intake(session: Session, deal_id: UUID, record: IntakeRecord, *, actor: str) -> Deal:
+def update_intake(
+    session: Session,
+    deal_id: UUID,
+    record: IntakeRecord,
+    *,
+    actor: str,
+    config: Config | None = None,
+) -> Deal:
     """Re-apply an edited intake to an existing deal. Flushes; no commit.  # SPEC §4.1, §4.5
 
     The deal keeps its id, its history and its runs; what changes is what the intake says
@@ -91,7 +115,9 @@ def update_intake(session: Session, deal_id: UUID, record: IntakeRecord, *, acto
 
     before: dict[str, Any] = {}
     after: dict[str, Any] = {}
-    for column, value in intake_columns(record).items():
+    columns = intake_columns(record)
+    original = {column: getattr(deal, column) for column in columns}
+    for column, value in columns.items():
         if getattr(deal, column) == value:
             continue
         before[column] = jsonable(getattr(deal, column))
@@ -100,6 +126,14 @@ def update_intake(session: Session, deal_id: UUID, record: IntakeRecord, *, acto
 
     _relink(session, deal, record, before, after)
     _apply_completeness(deal, record, before, after)
+    # A box the form left blank on a defaulted economic is the default again, not nothing -
+    # and a column that ends where it started is not a change, so it leaves the audit row.
+    for column, value in populate(deal, config).items():
+        after[column] = value
+    for column in list(after):
+        if column in original and getattr(deal, column) == original[column]:
+            del after[column]
+            before.pop(column, None)
 
     deal.submissions.append(
         IntakeSubmission(channel=record.channel, raw_payload=record.raw_payload)

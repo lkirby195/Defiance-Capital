@@ -12,6 +12,7 @@ ready and a run that then refuses it is worse than no checklist at all.
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Any
 
@@ -191,7 +192,6 @@ def test_a_complete_deal_is_ready(deal_with_overrides: Deal) -> None:
     "clear,expected",
     [
         (["closing_date"], "Closing date"),
-        (["interest_rate"], "Interest rate"),
         (["term_months"], "Term"),
     ],
 )
@@ -287,11 +287,27 @@ def test_an_intake_gap_is_named_the_way_the_refusal_names_it(
     assert "deal.purchase_price" in underwrite_readiness(deal_with_overrides).missing
 
 
+def test_a_rate_nobody_entered_is_the_config_default_and_the_button_stays_on(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """The rate has a stand-in now (SPEC §8.1): DEFAULT is present, on the page and in the run."""
+    deal_with_overrides.interest_rate = None
+    db_session.commit()
+    readiness = underwrite_readiness(deal_with_overrides)
+    row = rows(deal_with_overrides)["deal.interest_rate"]
+    assert row.required is True
+    assert row.source is InputSource.DEFAULT
+    assert row.value == D("0.12")
+    assert "config default 12.00%" in row.note
+    assert readiness.ready is True
+    assembled = underwrite_inputs(deal_with_overrides, UnderwriteRequest())
+    assert assembled.interest_rate == D("0.12")
+
+
 @pytest.mark.parametrize(
     "clear",
     [
         ["closing_date"],
-        ["interest_rate"],
         ["term_months"],
         ["purchase_price"],
     ],
@@ -353,9 +369,10 @@ def test_the_deal_page_shows_the_holding_cost_as_a_percentage_and_as_dollars(
     body = page(client, deal_with_overrides)
 
     assert "3.0%" in body
-    # ...as entered, beside the percentage
-    assert "of the price plus the rehab" in body
-    assert f"${dollars:,.2f} over the hold" in body
+    # ...as the total, on its own row
+    assert re.search(rf"<dt>Holding Costs \(total\)</dt>\s*<dd>\${dollars:,.2f}</dd>", body), (
+        "the holding-cost total is not on its own row"
+    )
     # ...under the box on the override block
     assert f"${dollars:,.2f} over the whole hold, on a ${cost:,.2f} cost basis" in body
     # ...and on the checklist row, beside the config default it was typed over
@@ -383,12 +400,12 @@ def test_the_button_is_live_on_a_ready_deal(client: TestClient, deal_with_overri
 def test_the_button_is_off_and_the_page_says_why(
     client: TestClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    deal_with_overrides.interest_rate = None
+    deal_with_overrides.closing_date = None
     db_session.commit()
     body = page(client, deal_with_overrides)
     assert "disabled>Run underwrite</button>" in body
     assert "Run underwrite is off until these are entered" in body
-    assert "Interest rate" in body
+    assert "Closing date" in body
 
 
 # --- the borrower's own estimates (SPEC §4.2, §6.1) ---------------------------------------------

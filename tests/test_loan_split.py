@@ -8,9 +8,11 @@ Three states, and keeping them apart is most of what is tested here:
 
 * **entered** — a split product with both portions. The screen and the underwrite both use
   them; the rehab side is capped at the contingency-adjusted rehab budget.
-* **not entered** — a split product with neither. That is a borrower-channel intake nobody
-  has divided (SPEC §4.1, §4.2): it screens, sized on the loan requested with no split, and
-  the underwrite refuses it by name.
+* **defaulted** — a split product nobody has divided. That is a borrower-channel intake
+  (SPEC §4.1, §4.2), or a team form that left both boxes blank: the deal is populated with
+  the SPEC §8.2 formula split, tagged as a default, and both stages size on it
+  (``services/defaults.py``). A deal stored before that existed and never opened is sized
+  on the same formula at run time.
 * **forbidden** — a NO_DRAW or WHOLETAIL deal, which is one advance and carries no split at
   all. The model, the form and the database each refuse one.
 """
@@ -18,6 +20,7 @@ Three states, and keeping them apart is most of what is tested here:
 from __future__ import annotations
 
 import json
+import re
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -41,7 +44,7 @@ from schema.models import (
     ProductSource,
     Status,
 )
-from services import DealNotReady, TeamOverrides, run_screen, save_overrides
+from services import TeamOverrides, run_screen, save_overrides
 from services.assemble import underwrite_inputs
 from services.requests import UnderwriteRequest
 from tests.conftest import ACTOR, requires_db, store_deal
@@ -121,18 +124,31 @@ def test_deal_info_holds_the_same_line() -> None:
 # --- what the form insists on -------------------------------------------------------------------
 
 
-def test_the_form_requires_both_portions_on_a_split_product(client: TestClient) -> None:
+def test_the_form_takes_a_split_product_without_a_split_and_defaults_it(
+    client: TestClient, db_session: Session
+) -> None:
+    """Both boxes blank: the §8.2 formula split, tagged as the default it is."""
     response = form_post(client, payload(loan_purchase_portion=None, loan_rehab_portion=None))
-    assert response.status_code == 422
-    assert "Advance at Closing is required on a Split Draw loan." in response.text
-    assert "Rehab Portion is required on a Split Draw loan." in response.text
+    assert response.status_code == 303, response.text
+    deal = db_session.query(Deal).one()
+    # rehab_adj = 48,000 x (1 + 0.00), capped at the 195,000 loan; the rest at closing
+    assert deal.loan_rehab_portion == D("48000.00")
+    assert deal.loan_purchase_portion == D("147000.00")
+    assert {"loan_purchase_portion", "loan_rehab_portion"} <= set(deal.defaulted_fields)
 
 
 def test_the_form_takes_a_split_that_adds_up(client: TestClient, db_session: Session) -> None:
-    assert form_post(client, payload()).status_code == 303
+    assert (
+        form_post(
+            client, payload(loan_purchase_portion="150000.00", loan_rehab_portion="45000.00")
+        ).status_code
+        == 303
+    )
     deal = db_session.query(Deal).one()
-    assert deal.loan_purchase_portion == D("147000.00")
-    assert deal.loan_rehab_portion == D("48000.00")
+    assert deal.loan_purchase_portion == D("150000.00")
+    assert deal.loan_rehab_portion == D("45000.00")
+    # a split a person typed is the team's, not the default
+    assert "loan_purchase_portion" not in deal.defaulted_fields
 
 
 def test_the_form_says_so_when_a_split_does_not_add_up(client: TestClient) -> None:
@@ -141,10 +157,10 @@ def test_the_form_says_so_when_a_split_does_not_add_up(client: TestClient) -> No
     assert "must add up to the loan requested" in response.text
 
 
-def test_a_json_intake_may_still_arrive_without_one(
+def test_a_json_intake_may_still_arrive_without_one_and_is_defaulted(
     client: TestClient, db_session: Session
 ) -> None:
-    """The borrower channel: a loan amount, no shape.  # SPEC §4.2"""
+    """The borrower channel: a loan amount, no shape - and the formula fills it.  # SPEC §4.2"""
     response = client.post(
         "/intake/team", json=payload(loan_purchase_portion=None, loan_rehab_portion=None)
     )
@@ -152,7 +168,8 @@ def test_a_json_intake_may_still_arrive_without_one(
     deal = db_session.get(Deal, response.json()["id"])
     assert deal is not None
     assert deal.product is Product.SPLIT_DRAW
-    assert deal.loan_purchase_portion is None
+    assert (deal.loan_purchase_portion, deal.loan_rehab_portion) == (D("147000.00"), D("48000.00"))
+    assert {"loan_purchase_portion", "loan_rehab_portion"} <= set(deal.defaulted_fields)
 
 
 # --- and what the database insists on -----------------------------------------------------------
@@ -190,31 +207,33 @@ def test_a_split_on_a_deal_with_no_product_is_refused_by_the_database(db_session
     db_session.rollback()
 
 
-# --- the screen runs without one; the underwrite does not ---------------------------------------
+# --- both stages size an undivided deal on the default split ------------------------------------
 
 
 def undivided(session: Session) -> Deal:
-    """The SPLIT_DRAW team entry with its two portions taken off: a borrower-channel deal."""
+    """The SPLIT_DRAW team entry with its two portions taken off: a borrower-channel deal.
+
+    Stored the way every deal is, so the default split is on the row and tagged.
+    """
     entry = payload(loan_purchase_portion=None, loan_rehab_portion=None)
     return store_deal(session, entry)
 
 
-def test_an_undivided_deal_still_screens(db_session: Session) -> None:
+def test_an_undivided_deal_screens_on_the_default_split(db_session: Session) -> None:
     deal = undivided(db_session)
     result = run_screen(db_session, deal.id, actor=ACTOR)
     db_session.commit()
-    assert result.sizing.split is None
+    assert result.sizing.split is not None
+    assert result.sizing.split.purchase_portion == D("147000.00")
+    assert result.sizing.split.rehab_portion == D("48000.00")
     assert result.sizing.commitment == deal.loan_requested
+    assert result.sizing.funded_at_close == D("147000.00")
 
 
-def test_an_undivided_deal_is_refused_an_underwrite_by_name(db_session: Session) -> None:
+def test_an_undivided_deal_is_priced_on_the_default_split(db_session: Session) -> None:
     deal = undivided(db_session)
-    with pytest.raises(DealNotReady) as refusal:
-        underwrite_inputs(deal, UnderwriteRequest())
-    named = " ".join(refusal.value.missing)
-    assert "deal.loan_purchase_portion" in named
-    assert "deal.loan_rehab_portion" in named
-    assert "advanced in two parts" in named
+    assembled = underwrite_inputs(deal, UnderwriteRequest())
+    assert assembled.deal.loan_split == (D("147000.00"), D("48000.00"))
 
 
 def test_moving_off_a_split_product_takes_the_split_with_it(db_session: Session) -> None:
@@ -236,8 +255,8 @@ def test_moving_off_a_split_product_takes_the_split_with_it(db_session: Session)
 def test_the_deal_page_shows_the_split(client: TestClient, db_session: Session) -> None:
     deal = store_deal(db_session, split_entry())
     body = client.get(f"/queue/deals/{deal.id}").text
-    assert "Loan split" in body
-    assert "$147,000.00 advance at closing" in body
+    assert re.search(r"<dt>Advance at closing.*?</dt>\s*<dd>\$147,000\.00", body, re.S)
+    assert re.search(r"<dt>Rehab portion.*?</dt>\s*<dd>\$48,000\.00", body, re.S)
 
 
 def test_the_sizing_table_names_the_portions(client: TestClient, db_session: Session) -> None:
@@ -245,7 +264,7 @@ def test_the_sizing_table_names_the_portions(client: TestClient, db_session: Ses
     client.post(f"/queue/deals/{deal.id}/underwrite", follow_redirects=False)
     body = client.get(f"/queue/deals/{deal.id}").text
     assert "Rehab holdback" in body  # SPLIT_DRAW names, not SPLIT_PRINCIPAL's
-    assert "$48,000.00 rehab" in body
+    assert re.search(r"<dt>Rehab holdback</dt>\s*<dd>\$48,000\.00", body)
 
 
 def test_the_console_report_names_the_two_portions() -> None:

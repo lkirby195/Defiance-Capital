@@ -34,7 +34,6 @@ from api.masks import (
     MONEY_FIELDS,
     PERCENT_FIELDS,
     PHONE_FIELDS,
-    drop_defaults,
     holding_costs_amount,
     mask_one,
     masked,
@@ -183,28 +182,17 @@ def test_a_box_with_no_mask_is_left_alone() -> None:
 # --- the config defaults (SPEC §8.1) --------------------------------------------------------------
 
 
-def test_a_box_still_holding_its_default_stores_nothing() -> None:
-    """So the column stays null, the engine reads config, and the checklist says DEFAULT."""
-    defaults = deal_defaults(None, CONFIG)
-    submitted = {"contingency_pct": "0.00", "origination_fee_pct": "0.02", "rehab_costs": "0"}
-    kept = drop_defaults(submitted, defaults)
-    assert "contingency_pct" not in kept and "origination_fee_pct" not in kept
-    assert kept["rehab_costs"] == "0"  # not a defaulted field; untouched
-
-
-def test_a_number_somebody_chose_is_kept_even_when_it_is_close() -> None:
-    defaults = deal_defaults(None, CONFIG)
-    kept = drop_defaults({"origination_fee_pct": "0.025"}, defaults)
-    assert kept["origination_fee_pct"] == "0.025"
-
-
-def test_all_four_defaults_are_flat_config_numbers_on_a_blank_form() -> None:
-    """Holding costs are a percentage now, so nothing about the deal is needed to show it."""
+def test_all_five_defaults_are_flat_config_numbers_on_a_blank_form() -> None:
+    """Five flat config numbers, the rate among them (SPEC §8.1); nothing on the deal is needed."""
     assert deal_defaults(None, CONFIG)["holding_costs_pct_of_cost"] == D("0.02")
+    assert deal_defaults(None, CONFIG)["interest_rate"] == D("0.12")
     assert blank_form_values(CONFIG)["holding_costs_pct_of_cost"] == "2%"
     assert blank_form_values(CONFIG)["contingency_pct"] == "0%"
     assert blank_form_values(CONFIG)["origination_fee_pct"] == "2%"
     assert blank_form_values(CONFIG)["closing_costs_usd"] == "$1,000"
+    assert blank_form_values(CONFIG)["interest_rate"] == "12%"
+    # the split's default needs a deal (SPEC §8.2) and is not on a blank form
+    assert "loan_purchase_portion" not in deal_defaults(None, CONFIG)
 
 
 def test_the_dollars_a_holding_percentage_comes_to_are_shown_beside_the_box() -> None:
@@ -245,7 +233,8 @@ def test_the_form_reads_a_masked_submission_into_what_the_deal_stores() -> None:
     assert form.purchase_price == D("200000")
     assert form.loan_requested == D("195000")
     assert form.interest_rate == D("0.12")
-    assert form.holding_costs_pct_of_cost is None  # it is the default, so it stores nothing
+    # the default reaches the model as the number it is; the deal marks it as the default
+    assert form.holding_costs_pct_of_cost == D("0.02")
 
 
 # --- the labels a person reads --------------------------------------------------------------------
@@ -293,7 +282,7 @@ def test_the_page_tags_a_defaulted_box_and_offers_a_reset(
 ) -> None:
     """The tag says "this is the config's number"; the reset link puts it back."""
     body = client.get("/queue/new").text
-    for name in ("contingency_pct", "origination_fee_pct", "closing_costs_usd"):
+    for name in ("contingency_pct", "origination_fee_pct", "closing_costs_usd", "interest_rate"):
         assert f'data-default-tag="{name}"' in body, name
         assert re.search(rf'id="{name}"[^>]*data-default="[^"]+"', body), name
         assert f'data-reset="{name}"' in body, name
@@ -322,7 +311,7 @@ def test_the_masked_boxes_are_the_ones_the_script_formats(client: QueueClient) -
 def test_a_default_left_alone_is_not_recorded_as_a_team_entry(
     client: QueueClient, db_session: Session, team_entry: dict[str, Any]
 ) -> None:
-    """The point of the whole arrangement (SPEC §8.1, §9.2)."""
+    """The point of the whole arrangement (SPEC §8.1, §9.2): stored, and tagged as the default."""
     from tests.conftest import form_body
 
     body = form_body(team_entry)
@@ -330,4 +319,10 @@ def test_a_default_left_alone_is_not_recorded_as_a_team_entry(
     assert client.post("/intake/team", data=body, follow_redirects=False).status_code == 303
 
     deal = db_session.query(Deal).one()
-    assert deal.contingency_pct is None, "a default the team left alone became a team entry"
+    assert deal.contingency_pct == D("0"), "the default is on the deal, so the engine reads it"
+    assert "contingency_pct" in deal.defaulted_fields, (
+        "a default the team left alone became a team entry"
+    )
+    # ...and the number the fixture typed over its default is the team's
+    assert deal.closing_costs_usd == D("1500.00")
+    assert "closing_costs_usd" not in deal.defaulted_fields

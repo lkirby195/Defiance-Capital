@@ -318,6 +318,14 @@ class Deal(Base):
         JSONB, nullable=False, default=list, server_default="[]"
     )
     missing_fields: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    # Which of the SPEC §8.1 economics - the rate, the four fees, and the loan split on a
+    # split product - hold a value config or its formula stood in with rather than one a
+    # person chose (``services/defaults.py``). The value is stored either way, so the engine
+    # runs on what the page shows; this is what lets the readiness checklist say DEFAULT and
+    # the override block tag the box. A field a person typed over leaves the list.
+    defaulted_fields: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
     credit_authorization_signed: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
