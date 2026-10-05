@@ -66,10 +66,15 @@
     h3 { font-size: 14px; margin: 16px 0 6px; color: var(--muted); text-transform: uppercase;
          letter-spacing: .06em; }
     a { color: var(--accent); }
-    section.panel {
+    section.panel, details.panel {
       background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
       padding: 14px 16px; margin-bottom: 16px;
     }
+    /* A collapsed section (deal.html): the heading is the thing a person clicks, and the
+       browser's own disclosure marker is the whole mechanism - no script. */
+    details.panel > summary { cursor: pointer; }
+    details.panel > summary h2 { display: inline; }
+    details.panel[open] > summary { margin-bottom: 10px; }
     p.lede { color: var(--muted); margin: 0 0 12px; }
     .notice, .problem {
       padding: 10px 12px; border-radius: 6px; margin: 0 0 12px; border: 1px solid;
@@ -154,8 +159,8 @@
     .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
     .reply { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line);
              border-radius: 6px; padding: 10px 12px; margin: 0 0 8px; }
+    /* The sensitivity table's one marked cell: the deal's own loan amount at its own rate. */
     .grid-cell.hit { background: var(--go-bg); color: var(--go); font-weight: 600; }
-    .grid-cell.solved { outline: 2px solid var(--accent); outline-offset: -2px; }
     .muted { color: var(--muted); }
     .small { font-size: 13px; }
     @media (max-width: 640px) {

@@ -62,8 +62,7 @@
       {{ fields.enum_box("loan_purpose", "Loan Purpose", enums.loan_purpose,
                          form.loan_purpose) }}
       {{ fields.product_box("product", "Loan Type", enums.product, form.product) }}
-      {{ fields.text_box("closing_date", "Closing Date", form.closing_date, required=true,
-                         kind="date") }}
+      {{ fields.text_box("closing_date", "Closing Date", form.closing_date, kind="date") }}
       {{ fields.text_box("term_months", "Term (months)", form.term_months, required=true,
                          mode="numeric") }}
     </div>

@@ -1,4 +1,4 @@
-"""Store an ``IntakeRecord``, and re-apply an edited one.  # SPEC §4.2, §4.5, §5, §11
+"""Store an ``IntakeRecord``, re-apply an edited one, restore an earlier one.  # SPEC §4.2, §4.5, §5
 
 ``db/repository.py`` knows how to turn a record into rows. This is the seam that gives that
 write an actor, so a deal that appears in the queue can be traced to the person who typed it
@@ -18,15 +18,21 @@ form, so an edit that could not have known them leaves them exactly as they were
 reader would want back is overwritten - every submission is kept on ``intake_submissions``,
 immutable, and the audit row names the columns that moved.
 
-Both writes populate the deal's SPEC §8.1 defaults (``services/defaults.py``) before the
-audit row is written, so a deal is never stored with a blank the engine would have read a
-config number into: the rate, the four fees and the loan split on a split product are on
-the row, tagged as the stand-ins they are.
+``restore_intake`` is the third, and it is the second with an older payload: an intake
+version the deal already carries is read back through the parser that wrote it and applied
+as a **new** submission, so the versions table keeps growing and the one restored is still
+there to restore again. Nothing is rewound.
 
-Neither write runs the engine. The routes do that, through ``services/autorun.py``, once
+All three writes populate the deal's SPEC §8.1 defaults (``services/defaults.py``) before
+the audit row is written, so a deal is never stored with a blank the engine would have read
+a config number into: the rate, the four fees, the closing date and the loan split on a
+split product are on the row, tagged as the stand-ins they are.
+
+None of them runs the engine. The routes do that, through ``services/autorun.py``, once
 the intake is stored: a deal that arrives complete is screened and priced on the way in,
-and an edited one is re-run (SPEC §4.6). ``screen_is_stale`` still says when a stored screen
-is older than the intake - which, with the re-run, is only when the run could not go ahead.
+and an edited or restored one is re-run (SPEC §4.6). ``screen_is_stale`` still says when a
+stored screen is older than the intake - which, with the re-run, is only when the run could
+not go ahead.
 """
 
 from __future__ import annotations
@@ -45,7 +51,10 @@ from db.repository import (
     find_or_create_property,
     form_columns,
 )
-from schema.models import SPLIT_PRODUCTS, AuditAction, IntakeRecord, Status
+from intake.normalize import normalize
+from intake.parsers.team_form import TeamEntryForm, parse_team_form
+from intake.parsers.web_form import WebApplyForm, parse_web_form
+from schema.models import SPLIT_PRODUCTS, AuditAction, Channel, IntakeRecord, Status
 from services.audit import DEALS, jsonable, record_audit
 from services.defaults import populate
 from services.errors import ActionNotAllowed
@@ -63,6 +72,10 @@ EDIT_INTAKE_FROM: frozenset[Status] = frozenset(Status) - {
     Status.HANDED_OFF,
 }
 
+# The key on the public form's stored payload that is not a form field: the language the
+# borrower filled it in (``api/apply_form.intake_record``).
+LANGUAGE_KEY = "language"
+
 
 def create_deal(
     session: Session, record: IntakeRecord, *, actor: str, config: Config | None = None
@@ -70,7 +83,8 @@ def create_deal(
     """Create the deal and its immutable submission row, with an audit row. No commit.
 
     The deal is populated with its SPEC §8.1 defaults on the way in, whatever the channel,
-    and the audit row names what was written as ``defaults`` beside the intake's own facts.
+    and the audit row names what was written as ``defaults`` beside the intake's own facts
+    and the submission it was created from.
     """
     deal = create_deal_from_intake(session, record)
     defaults = populate(deal, config)
@@ -85,6 +99,7 @@ def create_deal(
             "channel": deal.channel.value,
             "status": deal.status.value,
             "missing_fields": list(deal.missing_fields),
+            "submission_id": str(deal.submissions[-1].id),
             **({"intake_source": deal.intake_source} if deal.intake_source else {}),
             **({"defaults": defaults} if defaults else {}),
         },
@@ -110,12 +125,93 @@ def update_intake(
 
     The status moves in one direction only: ``NEEDS_INFO`` to ``NEW`` once the minimum viable
     intake is complete. Nothing drags a screened deal backwards to be re-screened as if it
-    were new; a re-screen is a button, and ``screen_is_stale`` is what says to press it.
+    were new; the re-run the route makes afterwards is what brings the verdict up to date.
     """
     deal = load_deal(session, deal_id)
     if deal.status not in EDIT_INTAKE_FROM:
         raise ActionNotAllowed(deal.id, deal.status, "edited", set(EDIT_INTAKE_FROM))
+    return _apply_record(
+        session, deal, record, actor=actor, action=AuditAction.INTAKE_EDITED, config=config
+    )
 
+
+def restore_intake(
+    session: Session,
+    deal_id: UUID,
+    submission_id: UUID,
+    *,
+    actor: str,
+    config: Config | None = None,
+) -> Deal:
+    """Re-apply an earlier intake version as a new submission. Flushes; no commit.  # SPEC §5
+
+    The version is read back through the parser for the channel it arrived on and applied
+    exactly as an edit would be: the form's columns and nothing else, a new
+    ``intake_submissions`` row carrying the same payload, an audit row naming the version it
+    came from. Refused on the statuses an edit is refused on, and on a version that does not
+    belong to this deal or that no parser reads (``ValueError``, with the reason).
+    """
+    deal = load_deal(session, deal_id)
+    if deal.status not in EDIT_INTAKE_FROM:
+        raise ActionNotAllowed(deal.id, deal.status, "restored", set(EDIT_INTAKE_FROM))
+    submission = session.get(IntakeSubmission, submission_id)
+    if submission is None or submission.deal_id != deal.id:
+        raise ValueError("that intake version does not belong to this deal")
+    record = record_from_submission(submission, deal)
+    return _apply_record(
+        session,
+        deal,
+        record,
+        actor=actor,
+        action=AuditAction.INTAKE_RESTORED,
+        config=config,
+        restored_from=submission,
+    )
+
+
+def record_from_submission(submission: IntakeSubmission, deal: Deal) -> IntakeRecord:
+    """The ``IntakeRecord`` a stored submission's payload normalizes to, today.  # SPEC §4.2, §4.5
+
+    Through the same parser and normalizer the channel used when the version arrived, so
+    the restored deal is what that intake would make of it now - the inferred product, the
+    seeded term, the recomputed ``missing_fields`` - rather than a copy of columns as they
+    were. The public form's provenance stays the deal's own: ``intake_source`` is on the
+    deal rather than in the payload, and the referral note is in the payload.
+    """
+    payload = submission.raw_payload
+    if not isinstance(payload, dict):
+        raise ValueError("that intake version has no form payload to read back")
+    if submission.channel is Channel.TEAM:
+        team = TeamEntryForm.model_validate(payload)
+        return normalize(parse_team_form(team), Channel.TEAM, raw_payload=payload)
+    if submission.channel is Channel.WEB:
+        web = WebApplyForm.model_validate(
+            {key: value for key, value in payload.items() if key != LANGUAGE_KEY}
+        )
+        return normalize(
+            parse_web_form(web),
+            Channel.WEB,
+            raw_payload=payload,
+            intake_source=deal.intake_source,
+            referral_note=web.referral_note,
+        )
+    raise ValueError(
+        f"an intake version from the {submission.channel.value} channel cannot be restored; "
+        "no parser reads it back yet"
+    )
+
+
+def _apply_record(
+    session: Session,
+    deal: Deal,
+    record: IntakeRecord,
+    *,
+    actor: str,
+    action: AuditAction,
+    config: Config | None,
+    restored_from: IntakeSubmission | None = None,
+) -> Deal:
+    """Write a record's form columns onto a deal, append the submission, record who did it."""
     before: dict[str, Any] = {}
     after: dict[str, Any] = {}
     columns = form_columns(record)
@@ -141,14 +237,16 @@ def update_intake(
             del after[column]
             before.pop(column, None)
 
-    deal.submissions.append(
-        IntakeSubmission(channel=record.channel, raw_payload=record.raw_payload)
-    )
+    submission = IntakeSubmission(channel=record.channel, raw_payload=record.raw_payload)
+    deal.submissions.append(submission)
     session.flush()
+    after["submission_id"] = str(submission.id)
+    if restored_from is not None:
+        after["restored_from"] = str(restored_from.id)
     record_audit(
         session,
         actor=actor,
-        action=AuditAction.INTAKE_EDITED,
+        action=action,
         table_name=DEALS,
         row_id=deal.id,
         before=before,

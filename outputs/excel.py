@@ -7,6 +7,7 @@ and compare. Sheets, in the SPEC §9 order:
 
     Inputs           what went in, screen and underwrite, plus the sizing it produced
     Return Overview  the monthly ledger, its totals, and an XIRR formula over it
+    Sensitivity      the IRR at every loan amount and rate on the grid (SPEC §8.9)
     Flip             the project's margin if it sells
     Rental           whether the rent carries a takeout loan
     Take-Back        whether the rent carries what the loan cost GLENWOOD
@@ -26,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -53,6 +54,8 @@ DATE = "yyyy-mm-dd"
 
 HEAD = Font(bold=True)
 TITLE = Font(bold=True, size=13)
+# The sensitivity grid's one marked cell: the deal as it stands.
+HIT = PatternFill("solid", fgColor="E7F3EC")
 
 # What each ratio divides by (SPEC §7.4). Written out beside the sizing table so a reader
 # checking the arithmetic by hand knows which cell to divide the commitment into.
@@ -374,6 +377,64 @@ def _sheet_return_overview(book: Workbook, result: UnderwriteResult) -> None:
     _widths(sheet, 14, 8, 11, 15, 15, 13, 12, 15, 15)
 
 
+def _sheet_sensitivity(book: Workbook, result: UnderwriteResult) -> None:
+    """IRR by loan amount and rate, every cell a ledger re-run.  # SPEC §8.9
+
+    The rates across the top are numbers under a percent format and the loan amounts down
+    the side are numbers under a currency format, like every other figure in the workbook,
+    so a reader can sort, chart or recompute from them. The shaded cell is the deal's own.
+    """
+    sheet = book.create_sheet("Sensitivity")
+    _title(sheet, "Sensitivity — IRR by loan amount and annual rate")
+    grid = result.sensitivity
+    if grid is None:
+        sheet.cell(
+            row=3,
+            column=1,
+            value="Not on this run: the ledger predates the sensitivity table (engine 1.5.0).",
+        )
+        _widths(sheet, 80)
+        return
+    sheet.cell(
+        row=2,
+        column=1,
+        value=(
+            "Every cell is the whole ledger laid out again at that loan amount and that annual "
+            "rate, in the same caps cell (SPEC §8.9). Lending less comes off the advance at "
+            "closing first; the rehab portion gives only once the advance is gone. The request "
+            f"is the bottom row; the shaded cell is the deal as it stands "
+            f"({grid.interest_rate:.1%})"
+            + (", when that rate is a column." if grid.deal_cell is None else ".")
+        ),
+    )
+    at = 4
+    for column, label in enumerate(
+        ["Loan amount", "Less than request", "Advance at closing", "Rehab portion"], start=1
+    ):
+        cell = sheet.cell(row=at, column=column, value=label)
+        cell.font = HEAD
+        cell.alignment = Alignment(horizontal="right" if column > 1 else "left")
+    for offset, rate in enumerate(grid.rates, start=5):
+        cell = sheet.cell(row=at, column=offset, value=rate)
+        cell.number_format = PCT1
+        cell.font = HEAD
+        cell.alignment = Alignment(horizontal="right")
+    at += 1
+    for row in grid.rows:
+        sheet.cell(row=at, column=1, value=row.loan_amount).number_format = MONEY
+        sheet.cell(row=at, column=2, value=-row.reduction).number_format = MONEY
+        sheet.cell(row=at, column=3, value=row.loan_purchase_portion).number_format = MONEY
+        sheet.cell(row=at, column=4, value=row.loan_rehab_portion).number_format = MONEY
+        for offset, point in enumerate(row.cells, start=5):
+            cell = sheet.cell(row=at, column=offset, value=point.irr)
+            cell.number_format = PCT4
+            if point.is_deal:
+                cell.fill = HIT
+                cell.font = HEAD
+        at += 1
+    _widths(sheet, 16, 18, 19, 15, *([11] * len(grid.rates)))
+
+
 def _sheet_flip(book: Workbook, result: UnderwriteResult) -> None:
     sheet = book.create_sheet("Flip")
     _title(sheet, "Flip Analysis — the project's margin if it sells")
@@ -506,6 +567,7 @@ def build_workbook(
     book.remove(book.active)
     _sheet_inputs(book, screen_inputs, underwrite_inputs, result, config)
     _sheet_return_overview(book, result)
+    _sheet_sensitivity(book, result)
     _sheet_flip(book, result)
     _sheet_rental(book, result)
     _sheet_take_back(book, result)

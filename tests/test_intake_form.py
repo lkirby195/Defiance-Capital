@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 import pytest
 from sqlalchemy import func, select
@@ -28,6 +29,7 @@ from api.intake_form import (
 from db.models import Deal
 from db.repository import FORM_COLUMNS
 from schema.models import ExperienceBucket, Tranche
+from services import latest_screen, screen_result
 from tests.conftest import QueueClient, requires_db
 
 pytestmark = requires_db
@@ -257,18 +259,21 @@ def test_the_marks_are_plain_text_in_the_label_s_own_type(client: QueueClient) -
 def test_a_screened_deal_names_the_range_in_its_flags_and_caps_cell(
     client: QueueClient, db_session: Session, team_entry: dict[str, Any]
 ) -> None:
-    """The screen summary, the flag list and the sizing table all drop the T-code."""
+    """The stored flag and the page's sizing table both drop the T-code."""
     team_entry["credit_range"] = "T5"  # below the floor: a Hard flag that names both tranches
     created = client.post("/intake/team", json=team_entry)
     assert created.status_code == 201, created.text
     deal_id = created.json()["id"]
-    assert client.post(f"/queue/deals/{deal_id}/screen", follow_redirects=False).status_code == 303
+    # the deal declines on arrival, so the ledger stands down: a conflict, with the verdict kept
+    assert client.post(f"/queue/deals/{deal_id}/run").status_code == 409
 
+    row = latest_screen(db_session, UUID(deal_id))
+    assert row is not None
+    messages = [flag.message for flag in screen_result(row).flags]
+    assert any("Under 620 is below the floor of 620–659" in message for message in messages)
     body = form_page(client, f"/queue/deals/{deal_id}")
-    assert "Under 620 is below the floor of 620–659" in body
     assert "Caps cell" in body
     assert not re.search(r">\s*T[1-5]\s*<", body), "a raw tranche code is still on the page"
-    del db_session
 
 
 # --- Required or Optional, on every box -----------------------------------------------------------
@@ -305,9 +310,10 @@ def test_the_required_list_is_the_minimum_viable_intake() -> None:
     """What an engine run cannot proceed without, and nothing else (SPEC §4.1, §8.1).
 
     The credit range is not on the list: a person on the phone often does not have it yet,
-    and the screen names it by hand rather than the form refusing to submit. The two that
-    joined it are the ones the ledger has no stand-in for: the closing date and the term in
-    months. The rate has a config default (SPEC §8.1) and is not on the form at all.
+    and the screen names it by hand rather than the form refusing to submit. The one that
+    joined it is the one the ledger has no stand-in for: the term in months. The rate and the
+    closing date have defaults (SPEC §8.1); the rate is not on the form at all and the closing
+    date is optional on it.
     """
     assert REQUIRED_NAMES == {
         "borrower_name",
@@ -317,10 +323,10 @@ def test_the_required_list_is_the_minimum_viable_intake() -> None:
         "purchase_price",
         "rehab_costs",
         "loan_requested",
-        "closing_date",
         "term_months",
     }
     assert "interest_rate" not in REQUIRED_NAMES
+    assert "closing_date" not in REQUIRED_NAMES
     # the credit range, because a person on the phone often does not have it yet; the phone,
     # because a deal that arrived by email has a name and no number (SPEC §4.1)
     assert "credit_range" not in REQUIRED_NAMES

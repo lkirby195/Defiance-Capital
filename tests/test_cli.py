@@ -52,6 +52,7 @@ def test_run_underwrite_prints_every_section(
     for section in (
         "DEAL ECONOMICS",
         "RETURN OVERVIEW",
+        "SENSITIVITY",
         "FLIP ANALYSIS",
         "RENTAL ANALYSIS",
         "TAKE-BACK ANALYSIS",
@@ -61,6 +62,10 @@ def test_run_underwrite_prints_every_section(
     expected = load(path)["underwrite"]["expected"]
     assert "IRR" in out and "Yield (Profit / Costs)" in out
     assert "DSCR at loan cost" in out
+    # the sensitivity grid: the rate columns across the top, the request on the bottom row
+    grid = out[out.index("SENSITIVITY") : out.index("FLIP ANALYSIS")]
+    assert "12.5%" in grid and "17.5%" in grid
+    assert "reductions come off the advance at closing first" in grid
     # the numbers on the page are the numbers the fixture pins
     plain = out.replace("$", "").replace(",", "")
     assert expected["ledger"]["total_interest"] in plain

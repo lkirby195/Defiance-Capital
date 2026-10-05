@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from api.intake_form import TEAM_ENTRY_FIELDS
 from db.models import AuditLog, Borrower, Deal, IntakeSubmission, Screen
 from schema.models import AuditAction, CourtRecordsStatus, LoanPurpose, Status, Tranche
-from services import screen_is_stale
+from services import latest_submission, screen_is_stale
 from tests.conftest import QueueClient, form_body, requires_db
 
 pytestmark = requires_db
@@ -131,7 +131,7 @@ def test_an_edit_re_runs_the_screen_and_the_underwrite_as_the_system(
 ) -> None:
     """An edited intake is re-run on what was saved (SPEC §4.6), and never dragged back."""
     deal_id = deal_with_overrides.id
-    assert client.post(f"/queue/deals/{deal_id}/screen", follow_redirects=False).status_code == 303
+    assert client.post(f"/queue/deals/{deal_id}/run", follow_redirects=False).status_code == 303
     db_session.expire_all()
     assert db_session.scalar(select(func.count()).select_from(Screen)) == 1
 
@@ -140,7 +140,7 @@ def test_an_edit_re_runs_the_screen_and_the_underwrite_as_the_system(
     )
     assert response.status_code == 303
     said = unquote(response.headers["location"])
-    assert "Screen recorded: GO." in said and "Underwrite recorded" in said
+    assert "Analysis recorded: GO at an IRR of" in said
 
     db_session.expire_all()
     deal = db_session.get(Deal, deal_id)
@@ -153,7 +153,7 @@ def test_an_edit_re_runs_the_screen_and_the_underwrite_as_the_system(
     )
     actors = {row.actor for row in trail(db_session, AuditAction.SCREEN_RUN)}
     assert actors == {"sam@glenwood.example", "system"}
-    assert {row.actor for row in trail(db_session, AuditAction.UNDERWRITE_RUN)} == {"system"}
+    assert {row.actor for row in trail(db_session, AuditAction.UNDERWRITE_RUN)} == actors
 
 
 def test_an_edit_records_who_did_it_and_what_moved(
@@ -175,9 +175,13 @@ def test_an_edit_records_who_did_it_and_what_moved(
     [row] = trail(db_session, AuditAction.INTAKE_EDITED)
     assert row.actor == "sam@glenwood.example"
     assert row.table_name == "deals" and row.row_id == str(stored_deal.id)
+    # the row names the submission it wrote, so the History can say who wrote the version
+    after = dict(row.after or {})
+    newest = latest_submission(db_session, stored_deal.id)
+    assert newest is not None and after.pop("submission_id") == str(newest.id)
     # the loan amount moved, so the split the deal carried no longer added up: it was reset
     # to the §8.2 formula on the new amount (the rehab half is unchanged and is not listed)
-    assert row.after == {
+    assert after == {
         "loan_requested": "175000",
         "loan_purchase_portion": "127000.00",
         "borrower.email": "dana.w@example.com",
@@ -225,7 +229,7 @@ def test_an_edit_leaves_the_deal_page_s_own_columns_alone(
     assert deal.flip_analysis is False
     assert deal.court_records_status is CourtRecordsStatus.CLEAN
     [row] = trail(db_session, AuditAction.INTAKE_EDITED)
-    assert set(row.after or {}) == {"loan_purpose"}
+    assert set(row.after or {}) == {"loan_purpose", "submission_id"}
 
 
 def test_completing_an_intake_records_the_status_move(
@@ -278,16 +282,16 @@ def test_an_edited_deal_is_not_stale_because_the_edit_re_ran_it(
     deal_with_overrides: Deal,
 ) -> None:
     deal_id = deal_with_overrides.id
-    assert "changed after this screen ran" not in client.get(f"/queue/deals/{deal_id}").text
+    assert "changed after this analysis ran" not in client.get(f"/queue/deals/{deal_id}").text
 
-    client.post(f"/queue/deals/{deal_id}/screen", follow_redirects=False)
+    assert client.post(f"/queue/deals/{deal_id}/run", follow_redirects=False).status_code == 303
     fresh = client.get(f"/queue/deals/{deal_id}").text
-    assert "changed after this screen ran" not in fresh, "a screen just run is not stale"
+    assert "changed after this analysis ran" not in fresh, "an analysis just run is not stale"
 
     edit(client, deal_id, form_body(team_entry_with_overrides, rehab_costs="6000.00"))
 
     after = client.get(f"/queue/deals/{deal_id}").text
-    assert "changed after this screen ran" not in after, "the edit re-ran the screen"
+    assert "changed after this analysis ran" not in after, "the edit re-ran the analysis"
     assert screen_is_stale(db_session, deal_id) is False
 
 
@@ -296,7 +300,9 @@ def test_an_unscreened_deal_is_never_stale(
 ) -> None:
     """There is nothing to be out of date with."""
     edit(client, stored_deal.id, form_body(team_entry, county="Creek"))
-    assert "changed after this screen ran" not in client.get(f"/queue/deals/{stored_deal.id}").text
+    assert (
+        "changed after this analysis ran" not in client.get(f"/queue/deals/{stored_deal.id}").text
+    )
 
 
 # --- what an edit is refused on -------------------------------------------------------------------

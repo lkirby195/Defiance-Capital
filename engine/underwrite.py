@@ -8,8 +8,9 @@ mismatches, repeat-borrower notes - carry into the underwrite flags alongside th
 flags (SPEC §8.2) and the two DSCR flags (SPEC §8.5, §8.6).
 
 The order below is the order the math runs and the order every output shows it (SPEC §9):
-size the deal, resolve the §8.1 economics, lay out the ledger, then ask the three questions
-the ledger makes answerable - sell it, let it, or own it.
+size the deal, resolve the §8.1 economics, lay out the ledger, re-run it across the
+sensitivity grid (SPEC §8.9), then ask the three questions the ledger makes answerable -
+sell it, let it, or own it.
 
 The SPEC §7.2 court and filing tests run again here, on whatever source is in force at
 underwrite time - adapter over team, the same precedence as the screen (SPEC §6.1). They are
@@ -25,6 +26,7 @@ from engine.calc.analyses import analysis_toggles
 from engine.calc.flip import flip_analysis
 from engine.calc.ledger import return_overview
 from engine.calc.rental import rental_analysis, take_back_analysis
+from engine.calc.sensitivity import sensitivity_table
 from engine.calc.terms import LoanTerms, loan_terms
 from engine.screen import (
     court_flags,
@@ -220,6 +222,8 @@ def underwrite(inputs: UnderwriteInputs, config: Config) -> UnderwriteResult:
     loan = loan_terms(sizing, inputs, config)
     toggles = analysis_toggles(inputs)
     overview = return_overview(loan)
+    # Every cell of the grid re-sizes and re-ledgers the deal in the same caps cell (SPEC §8.9).
+    sensitivity = sensitivity_table(inputs, credit.tranche, experience.tier, config)
     flip = flip_analysis(inputs, loan, overview, toggles.flip_analysis, config)
     rental = rental_analysis(inputs, loan, toggles.rental_analysis, config)
     take_back = take_back_analysis(inputs, loan, config)
@@ -249,6 +253,7 @@ def underwrite(inputs: UnderwriteInputs, config: Config) -> UnderwriteResult:
         sizing=sizing,
         economics=deal_economics(loan),
         return_overview=overview,
+        sensitivity=sensitivity,
         flip=flip,
         rental=rental,
         take_back=take_back,

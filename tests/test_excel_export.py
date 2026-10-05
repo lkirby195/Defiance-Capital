@@ -30,7 +30,7 @@ FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures/synthetic/deals"
 CONFIG = Config.load()
 D = Decimal
 
-SHEETS = ["Inputs", "Return Overview", "Flip", "Rental", "Take-Back", "Flags"]
+SHEETS = ["Inputs", "Return Overview", "Sensitivity", "Flip", "Rental", "Take-Back", "Flags"]
 
 
 def underwritten() -> list[Path]:
@@ -105,7 +105,7 @@ def find_row(sheet: Worksheet, label: str) -> tuple[Any, Any]:
 # --- the sheets (SPEC §9.6) ----------------------------------------------------------------------
 
 
-def test_the_workbook_has_the_six_sheets_in_the_spec_order() -> None:
+def test_the_workbook_has_the_seven_sheets_in_the_spec_order() -> None:
     assert book_for(UNDERWRITE_FILES[0]).sheetnames == SHEETS
 
 
@@ -207,6 +207,76 @@ def test_the_workbook_ledger_solves_to_the_engines_irr(path: Path) -> None:
     engine_irr, fmt = find_row(sheet, "IRR (engine)")
     assert fmt == "0.0000%"
     assert abs(float(engine_irr) - from_sheet) < 1e-6
+
+
+# --- the sensitivity sheet (SPEC §8.9) ----------------------------------------------------------
+
+
+def test_the_sensitivity_sheet_is_numbers_under_formats_with_the_request_on_the_bottom_row() -> (
+    None
+):
+    path = FIXTURE_DIR / "go_split_draw_denver.json"
+    result = run(path).underwrite_result
+    assert result is not None and result.sensitivity is not None
+    sheet = book_for(path)["Sensitivity"]
+    # the rate columns are numbers under a percent format, not text
+    rates = [
+        sheet.cell(row=4, column=column) for column in range(5, 5 + len(result.sensitivity.rates))
+    ]
+    assert [Decimal(str(cell.value)) for cell in rates] == result.sensitivity.rates
+    assert all(cell.number_format == "0.0%" for cell in rates)
+    # one row per loan amount, the request last, every IRR a number under a percent format
+    rows = result.sensitivity.rows
+    for offset, row in enumerate(rows):
+        at = 5 + offset
+        amount = sheet.cell(row=at, column=1)
+        assert (
+            Decimal(str(amount.value)) == row.loan_amount and amount.number_format == '"$"#,##0.00'
+        )
+        assert Decimal(str(sheet.cell(row=at, column=2).value)) == -row.reduction
+        for column, cell in enumerate(row.cells, start=5):
+            written = sheet.cell(row=at, column=column)
+            assert cell.irr is not None and Decimal(str(written.value)) == cell.irr
+            assert written.number_format == "0.0000%"
+    assert (
+        Decimal(str(sheet.cell(row=4 + len(rows), column=1).value))
+        == result.economics.loan_requested
+    )
+    # the Denver deal is priced at 12%, which is not a column, so nothing is shaded
+    assert not any(
+        sheet.cell(row=5 + offset, column=column).fill.fgColor.rgb == "00E7F3EC"
+        for offset in range(len(rows))
+        for column in range(5, 5 + len(result.sensitivity.rates))
+    )
+
+
+def test_the_deals_own_cell_is_shaded_when_its_rate_is_a_column() -> None:
+    from engine.underwrite import underwrite
+    from tests.test_sensitivity import denver_inputs
+
+    path = FIXTURE_DIR / "go_split_draw_denver.json"
+    fixture = run(path)
+    inputs = denver_inputs(interest_rate="0.145")
+    result = underwrite(inputs, CONFIG)
+    assert result.sensitivity is not None and result.sensitivity.deal_cell is not None
+    sheet = build_workbook(fixture.screen_inputs, inputs, result, CONFIG)["Sensitivity"]
+    bottom = 4 + len(result.sensitivity.rows)
+    column = 5 + result.sensitivity.rates.index(Decimal("0.145"))
+    shaded = sheet.cell(row=bottom, column=column)
+    assert shaded.fill.fgColor.rgb == "00E7F3EC" and shaded.font.bold
+    assert Decimal(str(shaded.value)) == result.return_overview.irr
+    assert sheet.cell(row=bottom, column=column - 1).fill.fgColor.rgb != "00E7F3EC"
+
+
+def test_a_result_from_before_the_table_still_exports_and_says_so() -> None:
+    path = FIXTURE_DIR / "go_split_draw_denver.json"
+    fixture = run(path)
+    assert fixture.underwrite_inputs is not None and fixture.underwrite_result is not None
+    older = fixture.underwrite_result.model_copy(update={"sensitivity": None})
+    sheet = build_workbook(fixture.screen_inputs, fixture.underwrite_inputs, older, CONFIG)[
+        "Sensitivity"
+    ]
+    assert "predates the sensitivity table" in str(sheet.cell(row=3, column=1).value)
 
 
 # --- the rest of the sheets ----------------------------------------------------------------------

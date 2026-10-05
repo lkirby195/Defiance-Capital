@@ -37,7 +37,7 @@ glenwood-uw/
     sizing.py              # LTC / LTV, product-specific commitment split
     screen.py              # score components + verdict + reasons
     calc/                  # the v0.3 ledger model: terms.py, ledger.py, irr.py,
-                           #   flip.py, rental.py, analyses.py
+                           #   flip.py, rental.py, analyses.py, sensitivity.py
     version.py             # ENGINE_VERSION string, bump on any math change
   adapters/
     base.py                # Adapter Protocol + AdapterResult
@@ -63,10 +63,11 @@ glenwood-uw/
     actions.py             # the team actions: progress, pause, decline, kill, reopen, note, overrides
     assemble.py            # deals row -> ScreenInputs / UnderwriteInputs; adapter-over-team
     audit.py               # append audit_log rows; read one deal's trail
-    autorun.py             # the screen and the underwrite, run on arrival and after an edit, as `system`
+    autorun.py             # the analysis: screen then underwrite, behind Run Analysis and on arrival / edit as `system`
     defaults.py            # the SPEC 8.1 defaults every deal is populated with, and which are defaults
     enrichment.py          # what the adapters produced (Phase 3); the precedence rule
-    intake.py              # store an IntakeRecord with an actor; re-apply an edited one
+    history.py             # every intake version, screen and underwrite on a deal, with its actor
+    intake.py              # store an IntakeRecord with an actor; re-apply an edited one; restore an earlier one
     lifecycle.py           # the two automatic status transitions (SPEC 4.6)
     passwords.py           # PBKDF2 hash / verify; pure
     persistence.py         # append screens / underwrites rows; rebuild results from them
@@ -122,19 +123,26 @@ input goes in one place and both readers pick it up.
 
 **A missing input is not a failing one.** Where an input has a defensible stand-in, the deal
 is populated with it at intake and the source recorded as `DEFAULT` (`services/defaults.py`:
-the rate, the four fees, and the loan split on a split product). The value is stored, so the
+the rate, the four fees, the closing date - the month end `closing.default_lead_days` after
+the deal came in - and the loan split on a split product). The value is stored, so the
 engine runs on what the page shows; `deals.defaulted_fields` is what says it was nobody's
 choice, and a value equal to the default is the default. Where there is no stand-in - the
 monthly rent is the example - report the thing it feeds as `NOT_EVALUATED`, with the figure
 `None` rather than `False` or `0`. A DSCR nobody could compute has not fallen short, and a
-zero would manufacture a shortfall on every deal whose rent nobody looked up. The two the
-ledger cannot run without at all - the closing date and the term - are named by the readiness
-checklist and refused by name.
+zero would manufacture a shortfall on every deal whose rent nobody looked up. The one the
+ledger cannot run without at all - the term - is named by the readiness checklist and refused
+by name.
 
-**The runs are automatic, and the page is labels and values.** A complete intake is screened
-and priced on arrival on every channel and again after every team edit, as the actor
-`system` (`services/autorun.py`, SPEC §4.6); a route that stores or edits a deal calls it. A
-paused deal is left out until Progress brings it back. The deal page prints no explanatory
+**The runs are automatic, the page has one button, and the page is labels and values.** A
+complete intake is screened and priced on arrival on every channel and again after every
+team edit, as the actor `system` (`services/autorun.py`, SPEC §4.6); a route that stores,
+edits or restores a deal calls it. A paused deal is left out until Progress brings it back.
+The one button is **Run Analysis**, which runs both stages as the person who pressed it; the
+page never names a stage - it shows the verdict and the ledger - and the Flags, the Reasons
+and the Suggested Reply are on the stored rows, the CLI and the workbook, not on it. The
+hand-entered values are one collapsed Inputs section and the versions and runs one collapsed
+History section, each a plain `<details>`; History restores any intake version as a new
+submission (`services/intake.restore_intake`). The deal page prints no explanatory
 prose beside a value: a definition that is still useful goes behind the (?) on its label, as
 a hover title (`_fields.html`, `help`). The team form prints nothing but labels and boxes,
 each marked Required or Optional in plain text, and asks only for the Overview, the Property
@@ -178,14 +186,14 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
   conversion happens at the HTML boundary and nowhere else - the models, the database and the
   engine never see 12 - so the JSON half of `POST /intake/team` still speaks in what is
   stored.
-- **No client-side JS in the queue beyond the copy button and the input masks.**
-  Server-rendered Jinja, plain form posts, POST-redirect-GET. The two exceptions are
-  conveniences and neither is load-bearing: the copy button on the suggested reply, and the
-  masks in `base.html` that format a price, a percent and a phone as they are typed and
-  toggle the "default" tag on the §8.1 economics that have one. The server parses
-  `$425,000`, `425000`, `12%` and `12` alike, so a browser that runs none of it still posts a
-  deal that saves. Nothing client-side validates, fetches or decides. If a page seems to need
-  script for anything else, it needs a different page. The public borrower form (`/apply`,
+- **No client-side JS in the queue beyond the input masks.**
+  Server-rendered Jinja, plain form posts, POST-redirect-GET. The one exception is a
+  convenience and not load-bearing: the masks in `base.html` that format a price, a percent
+  and a phone as they are typed and toggle the "default" tag on the §8.1 inputs that have
+  one. The server parses `$425,000`, `425000`, `12%` and `12` alike, so a browser that runs
+  none of it still posts a deal that saves. The collapsed sections on the deal page are the
+  browser's own `<details>`. Nothing client-side validates, fetches or decides. If a page
+  seems to need script for anything else, it needs a different page. The public borrower form (`/apply`,
   SPEC §4.2) adds one more on the same terms: a few lines that keep the submit button off
   until every required box is filled and lift `required` off the address boxes while the
   listing link holds a value. Dependency-free, and the server checks every rule again

@@ -260,6 +260,7 @@ class AuditAction(StrEnum):
     # Deals
     INTAKE_CREATED = "INTAKE_CREATED"
     INTAKE_EDITED = "INTAKE_EDITED"
+    INTAKE_RESTORED = "INTAKE_RESTORED"  # an earlier intake version re-applied as a new one
     DEFAULTS_POPULATED = "DEFAULTS_POPULATED"  # SPEC §8.1: the stand-ins written on a deal
     SCREEN_RUN = "SCREEN_RUN"
     UNDERWRITE_RUN = "UNDERWRITE_RUN"
@@ -1235,8 +1236,71 @@ def _status_agrees_with_figures[T](
     return model
 
 
+class SensitivityCell(BaseModel):
+    """One cell of the sensitivity table: the IRR at one loan amount and one rate.  # SPEC §8.9
+
+    ``irr`` is None where the ledger at that point has no rate (``engine/calc/irr.py``).
+    ``is_deal`` marks the one cell, if any, whose loan amount and rate are the deal's own -
+    the request at its actual rate - so the page and the workbook can highlight it; it is
+    false everywhere when the deal's rate does not fall on a column.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    interest_rate: Decimal
+    irr: Decimal | None
+    is_deal: bool = False
+
+
+class SensitivityRow(BaseModel):
+    """One loan amount, and the IRR at every rate column.  # SPEC §8.9
+
+    ``reduction`` is how far below the request the row sits (0 on the request's own row);
+    the two portions are the split the ledger ran on at that amount, None on a single-note
+    product. A reduction comes off the advance at closing first, then off the rehab portion
+    once the advance reaches zero.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    loan_amount: Decimal
+    reduction: Decimal
+    loan_purchase_portion: Decimal | None
+    loan_rehab_portion: Decimal | None
+    cells: list[SensitivityCell]
+
+
+class SensitivityTable(BaseModel):
+    """IRR by loan amount and rate, every cell a full ledger re-run.  # SPEC §8.9
+
+    ``rates`` are the columns, lowest first; ``rows`` run from the largest reduction down to
+    the request itself on the bottom row. A row whose reduced loan amount would be nothing
+    at all is left out rather than priced.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    loan_requested: Decimal  # the deal's own loan amount: the bottom row
+    interest_rate: Decimal  # the deal's own rate; a column only when it falls on the grid
+    rates: list[Decimal]
+    rows: list[SensitivityRow]
+
+    @property
+    def deal_cell(self) -> SensitivityCell | None:
+        """The cell at the deal's own loan amount and rate, when the rate is on the grid."""
+        for row in self.rows:
+            for cell in row.cells:
+                if cell.is_deal:
+                    return cell
+        return None
+
+
 class UnderwriteResult(BaseModel):
-    """Full underwrite output; stored whole on ``underwrites.outputs``.  # SPEC §8.7"""
+    """Full underwrite output; stored whole on ``underwrites.outputs``.  # SPEC §8.7
+
+    ``sensitivity`` is None only on a row written before engine 1.5.0 added it: every run
+    since carries the table, and a stored result from before loads rather than failing.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1253,6 +1317,7 @@ class UnderwriteResult(BaseModel):
     sizing: SizingResult
     economics: DealEconomics
     return_overview: ReturnOverview
+    sensitivity: SensitivityTable | None = None  # SPEC §8.9
     flip: FlipAnalysis
     rental: RentalAnalysis
     take_back: TakeBackAnalysis

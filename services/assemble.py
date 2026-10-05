@@ -39,7 +39,7 @@ from schema.models import (
     UnderwriteInputs,
     ValueSource,
 )
-from services.defaults import default_loan_split
+from services.defaults import default_closing_date, default_loan_split, submitted_on
 from services.enrichment import NO_ADAPTER_VALUES, AdapterValues
 from services.errors import DealNotReady
 from services.requests import UnderwriteRequest
@@ -355,9 +355,20 @@ def screen_inputs(
     )
 
 
-def resolve_closing_date(deal: Deal, request: UnderwriteRequest) -> date | None:
-    """The request's closing date, else the one on the deal.  # SPEC §8.1"""
-    return request.closing_date if request.closing_date is not None else deal.closing_date
+def resolve_closing_date(deal: Deal, request: UnderwriteRequest, config: Config) -> date:
+    """The request's closing date, else the deal's, else the SPEC §8.1 default.
+
+    The default is the one ``services/defaults.py`` writes on every deal at intake - the
+    last day of the month ``closing.default_lead_days`` after the deal came in - read again
+    here so a row nobody has populated yet is priced the same way the page says it will be.
+    Nothing stops the run for want of a closing date any more; the term is the one input the
+    ledger still has no stand-in for.
+    """
+    if request.closing_date is not None:
+        return request.closing_date
+    if deal.closing_date is not None:
+        return deal.closing_date
+    return default_closing_date(submitted_on(deal), config)
 
 
 def resolve_term(deal: Deal, request: UnderwriteRequest) -> Term | None:
@@ -418,13 +429,14 @@ def underwrite_inputs(
     origination fee end at None, which is the engine's signal to use the config default
     (SPEC §8.1); the monthly rent ends at None too, which leaves the Rental and Take-Back
     analyses NOT_EVALUATED with an INFO flag rather than computed on a zero. The interest
-    rate ends at ``interest.default_annual_rate``, and the loan split on a split product at
-    the SPEC §8.2 formula - the two stand-ins ``services/defaults.py`` writes on every deal
-    at intake, read again here so a deal stored before that existed is priced the same way.
+    rate ends at ``interest.default_annual_rate``, the closing date at the month end
+    ``closing.default_lead_days`` after the deal came in, and the loan split on a split
+    product at the SPEC §8.2 formula - the three stand-ins ``services/defaults.py`` writes on
+    every deal at intake, read again here so a deal stored before that existed is priced the
+    same way.
 
-    Two things have no default and stop the run, and both are named at once rather than one
-    per attempt: the closing date and the term, because the ledger is dated months of
-    interest and neither has a defensible stand-in (SPEC §8.3).
+    One thing has no default and stops the run: the term, because the ledger is dated months
+    of interest and nothing stands in for how many (SPEC §8.3).
 
     The estimated sale price is not one of them any more. A deal without one is priced: the
     ledger, the economics and the Take-Back analysis do not read it, the flip reports
@@ -440,29 +452,22 @@ def underwrite_inputs(
     core = deal_core(deal)
     valuation = resolve_valuation(deal, adapters, request)
     rent = resolve_rent(deal, adapters, request)
-    closing_date = resolve_closing_date(deal, request)
+    closing_date = resolve_closing_date(deal, request, settings)
     term = resolve_term(deal, request)
     interest_rate = _first(
         request.interest_rate, deal.interest_rate, settings.interest.default_annual_rate
     )
-    needed: list[tuple[str, object | None, str]] = [
-        (
-            "deal.closing_date",
-            closing_date,
-            "the ledger's month 0 is the end of the closing month (SPEC §8.3)",
-        ),
-        ("deal.term_months", term, "the ledger runs closing to payoff (SPEC §8.1)"),
-    ]
-    missing = [f"{name} ({why})" for name, value, why in needed if value is None]
-    if missing:
-        raise DealNotReady(deal.id, missing)
+    if term is None:
+        raise DealNotReady(
+            deal.id, ["deal.term_months (the ledger runs closing to payoff (SPEC §8.1))"]
+        )
     return UnderwriteInputs(
         deal=sizing_inputs(core, valuation, request, settings),
         state=core.state,
         borrower=borrower_inputs(core, request),
-        closing_date=_present(closing_date),
-        term_months=_present(term).full_months,
-        term_stub_days=_present(term).stub_days,
+        closing_date=closing_date,
+        term_months=term.full_months,
+        term_stub_days=term.stub_days,
         interest_rate=_present(interest_rate),
         origination_fee_pct=_first(request.origination_fee_pct, deal.origination_fee_pct),
         holding_costs_pct_of_cost=_first(

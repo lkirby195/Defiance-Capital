@@ -157,6 +157,6 @@ def config_defaults(config: Config) -> dict[str, Decimal | None]:
     return dict(economics_defaults(config))
 
 
-def default_text(defaults: Mapping[str, Decimal | None]) -> dict[str, str]:
+def default_text(defaults: Mapping[str, object]) -> dict[str, str]:
     """Defaults as the masked strings their boxes are pre-filled with."""
     return {name: mask_one(name, value) for name, value in defaults.items()}

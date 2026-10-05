@@ -14,9 +14,12 @@ the court search are the deal page's. All of it is edited there, and Edit Intake
 of it alone (``db/repository.form_columns``).
 
 **Required is what an engine run cannot proceed without**, and nothing else. That is the
-SPEC §4.1 minimum viable intake, less the credit range, plus the two SPEC §8.1 inputs the
-ledger has no stand-in for: the closing date and the term. The credit range is not a required
-box because a person on the phone often does not have it yet - the screen names it by hand
+SPEC §4.1 minimum viable intake, less the credit range, plus the one SPEC §8.1 input the
+ledger has no stand-in for: the term. The closing date is optional on every channel - a deal
+nobody has dated closes, by default, at the end of the month two weeks after it came in
+(``services/defaults.py``) and the team edits the date on the deal page. The credit range is
+not a required box because a person on the phone often does not have it yet - the screen names
+it by hand
 when it runs without one (``services/assemble.py``), which is a better answer than a form
 that will not submit. Nor is the phone: it is the borrower match key when there is one
 (SPEC §5), and a deal that arrived by email has a name and no number. The page marks every
@@ -38,6 +41,7 @@ model, so the JSON body of the same route still speaks in what is stored.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
@@ -105,7 +109,6 @@ REQUIRED_FIELDS: tuple[tuple[str, str], ...] = (
     ("purchase_price", "Purchase Price"),
     ("rehab_costs", "Rehab Costs"),
     ("loan_requested", "Loan Amount"),
-    ("closing_date", "Closing Date"),
     ("term_months", "Term (months)"),
 )
 REQUIRED_NAMES: frozenset[str] = frozenset(name for name, _ in REQUIRED_FIELDS)
@@ -139,17 +142,20 @@ def text_value(value: Any) -> str:
     return str(getattr(value, "value", value))
 
 
-def deal_defaults(deal: Deal | None, config: Config | None = None) -> dict[str, Decimal | None]:
-    """The default for each defaultable §8.1 economic, on this deal.  # SPEC §8.1, §8.2
+def deal_defaults(
+    deal: Deal | None, config: Config | None = None
+) -> dict[str, Decimal | date | None]:
+    """The default for each defaultable §8.1 input, on this deal.  # SPEC §8.1, §8.2
 
-    The five config numbers on every deal; on a split product whose loan amount and rehab
-    are known, the formula loan split as well (``services.defaults.defaults_for``). Read by
-    the deal page's override block, which is where these boxes live now; the team form has
-    none of them.
+    The five config numbers and the closing date on every deal; on a split product whose
+    loan amount and rehab are known, the formula loan split as well
+    (``services.defaults.defaults_for``). Read by the deal page's Inputs block, which is
+    where these boxes live now; the team form has none of them, and a blank form has no
+    deal to date, so it gets the five numbers alone.
     """
     settings = config if config is not None else get_config()
     if deal is None:
-        return config_defaults(settings)
+        return dict(config_defaults(settings))
     return dict(defaults_for(deal, settings))
 
 

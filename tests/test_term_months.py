@@ -190,7 +190,7 @@ def test_the_edit_page_renders_the_term_editable(client: TestClient, db_session:
 def test_the_override_block_sets_a_term_on_a_deal_that_has_none(
     client: TestClient, db_session: Session
 ) -> None:
-    """The one place in the queue: Run underwrite posts no form of its own."""
+    """The one place in the queue: Run Analysis posts no form of its own."""
     deal = stored(client, db_session, payload(term_months=None))
     save_overrides(db_session, deal.id, TeamOverrides(term_months=18), actor=ACTOR)
     db_session.commit()
@@ -248,7 +248,7 @@ def test_the_page_says_the_button_is_off_on_a_deal_with_no_term(
 ) -> None:
     deal = stored(client, db_session, payload(term_months=None))
     body = client.get(f"/queue/deals/{deal.id}").text
-    assert "Run underwrite is off until these are entered" in body
+    assert "The ledger is off until these are entered" in body
     assert "Term" in body
 
 

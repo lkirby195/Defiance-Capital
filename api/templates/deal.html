@@ -6,14 +6,17 @@
 {% import "_fields.html" as fields with context %}
 {% block title %}Deal — GLENWOOD{% endblock %}
 
-{# The first eight panels are the SPEC §9 order, the same order the CLI prints and the
-   workbook writes: the three §8.1 input groups, then the ledger and its IRR, then the three
-   analyses, then the flags. The working furniture — the run buttons and their checklist, the
-   team actions, the override block, the screen and the audit trail — sits below them.
+{# The page opens on the one button and the verdict line. Then the SPEC §9 order - the three
+   §8.1 input groups, the ledger and its IRR, the sensitivity grid, the three analyses - which
+   is the order the CLI prints and the workbook writes. The working furniture sits below: the
+   Inputs (every value the team enters by hand, Save at the bottom) and the History (every
+   intake version and every run, Restore on each version) collapsed, the Actions open. The
+   flags, the reasons and the suggested reply are on the stored results, the CLI report and
+   the workbook, not here.
 
-   Labels and values only. Every definition the page used to print beside a value is behind
-   a (?) on its label (``help``), nothing visible until hovered; a value that is a config or
-   formula stand-in rather than a person's number carries the "default" tag (SPEC §8.1). #}
+   Labels and values only. Every definition is behind a (?) on its label (``help``), nothing
+   visible until hovered; a value that is a config or formula stand-in rather than a person's
+   number carries the "default" tag (SPEC §8.1). #}
 
 {% macro help(text) -%}{% if text %} <span class="help" title="{{ text }}">?</span>{% endif %}{%- endmacro %}
 {% macro dflt(name) -%}{% if name in economics.defaulted %} <span class="dflt">default</span>{% endif %}{%- endmacro %}
@@ -26,6 +29,7 @@
     {% elif deal.property and deal.property.listing_url %}{{ deal.property.listing_url }}
     {% else %}Deal {{ deal.id }}{% endif %}
     <span class="tag status">{{ deal.status | plain }}</span>
+    {% if screen %}<span class="tag {{ screen.result.verdict | plain }}">{{ screen.result.verdict | plain }}</span>{% endif %}
   </h1>
   {% if allowed.edit_intake %}
     <a class="btn" href="/queue/deals/{{ deal.id }}/intake">Edit Intake</a>
@@ -40,6 +44,62 @@
     · {{ deal.borrower.entities | map(attribute="name") | join(", ") }}{% endif %}
   · entered {{ deal.created_at | when }} via {{ deal.channel | plain }}
 </p>
+
+{% set result = underwrite.result if underwrite else none %}
+{% set values = economics.shown %}
+
+{# --- the analysis (SPEC §4.6, §7, §8) ------------------------------------------------------ #}
+<section class="panel">
+  <div class="actions">
+    <form method="post" action="/queue/deals/{{ deal.id }}/run">
+      {{ csrf.field(csrf_token) }}
+      <button type="submit" title="Scores the deal and lays out its ledger on what it carries now; the page reloads on the result">Run Analysis</button>
+    </form>
+    <p class="lede small" style="margin:0">
+      {% if screen %}
+        Verdict <strong>{{ screen.result.verdict | plain }}</strong>
+        {%- if result %} · IRR <strong>{{ result.return_overview.irr | rate }}</strong>{% endif %}
+        · run {{ screen.created_at | when }} · engine {{ screen.result.engine_version }}
+        · config {{ screen.result.config_hash[:12] }}
+      {% else %}Not analyzed yet.{% endif %}
+    </p>
+  </div>
+  {% if screen_is_stale %}
+    <p class="problem" style="margin:10px 0 0">The intake changed after this analysis ran.</p>
+  {% endif %}
+  {% if not readiness.ready %}
+    <div class="banner" style="margin:10px 0 0">
+      <strong>The ledger is off until these are entered</strong>
+      <ul class="plain small">
+        {% for name in readiness.missing %}<li>{{ name }}</li>{% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+  {% if screen %}
+    <h3>Scored as</h3>
+    <dl class="facts small">
+      <dt>Credit tranche</dt>
+      <dd>{{ screen.result.components.credit_tranche | tranche }}</dd>
+      <dt>Credit tranche basis</dt>
+      <dd>{{ "Verified" if screen.result.components.credit_tranche_verified else "Self-reported" }}</dd>
+      <dt>Floor tranche</dt>
+      <dd>{{ screen.result.components.floor_tranche | tranche }}</dd>
+      <dt>Meets the floor</dt>
+      <dd>{{ screen.result.components.credit_meets_floor | yes_no }}</dd>
+      <dt>Experience tier</dt>
+      <dd>{{ screen.result.components.experience_tier | plain }}</dd>
+      <dt>Experience tier (self-reported)</dt>
+      <dd>{{ screen.result.components.experience_tier_self_reported | plain }}</dd>
+      <dt>Experience tier (verified)</dt>
+      <dd>{{ screen.result.components.experience_tier_verified | plain }}</dd>
+      <dt>Repeat-borrower override</dt>
+      <dd>{{ screen.result.components.repeat_borrower_override_applied | yes_no }}</dd>
+      <dt>Court records from</dt>
+      <dd>{{ screen.result.components.court_records_source | label }}</dd>
+    </dl>
+  {% endif %}
+</section>
+
 {% if deal.channel | plain == "WEB" %}
   <section class="panel">
     <h2>From the public form <span class="tag INFO">Web</span></h2>
@@ -56,9 +116,6 @@
     </dl>
   </section>
 {% endif %}
-
-{% set result = underwrite.result if underwrite else none %}
-{% set values = economics.shown %}
 
 {# --- 1. Overview (SPEC §8.1) --------------------------------------------------------------- #}
 <section class="panel">
@@ -121,7 +178,8 @@
     <dt>Loan Purpose</dt><dd>{{ deal.loan_purpose | label }}</dd>
     <dt>Loan Type{{ help(deal.product | definition) }}</dt>
     <dd title="{{ deal.product_source | plain }}">{{ deal.product | label }}</dd>
-    <dt>Closing Date{{ help("Any date; the ledger's month 0 is the last day of this month (SPEC §8.3).") }}</dt><dd>{{ deal.closing_date | when }}</dd>
+    <dt>Closing Date{{ help("Any date; the ledger's month 0 is the last day of this month (SPEC §8.3). Default: the last day of the month two weeks after the deal came in (SPEC §8.1).") }}</dt>
+    <dd>{{ deal.closing_date | when }}{{ dflt("closing_date") }}</dd>
     <dt>Term{{ help("Whole monthly periods, anchored to month ends (SPEC §8.1). Seeded by the borrower's term bucket on a borrower channel; the team's own number wins.") }}</dt>
     <dd>{{ deal.term_months | plain }}{% if deal.term_months is not none %} month(s){% endif %}
       {%- if deal.term_stub_days %} and {{ deal.term_stub_days }} day(s){% endif %}</dd>
@@ -166,6 +224,10 @@
     <dt>{{ "Tranche A" if deal.product | plain == "SPLIT_PRINCIPAL" else "Rehab portion" }}{{ help("What is held back for the rehab (SPEC §8.2). The default is the contingency-adjusted rehab budget capped at the loan amount; nothing on a single-note loan.") }}</dt>
     <dd>{{ values.loan_rehab_portion | money }}{{ dflt("loan_rehab_portion") }}</dd>
   </dl>
+  {% if result or screen %}
+    <h3>Leverage against caps{{ help("The commitment against the caps cell the deal was scored in (SPEC §7.4, §8.2): the latest ledger's sizing when there is one, else the latest score's.") }}</h3>
+    {{ parts.sizing_table(result.sizing if result else screen.result.sizing) }}
+  {% endif %}
 </section>
 
 {# --- 4. Return Overview (SPEC §8.3) -------------------------------------------------------- #}
@@ -224,11 +286,52 @@
       </table>
     </div>
   {% else %}
-    <p class="small muted">Not underwritten yet.</p>
+    <p class="small muted">No analysis yet.</p>
   {% endif %}
 </section>
 
-{# --- 5. Flip Analysis (SPEC §8.4) ---------------------------------------------------------- #}
+{# --- 5. Sensitivity (SPEC §8.9) ------------------------------------------------------------ #}
+<section class="panel">
+  <h2>Sensitivity{{ help("IRR by loan amount and rate: every cell is the whole ledger laid out again at that amount and that annual rate, in the same caps cell (SPEC §8.9). Lending less comes off the advance at closing first; the rehab portion gives only once the advance is gone. The request is the bottom row. The marked cell is the deal as it stands, when its rate falls on a column.") }}</h2>
+  {% if result and result.sensitivity %}
+    {% set grid = result.sensitivity %}
+    {% set show_split = grid.rows and grid.rows[0].loan_purchase_portion is not none %}
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="num">Loan amount</th>
+            {% if show_split %}<th class="num">Advance at closing</th><th class="num">Rehab portion</th>{% endif %}
+            {% for rate in grid.rates %}<th class="num">{{ rate | pct }}</th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in grid.rows %}
+            <tr>
+              <td class="num">{{ row.loan_amount | money }}{% if row.reduction %} <span class="small muted">(−{{ row.reduction | money }})</span>{% endif %}</td>
+              {% if show_split %}
+                <td class="num">{{ row.loan_purchase_portion | money }}</td>
+                <td class="num">{{ row.loan_rehab_portion | money }}</td>
+              {% endif %}
+              {% for cell in row.cells %}
+                <td class="num grid-cell{% if cell.is_deal %} hit{% endif %}">{{ cell.irr | rate }}</td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if not grid.deal_cell %}
+      <p class="small muted">The deal's own rate, {{ grid.interest_rate | pct }}, is not a column; its IRR is the Return Overview's.</p>
+    {% endif %}
+  {% elif result %}
+    <p class="small muted">Not on this ledger; run the analysis again for the table.</p>
+  {% else %}
+    <p class="small muted">No analysis yet.</p>
+  {% endif %}
+</section>
+
+{# --- 6. Flip Analysis (SPEC §8.4) ---------------------------------------------------------- #}
 <section class="panel">
   <h2>Flip Analysis
     <span class="tag {{ 'GO' if result and result.analyses.flip_analysis else 'INFO' }}">{{
@@ -256,11 +359,11 @@
       <dd>{{ flip.profit_yield | pct }}</dd>
     </dl>
   {% else %}
-    <p class="small muted">Not underwritten yet.</p>
+    <p class="small muted">No analysis yet.</p>
   {% endif %}
 </section>
 
-{# --- 6. Rental Analysis (SPEC §8.5) -------------------------------------------------------- #}
+{# --- 7. Rental Analysis (SPEC §8.5) -------------------------------------------------------- #}
 <section class="panel">
   <h2>Rental Analysis
     <span class="tag {{ 'GO' if result and result.analyses.rental_analysis else 'INFO' }}">{{
@@ -287,11 +390,11 @@
       <dt>Result</dt><dd>{{ passed(rental.passed) }}</dd>
     </dl>
   {% else %}
-    <p class="small muted">Not underwritten yet.</p>
+    <p class="small muted">No analysis yet.</p>
   {% endif %}
 </section>
 
-{# --- 7. Take-Back Analysis (SPEC §8.6) ----------------------------------------------------- #}
+{# --- 8. Take-Back Analysis (SPEC §8.6) ----------------------------------------------------- #}
 <section class="panel">
   <h2>Take-Back Analysis{{ help("What it costs GLENWOOD to end up owning the property, and whether the rent carries it. No toggle: it runs on every deal (SPEC §8.6).") }}
     <span class="tag GO">ALWAYS ON</span></h2>
@@ -315,116 +418,13 @@
       <dt>Result</dt><dd>{{ passed(take_back.passed) }}</dd>
     </dl>
   {% else %}
-    <p class="small muted">Not underwritten yet.</p>
+    <p class="small muted">No analysis yet.</p>
   {% endif %}
 </section>
 
-{# --- 8. Flags (SPEC §8.8) ------------------------------------------------------------------ #}
-<section class="panel">
-  <h2>Flags</h2>
-  {% if result %}
-    <h3>Sizing against caps</h3>
-    {{ parts.sizing_table(result.sizing) }}
-    <h3>Raised</h3>
-    {{ parts.flag_list(result.flags) }}
-  {% else %}
-    <p class="small muted">Not underwritten yet.</p>
-  {% endif %}
-</section>
-
-{# --- run the engine ---------------------------------------------------------------------- #}
-<section class="panel">
-  <h2>Run</h2>
-  <div class="actions">
-    <form method="post" action="/queue/deals/{{ deal.id }}/screen">
-      {{ csrf.field(csrf_token) }}
-      <button type="submit" title="Stage 1 (SPEC §7): no paid pulls">Run screen</button>
-    </form>
-    <form method="post" action="/queue/deals/{{ deal.id }}/underwrite">
-      {{ csrf.field(csrf_token) }}
-      <button type="submit" title="Stage 2 (SPEC §8), on what the deal carries below" {% if not readiness.ready %}disabled{% endif %}>Run underwrite</button>
-    </form>
-  </div>
-
-  <h3>Underwrite inputs{{ help("Every SPEC §8.1 input, the value in force and where it came from (SPEC §9.2). A default counts as present; the (?) on each row says what the run does with or without it.") }}</h3>
-  {% if not readiness.ready %}
-    <div class="banner">
-      <strong>Run underwrite is off until these are entered</strong>
-      <ul class="plain small">
-        {% for name in readiness.missing %}<li>{{ name }}</li>{% endfor %}
-      </ul>
-    </div>
-  {% endif %}
-  <div class="scroll">
-    <table>
-      <thead>
-        <tr><th>Input</th><th class="num">Value</th><th>From</th><th>Needed</th></tr>
-      </thead>
-      <tbody>
-        {% for row in readiness.rows %}
-          <tr>
-            <td>{{ row.label }}{{ help(row.note) }}</td>
-            <td class="num">
-              {% if row.fmt == "money" %}{{ row.value | money }}
-              {% elif row.fmt == "pct" %}{{ row.value | pct }}
-              {% elif row.fmt == "label" %}{{ row.value | label }}
-              {% else %}{{ row.value | plain }}{% endif %}
-            </td>
-            <td><span class="tag {{ 'HARD' if row.required and not row.satisfied
-                     else ('GO' if row.satisfied else 'INFO') }}">{{ row.source | label }}</span></td>
-            <td class="small">{{ "Required" if row.required else "Optional" }}</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-
-{# --- team actions (SPEC §4.6) ------------------------------------------------------------- #}
-<section class="panel">
-  <h2>Actions</h2>
-  <div class="grid3">
-    <div class="actions">
-      <form method="post" action="/queue/deals/{{ deal.id }}/advance">
-        {{ csrf.field(csrf_token) }}
-        <button type="submit" title="A screened deal goes into review; a paused deal goes back where it was" {% if not allowed.progress %}disabled{% endif %}>Progress</button>
-      </form>
-      <form method="post" action="/queue/deals/{{ deal.id }}/pause">
-        {{ csrf.field(csrf_token) }}
-        <button class="quiet" type="submit" title="Sets the deal aside; nothing runs on it until Progress" {% if not allowed.pause %}disabled{% endif %}>Pause</button>
-      </form>
-      {% if allowed.kill %}
-        <a class="btn danger" href="/queue/deals/{{ deal.id }}/kill" title="Marks the deal dead, after a confirmation">Kill</a>
-      {% else %}
-        <span class="btn danger off" title="A dead deal is already dead">Kill</span>
-      {% endif %}
-    </div>
-
-    <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/decline">
-      {{ csrf.field(csrf_token) }}
-      {{ fields.text_box("reason", "Decline — reason", "", required=true, maxlength=500,
-                         disabled=not allowed.decline, id="decline_reason") }}
-      <button class="danger" type="submit" {% if not allowed.decline %}disabled{% endif %}>Decline</button>
-    </form>
-
-    <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/reopen">
-      {{ csrf.field(csrf_token) }}
-      {{ fields.text_box("reason", "Re-open — reason", "", required=true, maxlength=500,
-                         disabled=not allowed.reopen, id="reopen_reason") }}
-      <button type="submit" title="From DECLINED only" {% if not allowed.reopen %}disabled{% endif %}>Re-open</button>
-    </form>
-  </div>
-
-  <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/note" style="margin-top:12px">
-      {{ csrf.field(csrf_token) }}
-    {{ fields.text_area("note", "Note", required=true, maxlength=4000) }}
-    <div class="actions"><button class="quiet" type="submit">Add note</button></div>
-  </form>
-</section>
-
-{# --- team overrides (SPEC §6.1, §8.1) ------------------------------------------------------ #}
-<section class="panel">
-  <h2>Team entry{{ help("The interim source until the enrichment adapters land (SPEC §6.1): an adapter value wins over anything here, and what is entered stays on the deal. Saving replaces the whole block and runs the screen and the underwrite again. A box left blank on an economic with a default gets the default back.") }}</h2>
+{# --- the inputs (SPEC §6.1, §8.1), collapsed ------------------------------------------------ #}
+<details class="panel" id="inputs"{% if inputs_open %} open{% endif %}>
+  <summary><h2>Inputs{{ help("Every value the team enters by hand (SPEC §6.1, §8.1): the economics with their defaults, the dates and the term, the loan split, the valuation, the rent, the two toggles and the court search. An adapter value wins over anything here, and what is entered stays on the deal. Save replaces the whole block and runs the analysis again; a box left blank on an input with a default gets the default back.") }}</h2></summary>
   <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/overrides">
       {{ csrf.field(csrf_token) }}
     <fieldset>
@@ -435,7 +435,8 @@
         {{ fields.product_box("product", "Loan Type", enums.product, form.product,
                               help="Blank leaves the inferred one. " ~ (deal.product | definition)) }}
         {{ fields.text_box("closing_date", "Closing Date", form.closing_date, kind="date",
-                           help="Any date; the ledger's month 0 is the last day of this month (SPEC §8.3).") }}
+                           default=defaults.closing_date,
+                           help="Any date; the ledger's month 0 is the last day of this month (SPEC §8.3). Default: the last day of the month two weeks after the deal came in (SPEC §8.1).") }}
         {{ fields.text_box("term_months", "Term (months)", form.term_months, mode="numeric",
                            help="Whole monthly periods, anchored to month ends (SPEC §8.1).") }}
         {#- Read-only and not posted: the payoff date is not a column, it is the last day of
@@ -502,72 +503,117 @@
       {{ fields.matter_table(enums, matters) }}
     </fieldset>
 
-    <div class="actions"><button type="submit">Save team entry</button></div>
+    <div class="actions"><button type="submit">Save</button></div>
+  </form>
+
+  <h3>What the ledger runs on{{ help("Every SPEC §8.1 input, the value in force and where it came from (SPEC §9.2). A default counts as present; the (?) on each row says what the run does with or without it.") }}</h3>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Input</th><th class="num">Value</th><th>From</th><th>Needed</th></tr>
+      </thead>
+      <tbody>
+        {% for row in readiness.rows %}
+          <tr>
+            <td>{{ row.label }}{{ help(row.note) }}</td>
+            <td class="num">
+              {% if row.fmt == "money" %}{{ row.value | money }}
+              {% elif row.fmt == "pct" %}{{ row.value | pct }}
+              {% elif row.fmt == "label" %}{{ row.value | label }}
+              {% else %}{{ row.value | plain }}{% endif %}
+            </td>
+            <td><span class="tag {{ 'HARD' if row.required and not row.satisfied
+                     else ('GO' if row.satisfied else 'INFO') }}">{{ row.source | label }}</span></td>
+            <td class="small">{{ "Required" if row.required else "Optional" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
+
+{# --- team actions (SPEC §4.6) ------------------------------------------------------------- #}
+<section class="panel">
+  <h2>Actions</h2>
+  <div class="grid3">
+    <div class="actions">
+      <form method="post" action="/queue/deals/{{ deal.id }}/advance">
+        {{ csrf.field(csrf_token) }}
+        <button type="submit" title="A scored deal goes into review; a paused deal goes back where it was" {% if not allowed.progress %}disabled{% endif %}>Progress</button>
+      </form>
+      <form method="post" action="/queue/deals/{{ deal.id }}/pause">
+        {{ csrf.field(csrf_token) }}
+        <button class="quiet" type="submit" title="Sets the deal aside; nothing runs on it until Progress" {% if not allowed.pause %}disabled{% endif %}>Pause</button>
+      </form>
+      {% if allowed.kill %}
+        <a class="btn danger" href="/queue/deals/{{ deal.id }}/kill" title="Marks the deal dead, after a confirmation">Kill</a>
+      {% else %}
+        <span class="btn danger off" title="A dead deal is already dead">Kill</span>
+      {% endif %}
+    </div>
+
+    <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/decline">
+      {{ csrf.field(csrf_token) }}
+      {{ fields.text_box("reason", "Decline — reason", "", required=true, maxlength=500,
+                         disabled=not allowed.decline, id="decline_reason") }}
+      <button class="danger" type="submit" {% if not allowed.decline %}disabled{% endif %}>Decline</button>
+    </form>
+
+    <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/reopen">
+      {{ csrf.field(csrf_token) }}
+      {{ fields.text_box("reason", "Re-open — reason", "", required=true, maxlength=500,
+                         disabled=not allowed.reopen, id="reopen_reason") }}
+      <button type="submit" title="From DECLINED only" {% if not allowed.reopen %}disabled{% endif %}>Re-open</button>
+    </form>
+  </div>
+
+  <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/note" style="margin-top:12px">
+      {{ csrf.field(csrf_token) }}
+    {{ fields.text_area("note", "Note", required=true, maxlength=4000) }}
+    <div class="actions"><button class="quiet" type="submit">Add note</button></div>
   </form>
 </section>
 
-{# --- screen summary (SPEC §9.1) ------------------------------------------------------------ #}
-<section class="panel">
-  <h2>Screen</h2>
-  {% if screen_is_stale %}
-    <p class="problem">The intake changed after this screen ran.</p>
-  {% endif %}
-  {% if screen %}
-    <p class="lede small">
-      <span class="tag {{ screen.result.verdict | plain }}">{{ screen.result.verdict | plain }}</span>
-      run {{ screen.created_at | when }} · engine {{ screen.result.engine_version }} ·
-      config {{ screen.result.config_hash[:12] }}
-    </p>
-
-    <h3>Score components</h3>
-    <dl class="facts small">
-      <dt>Credit tranche</dt>
-      <dd>{{ screen.result.components.credit_tranche | tranche }}</dd>
-      <dt>Credit tranche basis</dt>
-      <dd>{{ "Verified" if screen.result.components.credit_tranche_verified else "Self-reported" }}</dd>
-      <dt>Floor tranche</dt>
-      <dd>{{ screen.result.components.floor_tranche | tranche }}</dd>
-      <dt>Meets the floor</dt>
-      <dd>{{ screen.result.components.credit_meets_floor | yes_no }}</dd>
-      <dt>Experience tier</dt>
-      <dd>{{ screen.result.components.experience_tier | plain }}</dd>
-      <dt>Experience tier (self-reported)</dt>
-      <dd>{{ screen.result.components.experience_tier_self_reported | plain }}</dd>
-      <dt>Experience tier (verified)</dt>
-      <dd>{{ screen.result.components.experience_tier_verified | plain }}</dd>
-      <dt>Repeat-borrower override</dt>
-      <dd>{{ screen.result.components.repeat_borrower_override_applied | yes_no }}</dd>
-      <dt>Court records from</dt>
-      <dd>{{ screen.result.components.court_records_source | label }}</dd>
-    </dl>
-
-    <h3>Sizing against caps</h3>
-    {{ parts.sizing_table(screen.result.sizing) }}
-
-    <h3>Flags</h3>
-    {{ parts.flag_list(screen.result.flags) }}
-
-    <h3>Reasons</h3>
-    {% if screen.result.reasons %}
-      <ul class="plain small">
-        {% for reason in screen.result.reasons %}<li>{{ reason }}</li>{% endfor %}
-      </ul>
-    {% else %}<p class="small">None</p>{% endif %}
-
-    <h3>Suggested reply{{ help("A draft, sent by hand from a person's own phone. Nothing on this page sends anything: GLENWOOD does no automated outbound SMS (SPEC §11).") }}</h3>
-    <p class="reply" id="suggested-reply">{{ screen.result.suggested_reply }}</p>
-    <div class="actions">
-      <button class="quiet" type="button" data-copy="suggested-reply">Copy reply</button>
-      <span class="small muted" id="copy-state" role="status"></span>
+{# --- the history (SPEC §5, §11), collapsed -------------------------------------------------- #}
+<details class="panel" id="history">
+  <summary><h2>History{{ help("Every intake version, score and ledger on the deal, newest first, with who recorded it and the engine that ran. Restore saves an earlier intake version as a new one - nothing is rewound - and runs the analysis again on it. The actions and notes are below.") }}</h2></summary>
+  <h3>Versions and runs</h3>
+  {% if history %}
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>When</th><th>What</th><th>Who</th><th>Engine</th><th>Detail</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for entry in history %}
+            <tr>
+              <td class="small">{{ entry.at | when }}</td>
+              <td class="small"><strong>{{ entry.label }}</strong></td>
+              <td class="small">{{ entry.actor | plain }}</td>
+              <td class="small">{{ entry.engine_version | plain }}</td>
+              <td class="small">
+                {% if entry.verdict %}<span class="tag {{ entry.verdict | plain }}">{{ entry.verdict | plain }}</span>
+                {% elif entry.kind | plain == "UNDERWRITE" %}IRR {{ entry.irr | rate }}
+                {% else %}{{ entry.note }}{% endif %}
+              </td>
+              <td class="small">
+                {% if entry.restorable %}
+                  <form method="post" action="/queue/deals/{{ deal.id }}/intake/{{ entry.id }}/restore">
+                    {{ csrf.field(csrf_token) }}
+                    <button class="quiet small" type="submit" title="Saves this version as a new intake and runs the analysis again" {% if not allowed.edit_intake %}disabled{% endif %}>Restore</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   {% else %}
-    <p class="small muted">Not screened yet.</p>
+    <p class="small muted">Nothing recorded yet.</p>
   {% endif %}
-</section>
 
-{# --- the audit trail (SPEC §5, §11) --------------------------------------------------------- #}
-<section class="panel">
-  <h2>History</h2>
+  <h3>Actions and notes</h3>
   {% if trail %}
     <div class="scroll">
       <table>
@@ -594,19 +640,5 @@
   {% else %}
     <p class="small muted">Nothing recorded yet.</p>
   {% endif %}
-</section>
-
-<script>
-  // The one piece of client-side script in the queue. Everything else is a form post.
-  document.querySelectorAll("[data-copy]").forEach(function (button) {
-    button.addEventListener("click", function () {
-      var source = document.getElementById(button.dataset.copy);
-      var state = document.getElementById("copy-state");
-      navigator.clipboard.writeText(source.innerText).then(
-        function () { state.textContent = "Copied — send it by hand."; },
-        function () { state.textContent = "Could not copy; select the text instead."; }
-      );
-    });
-  });
-</script>
+</details>
 {% endblock %}

@@ -50,8 +50,8 @@ COMPLETE_INTAKE: dict[str, Any] = {
 # Every state-changing path a browser posts to, with a body that would otherwise be accepted.
 GUARDED: list[tuple[str, dict[str, Any]]] = [
     ("/queue/deals/{deal}/intake", COMPLETE_INTAKE),
-    ("/queue/deals/{deal}/screen", {}),
-    ("/queue/deals/{deal}/underwrite", {}),
+    ("/queue/deals/{deal}/intake/00000000-0000-0000-0000-000000000000/restore", {}),
+    ("/queue/deals/{deal}/run", {}),
     ("/queue/deals/{deal}/overrides", {"estimated_sale_price_team": "$250,000"}),
     ("/queue/deals/{deal}/advance", {}),
     ("/queue/deals/{deal}/pause", {}),
