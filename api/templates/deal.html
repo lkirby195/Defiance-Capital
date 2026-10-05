@@ -8,11 +8,14 @@
 
 {# The page opens on the one button and the verdict line. Then the SPEC §9 order - the three
    §8.1 input groups, the ledger and its IRR, the sensitivity grid, the three analyses - which
-   is the order the CLI prints and the workbook writes. The working furniture sits below: the
-   Inputs (every value the team enters by hand, Save at the bottom) and the History (every
-   intake version and every run, Restore on each version) collapsed, the Actions open. The
-   flags, the reasons and the suggested reply are on the stored results, the CLI report and
-   the workbook, not here.
+   is the order the CLI prints and the workbook writes. Between Deal Economics and the Return
+   Overview sits the Underwriting Assumptions panel, open: every number the ledger and the
+   analyses run on that the team may set by hand, two columns, Save & Run at the bottom and
+   Reset all to defaults beside it. The working furniture sits below the sections: the court
+   search (collapsed, its own Save), what the ledger runs on (collapsed), the Actions open,
+   and the History (every intake version and every run, Restore on each version) collapsed.
+   The flags, the reasons and the suggested reply are on the stored results, the CLI report
+   and the workbook, not here.
 
    Labels and values only. Every definition is behind a (?) on its label (``help``), nothing
    visible until hovered; a value that is a config or formula stand-in rather than a person's
@@ -230,6 +233,76 @@
   {% endif %}
 </section>
 
+{# --- Underwriting Assumptions (SPEC §8.1, §8.4-§8.6): editable, open, Save & Run ----------- #}
+<section class="panel" id="assumptions">
+  <h2>Underwriting Assumptions{{ help("Every number the ledger and the three analyses run on that the team may set by hand (SPEC §8.1, §8.4-§8.6): the economics and the analysis assumptions with their config defaults, the loan split, the valuation, the rent and the two toggles. A box holding its default says so; reset to default puts that one back, and Reset all puts every one back. Save & Run saves the whole panel and runs the analysis on it; a box left blank on an input with a default gets the default back. The dates, the term and the loan type are on the intake form; the court search is its own section below.") }}</h2>
+  <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/assumptions">
+    {{ csrf.field(csrf_token) }}
+    <div class="grid2">
+      {{ fields.pct_box("interest_rate", "Interest Rate", form.interest_rate,
+                        default=defaults.interest_rate,
+                        help="Annual; interest-only, paid current (SPEC §3, §8.1).") }}
+      {{ fields.pct_box("origination_fee_pct", "Origination Fee", form.origination_fee_pct,
+                        default=defaults.origination_fee_pct,
+                        help="Of the commitment: half at close, half at payoff (SPEC §3).") }}
+      {{ fields.pct_box("contingency_pct", "Contingency", form.contingency_pct,
+                        default=defaults.contingency_pct,
+                        help="Of the rehab costs: rehab_adj = rehab x (1 + contingency) (SPEC §8.2).") }}
+      {{ fields.money_box("closing_costs_usd", "Closing Costs", form.closing_costs_usd,
+                          default=defaults.closing_costs_usd,
+                          help="The lender's own, inside the LTC denominator (SPEC §8.2).") }}
+      {{ fields.pct_box("holding_costs_pct_of_cost", "Holding Costs %",
+                        form.holding_costs_pct_of_cost,
+                        default=defaults.holding_costs_pct_of_cost,
+                        note=holding_costs_hint,
+                        help="A percentage of the purchase price plus the rehab costs, over the whole hold (SPEC §8.1).") }}
+      {% if economics.split_product %}
+        {{ fields.money_box("loan_purchase_portion",
+                            "Principal Note" if deal.product | plain == "SPLIT_PRINCIPAL" else "Advance at Closing",
+                            form.loan_purchase_portion,
+                            default=defaults.get("loan_purchase_portion", ""),
+                            help="With the rehab portion, adds up to the Loan Amount (SPEC §8.2). Both blank: the default split.") }}
+        {{ fields.money_box("loan_rehab_portion",
+                            "Tranche A" if deal.product | plain == "SPLIT_PRINCIPAL" else "Rehab Portion",
+                            form.loan_rehab_portion,
+                            default=defaults.get("loan_rehab_portion", ""),
+                            help="Capped at the contingency-adjusted rehab budget when the deal is priced (SPEC §8.2). Default: that budget, capped at the loan amount.") }}
+      {% endif %}
+      {{ fields.money_box("estimated_sale_price_team", "Estimated Sale Price",
+                          form.estimated_sale_price_team,
+                          help="The ARV: what LTV is computed on and what the Flip analysis sells at (SPEC §7.4, §8.4). No default; an adapter value wins over it.") }}
+      {{ fields.money_box("monthly_rent", "Monthly Rent", form.monthly_rent,
+                          help="No default: without one the Rental and Take-Back analyses are not evaluated (SPEC §8.5).") }}
+      {{ fields.pct_box("broker_selling_pct", "Broker Selling Costs %", form.broker_selling_pct,
+                        default=defaults.broker_selling_pct,
+                        help="Of the sale price: the flip's cost of selling, off the sale price and not a project cost (SPEC §8.4).") }}
+      {{ fields.pct_box("rental_expenses_pct_of_rent", "Rental Expense %",
+                        form.rental_expenses_pct_of_rent,
+                        default=defaults.rental_expenses_pct_of_rent,
+                        help="Operating expenses as a share of the monthly rent, in both DSCRs' net monthly income (SPEC §8.5).") }}
+      {{ fields.pct_box("rental_takeout_rate", "Rental Takeout Rate", form.rental_takeout_rate,
+                        default=defaults.rental_takeout_rate,
+                        help="The annual rate a takeout lender would amortize the commitment at (SPEC §8.5).") }}
+      {{ fields.money_box("take_back_legal_costs_usd", "Take-Back Legal Costs",
+                          form.take_back_legal_costs_usd,
+                          default=defaults.take_back_legal_costs_usd,
+                          help="The legal bill in the take-back's total cost (SPEC §8.6).") }}
+      {{ fields.months_box("take_back_lost_interest_months", "Take-Back Lost Interest Months",
+                           form.take_back_lost_interest_months,
+                           default=defaults.take_back_lost_interest_months, note="months",
+                           help="Months of interest GLENWOOD stops collecting while it takes the property back, at the deal's own rate (SPEC §8.6).") }}
+      {{ fields.toggle_box("flip_analysis", "Flip Analysis", form.flip_analysis, default=true,
+                           help="Default: on when there is a sale price (SPEC §8.1).") }}
+      {{ fields.toggle_box("rental_analysis", "Rental Analysis", form.rental_analysis, default=true,
+                           help="Default: on when there is a rent (SPEC §8.1). The Take-Back analysis has no toggle; it runs on every deal.") }}
+    </div>
+    <div class="actions">
+      <button type="submit" title="Saves every box on this panel and runs the analysis on it">Save &amp; Run</button>
+      <a class="btn danger" href="/queue/deals/{{ deal.id }}/assumptions/reset" title="Puts every box with a default back to it and runs the analysis, after a confirmation">Reset all to defaults</a>
+    </div>
+  </form>
+</section>
+
 {# --- 4. Return Overview (SPEC §8.3) -------------------------------------------------------- #}
 <section class="panel">
   <h2>Return Overview</h2>
@@ -342,7 +415,7 @@
       <dd>{{ "On" if result.analyses.flip_analysis else "Off" }}{% if deal.flip_analysis is none %} <span class="dflt">default</span>{% endif %}</dd>
       <dt>Estimated Sale Price</dt><dd>{{ flip.estimated_sale_price | money }}</dd>
       <dt>Broker selling costs</dt><dd>{{ flip.broker_costs | money }}</dd>
-      <dt>Broker selling %</dt><dd>{{ flip.broker_selling_pct | pct }}</dd>
+      <dt>Broker selling %</dt><dd>{{ flip.broker_selling_pct | pct }}{{ dflt("broker_selling_pct") }}</dd>
       <dt>Purchase price</dt><dd>{{ flip.purchase_price | money }}</dd>
       <dt>Closing costs</dt><dd>{{ flip.closing_costs | money }}</dd>
       <dt>Holding costs</dt><dd>{{ flip.holding_costs_total | money }}</dd>
@@ -374,13 +447,13 @@
       <dd>{{ "On" if result.analyses.rental_analysis else "Off" }}{% if deal.rental_analysis is none %} <span class="dflt">default</span>{% endif %}</dd>
       <dt>Monthly Rent</dt><dd>{{ rental.monthly_rent | money }}</dd>
       <dt>Expenses</dt><dd>{{ rental.expenses | money }}</dd>
-      <dt>Expenses (% of rent)</dt><dd>{{ rental.expenses_pct | pct }}</dd>
+      <dt>Expenses (% of rent)</dt><dd>{{ rental.expenses_pct | pct }}{{ dflt("rental_expenses_pct_of_rent") }}</dd>
       <dt>Monthly holding costs</dt><dd>{{ rental.holding_costs_monthly | money }}</dd>
       <dt>Net monthly income</dt><dd>{{ rental.net_monthly_income | money }}</dd>
       <dt>Debt service{{ help("Monthly, on the loan amount at the takeout rate over the amortization (SPEC §8.5).") }}</dt>
       <dd>{{ rental.debt_service_monthly | money }}</dd>
       <dt>Takeout loan amount</dt><dd>{{ rental.loan_amount | money }}</dd>
-      <dt>Takeout rate</dt><dd>{{ rental.takeout_rate | pct }}</dd>
+      <dt>Takeout rate</dt><dd>{{ rental.takeout_rate | pct }}{{ dflt("rental_takeout_rate") }}</dd>
       <dt>Amortization (years)</dt><dd>{{ rental.amortization_years | plain }}</dd>
       <dt>DSCR</dt><dd>{{ rental.dscr | ratio }}</dd>
       <dt>DSCR floor</dt><dd>{{ rental.dscr_floor | ratio }}</dd>
@@ -402,9 +475,9 @@
       <dd>{{ take_back.status | plain }}</dd>
       <dt>Loan amount</dt><dd>{{ take_back.loan_amount | money }}</dd>
       <dt>Lost interest</dt><dd>{{ take_back.lost_interest | money }}</dd>
-      <dt>Lost interest (months)</dt><dd>{{ take_back.lost_interest_months | plain }}</dd>
+      <dt>Lost interest (months)</dt><dd>{{ take_back.lost_interest_months | plain }}{{ dflt("take_back_lost_interest_months") }}</dd>
       <dt>Interest rate</dt><dd>{{ take_back.interest_rate | pct }}</dd>
-      <dt>Legal costs</dt><dd>{{ take_back.legal_costs | money }}</dd>
+      <dt>Legal costs</dt><dd>{{ take_back.legal_costs | money }}{{ dflt("take_back_legal_costs_usd") }}</dd>
       <dt>Total cost</dt><dd><strong>{{ take_back.total_cost | money }}</strong></dd>
       <dt>Debt service{{ help("Monthly, on the total cost at the deal's own rate over the amortization (SPEC §8.6).") }}</dt>
       <dd>{{ take_back.debt_service_monthly | money }}</dd>
@@ -419,91 +492,27 @@
   {% endif %}
 </section>
 
-{# --- the inputs (SPEC §6.1, §8.1), collapsed ------------------------------------------------ #}
-<details class="panel" id="inputs"{% if inputs_open %} open{% endif %}>
-  <summary><h2>Inputs{{ help("Every value the team enters by hand (SPEC §6.1, §8.1): the economics with their defaults, the dates and the term, the loan split, the valuation, the rent, the two toggles and the court search. An adapter value wins over anything here, and what is entered stays on the deal. Save replaces the whole block and runs the analysis again; a box left blank on an input with a default gets the default back.") }}</h2></summary>
-  <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/overrides">
-      {{ csrf.field(csrf_token) }}
-    <fieldset>
-      <legend>Deal Economics</legend>
-      <div class="grid3">
-        {{ fields.enum_box("loan_purpose", "Loan Purpose", enums.loan_purpose,
-                           form.loan_purpose) }}
-        {{ fields.product_box("product", "Loan Type", enums.product, form.product,
-                              help="Blank leaves the inferred one. " ~ (deal.product | definition)) }}
-        {{ fields.text_box("closing_date", "Closing Date", form.closing_date, kind="date",
-                           default=defaults.closing_date,
-                           help="Any date; the ledger's month 0 is the last day of this month (SPEC §8.3). Default: the last day of the month two weeks after the deal came in (SPEC §8.1).") }}
-        {{ fields.text_box("term_months", "Term (months)", form.term_months, mode="numeric",
-                           help="Whole monthly periods, anchored to month ends (SPEC §8.1).") }}
-        {#- Read-only and not posted: the payoff date is not a column, it is the last day of
-            the month that is the closing month plus the term (SPEC §8.1). -#}
-        {{ fields.text_box("payoff_date", "Payoff Date", payoff_date | when if payoff_date else "",
-                           readonly=true, disabled=true,
-                           help="Derived: the last day of the month that is the closing month plus the term (SPEC §8.1).") }}
-        {{ fields.pct_box("interest_rate", "Interest Rate", form.interest_rate,
-                          default=defaults.interest_rate, help="Annual (SPEC §8.1).") }}
-        {{ fields.pct_box("contingency_pct", "Contingency", form.contingency_pct,
-                          default=defaults.contingency_pct,
-                          help="Of the rehab costs (SPEC §8.2).") }}
-        {{ fields.money_box("closing_costs_usd", "Closing Costs", form.closing_costs_usd,
-                            default=defaults.closing_costs_usd,
-                            help="The lender's own, inside the LTC denominator (SPEC §8.2).") }}
-        {{ fields.pct_box("holding_costs_pct_of_cost", "Holding Costs",
-                          form.holding_costs_pct_of_cost,
-                          default=defaults.holding_costs_pct_of_cost,
-                          note=holding_costs_hint,
-                          help="A percentage of the price plus the rehab, over the whole hold (SPEC §8.1).") }}
-        {{ fields.pct_box("origination_fee_pct", "Origination Fee", form.origination_fee_pct,
-                          default=defaults.origination_fee_pct,
-                          help="Of the commitment: half at close, half at payoff (SPEC §3).") }}
-        {% if economics.split_product %}
-          {{ fields.money_box("loan_purchase_portion",
-                              "Principal Note" if deal.product | plain == "SPLIT_PRINCIPAL" else "Advance at Closing",
-                              form.loan_purchase_portion,
-                              default=defaults.get("loan_purchase_portion", ""),
-                              help="With the rehab portion, adds up to the Loan Amount (SPEC §8.2). Both blank: the default split.") }}
-          {{ fields.money_box("loan_rehab_portion",
-                              "Tranche A" if deal.product | plain == "SPLIT_PRINCIPAL" else "Rehab Portion",
-                              form.loan_rehab_portion,
-                              default=defaults.get("loan_rehab_portion", ""),
-                              help="Capped at the contingency-adjusted rehab budget when the deal is priced (SPEC §8.2). Default: that budget, capped at the loan amount.") }}
-        {% endif %}
-      </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Valuation, rent and the analyses</legend>
-      <div class="grid3">
-        {{ fields.money_box("estimated_sale_price_team", "Estimated Sale Price",
-                            form.estimated_sale_price_team,
-                            help="The ARV: what LTV is computed on and what the Flip analysis sells at (SPEC §7.4, §8.4).") }}
-        {{ fields.money_box("monthly_rent", "Monthly Rent", form.monthly_rent,
-                            help="No default: without one the Rental and Take-Back analyses are not evaluated (SPEC §8.5).") }}
-        {{ fields.toggle_box("flip_analysis", "Flip Analysis", form.flip_analysis,
-                             help="Default: on when there is a sale price (SPEC §8.1).") }}
-        {{ fields.toggle_box("rental_analysis", "Rental Analysis", form.rental_analysis,
-                             help="Default: on when there is a rent (SPEC §8.1). The Take-Back analysis has no toggle; it runs on every deal.") }}
-      </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Court and filing search</legend>
-      <div class="grid3">
-        {{ fields.enum_box("court_records_status", "Outcome",
-                           enums.court_records_status, form.court_records_status,
-                           help="Not Checked is not Clean: the first is an INFO flag, the second a clean record (SPEC §7.2).") }}
-        {{ fields.text_box("court_records_as_of", "Searched on",
-                           form.court_records_as_of, kind="date",
-                           help="The lookbacks run from this date (SPEC §7.2).") }}
-      </div>
-      {{ fields.matter_table(enums, matters) }}
-    </fieldset>
-
+{# --- the court and filing search (SPEC §6.1, §7.2), collapsed ------------------------------ #}
+<details class="panel" id="court"{% if court_open %} open{% endif %}>
+  <summary><h2>Court and filing search{{ help("The team's own search (SPEC §7.2), one typed matter per row, until an adapter pulls one; an adapter record wins over anything here and what is entered stays on the deal. Save replaces the search and runs the analysis again. Not Checked is not Clean: the first is an INFO flag, the second a clean record.") }}</h2></summary>
+  <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/court">
+    {{ csrf.field(csrf_token) }}
+    <div class="grid3">
+      {{ fields.enum_box("court_records_status", "Outcome",
+                         enums.court_records_status, court.court_records_status,
+                         help="Not Checked is not Clean: the first is an INFO flag, the second a clean record (SPEC §7.2).") }}
+      {{ fields.text_box("court_records_as_of", "Searched on",
+                         court.court_records_as_of, kind="date",
+                         help="The lookbacks run from this date (SPEC §7.2).") }}
+    </div>
+    {{ fields.matter_table(enums, matters) }}
     <div class="actions"><button type="submit">Save</button></div>
   </form>
+</details>
 
-  <h3>What the ledger runs on{{ help("Every SPEC §8.1 input, the value in force and where it came from (SPEC §9.2). A default counts as present; the (?) on each row says what the run does with or without it.") }}</h3>
+{# --- what the ledger runs on (SPEC §9.2), collapsed ------------------------------------------ #}
+<details class="panel" id="readiness">
+  <summary><h2>What the ledger runs on{{ help("Every SPEC §8.1 input, the value in force and where it came from (SPEC §9.2). A default counts as present; the (?) on each row says what the run does with or without it.") }}</h2></summary>
   <div class="scroll">
     <table>
       <thead>

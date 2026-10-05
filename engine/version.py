@@ -3,6 +3,18 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**1.6.0 (Phase 7c, 2026-10-05) lets a deal carry its own analysis assumptions.** Five
+numbers the three analyses read from config alone become per-deal inputs with the config
+value as their default, on the same rule as the origination fee and the holding costs:
+``broker_selling_pct`` (SPEC §8.4), ``rental_expenses_pct_of_rent`` and
+``rental_takeout_rate`` (SPEC §8.5), ``take_back_legal_costs_usd`` and
+``take_back_lost_interest_months`` (SPEC §8.6). ``UnderwriteInputs`` gains the five as
+optional fields, ``engine/calc/terms.py`` resolves each in one place, and the flip, the
+rental and the take-back read the resolved value. Nothing moves on a deal that carries
+none of them: every fixture's ledger, IRR, flip, rental and take-back stand, and the one new
+fixture (``go_team_assumptions_tulsa``) is the Tulsa deal with all five typed over. No
+result shape changes, so no migration deletes a run; migration ``0017`` adds the columns.
+
 **1.5.1 (Phase 7b, 2026-10-04) puts the deal's own rate on the sensitivity grid.** The
 table's columns are the config grid plus the deal's actual rate, inserted in rate order when
 it falls between two grid rates and not duplicated when it lands on one, so the deal's own
@@ -112,4 +124,4 @@ REHAB_PORTION_EXCEEDS_BUDGET.
 
 from __future__ import annotations
 
-ENGINE_VERSION = "1.5.1"
+ENGINE_VERSION = "1.6.0"

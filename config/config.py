@@ -148,18 +148,19 @@ class ExperienceConfig(_Section):
 class FeesConfig(_Section):
     """Fee defaults.  # SPEC §3, §8.1, §8.4
 
-    Every one but the broker's is the **default for a SPEC §8.1 input**: the team may enter
-    its own number on the deal, and these are what stands in when nobody has. The origination
-    split is not a tunable - it is half at close and half at payoff in code (SPEC §3) - so a
-    yaml that still carries the two halves is refused by ``extra="forbid"`` rather than
-    quietly ignored.
+    Every one is the **default for a per-deal input**: the team may enter its own number on
+    the deal, and these are what stands in when nobody has. The broker's selling percentage
+    joined the rule in Phase 7c (SPEC §8.4): it is the flip's cost of selling, carried on
+    the deal since migration ``0017``. The origination split is not a tunable - it is half
+    at close and half at payoff in code (SPEC §3) - so a yaml that still carries the two
+    halves is refused by ``extra="forbid"`` rather than quietly ignored.
     """
 
     origination_default_pct: Pct  # of the commitment; half at close, half at payoff
     contingency_default_pct: Pct  # of rehab_costs
     closing_costs_default_usd: Money  # the lender's closing costs; inside the LTC denominator
     holding_costs_default_pct_of_cost: Pct  # of purchase_price + rehab_costs, total over the hold
-    broker_selling_pct: Pct  # the flip's cost of selling (SPEC §8.4); not an input
+    broker_selling_pct: Pct  # the flip's cost of selling (SPEC §8.4); the deal may carry its own
 
 
 class DrawsConfig(_Section):
@@ -235,7 +236,12 @@ class SensitivityConfig(_Section):
 
 
 class RentalConfig(_Section):
-    """Rental analysis assumptions.  # SPEC §8.5"""
+    """Rental analysis assumptions.  # SPEC §8.5
+
+    ``expenses_pct_of_rent`` and ``takeout_rate`` are the **defaults for per-deal inputs**
+    since Phase 7c: a deal carries its own on the Underwriting Assumptions panel and these
+    stand in when nobody has typed one. The amortization and the floor are config alone.
+    """
 
     expenses_pct_of_rent: Pct
     takeout_rate: Pct
@@ -249,7 +255,9 @@ class TakeBackConfig(_Section):
     What it costs GLENWOOD to end up owning the property: the interest it stops collecting
     while that happens, and the legal bill. The debt service is computed at the deal's own
     note rate, not a takeout rate - this is GLENWOOD carrying its own money, not a borrower
-    refinancing away from it.
+    refinancing away from it. ``lost_interest_months`` and ``legal_costs_usd`` are the
+    **defaults for per-deal inputs** since Phase 7c; the amortization and the floor are
+    config alone.
     """
 
     lost_interest_months: Months

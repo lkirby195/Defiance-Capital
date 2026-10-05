@@ -25,7 +25,8 @@ input nothing stands in for - the term.
 An optional row that is MISSING is not a problem to fix before running - it is a thing the
 ledger will do without, and the note says what that costs: no DSCR at all without a
 monthly rent, no LTV and no flip without an estimated sale price, the self-reported tranche
-without a verified score.
+without a verified score. The five §8.4-§8.6 analysis assumptions are rows too, DEFAULT
+until the team types over them on the Underwriting Assumptions panel.
 """
 
 from __future__ import annotations
@@ -459,6 +460,66 @@ def underwrite_readiness(
             note=(
                 f"config default: {fees.origination_default_pct:.2%}, half at close and half "
                 "at payoff"
+            ),
+        ),
+        _defaulted_row(
+            deal,
+            "broker_selling_pct",
+            "broker_selling_pct",
+            "Broker selling costs",
+            defaults,
+            fmt="pct",
+            note=(
+                f"of the sale price, the flip's cost of selling (SPEC §8.4); config "
+                f"{fees.broker_selling_pct:.2%}"
+            ),
+        ),
+        _defaulted_row(
+            deal,
+            "rental_expenses_pct_of_rent",
+            "rental_expenses_pct_of_rent",
+            "Rental expenses",
+            defaults,
+            fmt="pct",
+            note=(
+                f"operating expenses as a share of the rent (SPEC §8.5); config "
+                f"{settings.rental.expenses_pct_of_rent:.2%}"
+            ),
+        ),
+        _defaulted_row(
+            deal,
+            "rental_takeout_rate",
+            "rental_takeout_rate",
+            "Rental takeout rate",
+            defaults,
+            fmt="pct",
+            note=(
+                f"the rate a takeout lender amortizes at over "
+                f"{settings.rental.amortization_years} years (SPEC §8.5); config "
+                f"{settings.rental.takeout_rate:.2%}"
+            ),
+        ),
+        _defaulted_row(
+            deal,
+            "take_back_legal_costs_usd",
+            "take_back_legal_costs_usd",
+            "Take-back legal costs",
+            defaults,
+            note=(
+                f"the legal bill in the take-back's total cost (SPEC §8.6); config "
+                f"${settings.take_back.legal_costs_usd:,.2f}"
+            ),
+        ),
+        _defaulted_row(
+            deal,
+            "take_back_lost_interest_months",
+            "take_back_lost_interest_months",
+            "Take-back lost interest (months)",
+            defaults,
+            fmt="plain",
+            note=(
+                "months of interest GLENWOOD stops collecting while it takes the property "
+                f"back (SPEC §8.6); config {settings.take_back.lost_interest_months}"
             ),
         ),
         _toggle_row(

@@ -22,7 +22,7 @@ from api.ratelimit import LIMITER
 from db.models import AuditLog, Deal, Screen, Underwrite
 from schema.models import AuditAction, Status
 from services import DEALS, auto_run, latest_screen, run_screen, screen_result
-from tests.conftest import ACTOR, QueueClient, form_body, requires_db, store_deal
+from tests.conftest import ACTOR, USER_EMAIL, QueueClient, form_body, requires_db, store_deal
 from tests.test_apply import VALID
 
 pytestmark = requires_db
@@ -116,34 +116,28 @@ def test_a_screen_that_declines_stops_the_underwrite_and_closes_the_deal(
 # --- on a team edit -------------------------------------------------------------------------------
 
 
-def test_saving_the_override_block_re_runs_both(
+def test_save_and_run_on_the_panel_runs_both_as_the_person(
     client: QueueClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
+    """Save & Run is a run button: the rows name the person, not ``system``."""
     deal_id = deal_with_overrides.id
     run_screen(db_session, deal_id, actor=ACTOR)
     db_session.commit()
     assert count(db_session, Screen) == 1
 
     response = client.post(
-        f"/queue/deals/{deal_id}/overrides",
-        data={
-            "estimated_sale_price_team": "$210,000",
-            "closing_date": "2027-02-01",
-            "term_months": "6",
-            "interest_rate": "13%",
-            "court_records_status": "CLEAN",
-            "court_records_as_of": "2026-10-01",
-        },
+        f"/queue/deals/{deal_id}/assumptions",
+        data={"estimated_sale_price_team": "$210,000", "interest_rate": "13%"},
         follow_redirects=False,
     )
     assert response.status_code == 303, response.text
-    assert notice(response).startswith("Inputs saved. Analysis recorded: GO at an IRR of")
+    assert notice(response).startswith("Assumptions saved. Analysis recorded: GO at an IRR of")
     db_session.expire_all()
     deal = db_session.get(Deal, deal_id)
     assert deal is not None and deal.status is Status.UNDERWRITING
     assert count(db_session, Screen) == 2 and count(db_session, Underwrite) == 1
-    assert actors(db_session, AuditAction.SCREEN_RUN) == [ACTOR, "system"]
-    assert actors(db_session, AuditAction.UNDERWRITE_RUN) == ["system"]
+    assert actors(db_session, AuditAction.SCREEN_RUN) == [ACTOR, USER_EMAIL]
+    assert actors(db_session, AuditAction.UNDERWRITE_RUN) == [USER_EMAIL]
     latest = db_session.scalars(select(Underwrite).order_by(Underwrite.created_at.desc())).first()
     assert latest is not None
     assert Decimal(latest.inputs["deal"]["estimated_sale_price"]) == Decimal("210000"), (
@@ -151,29 +145,72 @@ def test_saving_the_override_block_re_runs_both(
     )
 
 
-def test_an_override_save_that_leaves_the_deal_unpriceable_says_so_and_keeps_the_save(
+def test_saving_the_court_search_re_runs_both_as_system(
+    client: QueueClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """The court section's Save is an edit, and the run that follows an edit is automatic."""
+    deal_id = deal_with_overrides.id
+    response = client.post(
+        f"/queue/deals/{deal_id}/court",
+        data={"court_records_status": "CLEAN", "court_records_as_of": "2026-10-01"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303, response.text
+    assert notice(response).startswith("Court search saved. Analysis recorded: GO at an IRR of")
+    assert count(db_session, Screen) == 1 and count(db_session, Underwrite) == 1
+    assert actors(db_session, AuditAction.SCREEN_RUN) == ["system"]
+    assert actors(db_session, AuditAction.UNDERWRITE_RUN) == ["system"]
+
+
+def test_a_panel_save_that_leaves_the_deal_unpriceable_says_so_and_keeps_the_save(
     client: QueueClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
     """The edit is applied; what could not run is in the notice (``services/autorun.py``)."""
     deal_id = deal_with_overrides.id
+    deal_with_overrides.term_months = None  # the panel has no term box; the intake form does
+    db_session.commit()
     response = client.post(
-        f"/queue/deals/{deal_id}/overrides",
-        data={"estimated_sale_price_team": "$210,000"},  # no term; the closing date defaults
+        f"/queue/deals/{deal_id}/assumptions",
+        data={"estimated_sale_price_team": "$210,000"},
         follow_redirects=False,
     )
     assert response.status_code == 303, response.text
     said = notice(response)
-    assert said.startswith("Inputs saved. Analysis recorded: GO. The ledger did not run")
+    assert said.startswith("Assumptions saved. Analysis recorded: GO. The ledger did not run")
     assert "deal.term_months" in said and "closing_date" not in said
     db_session.expire_all()
     deal = db_session.get(Deal, deal_id)
     assert deal is not None
+    assert deal.estimated_sale_price_team == Decimal("210000")
     assert deal.term_months is None and deal.status is Status.SCREENED
-    assert deal.closing_date is not None and "closing_date" in deal.defaulted_fields
     assert count(db_session, Underwrite) == 0
 
 
-def test_an_override_save_on_a_declined_deal_runs_nothing(
+def test_a_panel_save_on_a_declined_deal_scores_it_again_and_refuses_the_ledger(
+    client: QueueClient, db_session: Session, declining_deal: Deal
+) -> None:
+    """Save & Run is the Run Analysis button with a save in front: a closed deal is scored
+    again and its ledger refused by name, exactly as the button does it."""
+    deal_id = declining_deal.id
+    run_screen(db_session, deal_id, actor=ACTOR)
+    db_session.commit()
+    assert declining_deal.status is Status.DECLINED
+    response = client.post(
+        f"/queue/deals/{deal_id}/assumptions",
+        data={"estimated_sale_price_team": "$400,000"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    said = notice(response)
+    assert said.startswith("Assumptions saved. Analysis recorded: GO.")
+    assert "The ledger did not run: the deal is DECLINED." in said
+    db_session.expire_all()
+    deal = db_session.get(Deal, deal_id)
+    assert deal is not None and deal.status is Status.DECLINED
+    assert count(db_session, Screen) == 2 and count(db_session, Underwrite) == 0
+
+
+def test_a_court_save_on_a_declined_deal_runs_nothing(
     client: QueueClient, db_session: Session, declining_deal: Deal
 ) -> None:
     deal_id = declining_deal.id
@@ -181,12 +218,12 @@ def test_an_override_save_on_a_declined_deal_runs_nothing(
     db_session.commit()
     assert declining_deal.status is Status.DECLINED
     response = client.post(
-        f"/queue/deals/{deal_id}/overrides",
-        data={"estimated_sale_price_team": "$400,000"},
+        f"/queue/deals/{deal_id}/court",
+        data={"court_records_status": "CLEAN", "court_records_as_of": "2026-10-01"},
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert notice(response) == "Inputs saved."
+    assert notice(response) == "Court search saved."
     assert count(db_session, Screen) == 1, "a closed deal is not re-run until it is re-opened"
 
 

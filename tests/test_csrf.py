@@ -52,7 +52,9 @@ GUARDED: list[tuple[str, dict[str, Any]]] = [
     ("/queue/deals/{deal}/intake", COMPLETE_INTAKE),
     ("/queue/deals/{deal}/intake/00000000-0000-0000-0000-000000000000/restore", {}),
     ("/queue/deals/{deal}/run", {}),
-    ("/queue/deals/{deal}/overrides", {"estimated_sale_price_team": "$250,000"}),
+    ("/queue/deals/{deal}/assumptions", {"estimated_sale_price_team": "$250,000"}),
+    ("/queue/deals/{deal}/assumptions/reset", {"confirm": "yes"}),
+    ("/queue/deals/{deal}/court", {"court_records_status": "NOT_CHECKED"}),
     ("/queue/deals/{deal}/advance", {}),
     ("/queue/deals/{deal}/pause", {}),
     ("/queue/deals/{deal}/decline", {"reason": "leverage"}),
@@ -294,6 +296,7 @@ def forms_on(body: str) -> list[str]:
         "/queue/deals/{deal}",
         "/queue/deals/{deal}/intake",
         "/queue/deals/{deal}/kill",
+        "/queue/deals/{deal}/assumptions/reset",
         "/account/password",
     ],
 )
@@ -314,10 +317,12 @@ def test_every_post_form_on_a_page_carries_the_field(
 def test_the_deal_page_carries_one_on_every_action(
     client: QueueClient, deal_with_overrides: Deal
 ) -> None:
-    """Eight forms: two runs, Progress, Pause, Decline, Re-open, the note and the override
-    block. Kill is a link to its confirmation page, which carries its own form."""
+    """Nine forms: Run Analysis, the Underwriting Assumptions panel, the court search,
+    Progress, Pause, Decline, Re-open, the note and the one Restore on the deal's one intake
+    version. Kill and Reset all are links to their confirmation pages, which carry their own
+    forms."""
     body = client.get(f"/queue/deals/{deal_with_overrides.id}").text
-    assert len(forms_on(body)) == 9  # the eight above plus sign-out in the header
+    assert len(forms_on(body)) == 10  # the nine above plus sign-out in the header
 
 
 def test_the_sign_in_page_has_no_token_to_carry(anon_client: QueueClient) -> None:

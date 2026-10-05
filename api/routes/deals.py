@@ -146,6 +146,12 @@ class DealView(BaseModel):
     closing_costs_usd: Decimal | None
     holding_costs_pct_of_cost: Decimal | None  # of purchase_price + rehab_costs (SPEC §8.1)
     origination_fee_pct: Decimal | None
+    # The §8.4-§8.6 assumptions the deal carries its own number for; null is the config value.
+    broker_selling_pct: Decimal | None
+    rental_expenses_pct_of_rent: Decimal | None
+    rental_takeout_rate: Decimal | None
+    take_back_legal_costs_usd: Decimal | None
+    take_back_lost_interest_months: int | None
     flip_analysis: bool | None
     rental_analysis: bool | None
     credit_range_self_reported: Tranche | None
@@ -315,6 +321,11 @@ def deal_view(deal: Deal, session: Session) -> DealView:
         closing_costs_usd=deal.closing_costs_usd,
         holding_costs_pct_of_cost=deal.holding_costs_pct_of_cost,
         origination_fee_pct=deal.origination_fee_pct,
+        broker_selling_pct=deal.broker_selling_pct,
+        rental_expenses_pct_of_rent=deal.rental_expenses_pct_of_rent,
+        rental_takeout_rate=deal.rental_takeout_rate,
+        take_back_legal_costs_usd=deal.take_back_legal_costs_usd,
+        take_back_lost_interest_months=deal.take_back_lost_interest_months,
         flip_analysis=deal.flip_analysis,
         rental_analysis=deal.rental_analysis,
         credit_range_self_reported=deal.credit_range_self_reported,

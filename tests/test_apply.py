@@ -38,6 +38,7 @@ from schema.models import (
     Tranche,
 )
 from services import (
+    ASSUMPTIONS,
     InputSource,
     Section,
     TeamOverrides,
@@ -400,6 +401,7 @@ def test_a_full_submission_lands_in_the_queue_as_a_web_deal(
         "closing_costs_usd",
         "holding_costs_pct_of_cost",
         "origination_fee_pct",
+        *ASSUMPTIONS,
         "loan_purchase_portion",
         "loan_rehab_portion",
     }

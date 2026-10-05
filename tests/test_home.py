@@ -403,19 +403,46 @@ def test_a_paused_deal_is_left_out_of_the_automatic_runs(
 def test_an_edit_on_a_paused_deal_is_stored_and_waits(
     client: QueueClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
+    """The court search's Save is an edit: stored, and the automatic run leaves a paused
+    deal alone until Progress brings it back (SPEC §4.6)."""
     at(db_session, deal_with_overrides, Status.PAUSED)
     response = client.post(
-        f"/queue/deals/{deal_with_overrides.id}/overrides",
-        data={"estimated_sale_price_team": "$210,000", "term_months": "6"},
+        f"/queue/deals/{deal_with_overrides.id}/court",
+        data={"court_records_status": "CLEAN", "court_records_as_of": "2026-10-01"},
         follow_redirects=False,
     )
     assert response.status_code == 303, response.text
-    assert response.headers["location"].endswith("notice=Inputs%20saved.")
+    assert response.headers["location"].endswith("notice=Court%20search%20saved.")
+    db_session.expire_all()
+    deal = db_session.get(Deal, deal_with_overrides.id)
+    assert deal is not None
+    assert deal.court_records_as_of is not None and deal.court_records_as_of.isoformat() == (
+        "2026-10-01"
+    )
+    assert deal.status is Status.PAUSED
+    assert latest_screen(db_session, deal.id) is None
+
+
+def test_save_and_run_on_a_paused_deal_runs_and_leaves_it_paused(
+    client: QueueClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """Save & Run is a run button, and a person pressing one has not left the deal alone."""
+    at(db_session, deal_with_overrides, Status.PAUSED)
+    response = client.post(
+        f"/queue/deals/{deal_with_overrides.id}/assumptions",
+        data={"estimated_sale_price_team": "$210,000"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303, response.text
+    assert (
+        "notice=Assumptions%20saved.%20Analysis%20recorded%3A%20GO"
+        in (response.headers["location"])
+    )
     db_session.expire_all()
     deal = db_session.get(Deal, deal_with_overrides.id)
     assert deal is not None
     assert deal.estimated_sale_price_team == 210000 and deal.status is Status.PAUSED
-    assert latest_screen(db_session, deal.id) is None
+    assert latest_screen(db_session, deal.id) is not None
 
 
 def test_a_manual_run_on_a_paused_deal_leaves_it_paused(
@@ -630,10 +657,10 @@ def test_the_deal_page_renders_a_screen_and_an_underwrite(
     assert "Scored as" in body
     assert "Leverage against caps" in body
     assert ">LTV<" in body and ">LTC<" in body
-    assert body.index("Return Overview") < body.index("<h2>Sensitivity")
-    assert body.index("<h2>Sensitivity") < body.index("Flip Analysis")
-    assert body.index("Flip Analysis") < body.index("Rental Analysis")
-    assert body.index("Rental Analysis") < body.index("Take-Back Analysis")
+    assert body.index("<h2>Return Overview") < body.index("<h2>Sensitivity")
+    assert body.index("<h2>Sensitivity") < body.index("<h2>Flip Analysis")
+    assert body.index("<h2>Flip Analysis") < body.index("<h2>Rental Analysis")
+    assert body.index("<h2>Rental Analysis") < body.index("<h2>Take-Back Analysis")
     assert "Future Draws" in body
     assert "Yield (Profit / Costs)" in body
     assert "DSCR at loan cost" in body

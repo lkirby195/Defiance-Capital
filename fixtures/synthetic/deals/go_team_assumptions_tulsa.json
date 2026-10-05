@@ -1,0 +1,162 @@
+{
+  "name": "go_team_assumptions_tulsa",
+  "description": "The Tulsa WHOLETAIL (go_team_overrides_tulsa) after the team has typed over all five analysis assumptions on the Underwriting Assumptions panel: broker selling 5% (config 4%), rental expenses 40% of rent (config 35%), a 7% takeout rate (config 6.5%), $7,500 of take-back legal costs (config $5,000) and 4 months of lost interest (config 3). The ledger and its 18.263% IRR do not read any of them and stand exactly as in the Tulsa fixture; the flip nets $20,700 instead of $22,700, the rental DSCR falls to 0.71x on a $798.36 takeout payment against $563.33 of net income, and the take-back costs $132,700 with a 0.38x DSCR. Every number computed by hand from SPEC 8.4-8.6 before the engine ran on it.",
+  "team_entry": {
+    "borrower_name": "Dana Whitlock",
+    "borrower_phone": "918-555-0147",
+    "borrower_email": "dana@whitlockhomes.example",
+    "entity_name": "Whitlock Homes LLC",
+    "credit_range": "T1",
+    "experience_bucket": "6_PLUS",
+    "repeat_borrower": false,
+    "loan_purpose": "PURCHASE",
+    "product": "WHOLETAIL",
+    "closing_date": "2027-02-01",
+    "address": "1412 S Trenton Ave, Tulsa, OK 74120",
+    "city": "Tulsa",
+    "state": "OK",
+    "units": 1,
+    "structures": 1,
+    "sf": 1420,
+    "year_built": 1948,
+    "year_renovated": 2019,
+    "beds": 3,
+    "baths": "2.0",
+    "garage_spaces": 1,
+    "purchase_price": "150000.00",
+    "rehab_costs": "5000.00",
+    "loan_requested": "120000.00",
+    "interest_rate": "0.13",
+    "estimated_sale_price_team": "200000.00",
+    "monthly_rent": "1800.00",
+    "court_records_status": "CLEAN",
+    "court_records_as_of": "2026-09-16",
+    "term_months": 6
+  },
+  "team_overrides": {
+    "loan_purpose": "PURCHASE",
+    "closing_date": "2027-02-01",
+    "term_months": 6,
+    "interest_rate": "0.13",
+    "estimated_sale_price_team": "200000.00",
+    "monthly_rent": "1800.00",
+    "broker_selling_pct": "0.05",
+    "rental_expenses_pct_of_rent": "0.40",
+    "rental_takeout_rate": "0.07",
+    "take_back_legal_costs_usd": "7500.00",
+    "take_back_lost_interest_months": 4,
+    "court_records_status": "CLEAN",
+    "court_records_as_of": "2026-09-16"
+  },
+  "expected": {
+    "verdict": "GO",
+    "flags": [
+      {
+        "code": "TEAM_SOURCED_VALUES",
+        "severity": "INFO"
+      }
+    ],
+    "credit_tranche": "T1",
+    "experience_tier": "E3",
+    "repeat_borrower_override_applied": false,
+    "all_pass": true,
+    "commitment": "120000.00",
+    "funded_at_close": "120000.00",
+    "total_cost": "156000.00",
+    "rehab_adj": "5000.00",
+    "metrics": {
+      "LTC": "PASS",
+      "LTV": "PASS"
+    },
+    "reasons_contain": [
+      "entered by hand"
+    ],
+    "reply_contains": [
+      "fit on first pass"
+    ],
+    "sources": {
+      "estimated_sale_price": "TEAM",
+      "court_records": "TEAM"
+    }
+  },
+  "underwrite": {
+    "request": {},
+    "expected": {
+      "payoff_date": "2027-08-31",
+      "rehab_months": 3,
+      "commitment": "120000.00",
+      "funded_at_close": "120000.00",
+      "assumptions": {
+        "broker_selling_pct": "0.050000",
+        "rental_expenses_pct_of_rent": "0.400000",
+        "rental_takeout_rate": "0.070000",
+        "take_back_legal_costs_usd": "7500.00",
+        "take_back_lost_interest_months": 4
+      },
+      "economics": {
+        "rehab_adj": "5000.00",
+        "contingency": "0.00",
+        "closing_costs": "1000.00",
+        "holding_costs_total": "3100.00",
+        "holding_costs_monthly": "516.67",
+        "origination_at_close": "1200.00",
+        "origination_at_payoff": "1200.00",
+        "holding_costs_pct_of_cost": "0.020000",
+        "holding_costs_basis": "155000.00"
+      },
+      "ledger": {
+        "rows": 7,
+        "first_net": "-118800.00",
+        "last_net": "122500.00",
+        "total_funding": "-120000.00",
+        "total_draws": "0.00",
+        "total_interest": "7800.00",
+        "total_fees": "2400.00",
+        "total_payoff": "120000.00",
+        "total_profit": "10200.00",
+        "irr": "0.18263021"
+      },
+      "flip": {
+        "status": "EVALUATED",
+        "broker_costs": "10000.00",
+        "total_costs": "169300.00",
+        "net_profit": "20700.00",
+        "profit_yield": "0.122268"
+      },
+      "rental": {
+        "status": "EVALUATED",
+        "expenses": "720.00",
+        "net_monthly_income": "563.33",
+        "debt_service_monthly": "798.36",
+        "dscr": "0.705611",
+        "passed": false
+      },
+      "take_back": {
+        "status": "EVALUATED",
+        "lost_interest": "5200.00",
+        "total_cost": "132700.00",
+        "debt_service_monthly": "1467.93",
+        "net_monthly_income": "563.33",
+        "dscr": "0.383761",
+        "passed": false
+      },
+      "flags": [
+        {
+          "code": "DSCR_BELOW_FLOOR",
+          "severity": "SOFT"
+        },
+        {
+          "code": "TAKE_BACK_DSCR_BELOW_FLOOR",
+          "severity": "HARD"
+        },
+        {
+          "code": "TEAM_SOURCED_VALUES",
+          "severity": "INFO"
+        }
+      ],
+      "term_months": 6,
+      "term_stub_days": 0,
+      "term_months_decimal": "6.000000"
+    }
+  }
+}

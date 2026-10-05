@@ -32,6 +32,7 @@ from api.intake_form import (
 from api.masks import (
     DEFAULTED_FIELDS,
     MONEY_FIELDS,
+    MONTH_FIELDS,
     PERCENT_FIELDS,
     PHONE_FIELDS,
     holding_costs_amount,
@@ -166,10 +167,15 @@ def test_every_masked_field_round_trips_through_its_own_shape() -> None:
             assert back[name] == value, name
 
 
-def test_the_three_sets_do_not_overlap() -> None:
+def test_the_four_sets_do_not_overlap() -> None:
     assert MONEY_FIELDS.isdisjoint(PERCENT_FIELDS)
     assert PHONE_FIELDS.isdisjoint(MONEY_FIELDS | PERCENT_FIELDS)
-    assert set(DEFAULTED_FIELDS) <= MONEY_FIELDS | PERCENT_FIELDS
+    assert MONTH_FIELDS.isdisjoint(MONEY_FIELDS | PERCENT_FIELDS | PHONE_FIELDS)
+    # every box with a default is money, a percent, or a whole number of months
+    assert set(DEFAULTED_FIELDS) <= MONEY_FIELDS | PERCENT_FIELDS | MONTH_FIELDS
+    # ...and a month box is typed and shown bare
+    assert mask_one("take_back_lost_interest_months", 3) == "3"
+    assert unmask_one("take_back_lost_interest_months", "4") == "4"
 
 
 def test_a_box_with_no_mask_is_left_alone() -> None:

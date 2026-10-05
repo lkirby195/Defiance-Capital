@@ -123,8 +123,9 @@ input goes in one place and both readers pick it up.
 
 **A missing input is not a failing one.** Where an input has a defensible stand-in, the deal
 is populated with it at intake and the source recorded as `DEFAULT` (`services/defaults.py`:
-the rate, the four fees, the closing date - the month end `closing.default_lead_days` after
-the deal came in - and the loan split on a split product). The value is stored, so the
+the rate, the four fees, the five analysis assumptions, the closing date - the month end
+`closing.default_lead_days` after the deal came in - and the loan split on a split product).
+The value is stored, so the
 engine runs on what the page shows; `deals.defaulted_fields` is what says it was nobody's
 choice, and a value equal to the default is the default. Where there is no stand-in - the
 monthly rent is the example - report the thing it feeds as `NOT_EVALUATED`, with the figure
@@ -140,9 +141,16 @@ edits or restores a deal calls it. A paused deal is left out until Progress brin
 The one button is **Run Analysis**, which runs both stages as the person who pressed it; the
 page never names a stage - it shows the verdict and the ledger - and the Flags, the Reasons
 and the Suggested Reply are on the stored rows, the CLI and the workbook, not on it. The
-hand-entered values are one collapsed Inputs section and the versions and runs one collapsed
-History section, each a plain `<details>`; History restores any intake version as a new
-submission (`services/intake.restore_intake`). The deal page prints no explanatory
+hand-entered numbers are the **Underwriting Assumptions** panel, open, directly under Deal
+Economics: two columns of boxes - the §8.1 economics with their config defaults, the loan
+split, the valuation, the rent, the five §8.4-§8.6 analysis assumptions (which carry their
+own `deals` columns since migration `0017`, config value as default, engine reads the deal's
+when present) and the two toggles - each tagged "default" while it holds its default and
+resettable one at a time, with one **Save & Run** at the bottom and a **Reset all to
+defaults** beside it that goes through a confirmation page. The court search is its own
+collapsed section with its own Save; the readiness checklist and the versions and runs
+(History) are collapsed too, each a plain `<details>`; History restores any intake version
+as a new submission (`services/intake.restore_intake`). The deal page prints no explanatory
 prose beside a value: a definition that is still useful goes behind the (?) on its label, as
 a hover title (`_fields.html`, `help`). The team form prints nothing but labels and boxes,
 each marked Required or Optional in plain text, and asks only for the Overview, the Property
@@ -190,9 +198,11 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
   Server-rendered Jinja, plain form posts, POST-redirect-GET. The one exception is a
   convenience and not load-bearing: the masks in `base.html` that format a price, a percent
   and a phone as they are typed and toggle the "default" tag on the §8.1 inputs that have
-  one. The server parses `$425,000`, `425000`, `12%` and `12` alike, so a browser that runs
-  none of it still posts a deal that saves. The collapsed sections on the deal page are the
-  browser's own `<details>`. Nothing client-side validates, fetches or decides. If a page
+  one, the two analysis toggles included. The server parses `$425,000`, `425000`, `12%` and
+  `12` alike, and renders the tag hidden or shown itself, so a browser that runs none of it
+  still posts a deal that saves and still reads the right tag. The collapsed sections on
+  the deal page are the browser's own `<details>`, and Reset all to defaults confirms on a
+  page of its own, as Kill does. Nothing client-side validates, fetches or decides. If a page
   seems to need script for anything else, it needs a different page. The public borrower form (`/apply`,
   SPEC §4.2) adds one more on the same terms: a few lines that keep the submit button off
   until every required box is filled and lift `required` off the address boxes while the

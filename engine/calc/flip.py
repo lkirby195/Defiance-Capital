@@ -1,6 +1,6 @@
 """Flip analysis: the project's margin if the property is sold.  # SPEC §8.4
 
-    broker_costs    = estimated_sale_price x broker_selling_pct
+    broker_costs    = estimated_sale_price x broker_selling_pct    # the deal's own, else config
     contingency     = rehab_costs x contingency_pct
     financing_costs = total interest over the term + both origination halves
     net_profit      = estimated_sale_price - broker_costs
@@ -25,7 +25,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from config.config import Config
-from engine.calc.terms import LoanTerms
+from engine.calc.terms import LoanTerms, broker_selling_pct
 from schema.models import AnalysisStatus, FlipAnalysis, ReturnOverview, UnderwriteInputs
 
 
@@ -53,7 +53,7 @@ def flip_analysis(
         + contingency
         + financing
     )
-    broker_pct = config.fees.broker_selling_pct
+    broker_pct = broker_selling_pct(inputs, config)
     sale_price = inputs.deal.estimated_sale_price
     common = {
         "purchase_price": sizing.purchase_price,

@@ -341,6 +341,46 @@ def test_a_fixture_that_names_its_underwrite_sources_is_held_to_them(path: Path)
     assert run.underwrite_inputs.monthly_rent_source == ValueSource(want["monthly_rent"])
 
 
+def test_a_fixture_that_names_its_assumptions_is_held_to_them() -> None:
+    """The five §8.4-§8.6 assumptions typed over on the panel reach the engine as the deal's
+    own, and the ledger - which reads none of them - is the Tulsa ledger to the cent."""
+    typed = FIXTURE_DIR / "go_team_assumptions_tulsa.json"
+    plain = FIXTURE_DIR / "go_team_overrides_tulsa.json"
+    want = load(typed)["underwrite"]["expected"]["assumptions"]
+    run = run_fixture(typed, CONFIG, with_underwrite=True)
+    assert run.underwrite_inputs is not None and run.underwrite_result is not None
+    inputs, result = run.underwrite_inputs, run.underwrite_result
+    assert rate(inputs.broker_selling_pct or D(0)) == D(want["broker_selling_pct"])
+    assert rate(inputs.rental_expenses_pct_of_rent or D(0)) == D(
+        want["rental_expenses_pct_of_rent"]
+    )
+    assert rate(inputs.rental_takeout_rate or D(0)) == D(want["rental_takeout_rate"])
+    assert inputs.take_back_legal_costs_usd == D(want["take_back_legal_costs_usd"])
+    assert inputs.take_back_lost_interest_months == want["take_back_lost_interest_months"]
+    # ...and the result reports the numbers it ran on, not the config's
+    assert rate(result.flip.broker_selling_pct) == D(want["broker_selling_pct"])
+    assert rate(result.rental.expenses_pct) == D(want["rental_expenses_pct_of_rent"])
+    assert rate(result.rental.takeout_rate) == D(want["rental_takeout_rate"])
+    assert result.take_back.legal_costs == D(want["take_back_legal_costs_usd"])
+    assert result.take_back.lost_interest_months == want["take_back_lost_interest_months"]
+    # the ledger does not read any of the five
+    untouched = run_fixture(plain, CONFIG, with_underwrite=True).underwrite_result
+    assert untouched is not None
+    assert result.return_overview == untouched.return_overview
+    assert result.economics == untouched.economics
+    # every other fixture types none of them over and runs on the config values - stored on
+    # the deal as the defaults they are on an entry fixture, absent on an inputs fixture
+    for path in UNDERWRITE_FILES:
+        if path == typed:
+            continue
+        other = run_fixture(path, CONFIG, with_underwrite=True)
+        assert other.underwrite_inputs is not None and other.underwrite_result is not None
+        own = other.underwrite_inputs.broker_selling_pct
+        assert own is None or own == CONFIG.fees.broker_selling_pct, path.stem
+        assert other.underwrite_result.flip.broker_selling_pct == CONFIG.fees.broker_selling_pct
+        assert other.underwrite_result.take_back.legal_costs == CONFIG.take_back.legal_costs_usd
+
+
 def test_the_team_s_correction_replaces_the_borrower_s_number_and_keeps_it() -> None:
     """The override block is applied through the queue's own code; nothing is overwritten."""
     path = FIXTURE_DIR / "go_web_overridden_by_team_okc.json"

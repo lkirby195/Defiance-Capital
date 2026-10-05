@@ -255,6 +255,13 @@ class AuditAction(StrEnum):
     ``PAUSED`` and ``RESUMED`` are the two halves of setting a deal aside (SPEC §4.6): the
     first row's ``before.status`` is where ``RESUMED`` sends the deal back to.
     ``DEALS_PURGED`` is the one row the one-time ``glenwood deals purge`` leaves behind.
+
+    ``ASSUMPTIONS_SAVED`` and ``ASSUMPTIONS_RESET`` are the deal page's Underwriting
+    Assumptions panel - Save & Run, and Reset all to defaults - and ``COURT_SEARCH_SAVED`` its
+    court search section; each row's ``before`` / ``after`` name exactly the columns that
+    moved. ``OVERRIDES_SAVED`` is the whole-block save the services and the CLI fixtures
+    still make (``services.actions.save_overrides``), and what every row before Phase 7c
+    was written under.
     """
 
     # Deals
@@ -265,6 +272,9 @@ class AuditAction(StrEnum):
     SCREEN_RUN = "SCREEN_RUN"
     UNDERWRITE_RUN = "UNDERWRITE_RUN"
     OVERRIDES_SAVED = "OVERRIDES_SAVED"
+    ASSUMPTIONS_SAVED = "ASSUMPTIONS_SAVED"  # the Underwriting Assumptions panel's Save & Run
+    ASSUMPTIONS_RESET = "ASSUMPTIONS_RESET"  # ...and its Reset all to defaults
+    COURT_SEARCH_SAVED = "COURT_SEARCH_SAVED"  # the deal page's court search section
     ADVANCED_TO_REVIEW = "ADVANCED_TO_REVIEW"
     DECLINED = "DECLINED"
     MARKED_DEAD = "MARKED_DEAD"
@@ -943,9 +953,14 @@ class UnderwriteInputs(BaseModel):
     the property below is the single place it is worked out.
 
     ``origination_fee_pct`` and ``holding_costs_pct_of_cost`` are SPEC §8.1 inputs with config
-    defaults, so ``None`` means "use the default" rather than "zero". ``monthly_rent`` has no
-    default - nothing stands in for what a property lets for - so ``None`` leaves the Rental
-    and Take-Back analyses NOT_EVALUATED (SPEC §8.5, §8.6) rather than computed on a zero.
+    defaults, so ``None`` means "use the default" rather than "zero". So are the five
+    analysis assumptions - ``broker_selling_pct`` (SPEC §8.4), ``rental_expenses_pct_of_rent``
+    and ``rental_takeout_rate`` (SPEC §8.5), ``take_back_legal_costs_usd`` and
+    ``take_back_lost_interest_months`` (SPEC §8.6): the deal's own number when it carries
+    one, the config value otherwise, each resolved in ``engine/calc/terms.py``.
+    ``monthly_rent`` has no default - nothing stands in for what a property lets for - so
+    ``None`` leaves the Rental and Take-Back analyses NOT_EVALUATED (SPEC §8.5, §8.6) rather
+    than computed on a zero.
 
     ``flip_analysis`` and ``rental_analysis`` are the SPEC §8.1 toggles. ``None`` leaves the
     default - on when the sale price, or the rent, is present; a bool is the team overriding
@@ -970,6 +985,14 @@ class UnderwriteInputs(BaseModel):
     interest_rate: Decimal = Field(ge=0, le=1)
     origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
     holding_costs_pct_of_cost: Decimal | None = Field(default=None, ge=0, le=1)
+    # The §8.4-§8.6 assumptions the deal carries its own number for; None is the config value.
+    broker_selling_pct: Decimal | None = Field(default=None, ge=0, le=1)
+    rental_expenses_pct_of_rent: Decimal | None = Field(default=None, ge=0, le=1)
+    rental_takeout_rate: Decimal | None = Field(default=None, ge=0, le=1)
+    take_back_legal_costs_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    take_back_lost_interest_months: int | None = Field(default=None, ge=0, le=60)
     monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     # Where the rent came from (SPEC §4.2, §6.1): the team's own entry, or the borrower's
     # claim on the public form. None when nobody said, which a fixture handed straight to

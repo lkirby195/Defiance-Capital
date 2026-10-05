@@ -415,17 +415,45 @@ def test_a_reopen_without_a_reason_comes_back_as_the_page_saying_so(
     assert rows(db_session, deal_with_overrides, AuditAction.REOPENED) == []
 
 
-def test_the_override_form_posts_and_saves(
+def test_the_assumptions_panel_posts_and_saves(
     client: TestClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
     response = client.post(
-        f"/queue/deals/{deal_with_overrides.id}/overrides",
+        f"/queue/deals/{deal_with_overrides.id}/assumptions",
         data={
             "estimated_sale_price_team": "$295,000",
             "monthly_rent": "2,400",
             "holding_costs_pct_of_cost": "1.5%",
+            "broker_selling_pct": "5%",
+            "take_back_legal_costs_usd": "$7,500",
+            "take_back_lost_interest_months": "4",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303, response.text
+    db_session.expire_all()
+    deal = db_session.get(Deal, deal_with_overrides.id)
+    assert deal is not None
+    # the masks come off at the boundary (api/masks.py): the deal carries the numbers
+    assert deal.estimated_sale_price_team == Decimal("295000")
+    assert deal.monthly_rent == Decimal("2400")
+    assert deal.holding_costs_pct_of_cost == Decimal("0.015")
+    assert deal.broker_selling_pct == Decimal("0.05")
+    assert deal.take_back_legal_costs_usd == Decimal("7500")
+    assert deal.take_back_lost_interest_months == 4
+    # the court search is its own section and is not touched by the panel
+    assert deal.court_records_status is CourtRecordsStatus.CLEAN
+    assert deal.court_records_as_of is not None
+
+
+def test_the_court_search_posts_and_saves_on_its_own(
+    client: TestClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    response = client.post(
+        f"/queue/deals/{deal_with_overrides.id}/court",
+        data={
             "court_records_status": "CLEAN",
-            "court_records_as_of": "2026-09-16",
+            "court_records_as_of": "2026-10-01",
             "matter_code": ["", "", ""],
             "matter_occurred_on": ["", "", ""],
             "matter_amount_usd": ["", "", ""],
@@ -436,23 +464,23 @@ def test_the_override_form_posts_and_saves(
         },
         follow_redirects=False,
     )
-    assert response.status_code == 303
+    assert response.status_code == 303, response.text
     db_session.expire_all()
     deal = db_session.get(Deal, deal_with_overrides.id)
     assert deal is not None
-    # the masks come off at the boundary (api/masks.py): the deal carries the numbers
-    assert deal.estimated_sale_price_team == Decimal("295000")
-    assert deal.monthly_rent == Decimal("2400")
-    assert deal.holding_costs_pct_of_cost == Decimal("0.015")
     assert deal.court_records_status is CourtRecordsStatus.CLEAN
+    assert deal.court_records_as_of == date(2026, 10, 1)
     assert deal.court_records_team == []
+    # ...and the panel's values are not touched by the court section
+    assert deal.estimated_sale_price_team == Decimal("200000.00")
+    assert deal.monthly_rent == Decimal("1800.00")
 
 
 def test_a_court_matter_typed_into_the_form_reaches_the_deal(
     client: TestClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
     response = client.post(
-        f"/queue/deals/{deal_with_overrides.id}/overrides",
+        f"/queue/deals/{deal_with_overrides.id}/court",
         data={
             "court_records_status": "FLAGS",
             "court_records_as_of": "2026-09-16",
@@ -478,22 +506,12 @@ def test_a_court_matter_typed_into_the_form_reaches_the_deal(
     assert lien["senior"] is True and lien["resolved_at_close"] is False
 
 
-def test_a_bad_override_comes_back_with_the_values_still_in_the_form(
+def test_a_bad_assumption_comes_back_with_the_values_still_in_the_panel(
     client: TestClient, deal_with_overrides: Deal
 ) -> None:
     response = client.post(
-        f"/queue/deals/{deal_with_overrides.id}/overrides",
-        data={
-            "monthly_rent": "$2,400",
-            "estimated_sale_price_team": "not a number",
-            "matter_code": [""],
-            "matter_occurred_on": [""],
-            "matter_amount_usd": [""],
-            "matter_lien_kind": [""],
-            "matter_senior": [""],
-            "matter_resolved_at_close": [""],
-            "matter_description": [""],
-        },
+        f"/queue/deals/{deal_with_overrides.id}/assumptions",
+        data={"monthly_rent": "$2,400", "estimated_sale_price_team": "not a number"},
     )
     assert response.status_code == 422
     assert "estimated_sale_price_team" in response.text

@@ -3,8 +3,8 @@
 Both ask whether the rent covers a level monthly payment, and they differ in what that
 payment is on:
 
-* **Rental** (§8.5) - a takeout lender refinancing GLENWOOD out: the commitment, at
-  ``rental.takeout_rate`` over ``rental.amortization_years``.
+* **Rental** (§8.5) - a takeout lender refinancing GLENWOOD out: the commitment, at the
+  takeout rate over ``rental.amortization_years``.
 * **Take-Back** (§8.6) - GLENWOOD carrying the property itself: the commitment plus the
   interest it stopped collecting plus the legal bill, at the deal's **own** note rate. That
   is the point of the second test - it is GLENWOOD's money at GLENWOOD's price, not a
@@ -12,8 +12,12 @@ payment is on:
 
 They share one ``net_monthly_income``:
 
-    expenses           = monthly_rent x rental.expenses_pct_of_rent
+    expenses           = monthly_rent x expenses_pct
     net_monthly_income = monthly_rent - expenses - holding_costs_total / term_months
+
+The expense ratio, the takeout rate, the legal bill and the lost-interest months are each
+the deal's own number when it carries one and the config value otherwise
+(``engine/calc/terms.py``); the amortization years and the two DSCR floors are config alone.
 
 Take-Back is not gated by the Rental toggle: a flip deal with a rent on it still gets one.
 Neither can be computed without a rent - nothing stands in for what a property lets for - so
@@ -26,7 +30,13 @@ from __future__ import annotations
 from decimal import Decimal
 
 from config.config import Config
-from engine.calc.terms import LoanTerms
+from engine.calc.terms import (
+    LoanTerms,
+    rental_expenses_pct,
+    rental_takeout_rate,
+    take_back_legal_costs,
+    take_back_lost_interest_months,
+)
 from schema.models import (
     AnalysisStatus,
     RentalAnalysis,
@@ -50,9 +60,13 @@ def monthly_payment(principal: Decimal, annual_rate: Decimal, years: int) -> Dec
     return principal * rate / (ONE - (ONE + rate) ** -periods)
 
 
-def net_monthly_income(monthly_rent: Decimal, loan: LoanTerms, config: Config) -> Decimal:
-    """Rent less operating expenses less the monthly holding cost.  # SPEC §8.5"""
-    expenses = monthly_rent * config.rental.expenses_pct_of_rent
+def net_monthly_income(monthly_rent: Decimal, expenses_pct: Decimal, loan: LoanTerms) -> Decimal:
+    """Rent less operating expenses less the monthly holding cost.  # SPEC §8.5
+
+    ``expenses_pct`` is the ratio in force - ``rental_expenses_pct`` resolves it - handed in
+    rather than read here, so both analyses are given the same one.
+    """
+    expenses = monthly_rent * expenses_pct
     return monthly_rent - expenses - loan.holding_costs_monthly
 
 
@@ -68,12 +82,14 @@ def rental_analysis(
 ) -> RentalAnalysis:
     """Whether the rent carries a takeout loan on the commitment.  # SPEC §8.5"""
     rental = config.rental
-    debt_service = monthly_payment(loan.commitment, rental.takeout_rate, rental.amortization_years)
+    expenses_pct = rental_expenses_pct(inputs, config)
+    takeout_rate = rental_takeout_rate(inputs, config)
+    debt_service = monthly_payment(loan.commitment, takeout_rate, rental.amortization_years)
     common = {
-        "expenses_pct": rental.expenses_pct_of_rent,
+        "expenses_pct": expenses_pct,
         "holding_costs_monthly": loan.holding_costs_monthly,
         "loan_amount": loan.commitment,
-        "takeout_rate": rental.takeout_rate,
+        "takeout_rate": takeout_rate,
         "amortization_years": rental.amortization_years,
         "debt_service_monthly": debt_service,
         "dscr_floor": rental.dscr_floor,
@@ -89,12 +105,12 @@ def rental_analysis(
             passed=None,
             **common,
         )
-    income = net_monthly_income(rent, loan, config)
+    income = net_monthly_income(rent, expenses_pct, loan)
     dscr = _dscr(income, debt_service)
     return RentalAnalysis(
         status=AnalysisStatus.EVALUATED,
         monthly_rent=rent,
-        expenses=rent * rental.expenses_pct_of_rent,
+        expenses=rent * expenses_pct,
         net_monthly_income=income,
         dscr=dscr,
         passed=dscr >= rental.dscr_floor,
@@ -110,16 +126,17 @@ def take_back_analysis(
     # SPEC §8.6
     """
     take_back = config.take_back
-    lost_months = take_back.lost_interest_months
+    lost_months = take_back_lost_interest_months(inputs, config)
+    legal_costs = take_back_legal_costs(inputs, config)
     lost_interest = loan.monthly_interest(loan.commitment) * Decimal(lost_months)
-    total_cost = loan.commitment + lost_interest + take_back.legal_costs_usd
+    total_cost = loan.commitment + lost_interest + legal_costs
     debt_service = monthly_payment(total_cost, loan.interest_rate, take_back.amortization_years)
     common = {
         "loan_amount": loan.commitment,
         "interest_rate": loan.interest_rate,
         "lost_interest_months": lost_months,
         "lost_interest": lost_interest,
-        "legal_costs": take_back.legal_costs_usd,
+        "legal_costs": legal_costs,
         "total_cost": total_cost,
         "amortization_years": take_back.amortization_years,
         "debt_service_monthly": debt_service,
@@ -134,7 +151,7 @@ def take_back_analysis(
             passed=None,
             **common,
         )
-    income = net_monthly_income(rent, loan, config)
+    income = net_monthly_income(rent, rental_expenses_pct(inputs, config), loan)
     dscr = _dscr(income, debt_service)
     return TakeBackAnalysis(
         status=AnalysisStatus.EVALUATED,

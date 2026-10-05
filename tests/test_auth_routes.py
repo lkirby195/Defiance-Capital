@@ -42,7 +42,10 @@ PAGE_ROUTES = [
         "/00000000-0000-0000-0000-000000000000/restore",
     ),
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/run"),
-    ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/overrides"),
+    ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/assumptions"),
+    ("GET", "/queue/deals/00000000-0000-0000-0000-000000000000/assumptions/reset"),
+    ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/assumptions/reset"),
+    ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/court"),
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/advance"),
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/pause"),
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/decline"),
@@ -122,7 +125,9 @@ def test_every_route_is_accounted_for() -> None:
             for action in (
                 "intake",
                 "run",
-                "overrides",
+                "assumptions",
+                "assumptions/reset",
+                "court",
                 "advance",
                 "pause",
                 "decline",
@@ -131,6 +136,7 @@ def test_every_route_is_accounted_for() -> None:
                 "note",
             )
         }
+        | {("GET", "/queue/deals/{deal_id}/assumptions/reset")}
         | {("POST", f"/deals/{{deal_id}}/{action}") for action in ("screen", "underwrite")}
     )
     assert served == covered

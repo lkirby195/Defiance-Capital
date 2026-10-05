@@ -9,6 +9,12 @@ resolved here) are each read from config in exactly one place. A deal therefore 
 origination fee and one holding-cost figure everywhere - the ledger's fee rows, the flip's
 financing cost, and the rental's monthly carry all read the same numbers.
 
+The five analysis assumptions follow the same rule and live here for the same reason
+(SPEC §8.4, §8.5, §8.6): the broker's selling percentage, the rental's expense ratio and
+takeout rate, the take-back's legal costs and lost-interest months are each the deal's own
+number when ``UnderwriteInputs`` carries one and the config value otherwise, resolved by one
+function apiece so the flip, the rental and the take-back cannot read different answers.
+
 The term is whole monthly periods plus a stub (``schema/dates.py``), and the periods are
 anchored to month ends: closing is treated as the last day of its month, and month ``m`` is
 the last day of the month ``m`` later (``anchor``). ``term_months`` is the count of full
@@ -68,6 +74,47 @@ def holding_costs_pct(inputs: UnderwriteInputs, config: Config) -> Decimal:
     if inputs.holding_costs_pct_of_cost is not None:
         return inputs.holding_costs_pct_of_cost
     return config.fees.holding_costs_default_pct_of_cost
+
+
+def broker_selling_pct(inputs: UnderwriteInputs, config: Config) -> Decimal:
+    """The broker's cut of the sale price in force: the deal's own, else config.  # SPEC §8.4"""
+    if inputs.broker_selling_pct is not None:
+        return inputs.broker_selling_pct
+    return config.fees.broker_selling_pct
+
+
+def rental_expenses_pct(inputs: UnderwriteInputs, config: Config) -> Decimal:
+    """The rental's operating expenses as a share of the rent: the deal's own, else config.
+
+    # SPEC §8.5
+    """
+    if inputs.rental_expenses_pct_of_rent is not None:
+        return inputs.rental_expenses_pct_of_rent
+    return config.rental.expenses_pct_of_rent
+
+
+def rental_takeout_rate(inputs: UnderwriteInputs, config: Config) -> Decimal:
+    """The rate a takeout lender amortizes at: the deal's own, else config.  # SPEC §8.5"""
+    if inputs.rental_takeout_rate is not None:
+        return inputs.rental_takeout_rate
+    return config.rental.takeout_rate
+
+
+def take_back_legal_costs(inputs: UnderwriteInputs, config: Config) -> Decimal:
+    """The take-back's legal bill: the deal's own, else config.  # SPEC §8.6"""
+    if inputs.take_back_legal_costs_usd is not None:
+        return inputs.take_back_legal_costs_usd
+    return config.take_back.legal_costs_usd
+
+
+def take_back_lost_interest_months(inputs: UnderwriteInputs, config: Config) -> int:
+    """The months of interest GLENWOOD stops collecting: the deal's own, else config.
+
+    # SPEC §8.6
+    """
+    if inputs.take_back_lost_interest_months is not None:
+        return inputs.take_back_lost_interest_months
+    return config.take_back.lost_interest_months
 
 
 def holding_costs_basis(inputs: UnderwriteInputs) -> Decimal:

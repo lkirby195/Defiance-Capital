@@ -432,7 +432,9 @@ def test_net_monthly_income_is_rent_less_expenses_less_the_monthly_carry() -> No
     deal = inputs(monthly_rent="2000", holding_costs_pct_of_cost=D("0.024"))
     loan = terms(deal)
     # 2,000 - 35% of 2,000 - 4,800/12 = 2,000 - 700 - 400
-    assert net_monthly_income(D("2000"), loan, CONFIG) == D("900.00")
+    assert net_monthly_income(D("2000"), CONFIG.rental.expenses_pct_of_rent, loan) == D("900.00")
+    # the ratio is handed in, so a deal's own 40% is 2,000 - 800 - 400
+    assert net_monthly_income(D("2000"), D("0.40"), loan) == D("800.00")
 
 
 def test_the_rental_dscr_is_income_over_a_takeout_payment_on_the_commitment() -> None:

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% import "_csrf.html" as csrf %}
+{% block title %}Reset assumptions — GLENWOOD{% endblock %}
+
+{# The confirmation in front of Reset all to defaults (SPEC §8.1). One click on the deal page
+   would wipe every number the team typed over on the Underwriting Assumptions panel, so the
+   link leads here, the table says exactly what will move, and the form below is the only
+   thing that posts the confirmation. Server-rendered, like Kill: a confirm() dialog would be
+   script that decides something (CLAUDE.md). #}
+
+{% block content %}
+<section class="panel" style="max-width: 720px; margin: 40px auto;">
+  <h1>Reset every assumption to its default?</h1>
+  <p class="lede">
+    {% if deal.property and deal.property.address_raw %}{{ deal.property.address_raw }}
+    {% elif deal.property and deal.property.listing_url %}{{ deal.property.listing_url }}
+    {% else %}Deal {{ deal.id }}{% endif %}
+    · {{ deal.borrower.name if deal.borrower and deal.borrower.name else "(no guarantor name)" }}
+    · <span class="tag status">{{ deal.status | plain }}</span>
+  </p>
+  <p class="small">Every box on the Underwriting Assumptions panel with a default goes back to it, the two toggles go back to Default, and the analysis runs again. The estimated sale price and the monthly rent have no default and stay as they are.</p>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Assumption</th><th class="num">Now</th><th class="num">Default</th></tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>{{ row.label }}</td>
+            <td class="num">{{ row.current }}{% if not row.changes %} <span class="dflt">default</span>{% endif %}</td>
+            <td class="num">{{ row.default }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/assumptions/reset" style="margin-top:12px">
+    {{ csrf.field(csrf_token) }}
+    <input type="hidden" name="confirm" value="yes">
+    <div class="actions">
+      <button class="danger" type="submit">Reset all to defaults</button>
+      <a class="small" href="{{ back_url }}">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

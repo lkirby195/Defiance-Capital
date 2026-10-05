@@ -289,6 +289,16 @@ class Deal(Base):
     # a price or a rehab budget that moves moves the carry with it.
     holding_costs_pct_of_cost: Mapped[Decimal | None] = mapped_column(RATE)
     origination_fee_pct: Mapped[Decimal | None] = mapped_column(RATE)
+    # The SPEC §8.4-§8.6 assumptions a deal may carry its own number for: the broker's cut
+    # on the flip, the rental's expense ratio and takeout rate, the take-back's legal bill and
+    # lost-interest months. Each has a config value behind it and is populated with it at
+    # intake like the §8.1 economics (``services/defaults.py``); NULL reads the config value
+    # too, so a deal stored before the columns existed is priced the same way.
+    broker_selling_pct: Mapped[Decimal | None] = mapped_column(RATE)
+    rental_expenses_pct_of_rent: Mapped[Decimal | None] = mapped_column(RATE)
+    rental_takeout_rate: Mapped[Decimal | None] = mapped_column(RATE)
+    take_back_legal_costs_usd: Mapped[Decimal | None] = mapped_column(MONEY)
+    take_back_lost_interest_months: Mapped[int | None] = mapped_column(Integer)
     # The two SPEC §8.1 analysis toggles. NULL leaves the default: the flip is on when there
     # is a sale price, the rental when there is a rent.
     flip_analysis: Mapped[bool | None] = mapped_column(Boolean)

@@ -15,9 +15,16 @@ engine default:
     interest_rate                 request -> deal.interest_rate -> not ready (§8.1)
     contingency / closing costs   request -> deal -> the config default (§8.1)
     holding costs / origination   request -> deal -> the config default (§8.1)
+    the five analysis assumptions request -> deal -> the config value (§8.4, §8.5, §8.6)
     monthly_rent                  request -> deal.monthly_rent -> no DSCR at all (§8.5, §8.6)
     flip / rental toggles         request -> deal -> on when the price / the rent is there (§8.1)
     loan purpose                  request -> deal -> unstated
+
+``UnderwritingAssumptions`` is the deal page's Underwriting Assumptions panel: the sixteen
+boxes a person edits and saves with one button, and nothing else - not the dates, the term,
+the product or the court search, which the intake form and the court section own.
+``CourtSearch`` is that section. Each replaces exactly the columns it renders, so a save of
+one cannot clear a value the other owns.
 
 Three have no third step and stop the run: the closing date, the term and the interest rate.
 The ledger is dated months of interest (SPEC §8.3) and there is no defensible stand-in for
@@ -85,6 +92,14 @@ class UnderwriteRequest(BaseModel):
     closing_costs_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     holding_costs_pct_of_cost: Decimal | None = Field(default=None, ge=0, le=1)
     origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
+    # The §8.4-§8.6 analysis assumptions, each with the config value behind it.
+    broker_selling_pct: Decimal | None = Field(default=None, ge=0, le=1)
+    rental_expenses_pct_of_rent: Decimal | None = Field(default=None, ge=0, le=1)
+    rental_takeout_rate: Decimal | None = Field(default=None, ge=0, le=1)
+    take_back_legal_costs_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    take_back_lost_interest_months: int | None = Field(default=None, ge=0, le=60)
     # The Rental and Take-Back analyses (SPEC §8.5, §8.6).
     monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     # Overrides of what intake captured; None leaves the deal's own value in force.
@@ -154,6 +169,14 @@ class TeamOverrides(BaseModel):
         default=None, gt=0, max_digits=14, decimal_places=2
     )
     monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    # The §8.4-§8.6 analysis assumptions (Phase 7c). Blank means the config value.
+    broker_selling_pct: Decimal | None = Field(default=None, ge=0, le=1)
+    rental_expenses_pct_of_rent: Decimal | None = Field(default=None, ge=0, le=1)
+    rental_takeout_rate: Decimal | None = Field(default=None, ge=0, le=1)
+    take_back_legal_costs_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    take_back_lost_interest_months: int | None = Field(default=None, ge=0, le=60)
     # The two analysis toggles (SPEC §8.1): blank is the default - on when the sale price,
     # or the rent, is on the deal - and On / Off is a person overriding it.
     flip_analysis: bool | None = None
@@ -181,3 +204,70 @@ class TeamOverrides(BaseModel):
     def requested_term(self) -> Term | None:
         """The term this block names, whole months and no stub; None when the box was blank."""
         return None if self.term_months is None else Term(self.term_months, 0)
+
+
+class UnderwritingAssumptions(BaseModel):
+    """The deal page's Underwriting Assumptions panel.  # SPEC §8.1, §8.4, §8.5, §8.6
+
+    Sixteen boxes, two columns, one Save & Run: the five §8.1 economics with a config
+    default, the loan split on a split product, the valuation and the rent, the five
+    analysis assumptions, and the two toggles. A submission replaces exactly these columns
+    - the form is rendered with the deal's current values in it, so what comes back is the
+    state the team means - and a blank on anything with a default is the default again
+    (``services/defaults.py``); a blank sale price or rent is no value, because nothing
+    stands in for either. The dates, the term and the product are the intake form's; the
+    court search is its own section (``CourtSearch``). Neither is touched by a save here.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    interest_rate: Decimal | None = Field(default=None, ge=0, le=1)
+    origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
+    contingency_pct: Decimal | None = Field(default=None, ge=0, le=1)
+    closing_costs_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    holding_costs_pct_of_cost: Decimal | None = Field(default=None, ge=0, le=1)
+    loan_purchase_portion: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    loan_rehab_portion: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    estimated_sale_price_team: Decimal | None = Field(
+        default=None, gt=0, max_digits=14, decimal_places=2
+    )
+    monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    broker_selling_pct: Decimal | None = Field(default=None, ge=0, le=1)
+    rental_expenses_pct_of_rent: Decimal | None = Field(default=None, ge=0, le=1)
+    rental_takeout_rate: Decimal | None = Field(default=None, ge=0, le=1)
+    take_back_legal_costs_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    take_back_lost_interest_months: int | None = Field(default=None, ge=0, le=60)
+    flip_analysis: bool | None = None
+    rental_analysis: bool | None = None
+
+    @model_validator(mode="after")
+    def _split_is_both_or_neither(self) -> UnderwritingAssumptions:
+        """Half a split is refused here; the rest of the rule needs the deal (SPEC §8.2)."""
+        validate_loan_split(None, None, self.loan_purchase_portion, self.loan_rehab_portion)
+        return self
+
+
+class CourtSearch(BaseModel):
+    """The deal page's court search section: the team's own search (SPEC §7.2), by hand.
+
+    The outcome, the day it was searched, and one typed matter per entry; the same coherence
+    rule ``DealInfo`` applies, so the page answers with a message rather than a 500. A save
+    replaces the three columns and nothing else.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    court_records_status: CourtRecordsStatus | None = None
+    court_records_as_of: date | None = None
+    court_records_team: list[TeamCourtRecord] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _court_records_are_coherent(self) -> CourtSearch:
+        validate_court_records(
+            self.court_records_status, self.court_records_as_of, self.court_records_team
+        )
+        return self
