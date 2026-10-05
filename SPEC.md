@@ -1,6 +1,6 @@
 # GLENWOOD Underwriting Platform — SPEC v0.8
 
-Status: **v0.8**, 2026-10-04, engine `1.5.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.8**, 2026-10-04, engine `1.5.1`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
 
 **v0.8** is one button and a leaner deal page. **Run Analysis** runs the screen and the underwrite together, as the person who pressed it, and the two stages are not named anywhere a person reads (§4.6, §9); the automatic runs stay. The deal page keeps the verdict line and loses the Flags, the Reasons and the Suggested Reply, which stay on the stored results, the CLI report and the workbook. Everything the team enters by hand is one collapsed **Inputs** section with Save at the bottom; a collapsed **History** lists every intake version, screen and underwrite with its actor and engine, and each version can be **restored** as a new submission (§9.1). The **closing date is optional on every channel** and defaults to the last day of the month `closing.default_lead_days` (14) after the deal came in, stored and tagged `DEFAULT` (§8.1), so the term is the one input that can keep a deal from being priced. A **sensitivity table** - IRR by loan amount and rate, every cell a full ledger re-run (§8.9, engine `1.5.0`) - sits under the Return Overview and in the workbook.
 
@@ -844,16 +844,17 @@ that rate, and the cell is its XIRR. Nothing is interpolated.
 ```
 rows     the request on the bottom row, then sensitivity.loan_steps rows above it,
          each sensitivity.loan_step_usd less (placeholders: 4 x $5,000, so -$20,000 .. request)
-columns  sensitivity.rate_min .. rate_max in rate_step steps (placeholders: 12.5% .. 17.5% by 1%)
+columns  sensitivity.rate_min .. rate_max in rate_step steps (placeholders: 12.5% .. 17.5% by 1%),
+         plus the deal's own rate, inserted in rate order when it falls between two grid rates
 ```
 
 **A reduction comes off the advance at closing**; the rehab portion is what the work costs
 and is unchanged until the advance reaches zero, after which it gives dollar for dollar.
 A single-note product simply lends less. A row whose reduced amount is nothing at all, or
-whose commitment sizes to nothing, is left out. The deal's own cell - the request at its
-actual rate - is marked when its rate falls on a column; a deal priced at a rate between
-two columns has no marked cell and the page says so. The base row at the deal's own rate
-reproduces the Return Overview's IRR exactly.
+whose commitment sizes to nothing, is left out. The deal's own rate is always a column - not
+written twice when it lands on a grid rate - so the deal's own cell, the request at its
+actual rate, is always on the grid and marked, and reproduces the Return Overview's IRR
+exactly.
 
 ---
 
@@ -982,8 +983,12 @@ Config is versioned; each `screens`/`underwrites` row records the config hash us
 - **Business-purpose lending:** intake and LOI language reflect business-purpose loans; no consumer-purpose features.
 - **Court/lien data:** used for underwriting decisions on business-purpose loans; retained with source and timestamp.
 - **Access:** the review queue is behind a session cookie and nothing it serves is public but the borrower's own form at `/apply` (§4.2), which writes one new deal and reads nothing back. No
-  self-signup and no password reset in v1 — a user is created and deactivated from the command
+  self-signup and no reset-by-email — a user is created and deactivated from the command
   line, so the list of people who can read credit and court findings is maintained on purpose.
+  A signed-in user changes their own password at `/account/password` (the current password
+  and the new one twice, the same 12-character floor); a forgotten one is set anew by
+  `glenwood users reset-password`. Both are audited and both end every other session on the
+  account at once: a session cookie is bound to the password hash it was issued under.
   Deactivating ends every live session at once, because the user row is read on each request.
   Every form post carries a CSRF token bound to the signed-in user and expiring with their
   session; a post without one is refused and writes nothing. Every service write takes an
@@ -1053,6 +1058,11 @@ to the month end `closing.default_lead_days` after arrival, tagged `DEFAULT` (§
 sensitivity table (§8.9) is new: IRR by loan amount and rate, each cell a full ledger
 re-run, config-shaped, on the page and in the workbook.
 
+Phase 7b (engine `1.5.1`) puts the deal's own rate on the sensitivity grid as a column, so its
+cell is always present and marked; adds Change password for the signed-in user
+(`/account/password`) and `glenwood users reset-password` for an admin, both audited, both
+ending every other session on the account (§11).
+
 ---
 
 ## 13. Open items
@@ -1090,6 +1100,5 @@ re-run, config-shaped, on the page and in the workbook.
 - `closing.default_lead_days`, placeholder 14: the closing date a deal gets when nobody
   entered one, anchored to the day the deal first came in rather than to the latest edit
 - The sensitivity grid's placeholders (§8.9): $5,000 steps, four rows above the request,
-  12.5% to 17.5% by 1%. The default rate (12%) is off that grid, so a deal nobody has
-  re-priced shows no marked cell; confirm the range, or whether the deal's own rate should
-  always be a column
+  12.5% to 17.5% by 1%; the deal's own rate joins the columns, so the default 12% shows as a
+  first column beside them until the range is tuned

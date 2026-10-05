@@ -1,8 +1,13 @@
 """Create, deactivate, find and authenticate the people who use the review queue.  # SPEC §11
 
-The only writers of ``users``. There is no self-signup and no password reset in v1: a user is
-created from the command line and deactivated the same way, and both writes take an actor and
-record an ``audit_log`` row like every other service write.
+The only writers of ``users``. There is no self-signup and no reset-by-email: a user is
+created from the command line and deactivated the same way, a signed-in user changes their
+own password on the queue (``change_password``), and an admin sets a new one from the command
+line for somebody who has forgotten theirs (``reset_password``). Every write takes an actor
+and records an ``audit_log`` row like every other service write.
+
+Either password write ends every other session on the account: a session cookie is bound to
+the password hash it was issued under (``api/security.py``), and the hash changes here.
 
 ``email`` is the sign-in name. It is lower-cased and stripped on the way in and on the way to
 every lookup, so ``Sam@Glenwood.com`` and ``sam@glenwood.com`` are one account rather than two
@@ -22,7 +27,7 @@ from sqlalchemy.orm import Session
 from db.models import User
 from schema.models import AuditAction
 from services.audit import USERS, record_audit
-from services.errors import UserExists, UserNotFound
+from services.errors import UserExists, UserNotFound, WrongPassword
 from services.passwords import hash_password, needs_rehash, verify_password
 
 
@@ -93,6 +98,55 @@ def deactivate_user(session: Session, *, email: str, actor: str) -> User:
         row_id=user.id,
         before={"active": was_active},
         after={"active": False},
+    )
+    return user
+
+
+def change_password(session: Session, user: User, *, current: str, new: str, actor: str) -> User:
+    """A signed-in user replaces their own password. Flushes; no commit.  # SPEC §11
+
+    The current password is verified first, so a session left open on a shared machine
+    cannot be turned into a new password by whoever sits down at it. The new one clears the
+    same length floor a created one does (``WeakPassword``), and the hash is computed before
+    the row is touched. The audit row names the account and not the credential; the route
+    is what re-issues this session's cookie, because every cookie issued under the old hash
+    stops working the moment the row changes.
+    """
+    if not verify_password(current, user.password_hash):
+        raise WrongPassword()
+    user.password_hash = hash_password(new)
+    session.flush()
+    record_audit(
+        session,
+        actor=actor,
+        action=AuditAction.USER_PASSWORD_CHANGED,
+        table_name=USERS,
+        row_id=user.id,
+        after={"email": user.email},
+    )
+    return user
+
+
+def reset_password(session: Session, *, email: str, password: str, actor: str) -> User:
+    """An admin sets a new password for a user who has forgotten theirs. Flushes; no commit.
+
+    From the command line only (``glenwood users reset-password``): there is no reset-by-email
+    and no page a stranger can ask for one on. The account's standing is left alone - a
+    deactivated user with a new password is still deactivated - and every session the old
+    password issued stops working at once.
+    """
+    user = user_by_email(session, email)
+    if user is None:
+        raise UserNotFound(normalize_email(email))
+    user.password_hash = hash_password(password)
+    session.flush()
+    record_audit(
+        session,
+        actor=actor,
+        action=AuditAction.USER_PASSWORD_RESET,
+        table_name=USERS,
+        row_id=user.id,
+        after={"email": user.email, "active": user.active},
     )
     return user
 

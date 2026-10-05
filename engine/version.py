@@ -3,6 +3,12 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**1.5.1 (Phase 7b, 2026-10-04) puts the deal's own rate on the sensitivity grid.** The
+table's columns are the config grid plus the deal's actual rate, inserted in rate order when
+it falls between two grid rates and not duplicated when it lands on one, so the deal's own
+cell is always present and marked. Every grid cell is unchanged; the one new column is the
+ledger the Return Overview already shows, at each loan amount.
+
 **1.5.0 (Phase 7a, 2026-10-04) adds the sensitivity table.** ``UnderwriteResult`` gains
 ``sensitivity`` (``SensitivityTable``, SPEC §8.9): IRR by loan amount and rate, every cell a
 full re-sizing and re-ledgering of the deal in the same caps cell
@@ -106,4 +112,4 @@ REHAB_PORTION_EXCEEDS_BUDGET.
 
 from __future__ import annotations
 
-ENGINE_VERSION = "1.5.0"
+ENGINE_VERSION = "1.5.1"

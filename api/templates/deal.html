@@ -292,7 +292,7 @@
 
 {# --- 5. Sensitivity (SPEC §8.9) ------------------------------------------------------------ #}
 <section class="panel">
-  <h2>Sensitivity{{ help("IRR by loan amount and rate: every cell is the whole ledger laid out again at that amount and that annual rate, in the same caps cell (SPEC §8.9). Lending less comes off the advance at closing first; the rehab portion gives only once the advance is gone. The request is the bottom row. The marked cell is the deal as it stands, when its rate falls on a column.") }}</h2>
+  <h2>Sensitivity{{ help("IRR by loan amount and rate: every cell is the whole ledger laid out again at that amount and that annual rate, in the same caps cell (SPEC §8.9). Lending less comes off the advance at closing first; the rehab portion gives only once the advance is gone. The request is the bottom row; the deal's own rate is always a column, and the marked cell is the deal as it stands.") }}</h2>
   {% if result and result.sensitivity %}
     {% set grid = result.sensitivity %}
     {% set show_split = grid.rows and grid.rows[0].loan_purchase_portion is not none %}
@@ -321,9 +321,6 @@
         </tbody>
       </table>
     </div>
-    {% if not grid.deal_cell %}
-      <p class="small muted">The deal's own rate, {{ grid.interest_rate | pct }}, is not a column; its IRR is the Return Overview's.</p>
-    {% endif %}
   {% elif result %}
     <p class="small muted">Not on this ledger; run the analysis again for the table.</p>
   {% else %}

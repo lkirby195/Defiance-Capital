@@ -382,7 +382,8 @@ def _sheet_sensitivity(book: Workbook, result: UnderwriteResult) -> None:
 
     The rates across the top are numbers under a percent format and the loan amounts down
     the side are numbers under a currency format, like every other figure in the workbook,
-    so a reader can sort, chart or recompute from them. The shaded cell is the deal's own.
+    so a reader can sort, chart or recompute from them. The shaded cell is the deal's own;
+    its rate is always one of the columns (SPEC §8.9).
     """
     sheet = book.create_sheet("Sensitivity")
     _title(sheet, "Sensitivity — IRR by loan amount and annual rate")
@@ -402,9 +403,8 @@ def _sheet_sensitivity(book: Workbook, result: UnderwriteResult) -> None:
             "Every cell is the whole ledger laid out again at that loan amount and that annual "
             "rate, in the same caps cell (SPEC §8.9). Lending less comes off the advance at "
             "closing first; the rehab portion gives only once the advance is gone. The request "
-            f"is the bottom row; the shaded cell is the deal as it stands "
-            f"({grid.interest_rate:.1%})"
-            + (", when that rate is a column." if grid.deal_cell is None else ".")
+            f"is the bottom row; the deal's own rate ({grid.interest_rate:.1%}) is always a "
+            "column, and the shaded cell is the deal as it stands."
         ),
     )
     at = 4

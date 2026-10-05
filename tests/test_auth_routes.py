@@ -29,6 +29,8 @@ pytestmark = requires_db
 # Every route the app serves, less the ones FastAPI adds for its own docs. A route that is
 # not in one of these lists is a route nobody decided the access rule for.
 PAGE_ROUTES = [
+    ("GET", "/account/password"),
+    ("POST", "/account/password"),
     ("GET", "/queue"),
     ("GET", "/queue/new"),
     ("GET", "/queue/deals/00000000-0000-0000-0000-000000000000"),
@@ -96,6 +98,8 @@ def test_every_route_is_accounted_for() -> None:
             ("GET", "/login"),
             ("POST", "/login"),
             ("POST", "/logout"),
+            ("GET", "/account/password"),
+            ("POST", "/account/password"),
             ("POST", "/intake/team"),
             ("GET", "/queue"),
             ("GET", "/queue/new"),
@@ -261,13 +265,19 @@ def test_a_forged_or_expired_cookie_is_not_a_session(
     from datetime import UTC, datetime, timedelta
 
     good = issue(queue_user)
-    assert read(good) is not None
+    claim = read(good)
+    assert claim is not None and claim.user_id == queue_user.id
 
     body, _, signature = good.rpartition(".")
     assert read(f"{body}.{signature[:-1]}x") is None, "a tampered signature"
     assert read(f"{body}.") is None, "no signature at all"
     assert read("not-a-cookie") is None
     assert read(None) is None
+    # the payload is the user, the expiry and the password fingerprint; a cookie of the old
+    # three-part shape is not a session any more
+    assert good.count(".") == 3
+    user_text, expiry_text, _ = body.split(".")
+    assert read(f"{user_text}.{expiry_text}.{signature}") is None
 
     stale = issue(queue_user, now=datetime.now(UTC) - timedelta(hours=SESSION_HOURS + 1))
     assert read(stale) is None

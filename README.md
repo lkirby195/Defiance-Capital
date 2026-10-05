@@ -30,17 +30,21 @@ default would be a signing key every copy of this repository knows. Generate one
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-There is no self-signup and no password reset. Accounts are created and deactivated from the
+There is no self-signup and no reset-by-email. Accounts are created and deactivated from the
 command line, which is the point: the list of people who can read credit and court findings
-is one somebody maintains deliberately.
+is one somebody maintains deliberately. A signed-in person changes their own password from
+the Change password link in the top bar; when somebody has forgotten theirs, set a new one
+from the command line.
 
 ```bash
 uv run glenwood users create --name "Sam Reed" --email sam@example.com   # prompts for a password
 uv run glenwood users list
 uv run glenwood users deactivate --email sam@example.com
+uv run glenwood users reset-password --email sam@example.com             # prompts for the new one
 ```
 
 Omit `--password` and it prompts twice, which keeps the password out of your shell history.
+A changed or reset password signs that person out of every session at once.
 
 ### The one-time cleanup
 

@@ -278,6 +278,8 @@ class AuditAction(StrEnum):
     # Users and access (SPEC §11: credit data access is logged)
     USER_CREATED = "USER_CREATED"
     USER_DEACTIVATED = "USER_DEACTIVATED"
+    USER_PASSWORD_CHANGED = "USER_PASSWORD_CHANGED"  # by the user, signed in; other sessions end
+    USER_PASSWORD_RESET = "USER_PASSWORD_RESET"  # by an admin, from the command line
     SIGNED_IN = "SIGNED_IN"
     SIGNED_OUT = "SIGNED_OUT"
 
@@ -1240,9 +1242,9 @@ class SensitivityCell(BaseModel):
     """One cell of the sensitivity table: the IRR at one loan amount and one rate.  # SPEC §8.9
 
     ``irr`` is None where the ledger at that point has no rate (``engine/calc/irr.py``).
-    ``is_deal`` marks the one cell, if any, whose loan amount and rate are the deal's own -
-    the request at its actual rate - so the page and the workbook can highlight it; it is
-    false everywhere when the deal's rate does not fall on a column.
+    ``is_deal`` marks the one cell whose loan amount and rate are the deal's own - the request
+    at its actual rate - so the page and the workbook can highlight it. The deal's rate is
+    always a column, so one cell always carries it.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1273,21 +1275,22 @@ class SensitivityRow(BaseModel):
 class SensitivityTable(BaseModel):
     """IRR by loan amount and rate, every cell a full ledger re-run.  # SPEC §8.9
 
-    ``rates`` are the columns, lowest first; ``rows`` run from the largest reduction down to
-    the request itself on the bottom row. A row whose reduced loan amount would be nothing
-    at all is left out rather than priced.
+    ``rates`` are the columns, lowest first, the config grid plus the deal's own rate where
+    that falls between two grid rates; ``rows`` run from the largest reduction down to the
+    request itself on the bottom row. A row whose reduced loan amount would be nothing at all
+    is left out rather than priced.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     loan_requested: Decimal  # the deal's own loan amount: the bottom row
-    interest_rate: Decimal  # the deal's own rate; a column only when it falls on the grid
+    interest_rate: Decimal  # the deal's own rate; always one of ``rates``
     rates: list[Decimal]
     rows: list[SensitivityRow]
 
     @property
     def deal_cell(self) -> SensitivityCell | None:
-        """The cell at the deal's own loan amount and rate, when the rate is on the grid."""
+        """The cell at the deal's own loan amount and rate: the one with ``is_deal`` set."""
         for row in self.rows:
             for cell in row.cells:
                 if cell.is_deal:

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from api.intake_form import intake_form_values
 from db.models import AuditLog, Deal, IntakeSubmission, Screen, Underwrite
 from db.repository import create_deal_from_intake
+from engine.version import ENGINE_VERSION
 from intake.normalize import normalize
 from intake.parsers.team_form import TeamEntryForm, parse_team_form
 from schema.models import AuditAction, Channel, Status, Verdict
@@ -87,7 +88,7 @@ def test_history_lists_every_version_and_run_with_who_and_which_engine(
         HistoryKind.INTAKE,
     ]
     assert [entry.actor for entry in history] == [SAM, SAM, "system", "system", SAM]
-    assert [entry.engine_version for entry in history][:4] == ["1.5.0"] * 4
+    assert [entry.engine_version for entry in history][:4] == [ENGINE_VERSION] * 4
     intake = history[-1]
     assert intake.engine_version is None and intake.note == "team created"
     assert intake.restorable
