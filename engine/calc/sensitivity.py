@@ -17,8 +17,10 @@ rehab portion give, dollar for dollar. A single-note product has no split and si
 lends less. A row whose reduced amount would be nothing at all - or whose commitment sizes
 to nothing - is left out rather than priced.
 
-The deal's own cell - the request, at its actual rate - is marked when the rate falls on a
-column, so a reader finds the number they already know and reads outward from it.
+The deal's own rate is always a column, inserted in rate order when it falls between two
+grid rates and not duplicated when it lands on one, so the deal's own cell - the request, at
+its actual rate - is always on the grid and marked: a reader finds the number they already
+know and reads outward from it.
 
 Pure: ``UnderwriteInputs``, the caps cell and a ``Config`` in, a ``SensitivityTable`` out.
 """
@@ -44,11 +46,13 @@ from schema.models import (
 ZERO = Decimal(0)
 
 
-def rate_columns(config: Config) -> list[Decimal]:
-    """Every rate from ``rate_min`` to ``rate_max`` in ``rate_step`` steps, lowest first.
+def rate_columns(config: Config, deal_rate: Decimal | None = None) -> list[Decimal]:
+    """The grid's rates, lowest first, with the deal's own rate among them.  # SPEC §8.9
 
-    Each column is ``rate_min + n x rate_step`` rather than a running sum, so the last column
-    is exactly the number the yaml names and not that number plus a rounding remainder.
+    Each grid column is ``rate_min + n x rate_step`` rather than a running sum, so the last
+    column is exactly the number the yaml names and not that number plus a rounding remainder.
+    ``deal_rate`` is inserted in rate order when it is not already a column; a rate that lands
+    on a grid rate is not written twice.
     """
     settings = config.sensitivity
     columns: list[Decimal] = []
@@ -56,6 +60,9 @@ def rate_columns(config: Config) -> list[Decimal]:
     while (rate := settings.rate_min + settings.rate_step * step) <= settings.rate_max:
         columns.append(rate)
         step += 1
+    if deal_rate is not None and deal_rate not in columns:
+        columns.append(deal_rate)
+        columns.sort()
     return columns
 
 
@@ -103,7 +110,7 @@ def sensitivity_table(
     sizes against the same caps the deal did; the sizing is done once per row, because it
     does not depend on the rate, and the ledger once per cell, because it does.
     """
-    rates = rate_columns(config)
+    rates = rate_columns(config, inputs.interest_rate)
     rows: list[SensitivityRow] = []
     for reduction in reductions(config):
         deal = reduced_deal(inputs.deal, reduction)

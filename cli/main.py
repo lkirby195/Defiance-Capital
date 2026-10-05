@@ -4,6 +4,7 @@
     uv run glenwood export fixtures/synthetic/deals/go_split_draw_denver.json out.xlsx
     uv run glenwood users create --name "Sam Reed" --email sam@glenwood.example
     uv run glenwood users deactivate --email sam@glenwood.example
+    uv run glenwood users reset-password --email sam@glenwood.example
     uv run glenwood users list
     uv run glenwood deals purge --all --confirm
 
@@ -13,10 +14,11 @@ wired to anything, so nothing is rounded for presentation beyond the place it is
 
 ``users`` and ``deals`` are the other kind of command and the only ones that open the
 database. ``users`` is here rather than in the queue because there is no self-signup and no
-password reset (SPEC §11): the set of people who can read credit and court findings is a list
-someone maintains deliberately, from a shell, on the machine that holds the data.
-Deactivating is not deleting - ``audit_log.actor`` names people who have left, and the row
-has to keep resolving to someone.
+reset-by-email (SPEC §11): the set of people who can read credit and court findings is a list
+someone maintains deliberately, from a shell, on the machine that holds the data, and a
+forgotten password is set anew from the same shell (``reset-password``), which signs that
+person out everywhere. Deactivating is not deleting - ``audit_log.actor`` names people who
+have left, and the row has to keep resolving to someone.
 
 ``deals purge`` is the one-time cleanup the README describes: every deal and everything
 hanging off it goes, the users stay, and it refuses to run without both ``--all`` and
@@ -44,6 +46,7 @@ from services import (
     deactivate_user,
     list_users,
     purge_deals,
+    reset_password,
 )
 from services.passwords import MIN_LENGTH, WeakPassword
 
@@ -95,6 +98,19 @@ def build_parser() -> argparse.ArgumentParser:
     deactivate_cmd.add_argument(
         "--actor", default=DEFAULT_ACTOR, help="who to record on the audit row"
     )
+
+    reset_cmd = users.add_parser(
+        "reset-password", help="set a new password for a user who has forgotten theirs"
+    )
+    reset_cmd.add_argument("--email", required=True, help="the user whose password to replace")
+    reset_cmd.add_argument(
+        "--password",
+        help=(
+            f"at least {MIN_LENGTH} characters; omit it to be prompted, which keeps it out "
+            "of the shell history"
+        ),
+    )
+    reset_cmd.add_argument("--actor", default=DEFAULT_ACTOR, help="who to record on the audit row")
 
     users.add_parser("list", help="every user, active first")
 
@@ -168,6 +184,11 @@ def command_users(args: argparse.Namespace) -> str:
             user = deactivate_user(session, email=args.email, actor=args.actor)
             session.commit()
             return f"deactivated {user.email} ({user.name})"
+        if args.users_command == "reset-password":
+            password = args.password if args.password is not None else ask_for_password()
+            user = reset_password(session, email=args.email, password=password, actor=args.actor)
+            session.commit()
+            return f"reset the password for {user.email} ({user.name}); every session signed out"
         users = list_users(session)
         if not users:
             return "no users yet; create one with `glenwood users create`"

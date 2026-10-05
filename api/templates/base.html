@@ -3,7 +3,8 @@
    public borrower form has its own shell (public.html) on the same stylesheet.
 
    The top bar carries two buttons on every page: Home, the list of every deal, and New
-   Deal, the team-entry form.
+   Deal, the team-entry form; and, beside the signed-in person's name, Change password and
+   Sign out.
 
    One piece of client-side script exists in the whole queue: the input masks (_masks.html).
    A convenience and not load-bearing — the server parses `$425,000`, `425000`, `12%` and
@@ -30,6 +31,7 @@
     {% if user %}
       <span class="who">
         {{ user.name }} &lt;{{ user.email }}&gt;
+        <a class="btn small" href="/account/password">Change password</a>
         <form method="post" action="/logout">
           {{ csrf.field(csrf_token) }}
           <button class="quiet" type="submit">Sign out</button>

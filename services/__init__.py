@@ -55,6 +55,7 @@ from services.errors import (
     ServiceError,
     UserExists,
     UserNotFound,
+    WrongPassword,
 )
 from services.history import HistoryEntry, HistoryKind, deal_history
 from services.home import (
@@ -104,11 +105,13 @@ from services.requests import TeamOverrides, UnderwriteRequest
 from services.runner import load_deal, run_screen, run_underwrite
 from services.users import (
     authenticate,
+    change_password,
     create_user,
     deactivate_user,
     get_user,
     list_users,
     normalize_email,
+    reset_password,
     user_by_email,
 )
 
@@ -151,6 +154,7 @@ __all__ = [
     "UserExists",
     "UserNotFound",
     "WeakPassword",
+    "WrongPassword",
     "adapter_values",
     "add_note",
     "advance_after_screen",
@@ -160,6 +164,7 @@ __all__ = [
     "apply_overrides",
     "auto_run",
     "authenticate",
+    "change_password",
     "check_intake_complete",
     "check_underwritable",
     "create_deal",
@@ -197,6 +202,7 @@ __all__ = [
     "record_underwrite",
     "reopen",
     "reopen_status",
+    "reset_password",
     "restore_intake",
     "resume",
     "run_analysis",

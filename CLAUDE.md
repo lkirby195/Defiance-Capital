@@ -171,7 +171,7 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
 - **No credit pull without authorization.** `credco.py` must check `deal.credit_authorization_signed` and refuse otherwise. Do not add an override.
 - **Mortgage Automator is write-only at handoff.** Do not write to MA before the "LOI accepted" action. Reads (borrower match) are fine anytime.
 - **No dependency on any other repo.** See top of file.
-- **No self-signup and no password reset.** Users are created and deactivated from the command line. Do not add a registration page, an invite link, or a reset-by-email flow to v1.
+- **No self-signup and no reset-by-email.** Users are created and deactivated from the command line; a signed-in user changes their own password at `/account/password` (current password, new one twice, the same floor), and an admin sets a forgotten one with `glenwood users reset-password`. Both are audited and both end every other session on the account (`api/security.py` binds the cookie to the password hash). Do not add a registration page, an invite link, or a reset-by-email flow to v1.
 - **A code the model stores is never a label a person reads.** `Tranche` and
   `ExperienceBucket` are grid coordinates and stored values; `Product` and `LoanPurpose`
   are SCREAMING_SNAKE for the same reason. `schema/labels.py`
@@ -227,6 +227,7 @@ uv run uvicorn api.main:app --reload     # Home at http://127.0.0.1:8000/queue
 # the first user; there is no self-signup (SPEC 11). Omit --password to be prompted.
 uv run glenwood users create --name "Sam Reed" --email sam@glenwood.example
 uv run glenwood users deactivate --email sam@glenwood.example
+uv run glenwood users reset-password --email sam@glenwood.example   # a forgotten one; prompts
 uv run glenwood users list
 
 # the one-time cleanup (README): every deal and everything hanging off it; the users stay.

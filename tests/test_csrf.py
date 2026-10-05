@@ -60,6 +60,14 @@ GUARDED: list[tuple[str, dict[str, Any]]] = [
     ("/queue/deals/{deal}/reopen", {"reason": "new ARV"}),
     ("/queue/deals/{deal}/note", {"note": "spoke to the broker"}),
     ("/intake/team", COMPLETE_INTAKE),
+    (
+        "/account/password",
+        {
+            "current_password": USER_PASSWORD,
+            "new_password": "a-brand-new-long-password",
+            "new_password_again": "a-brand-new-long-password",
+        },
+    ),
     ("/logout", {}),
 ]
 
@@ -286,6 +294,7 @@ def forms_on(body: str) -> list[str]:
         "/queue/deals/{deal}",
         "/queue/deals/{deal}/intake",
         "/queue/deals/{deal}/kill",
+        "/account/password",
     ],
 )
 def test_every_post_form_on_a_page_carries_the_field(

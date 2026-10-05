@@ -91,6 +91,13 @@ class UserNotFound(ServiceError):
         self.email = email
 
 
+class WrongPassword(ServiceError):
+    """The current password offered for a password change is not the user's."""
+
+    def __init__(self) -> None:
+        super().__init__("the current password is wrong")
+
+
 class ActionNotAllowed(ServiceError):
     """The deal's status rules the team action out.  # SPEC §4.6
 

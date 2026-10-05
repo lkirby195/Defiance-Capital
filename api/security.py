@@ -11,6 +11,14 @@ loaded and its ``active`` flag checked on every single request, so deactivating 
 expiry. For a two-person internal queue that is the right shape; a stolen cookie is a
 deactivation away from useless.
 
+The cookie is also bound to the password it was issued under: its payload carries a short
+digest of the stored password hash, and a request whose digest no longer matches the row's
+is not a session. So changing a password - the person's own change at ``/account/password``,
+or an admin's ``glenwood users reset-password`` - signs out every other session for that
+account at once; the session that made the change is handed a fresh cookie and carries on.
+A rehash on sign-in (``services.authenticate`` raising the cost) has the same effect, and the
+sign-in it happens on issues its cookie after the rehash.
+
 ``SameSite=Lax`` withholds the cookie from cross-site POSTs, which is every state-changing
 route here. ``HttpOnly`` keeps it away from page scripts, of which there is one, and it does
 not touch cookies. ``Secure`` is set whenever the request arrived over HTTPS, so a deployment
@@ -101,10 +109,24 @@ def _sign(payload: str) -> str:
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
+# How much of the password-hash digest the cookie carries. Enough that two hashes do not
+# collide by accident; short enough to add nothing a cookie could be used to learn from.
+FINGERPRINT_CHARS = 16
+
+
+def fingerprint(user: User) -> str:
+    """A short digest of the stored password hash: the password a session was issued under.
+
+    A digest of the hash, not the hash: the stored hash is already salted PBKDF2, and the
+    cookie needs only enough of it to notice that it changed.
+    """
+    return sha256(user.password_hash.encode("utf-8")).hexdigest()[:FINGERPRINT_CHARS]
+
+
 def issue(user: User, now: datetime | None = None) -> str:
-    """The cookie value for a user's session."""
+    """The cookie value for a user's session, bound to the password it was issued under."""
     expires = (now or datetime.now(UTC)) + timedelta(hours=SESSION_HOURS)
-    payload = f"{user.id}.{int(expires.timestamp())}"
+    payload = f"{user.id}.{int(expires.timestamp())}.{fingerprint(user)}"
     return f"{payload}.{_sign(payload)}"
 
 
@@ -114,6 +136,7 @@ class SessionClaim:
 
     user_id: UUID
     expires_at: datetime
+    fingerprint: str  # of the password hash the cookie was issued under
 
 
 def read(cookie: str | None, now: datetime | None = None) -> SessionClaim | None:
@@ -121,10 +144,10 @@ def read(cookie: str | None, now: datetime | None = None) -> SessionClaim | None
     if not cookie:
         return None
     parts = cookie.split(".")
-    if len(parts) != 3:
+    if len(parts) != 4:
         return None
-    user_text, expiry_text, signature = parts
-    if not hmac.compare_digest(_sign(f"{user_text}.{expiry_text}"), signature):
+    user_text, expiry_text, print_text, signature = parts
+    if not hmac.compare_digest(_sign(f"{user_text}.{expiry_text}.{print_text}"), signature):
         return None
     try:
         user_id = UUID(user_text)
@@ -133,7 +156,7 @@ def read(cookie: str | None, now: datetime | None = None) -> SessionClaim | None
         return None
     if expires_at <= (now or datetime.now(UTC)):
         return None
-    return SessionClaim(user_id=user_id, expires_at=expires_at)
+    return SessionClaim(user_id=user_id, expires_at=expires_at, fingerprint=print_text)
 
 
 def over_https(request: Request) -> bool:
@@ -162,15 +185,19 @@ def clear(response: Response, *, secure: bool) -> None:
 def signed_in(request: Request, session: Session) -> User | None:
     """The signed-in, still-active user, or None.
 
-    Both halves matter. The signature says the cookie is ours and unexpired; the row says
-    the person is still allowed in. A deactivated user holding a valid cookie is None here,
-    which is the whole point of not keeping sessions server-side.
+    Three things have to hold. The signature says the cookie is ours and unexpired; the row
+    says the person is still allowed in; and the password the cookie was issued under is
+    still the password on the row. A deactivated user holding a valid cookie is None here,
+    and so is a cookie issued before a password change - which is the whole point of not
+    keeping sessions server-side.
     """
     claim = read(request.cookies.get(COOKIE_NAME))
     if claim is None:
         return None
     user = get_user(session, claim.user_id)
     if user is None or not user.active:
+        return None
+    if not hmac.compare_digest(claim.fingerprint, fingerprint(user)):
         return None
     return user
 

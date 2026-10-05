@@ -242,12 +242,15 @@ def test_the_sensitivity_sheet_is_numbers_under_formats_with_the_request_on_the_
         Decimal(str(sheet.cell(row=4 + len(rows), column=1).value))
         == result.economics.loan_requested
     )
-    # the Denver deal is priced at 12%, which is not a column, so nothing is shaded
-    assert not any(
-        sheet.cell(row=5 + offset, column=column).fill.fgColor.rgb == "00E7F3EC"
+    # the Denver deal is priced at 12%: its own column, first, and exactly one shaded cell
+    assert Decimal(str(rates[0].value)) == Decimal("0.12")
+    shaded = [
+        (offset, column)
         for offset in range(len(rows))
         for column in range(5, 5 + len(result.sensitivity.rates))
-    )
+        if sheet.cell(row=5 + offset, column=column).fill.fgColor.rgb == "00E7F3EC"
+    ]
+    assert shaded == [(len(rows) - 1, 5)]
 
 
 def test_the_deals_own_cell_is_shaded_when_its_rate_is_a_column() -> None:

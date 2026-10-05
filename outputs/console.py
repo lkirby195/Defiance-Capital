@@ -295,12 +295,9 @@ def render_sensitivity(table: SensitivityTable | None) -> list[str]:
             f"{pct4(cell.irr) + ('*' if cell.is_deal else ''):>11}" for cell in row.cells
         )
         lines.append(f"  {money(row.loan_amount):<16}{cells}")
-    marked = (
-        "* the deal as it stands"
-        if table.deal_cell is not None
-        else f"the deal's own rate ({pct1(table.interest_rate)}) is not a column"
+    lines.append(
+        "  reductions come off the advance at closing first; * the deal as it stands (SPEC 8.9)"
     )
-    lines.append(f"  reductions come off the advance at closing first; {marked} (SPEC 8.9)")
     return lines
 
 

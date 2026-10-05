@@ -66,6 +66,8 @@ def test_run_underwrite_prints_every_section(
     grid = out[out.index("SENSITIVITY") : out.index("FLIP ANALYSIS")]
     assert "12.5%" in grid and "17.5%" in grid
     assert "reductions come off the advance at closing first" in grid
+    # the deal's own rate is a column and its cell is starred, whatever rate it was priced at
+    assert grid.count("%*") == 1 and "* the deal as it stands" in grid
     # the numbers on the page are the numbers the fixture pins
     plain = out.replace("$", "").replace(",", "")
     assert expected["ledger"]["total_interest"] in plain

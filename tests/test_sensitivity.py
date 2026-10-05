@@ -63,16 +63,21 @@ def table_for(inputs: UnderwriteInputs) -> SensitivityTable:
 # --- the shape, from config ----------------------------------------------------------------------
 
 
+GRID = [D("0.125"), D("0.135"), D("0.145"), D("0.155"), D("0.165"), D("0.175")]
+
+
 def test_the_columns_and_rows_come_from_config() -> None:
-    assert rate_columns(CONFIG) == [
-        D("0.125"),
-        D("0.135"),
-        D("0.145"),
-        D("0.155"),
-        D("0.165"),
-        D("0.175"),
-    ]
+    assert rate_columns(CONFIG) == GRID
     assert reductions(CONFIG) == [D(20000), D(15000), D(10000), D(5000), D(0)]
+
+
+def test_the_deals_own_rate_is_a_column_in_rate_order_and_never_twice() -> None:
+    """SPEC §8.9: the grid plus the deal's rate - between two columns, below, above, or on one."""
+    assert rate_columns(CONFIG, D("0.12")) == [D("0.12"), *GRID]
+    assert rate_columns(CONFIG, D("0.14")) == [*GRID[:2], D("0.14"), *GRID[2:]]
+    assert rate_columns(CONFIG, D("0.20")) == [*GRID, D("0.20")]
+    assert rate_columns(CONFIG, D("0.145")) == GRID
+    assert rate_columns(CONFIG, D("0.14500")) == GRID  # numerically equal is the same column
 
 
 def test_the_request_is_the_bottom_row_and_each_row_above_is_one_step_less() -> None:
@@ -85,7 +90,9 @@ def test_the_request_is_the_bottom_row_and_each_row_above_is_one_step_less() -> 
         D(195000),
     ]
     assert table.rows[-1].reduction == 0 and table.rows[-1].loan_amount == table.loan_requested
-    assert [len(row.cells) for row in table.rows] == [6] * 5
+    # the six grid rates plus the deal's own 12%, first because it is the lowest
+    assert table.rates == [D("0.12"), *GRID]
+    assert [len(row.cells) for row in table.rows] == [7] * 5
     assert [cell.interest_rate for cell in table.rows[0].cells] == table.rates
 
 
@@ -101,6 +108,7 @@ def test_a_reshaped_grid_follows_the_yaml() -> None:
     config = Config.from_dict(data)
     assert rate_columns(config) == [D("0.10"), D("0.105"), D("0.11"), D("0.115"), D("0.12")]
     assert reductions(config) == [D(20000), D(10000), D(0)]
+    assert len(table_for(denver_inputs()).rates) == 7  # the default config: six, plus 12%
 
 
 def test_a_grid_whose_rates_run_backwards_is_refused_at_load() -> None:
@@ -121,6 +129,7 @@ def test_the_base_cell_equals_the_deals_irr_when_the_rate_is_on_the_grid() -> No
     assert cell is not None and cell.is_deal
     assert cell.interest_rate == D("0.145")
     assert cell.irr == result.return_overview.irr
+    assert result.sensitivity.rates == GRID  # on a grid rate: no second 14.5% column
     # ...and it sits on the bottom row, the request's own
     bottom = result.sensitivity.rows[-1]
     assert bottom.loan_amount == inputs.deal.loan_requested
@@ -128,14 +137,27 @@ def test_the_base_cell_equals_the_deals_irr_when_the_rate_is_on_the_grid() -> No
     assert sum(1 for row in result.sensitivity.rows for c in row.cells if c.is_deal) == 1
 
 
-def test_a_deal_priced_off_the_grid_marks_no_cell() -> None:
-    """The placeholder rate (12%) is not a column; the table still has its five rows."""
+def test_a_deal_priced_off_the_grid_gets_its_own_column_and_cell() -> None:
+    """The placeholder rate (12%) is below the grid, so it is the first column."""
     result = underwrite(denver_inputs(), CONFIG)
     assert result.sensitivity is not None
     assert result.sensitivity.interest_rate == D("0.12")
-    assert result.sensitivity.deal_cell is None
-    assert not any(c.is_deal for row in result.sensitivity.rows for c in row.cells)
+    assert result.sensitivity.rates[0] == D("0.12")
+    cell = result.sensitivity.deal_cell
+    assert cell is not None and cell.interest_rate == D("0.12")
+    assert cell.irr == result.return_overview.irr
+    assert cell is result.sensitivity.rows[-1].cells[0]
+    assert sum(1 for row in result.sensitivity.rows for c in row.cells if c.is_deal) == 1
     assert len(result.sensitivity.rows) == 5
+
+
+def test_a_deal_priced_between_two_columns_sits_between_them() -> None:
+    result = underwrite(denver_inputs(interest_rate="0.14"), CONFIG)
+    assert result.sensitivity is not None
+    assert result.sensitivity.rates == [*GRID[:2], D("0.14"), *GRID[2:]]
+    cell = result.sensitivity.deal_cell
+    assert cell is not None and cell.irr == result.return_overview.irr
+    assert result.sensitivity.rows[-1].cells[2] is cell
 
 
 # --- how a reduction is taken ---------------------------------------------------------------------
