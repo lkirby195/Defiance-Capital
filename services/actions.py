@@ -19,6 +19,14 @@ where its prior status is kept, so there is no second column to keep in step wit
 The one asymmetry worth stating: the automatic Decline stops at UNDERWRITING (SPEC §4.6) so
 that a re-screen cannot yank a deal out from under the person working it. A person declining
 a deal by hand *is* that person, so the manual decline runs from every status still live.
+
+The deal page's two editable blocks are here too (SPEC §8.1, §7.2). The **Underwriting
+Assumptions** panel saves its sixteen boxes as one replacement (``save_assumptions``) or puts
+every one with a default back to it (``reset_assumptions``); the **court search** section
+saves its three columns (``save_court_search``). Each touches exactly the columns it renders,
+so saving one cannot clear a value the other owns, and each audit row names only what moved.
+``save_overrides`` is the whole block in one - every column of both, plus the product, the
+dates and the term - kept for the CLI fixtures and the services that still speak it.
 """
 
 from __future__ import annotations
@@ -39,9 +47,9 @@ from schema.models import (
     validate_loan_split,
 )
 from services.audit import DEALS, jsonable, last_action_at, record_audit
-from services.defaults import populate
+from services.defaults import FLAT, populate
 from services.errors import ActionNotAllowed, ReasonRequired
-from services.requests import TeamOverrides
+from services.requests import CourtSearch, TeamOverrides, UnderwritingAssumptions
 from services.runner import load_deal
 
 # The two closed statuses: a deal that is over, one way or the other.
@@ -78,12 +86,49 @@ OVERRIDE_FIELDS: tuple[str, ...] = (
     "origination_fee_pct",
     "estimated_sale_price_team",
     "monthly_rent",
+    "broker_selling_pct",
+    "rental_expenses_pct_of_rent",
+    "rental_takeout_rate",
+    "take_back_legal_costs_usd",
+    "take_back_lost_interest_months",
     "flip_analysis",
     "rental_analysis",
     "court_records_status",
     "court_records_as_of",
     "court_records_team",
 )
+
+# The columns the deal page's Underwriting Assumptions panel owns (SPEC §8.1, §8.4-§8.6),
+# in the order the panel shows them. The loan split is not here: it is applied after them,
+# against the product the deal has (``_apply_split``).
+ASSUMPTION_FIELDS: tuple[str, ...] = (
+    "interest_rate",
+    "origination_fee_pct",
+    "contingency_pct",
+    "closing_costs_usd",
+    "holding_costs_pct_of_cost",
+    "estimated_sale_price_team",
+    "monthly_rent",
+    "broker_selling_pct",
+    "rental_expenses_pct_of_rent",
+    "rental_takeout_rate",
+    "take_back_legal_costs_usd",
+    "take_back_lost_interest_months",
+    "flip_analysis",
+    "rental_analysis",
+)
+# The columns the deal page's court search section owns (SPEC §7.2).
+COURT_FIELDS: tuple[str, ...] = (
+    "court_records_status",
+    "court_records_as_of",
+    "court_records_team",
+)
+# The two analysis toggles (SPEC §8.1), whose default is "nobody said".
+TOGGLE_FIELDS: tuple[str, str] = ("flip_analysis", "rental_analysis")
+# What Reset all to defaults puts back: every panel column with a default - the ten flat
+# config values, the loan split on a split product - and the two toggles. The estimated
+# sale price and the monthly rent have no default and are left exactly as they are.
+RESETTABLE: tuple[str, ...] = (*FLAT, *SPLIT_COLUMNS, *TOGGLE_FIELDS)
 
 
 def _check(deal: Deal, action: str, allowed_from: frozenset[Status]) -> None:
@@ -286,7 +331,7 @@ def add_note(session: Session, deal_id: UUID, *, actor: str, note: str) -> Deal:
     return deal
 
 
-def _override_value(overrides: TeamOverrides, field: str) -> Any:
+def _override_value(overrides: object, field: str) -> Any:
     """The submitted value in the form the ``deals`` column stores."""
     value = getattr(overrides, field)
     if field == "court_records_team":
@@ -294,6 +339,70 @@ def _override_value(overrides: TeamOverrides, field: str) -> Any:
         # db/repository.py writes them at intake.
         return [matter.model_dump(mode="json", exclude_none=True) for matter in value]
     return value
+
+
+def _apply_fields(
+    deal: Deal,
+    submitted: object,
+    fields: tuple[str, ...],
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> None:
+    """Set each named column from the model that carries it; record only what moved."""
+    for field in fields:
+        current = getattr(deal, field)
+        value = _override_value(submitted, field)
+        if current == value:
+            continue
+        before[field] = jsonable(current)
+        after[field] = jsonable(value)
+        setattr(deal, field, value)
+
+
+def _settle(
+    deal: Deal,
+    original: dict[str, Any],
+    before: dict[str, Any],
+    after: dict[str, Any],
+    config: Config | None,
+) -> None:
+    """Fill every blank a save left with its default; drop what ended where it started.
+
+    A box left blank on a defaulted input is the default again rather than nothing
+    (``services/defaults.py``), and what ``populate`` wrote lands in ``after`` beside the
+    team's own changes - unless the column ended exactly where it started, in which case it
+    has not moved and leaves the row.
+    """
+    for field, value in populate(deal, config).items():
+        after[field] = value
+    for field in list(after):
+        if field in original and getattr(deal, field) == original[field]:
+            del after[field]
+            before.pop(field, None)
+
+
+def _record_block(
+    session: Session,
+    deal: Deal,
+    *,
+    action: AuditAction,
+    actor: str,
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> None:
+    """One audit row for a block save, naming exactly the columns that moved; none for none."""
+    if not after:
+        return
+    session.flush()
+    record_audit(
+        session,
+        actor=actor,
+        action=action,
+        table_name=DEALS,
+        row_id=deal.id,
+        before=before,
+        after=after,
+    )
 
 
 def save_overrides(
@@ -304,14 +413,13 @@ def save_overrides(
     actor: str,
     config: Config | None = None,
 ) -> Deal:
-    """Apply the queue's override block to the deal.  # SPEC §6.1
+    """Apply the whole override block to the deal.  # SPEC §6.1
 
-    A replacement, not a patch: the form was rendered with the deal's current values, so what
-    comes back is the state the team means the deal to be in and a blank means no value -
-    and for the economics that have one, the default, which is written back onto the deal
-    and tagged (``services/defaults.py``) in the same save and the same audit row. Only the
-    fields that actually moved reach the audit row, so a save that changed one number does
-    not read as a save that changed eleven.
+    A replacement, not a patch: what comes in is the state the team means the deal to be in
+    and a blank means no value - and for the economics that have one, the default, which is
+    written back onto the deal and tagged (``services/defaults.py``) in the same save and
+    the same audit row. Only the fields that actually moved reach the audit row, so a save
+    that changed one number does not read as a save that changed eleven.
 
     Allowed from any status. It is data entry, not a decision - correcting a valuation on a
     declined deal before re-opening it is a real thing to want to do, and the audit row says
@@ -321,18 +429,18 @@ def save_overrides(
     a team sale price or rent replaces the borrower's as the value in force
     (``services/assemble.py``), and the borrower's figure stays in its own column for the
     audit trail to show what was claimed.
+
+    The deal page no longer posts this block whole: its Underwriting Assumptions panel and
+    its court search section each save their own columns (``save_assumptions``,
+    ``save_court_search``). This is the service's and the CLI's whole-block write.
     """
     deal = load_deal(session, deal_id)
     before, after = apply_overrides(deal, overrides, config)
-    if not after:
-        return deal
-    session.flush()
-    record_audit(
+    _record_block(
         session,
-        actor=actor,
+        deal,
         action=AuditAction.OVERRIDES_SAVED,
-        table_name=DEALS,
-        row_id=deal.id,
+        actor=actor,
         before=before,
         after=after,
     )
@@ -356,29 +464,132 @@ def apply_overrides(
     before: dict[str, Any] = {}
     after: dict[str, Any] = {}
     original = {field: getattr(deal, field) for field in (*OVERRIDE_FIELDS, *SPLIT_COLUMNS)}
-    for field in OVERRIDE_FIELDS:
-        current = getattr(deal, field)
-        submitted = _override_value(overrides, field)
-        if current == submitted:
-            continue
-        before[field] = jsonable(current)
-        after[field] = jsonable(submitted)
-        setattr(deal, field, submitted)
+    _apply_fields(deal, overrides, OVERRIDE_FIELDS, before, after)
     _apply_product(deal, overrides, before, after)
     _apply_split(deal, overrides, before, after)
     _apply_term(deal, overrides, before, after)
-    for field, value in populate(deal, config).items():
-        after[field] = value
-    # A box left blank that the default filled back in has not moved; it leaves the row.
-    for field in list(after):
-        if field in original and getattr(deal, field) == original[field]:
-            del after[field]
-            before.pop(field, None)
+    _settle(deal, original, before, after, config)
+    return before, after
+
+
+def save_assumptions(
+    session: Session,
+    deal_id: UUID,
+    assumptions: UnderwritingAssumptions,
+    *,
+    actor: str,
+    config: Config | None = None,
+) -> Deal:
+    """Save the deal page's Underwriting Assumptions panel.  # SPEC §8.1, §8.4-§8.6
+
+    The panel's sixteen boxes and nothing else: a replacement of those columns, a blank on
+    anything with a default being the default again, one ``ASSUMPTIONS_SAVED`` row naming
+    what moved and no row when nothing did. Allowed from any status, as every block save is.
+    The route runs the analysis afterwards; this does not.
+    """
+    deal = load_deal(session, deal_id)
+    before, after = apply_assumptions(deal, assumptions, config)
+    _record_block(
+        session,
+        deal,
+        action=AuditAction.ASSUMPTIONS_SAVED,
+        actor=actor,
+        before=before,
+        after=after,
+    )
+    return deal
+
+
+def apply_assumptions(
+    deal: Deal, assumptions: UnderwritingAssumptions, config: Config | None = None
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Set the panel on a deal row; return the before and after of what moved. Pure."""
+    before: dict[str, Any] = {}
+    after: dict[str, Any] = {}
+    original = {field: getattr(deal, field) for field in (*ASSUMPTION_FIELDS, *SPLIT_COLUMNS)}
+    _apply_fields(deal, assumptions, ASSUMPTION_FIELDS, before, after)
+    _apply_split(deal, assumptions, before, after)
+    _settle(deal, original, before, after, config)
+    return before, after
+
+
+def reset_assumptions(
+    session: Session, deal_id: UUID, *, actor: str, config: Config | None = None
+) -> Deal:
+    """Reset all to defaults: every panel column with a default back to it.  # SPEC §8.1
+
+    The ten config values, the formula split on a split product, and the two toggles back
+    to Default; the sale price and the rent have no default and are not touched. One
+    ``ASSUMPTIONS_RESET`` row names what moved, with the default each landed on in
+    ``after``; a deal already on its defaults writes no row. The route runs the analysis
+    afterwards.
+    """
+    deal = load_deal(session, deal_id)
+    before, after = apply_reset(deal, config)
+    _record_block(
+        session,
+        deal,
+        action=AuditAction.ASSUMPTIONS_RESET,
+        actor=actor,
+        before=before,
+        after=after,
+    )
+    return deal
+
+
+def apply_reset(deal: Deal, config: Config | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Clear every resettable column and let ``populate`` write the default back. Pure.
+
+    Clearing both halves of the split together is what lets the §8.2 formula stand in on a
+    split product; on a single-note product there is no split to clear.
+    """
+    before: dict[str, Any] = {}
+    after: dict[str, Any] = {}
+    original = {field: getattr(deal, field) for field in RESETTABLE}
+    for field in RESETTABLE:
+        current = getattr(deal, field)
+        if current is None:
+            continue
+        before[field] = jsonable(current)
+        after[field] = None
+        setattr(deal, field, None)
+    _settle(deal, original, before, after, config)
+    return before, after
+
+
+def save_court_search(session: Session, deal_id: UUID, search: CourtSearch, *, actor: str) -> Deal:
+    """Save the deal page's court search section.  # SPEC §7.2
+
+    The outcome, the day it was searched and the typed matters, as one replacement; one
+    ``COURT_SEARCH_SAVED`` row naming what moved, none when nothing did. An adapter record
+    still wins over this at every run (``services/assemble.py``).
+    """
+    deal = load_deal(session, deal_id)
+    before, after = apply_court_search(deal, search)
+    _record_block(
+        session,
+        deal,
+        action=AuditAction.COURT_SEARCH_SAVED,
+        actor=actor,
+        before=before,
+        after=after,
+    )
+    return deal
+
+
+def apply_court_search(deal: Deal, search: CourtSearch) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Set the three court columns on a deal row; return the before and after. Pure."""
+    before: dict[str, Any] = {}
+    after: dict[str, Any] = {}
+    _apply_fields(deal, search, COURT_FIELDS, before, after)
     return before, after
 
 
 def _apply_split(
-    deal: Deal, overrides: TeamOverrides, before: dict[str, Any], after: dict[str, Any]
+    deal: Deal,
+    overrides: TeamOverrides | UnderwritingAssumptions,
+    before: dict[str, Any],
+    after: dict[str, Any],
 ) -> None:
     """Set the loan split, against the product the deal now has.  # SPEC §8.2
 

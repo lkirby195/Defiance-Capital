@@ -176,6 +176,61 @@ def test_0016_adds_paused_drops_the_exit_columns_and_deletes_the_underwrites(
         conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
 
 
+# A deal written against 0016, before the five assumption columns existed (SPEC §8.4-§8.6).
+BEFORE_0017 = text(
+    """
+    INSERT INTO deals (id, channel, status, missing_fields, court_records_team,
+                       credit_authorization_signed, created_at, updated_at, defaulted_fields,
+                       interest_rate)
+    VALUES (:id, 'TEAM', 'NEW', '[]', '[]', false, now(), now(), '["interest_rate"]', 0.12)
+    """
+)
+ASSUMPTION_COLUMNS = (
+    "broker_selling_pct",
+    "rental_expenses_pct_of_rent",
+    "rental_takeout_rate",
+    "take_back_legal_costs_usd",
+    "take_back_lost_interest_months",
+)
+
+
+def test_0017_adds_the_five_assumption_columns_empty_and_rewrites_nothing(
+    alembic_cfg: AlembicConfig, test_engine: Engine
+) -> None:
+    """NULL on every existing deal - the engine reads config there - and the tagging the
+    deal already carried is left exactly as it was, for the next open to extend."""
+    command.upgrade(alembic_cfg, "0016")
+    deal_id = uuid.uuid4()
+    with test_engine.begin() as conn:
+        conn.execute(BEFORE_0017, {"id": deal_id})
+
+    command.upgrade(alembic_cfg, "0017")
+
+    with test_engine.connect() as conn:
+        columns = {column["name"] for column in inspect(conn).get_columns("deals")}
+        assert set(ASSUMPTION_COLUMNS) <= columns
+        row = conn.execute(
+            text(
+                "SELECT broker_selling_pct, rental_expenses_pct_of_rent, rental_takeout_rate, "
+                "take_back_legal_costs_usd, take_back_lost_interest_months, defaulted_fields "
+                "FROM deals WHERE id = :id"
+            ),
+            {"id": deal_id},
+        ).one()
+    assert all(value is None for value in row[:5])
+    assert row.defaulted_fields == ["interest_rate"]
+
+    command.downgrade(alembic_cfg, "0016")
+    with test_engine.connect() as conn:
+        columns = {column["name"] for column in inspect(conn).get_columns("deals")}
+        assert not (set(ASSUMPTION_COLUMNS) & columns)
+        assert conn.execute(text("SELECT count(*) FROM deals")).scalar() == 1
+
+    command.downgrade(alembic_cfg, "base")
+    with test_engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
+
+
 # A web deal written against 0013, when the public form put the borrower's numbers in the
 # team's columns, and a team deal beside it (SPEC §4.2, §6.1).
 BEFORE_0014 = text(

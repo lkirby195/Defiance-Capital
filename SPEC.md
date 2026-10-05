@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.8
+# GLENWOOD Underwriting Platform — SPEC v0.9
 
-Status: **v0.8**, 2026-10-04, engine `1.5.1`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.9**, 2026-10-05, engine `1.6.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.9** is the **Underwriting Assumptions** panel. The collapsed Inputs section is gone; directly under Deal Economics, open by default, sits a two-column panel of every number the ledger and the three analyses run on that the team may set by hand - the §8.1 economics with their config defaults, the loan split, the valuation, the rent, the two toggles and, new, the **five analysis assumptions** that only config carried until now: the broker's selling percentage (§8.4), the rental's expense ratio and takeout rate (§8.5), the take-back's legal costs and lost-interest months (§8.6). Each of the five is a column on `deals` (migration `0017`), populated with the config value and tagged `DEFAULT` like the economics, and the engine reads the deal's number when it carries one and config otherwise (engine `1.6.0`). Every box shows its value, carries the "default" tag while it holds its default, and has a reset of its own; one **Save & Run** saves the panel and runs the analysis as the person; **Reset all to defaults** puts every one back after a confirmation page and runs again. The court search is its own collapsed section with its own Save; the readiness checklist is collapsed below it (§9).
 
 **v0.8** is one button and a leaner deal page. **Run Analysis** runs the screen and the underwrite together, as the person who pressed it, and the two stages are not named anywhere a person reads (§4.6, §9); the automatic runs stay. The deal page keeps the verdict line and loses the Flags, the Reasons and the Suggested Reply, which stay on the stored results, the CLI report and the workbook. Everything the team enters by hand is one collapsed **Inputs** section with Save at the bottom; a collapsed **History** lists every intake version, screen and underwrite with its actor and engine, and each version can be **restored** as a new submission (§9.1). The **closing date is optional on every channel** and defaults to the last day of the month `closing.default_lead_days` (14) after the deal came in, stored and tagged `DEFAULT` (§8.1), so the term is the one input that can keep a deal from being priced. A **sensitivity table** - IRR by loan amount and rate, every cell a full ledger re-run (§8.9, engine `1.5.0`) - sits under the Return Overview and in the workbook.
 
@@ -559,19 +561,35 @@ fraction `0.12`), and a phone `555-123-4567` (the deal carries the digits). Smal
 dependency-free client-side script formats what is typed; the server parses either shape, so
 a browser that runs none of it still posts a deal that saves.
 
+**Analysis assumptions** — the five numbers the three analyses read that a deal may carry its
+own value for (v0.9). Each has the config value as its default and follows the same rule as
+the economics above.
+
+| Input | Default | Notes |
+|---|---|---|
+| `broker_selling_pct` | `fees.broker_selling_pct` (4%) | Of the sale price: the flip's cost of selling (§8.4). Labelled **Broker Selling Costs %** |
+| `rental_expenses_pct_of_rent` | `rental.expenses_pct_of_rent` (35%) | Operating expenses as a share of the monthly rent, in both DSCRs' net monthly income (§8.5). **Rental Expense %** |
+| `rental_takeout_rate` | `rental.takeout_rate` (6.5%) | The rate a takeout lender amortizes the commitment at (§8.5). **Rental Takeout Rate** |
+| `take_back_legal_costs_usd` | `take_back.legal_costs_usd` (5,000) | The legal bill in the take-back's total cost (§8.6). **Take-Back Legal Costs** |
+| `take_back_lost_interest_months` | `take_back.lost_interest_months` (3) | Months of interest GLENWOOD stops collecting, at the deal's own rate (§8.6). **Take-Back Lost Interest Months**, a whole number |
+
+The amortization years and the two DSCR floors stay config alone.
+
 **Every deal is populated with its defaults** (`services/defaults.py`). The five economics
 with a config default — the interest rate, the contingency, the closing costs, the holding
-costs and the origination fee — and, on a split product, the §8.2 formula loan split are
-written onto the deal at intake on every channel, so the number the engine runs on is the
-number the page shows. `deals.defaulted_fields` names the ones that are stand-ins rather than
-a person's choice; the form and the override block pre-fill each with its default, tag it
-"default", and offer a reset link, and the deal page tags the value. **A value equal to the
-default is the default**: a box left holding the number it was pre-filled with has not been
-chosen. A box typed over is the team's; a box left blank gets the default back. A deal stored
-before this existed is populated the first time it is opened, once, with a team value already
-on it never touched; until then the engine and the checklist read a blank as the default it
-would be given. The readiness checklist (§9.2) says `DEFAULT` for each and counts it as
-present.
+costs and the origination fee — the five analysis assumptions above and, on a split product,
+the §8.2 formula loan split are written onto the deal at intake on every channel, so the
+number the engine runs on is the number the page shows. `deals.defaulted_fields` names the
+ones that are stand-ins rather than a person's choice; the Underwriting Assumptions panel
+pre-fills each with its default, tags it "default", and offers a reset link, and the deal
+page tags the value. **A value equal to the default is the default**: a box left holding the
+number it was pre-filled with has not been chosen. A box typed over is the team's; a box left
+blank gets the default back; **Reset all to defaults** puts every one back at once, the two
+toggles included, after a confirmation page - the sale price and the rent have no default and
+stay. A deal stored before this existed is populated the first time it is opened, once, with a
+team value already on it never touched; until then the engine and the checklist read a blank
+as the default it would be given. The readiness checklist (§9.2) says `DEFAULT` for each and
+counts it as present.
 
 **Valuation and rent**
 
@@ -592,9 +610,10 @@ With one value ratio there is nothing left for it to feed.
 | Take-Back | Always. Not a toggle |
 
 A toggle the team sets by hand wins over its default, in either direction. Both are a visible
-three-state control — Default / On / Off — on the deal page's override block, and each
-analysis panel shows the state it ran under. The team form does not show them. Take-Back has
-no toggle anywhere, because it has none at all.
+three-state control — Default / On / Off — on the deal page's Underwriting Assumptions panel,
+tagged "default" while Default is the chosen state and resettable like any other box, and
+each analysis panel shows the state it ran under. The team form does not show them. Take-Back
+has no toggle anywhere, because it has none at all.
 
 Also from intake and enrichment, unchanged: the verified `credit_score` and deal count, and
 `court_records` — the §7.2 court and filing tests are re-run here on the source in force at
@@ -723,7 +742,7 @@ purchase portion makes unreachable in practice.
 On by default for a resale exit (§8.1). It sells at the `estimated_sale_price`, and without one it is `NOT_EVALUATED` — the whole cost stack is still reported, the four figures the sale price feeds are `null`, and `SALE_PRICE_MISSING` (Info, fixed in code, §8.8) says so. The run itself goes ahead: the ledger, the economics and the Take-Back analysis do not read a sale price, and refusing the whole underwrite for a figure three quarters of it does not need was a gate on the wrong thing.
 
 ```
-broker_costs    = estimated_sale_price × broker_selling_pct          # config, 4%
+broker_costs    = estimated_sale_price × broker_selling_pct          # the deal's own, else config 4%
 contingency     = rehab_costs × contingency_pct
 financing_costs = total_interest + both origination halves           # from §8.3
 net_profit      = estimated_sale_price
@@ -747,15 +766,20 @@ No floor and no pass/fail flag. The Flip analysis is information; `SALE_PRICE_MI
 On by default for a hold exit, or when a `monthly_rent` has been entered (§8.1).
 
 ```
-expenses           = monthly_rent × rental.expenses_pct_of_rent      # config, 35%
+expenses           = monthly_rent × rental_expenses_pct_of_rent      # the deal's own, else config 35%
 holding_costs_total = (purchase_price + rehab_costs) × holding_costs_pct_of_cost
 holding_monthly    = holding_costs_total / (term_months + term_stub_days / day_count_basis)
 net_monthly_income = monthly_rent − expenses − holding_monthly
 
 debt_service       = level monthly payment on the commitment
-                     at rental.takeout_rate (6.5%), rental.amortization_years (30)
+                     at rental_takeout_rate (the deal's own, else config 6.5%),
+                     rental.amortization_years (30)
 dscr               = net_monthly_income / debt_service
 ```
+
+The expense ratio and the takeout rate are §8.1 analysis assumptions since v0.9: the deal's
+own number where the team typed one on the Underwriting Assumptions panel, the config value
+otherwise, and the result reports the one it ran on.
 
 Flag `DSCR_BELOW_FLOOR` (severity config, placeholder Soft) when `dscr < rental.dscr_floor` (placeholder 1.20).
 
@@ -767,8 +791,9 @@ Always on. It replaces the liquidation downside entirely: there is no REO haircu
 
 ```
 loan_amount   = commitment
-lost_interest = commitment × interest_rate / 12 × take_back.lost_interest_months   # config, 3
-legal_costs   = take_back.legal_costs_usd                            # config, 5,000
+lost_interest = commitment × interest_rate / 12 × take_back_lost_interest_months
+                                                  # the deal's own, else config 3
+legal_costs   = take_back_legal_costs_usd         # the deal's own, else config 5,000
 total_cost    = loan_amount + lost_interest + legal_costs
 
 debt_service  = level monthly payment on total_cost
@@ -869,11 +894,21 @@ result. The CLI report and the workbook show all of it. The deal page opens on t
 **Run Analysis** button and the verdict line - the verdict, the IRR, when it ran and on which
 engine - with the score components under it, and shows every section but the Flags: the
 flags, the screen's reasons and the suggested reply stay on the stored rows, the CLI and the
-workbook. Its own furniture sits below the sections: **Inputs** (collapsed; everything the
-team enters by hand, the readiness checklist, Save at the bottom), **Actions**, and
-**History** (collapsed; every intake version, screen and underwrite with its timestamp,
-actor and engine version, a Restore on each version, and the audit trail under it). The
-page names no engine stage; the two it runs are an implementation.
+workbook. Directly under Deal Economics, open, sits the **Underwriting Assumptions** panel:
+two columns of editable boxes - Interest Rate, Origination Fee, Contingency, Closing Costs,
+Holding Costs %, Advance at Closing, Rehab Portion (the last two on a split product),
+Estimated Sale Price, Monthly Rent, Broker Selling Costs %, Rental Expense %, Rental Takeout
+Rate, Take-Back Legal Costs, Take-Back Lost Interest Months, Flip Analysis, Rental Analysis -
+each showing what the deal carries, masked as everywhere else, tagged "default" while it
+holds its default and with a reset of its own; one **Save & Run** at the bottom that saves
+the panel and runs the analysis as the person who pressed it, and **Reset all to defaults**
+beside it, which confirms on a page of its own, puts every box with a default back to it and
+runs again. Its other furniture sits below the sections: the **court and filing search**
+(collapsed; the outcome, the date and the typed matters, its own Save), **What the ledger
+runs on** (collapsed; the readiness checklist), **Actions**, and **History** (collapsed;
+every intake version, screen and underwrite with its timestamp, actor and engine version, a
+Restore on each version, and the audit trail under it). The page names no engine stage; the
+two it runs are an implementation.
 
 **The deal page is labels and values only.** No explanatory sub-line, parenthetical or inline
 definition beside a value; where a definition is still useful it sits behind a small (?) on
@@ -893,7 +928,8 @@ again. Nothing is rewound: the version restored and the one it replaced are both
 the History afterwards. Refused where an edit is refused (§4.6).
 
 **A rejected form is a page, not an error.** Every `ValueError` and `ValidationError` raised
-while handling the team-entry form, the deal page's override block, Edit Intake or an
+while handling the team-entry form, the deal page's Underwriting Assumptions panel and court
+search section, Edit Intake or an
 underwrite request re-renders the same form with what was typed still in it, and each complaint
 sits **under the box it is about**; only the ones about more than one box — the term against
 the payoff date against the closing date — go to the top of the page, because there is no
@@ -907,7 +943,7 @@ flag's severity. The stored value is untouched — an `<option>` still posts `BA
 and a flag tag is still styled by its code — only the words change.
 
 ### 9.2 Readiness checklist
-In the Inputs section, one row per §8.1 input with the value in force, where it came from (`ADAPTER` / `TEAM` / `BORROWER` / `DEFAULT` / `MISSING`, shown as words), and whether the run needs it; what the run does with or without it sits behind the (?) on the row's label. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months`, shown as months and, where there is one, the stub days after them), and the loan split on a split product. **A `DEFAULT` counts as present**: the rate, the closing date and the split always have one (§8.1, §8.2), so the one that can turn the ledger off is the term; readiness never blocks on the closing date. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
+In the collapsed **What the ledger runs on** section, one row per §8.1 input - the five analysis assumptions included - with the value in force, where it came from (`ADAPTER` / `TEAM` / `BORROWER` / `DEFAULT` / `MISSING`, shown as words), and whether the run needs it; what the run does with or without it sits behind the (?) on the row's label. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months`, shown as months and, where there is one, the stub days after them), and the loan split on a split product. **A `DEFAULT` counts as present**: the rate, the closing date and the split always have one (§8.1, §8.2), so the one that can turn the ledger off is the term; readiness never blocks on the closing date. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
 
 ### 9.3 Credit memo
 Generated from `UnderwriteResult` into GLENWOOD's template (to be supplied; docx). Sections: borrower, property, deal structure, sizing vs caps, the return overview (ledger and IRR), flip, rental, take-back, flags with pass/fail, recommendation. Every flag shows the threshold it was tested against.
@@ -1063,6 +1099,15 @@ cell is always present and marked; adds Change password for the signed-in user
 (`/account/password`) and `glenwood users reset-password` for an admin, both audited, both
 ending every other session on the account (§11).
 
+Phase 7c (engine `1.6.0`, migration `0017`) is the Underwriting Assumptions panel (§8.1, §9):
+the collapsed Inputs section replaced by an open two-column panel under Deal Economics, one
+Save & Run, one Reset all to defaults behind a confirmation page, the court search in its own
+collapsed section. Five analysis assumptions that only config carried - the broker's selling
+percentage, the rental's expense ratio and takeout rate, the take-back's legal costs and
+lost-interest months - become per-deal columns with the config value as their default
+(§8.4-§8.6), and the engine reads the deal's when present. Three audit codes are new:
+`ASSUMPTIONS_SAVED`, `ASSUMPTIONS_RESET`, `COURT_SEARCH_SAVED`.
+
 ---
 
 ## 13. Open items
@@ -1102,3 +1147,9 @@ ending every other session on the account (§11).
 - The sensitivity grid's placeholders (§8.9): $5,000 steps, four rows above the request,
   12.5% to 17.5% by 1%; the deal's own rate joins the columns, so the default 12% shows as a
   first column beside them until the range is tuned
+- The Underwriting Assumptions panel (v0.9) gave per-deal columns to the five analysis
+  assumptions that had none; the amortization years and the two DSCR floors are still config
+  alone. Confirm nothing else from §8.5/§8.6 should be per-deal. Save & Run and Reset all run
+  as the person who pressed them, like Run Analysis; the court search's Save runs as `system`,
+  like every other edit. Reset all leaves the sale price and the rent alone, since neither has
+  a default to go back to; confirm that is the wanted reading of "all"

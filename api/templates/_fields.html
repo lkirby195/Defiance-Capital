@@ -43,8 +43,11 @@
   {%- else %}<span class="mark">Optional</span>{% endif -%}
 {% endmacro %}
 
-{% macro default_tag(box, default) %}
-  {%- if default %} <span class="dflt" data-default-tag="{{ box }}">default</span>{% endif -%}
+{# The "default" tag beside a box that has one. Rendered whenever there is a default and
+   hidden on the server when the box holds something else, so a browser running no script
+   still sees the right tag; the script in _masks.html flips it as the person types. #}
+{% macro default_tag(box, default, tagged=true) %}
+  {%- if default %} <span class="dflt" data-default-tag="{{ box }}"{% if not tagged %} hidden{% endif %}>default</span>{% endif -%}
 {% endmacro %}
 
 {# The complaint the last post made about this box, under it, in the colour a problem is
@@ -69,14 +72,14 @@
    a definition - rendered as a small (?) carrying a title, nothing visible until hovered. #}
 {% macro help_mark(text) %}{%- if text %} <span class="help" title="{{ text }}">?</span>{% endif -%}{% endmacro %}
 
-{% macro caption(name, text, required, mark="", default="", help="") %}<label for="{{ name }}">{{ text }}{{ help_mark(help) }} {{ badge(required, mark) }}{{ default_tag(name, default) }}</label>{% endmacro %}
+{% macro caption(name, text, required, mark="", default="", help="", tagged=true) %}<label for="{{ name }}">{{ text }}{{ help_mark(help) }} {{ badge(required, mark) }}{{ default_tag(name, default, tagged) }}</label>{% endmacro %}
 
 {% macro text_box(name, text, value, required=false, kind="", mode="", maxlength=0, disabled=false, id="", mark="", readonly=false, mask="", default="", note="", help="") %}
   {#- ``id`` only where one page carries the same name twice: the three reason boxes in the
       action block all post ``reason`` and each needs a label of its own. -#}
   {% set box = id or name %}
   <div>
-    {{ caption(box, text, required, mark, default, help) }}
+    {{ caption(box, text, required, mark, default, help, tagged=(value == default)) }}
     <input id="{{ box }}" name="{{ name }}"
            {%- if kind %} type="{{ kind }}"{% endif %}
            {%- if mode %} inputmode="{{ mode }}"{% endif %}
@@ -109,6 +112,13 @@
 
 {% macro phone_box(name, text, value, required=false) %}
   {{ text_box(name, text, value, required=required, mode="tel", mask="phone") }}
+{% endmacro %}
+
+{% macro months_box(name, text, value, required=false, mark="", default="", note="", help="") %}
+  {#- A whole number of months, typed and shown bare: no mask, and the default tag still
+      follows the box (the take-back's lost-interest months, SPEC §8.6). -#}
+  {{ text_box(name, text, value, required=required, mode="numeric", mark=mark,
+              default=default, note=note, help=help) }}
 {% endmacro %}
 
 {% macro text_area(name, text, required=false, maxlength=0) %}
@@ -196,23 +206,30 @@
 
 {# --- the analysis toggles (SPEC §8.1) ----------------------------------------------------- #}
 
-{% macro toggle_box(name, text, chosen, note="", help="") %}
+{% macro toggle_box(name, text, chosen, note="", help="", default=false) %}
   {#- An on/off toggle with the third state a select hid: Default is on when the sale price,
       or the rent, is on the deal and is what a deal nobody has touched carries; On and Off
       are a person overriding it in either direction. Radios rather than a select because the
       state is the point of the control and a person should see it without opening anything.
-      Take-Back has no toggle at all - it runs on every deal (SPEC §8.6). -#}
+      Take-Back has no toggle at all - it runs on every deal (SPEC §8.6).
+
+      ``default`` true gives the toggle the same furniture a defaulted box has: the tag while
+      Default is the chosen state, and a reset link that chooses it. -#}
+  {% set on_default = chosen != "true" and chosen != "false" %}
   <div>
     {#- The caption points at the first radio, so the group reads as one labelled control. -#}
-    {{ caption(name, text, false, help=help) }}
-    <div class="toggle" role="group" aria-label="{{ text }}">
+    {{ caption(name, text, false, default=("default" if default else ""), help=help, tagged=on_default) }}
+    <div class="toggle" role="group" aria-label="{{ text }}"{% if default %} data-toggle="{{ name }}"{% endif %}>
       <label><input id="{{ name }}" type="radio" name="{{ name }}" value=""
-                    {% if chosen != "true" and chosen != "false" %}checked{% endif %}> Default</label>
+                    {% if on_default %}checked{% endif %}> Default</label>
       <label><input type="radio" name="{{ name }}" value="true"
                     {% if chosen == "true" %}checked{% endif %}> On</label>
       <label><input type="radio" name="{{ name }}" value="false"
                     {% if chosen == "false" %}checked{% endif %}> Off</label>
     </div>
+    {%- if default %}
+      <button class="linky" type="button" data-reset-toggle="{{ name }}">reset to default</button>
+    {%- endif %}
     {{ note_line(note) }}
     {{ field_error(name) }}
   </div>

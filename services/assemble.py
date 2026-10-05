@@ -425,8 +425,9 @@ def underwrite_inputs(
     """Assemble ``UnderwriteInputs`` from the deal plus the team's §8.1 additions.
 
     Every optional value falls back the same way: the request, then what is on the deal, then
-    the engine's own default. The contingency, the closing costs, the holding costs and the
-    origination fee end at None, which is the engine's signal to use the config default
+    the engine's own default. The contingency, the closing costs, the holding costs, the
+    origination fee and the five analysis assumptions (SPEC §8.4-§8.6) end at None, which is
+    the engine's signal to use the config value
     (SPEC §8.1); the monthly rent ends at None too, which leaves the Rental and Take-Back
     analyses NOT_EVALUATED with an INFO flag rather than computed on a zero. The interest
     rate ends at ``interest.default_annual_rate``, the closing date at the month end
@@ -472,6 +473,19 @@ def underwrite_inputs(
         origination_fee_pct=_first(request.origination_fee_pct, deal.origination_fee_pct),
         holding_costs_pct_of_cost=_first(
             request.holding_costs_pct_of_cost, deal.holding_costs_pct_of_cost
+        ),
+        # The §8.4-§8.6 assumptions: the request, then the deal, then None - which the
+        # engine reads as the config value (``engine/calc/terms.py``).
+        broker_selling_pct=_first(request.broker_selling_pct, deal.broker_selling_pct),
+        rental_expenses_pct_of_rent=_first(
+            request.rental_expenses_pct_of_rent, deal.rental_expenses_pct_of_rent
+        ),
+        rental_takeout_rate=_first(request.rental_takeout_rate, deal.rental_takeout_rate),
+        take_back_legal_costs_usd=_first(
+            request.take_back_legal_costs_usd, deal.take_back_legal_costs_usd
+        ),
+        take_back_lost_interest_months=_first(
+            request.take_back_lost_interest_months, deal.take_back_lost_interest_months
         ),
         monthly_rent=rent.monthly_rent,
         monthly_rent_source=rent.monthly_rent_source,

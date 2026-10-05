@@ -79,6 +79,12 @@ def _source(source: ValueSource | None) -> str:
     return "adapter / paid pull"
 
 
+def _assumption_note(own: object | None, what: str) -> str:
+    """The note beside a §8.4-§8.6 assumption: whether the deal carried it or config did."""
+    where = "config" if own is None else "the deal's own"
+    return f"{what}; {where}" if what else where
+
+
 def _title(sheet: Worksheet, text: str) -> None:
     sheet["A1"] = text
     sheet["A1"].font = TITLE
@@ -247,14 +253,41 @@ def _sheet_inputs(
             "blank when no source was checked",
         ),
         ("", None, None, ""),
-        ("CONFIG", None, None, ""),
-        ("Config: broker selling", config.fees.broker_selling_pct, PCT1, "flip only"),
+        # The five §8.4-§8.6 assumptions as the run read them - the deal's own where it
+        # carries one, config otherwise - beside the three that are config alone.
+        ("ASSUMPTIONS", None, None, ""),
+        (
+            "Broker selling",
+            result.flip.broker_selling_pct,
+            PCT1,
+            _assumption_note(underwrite_inputs.broker_selling_pct, "flip only"),
+        ),
+        (
+            "Rental expenses",
+            result.rental.expenses_pct,
+            PCT1,
+            _assumption_note(underwrite_inputs.rental_expenses_pct_of_rent, "of rent"),
+        ),
+        (
+            "Rental takeout rate",
+            result.rental.takeout_rate,
+            PCT1,
+            _assumption_note(underwrite_inputs.rental_takeout_rate, ""),
+        ),
+        (
+            "Lost interest months",
+            result.take_back.lost_interest_months,
+            INTEGER,
+            _assumption_note(underwrite_inputs.take_back_lost_interest_months, ""),
+        ),
+        (
+            "Legal costs",
+            result.take_back.legal_costs,
+            MONEY,
+            _assumption_note(underwrite_inputs.take_back_legal_costs_usd, ""),
+        ),
         ("Config: listing months", config.draws.listing_months, INTEGER, ""),
-        ("Config: rental expenses", config.rental.expenses_pct_of_rent, PCT1, "of rent"),
-        ("Config: rental takeout rate", config.rental.takeout_rate, PCT1, ""),
         ("Config: rental DSCR floor", config.rental.dscr_floor, RATIO, ""),
-        ("Config: lost interest months", config.take_back.lost_interest_months, INTEGER, ""),
-        ("Config: legal costs", config.take_back.legal_costs_usd, MONEY, ""),
         ("Config: take-back DSCR floor", config.take_back.dscr_floor, RATIO, ""),
     ]
     at = _rows(sheet, rows) + 1

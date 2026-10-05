@@ -22,10 +22,14 @@ button that does that in one click on a list is a button somebody will press by 
 Server-rendered, like everything else here - a ``confirm()`` dialog would be script that
 decides something, which the queue does not have (CLAUDE.md).
 
-Three edits run the engine again on their way out - the Inputs block, Edit Intake and a
-restored intake version (``services/autorun.py``, SPEC §4.6) - so the verdict and the ledger
-on the page are never older than the inputs beside them; the redirect's notice says what ran
-and what stood down.
+Four edits run the engine again on their way out, so the verdict and the ledger on the page
+are never older than the inputs beside them, and the redirect's notice says what ran and what
+stood down. The **Underwriting Assumptions** panel's Save & Run and its Reset all to defaults
+run as the person who pressed them (``run_analysis``), the way the Run Analysis button does -
+both buttons say "run" on them. The court search section, Edit Intake and a restored intake
+version run as ``system`` (``auto_run``, SPEC §4.6): they are edits, and the run is what
+follows an edit. Reset all goes through a confirmation page first
+(``reset_assumptions.html``), as Kill does.
 Opening a deal populates its SPEC §8.1 defaults if it was stored before they existed
 (``services/defaults.py``): the one write a GET makes, idempotent, and recorded.
 
@@ -90,9 +94,10 @@ from services import (
     REOPEN_FROM,
     SYSTEM_ACTOR,
     ActionNotAllowed,
+    CourtSearch,
     DealNotFound,
     ReasonRequired,
-    TeamOverrides,
+    UnderwritingAssumptions,
     add_note,
     apply_defaults,
     auto_run,
@@ -109,15 +114,18 @@ from services import (
     pause,
     progress,
     reopen,
+    reset_assumptions,
     restore_intake,
     run_analysis,
-    save_overrides,
+    save_assumptions,
+    save_court_search,
     screen_is_stale,
     screen_result,
     underwrite_readiness,
     underwrite_result,
     update_intake,
 )
+from services.actions import RESETTABLE, TOGGLE_FIELDS
 from services.readiness import deal_term
 
 # Every state-changing request through this router carries a CSRF token, by living here
@@ -159,46 +167,120 @@ def enum_values() -> dict[str, list[str]]:
     }
 
 
-OVERRIDE_NAMES: tuple[str, ...] = (
-    "loan_purpose",
-    "product",
-    "closing_date",
-    "term_months",
+# The Underwriting Assumptions panel's boxes (SPEC §8.1, §8.4-§8.6), in the order the panel
+# shows them, two columns reading across. The split boxes render on a split product only.
+ASSUMPTION_NAMES: tuple[str, ...] = (
     "interest_rate",
+    "origination_fee_pct",
     "contingency_pct",
     "closing_costs_usd",
     "holding_costs_pct_of_cost",
-    "origination_fee_pct",
     "loan_purchase_portion",
     "loan_rehab_portion",
     "estimated_sale_price_team",
     "monthly_rent",
+    "broker_selling_pct",
+    "rental_expenses_pct_of_rent",
+    "rental_takeout_rate",
+    "take_back_legal_costs_usd",
+    "take_back_lost_interest_months",
     "flip_analysis",
     "rental_analysis",
-    "court_records_status",
-    "court_records_as_of",
 )
+# The court search section's own boxes (SPEC §7.2); the matter rows are read separately.
+COURT_NAMES: tuple[str, ...] = ("court_records_status", "court_records_as_of")
+
+# Every box each form renders, so a complaint about one of them lands under it and anything
+# else Pydantic names goes to the top (``api/problems.py``).
+ASSUMPTION_BOX_NAMES: frozenset[str] = frozenset(ASSUMPTION_NAMES)
+COURT_BOX_NAMES: frozenset[str] = frozenset(COURT_NAMES)
+
+# What the reset confirmation page lists, by the caption the panel uses. The split's two
+# captions depend on the product and are filled in by ``reset_rows``.
+RESET_LABELS: tuple[tuple[str, str], ...] = (
+    ("interest_rate", "Interest Rate"),
+    ("origination_fee_pct", "Origination Fee"),
+    ("contingency_pct", "Contingency"),
+    ("closing_costs_usd", "Closing Costs"),
+    ("holding_costs_pct_of_cost", "Holding Costs %"),
+    ("loan_purchase_portion", "Advance at Closing"),
+    ("loan_rehab_portion", "Rehab Portion"),
+    ("broker_selling_pct", "Broker Selling Costs %"),
+    ("rental_expenses_pct_of_rent", "Rental Expense %"),
+    ("rental_takeout_rate", "Rental Takeout Rate"),
+    ("take_back_legal_costs_usd", "Take-Back Legal Costs"),
+    ("take_back_lost_interest_months", "Take-Back Lost Interest Months"),
+    ("flip_analysis", "Flip Analysis"),
+    ("rental_analysis", "Rental Analysis"),
+)
+SPLIT_PRINCIPAL_LABELS: dict[str, str] = {
+    "loan_purchase_portion": "Principal Note",
+    "loan_rehab_portion": "Tranche A",
+}
 
 
-# Every box the override block renders, so a complaint about one of them lands under it and
-# anything else Pydantic names goes to the top (``api/problems.py``).
-OVERRIDE_BOX_NAMES: frozenset[str] = frozenset(OVERRIDE_NAMES)
-
-
-def override_form(deal: Deal) -> dict[str, str]:
-    """The Inputs block as form values, so the page renders what the deal currently says.
+def assumptions_form(deal: Deal) -> dict[str, str]:
+    """The Underwriting Assumptions panel as form values: what the deal currently says.
 
     Masked on the way out (``api/masks.py``): a rate shows as ``12%`` and a price as
-    ``$425,000``. The §8.1 inputs with a default - the rate, the four fees, the closing date,
-    the loan split on a split product - are pre-filled with it where the deal carries none,
-    and the page tags them: a box holding the default and a box holding a number somebody
-    chose look different on purpose.
+    ``$425,000``. Every box with a default - the ten config values, the loan split on a
+    split product - is pre-filled with it where the deal carries none, and the page tags
+    it: a box holding the default and a box holding a number somebody chose look different
+    on purpose.
     """
-    values: dict[str, object | None] = {name: getattr(deal, name) for name in OVERRIDE_NAMES}
+    values: dict[str, object | None] = {name: getattr(deal, name) for name in ASSUMPTION_NAMES}
     for name, default in deal_defaults(deal).items():
-        if values.get(name) is None:
+        if name in values and values[name] is None:
             values[name] = default
     return {name: mask_one(name, value) for name, value in values.items()}
+
+
+def court_form(deal: Deal) -> dict[str, str]:
+    """The court search section's two boxes as form values."""
+    return {name: mask_one(name, getattr(deal, name)) for name in COURT_NAMES}
+
+
+def _toggle_word(value: bool | None) -> str:
+    return "Default" if value is None else ("On" if value else "Off")
+
+
+def reset_rows(deal: Deal) -> list[dict[str, Any]]:
+    """What Reset all to defaults would do, one row per box: the value now and the default.
+
+    The split rows appear only where the deal carries a formula split to go back to - a
+    split product with its loan amount and rehab known - under the names the product gives
+    them (SPEC §8.2). A toggle's default is Default itself.
+    """
+    defaults = default_marks(deal)
+    rows: list[dict[str, Any]] = []
+    for name, label in RESET_LABELS:
+        if name not in RESETTABLE:  # pragma: no cover - the two lists are kept in step
+            continue
+        if deal.product is Product.SPLIT_PRINCIPAL:
+            label = SPLIT_PRINCIPAL_LABELS.get(name, label)
+        if name in TOGGLE_FIELDS:
+            chosen = getattr(deal, name)
+            rows.append(
+                {
+                    "label": label,
+                    "current": _toggle_word(chosen),
+                    "default": "Default",
+                    "changes": chosen is not None,
+                }
+            )
+            continue
+        if name not in defaults:
+            continue
+        value = getattr(deal, name)
+        rows.append(
+            {
+                "label": label,
+                "current": defaults[name] if value is None else mask_one(name, value),
+                "default": defaults[name],
+                "changes": not is_defaulted(deal, name),
+            }
+        )
+    return rows
 
 
 def blank_matter() -> dict[str, str]:
@@ -308,17 +390,20 @@ def render_deal(
     *,
     complaints: FormProblems | None = None,
     form: dict[str, str] | None = None,
+    court: dict[str, str] | None = None,
     matters: list[dict[str, str]] | None = None,
     holding_costs_hint: str | None = None,
+    court_open: bool = False,
     status_code: int = status.HTTP_200_OK,
 ) -> HTMLResponse:
     """The deal page, rebuilt from the database plus whatever the last post left behind.
 
-    ``form`` and ``matters`` are the values a rejected submission was carrying: re-rendering
-    with them means a person fixes one box rather than retyping the block. Left out, the page
-    shows what the deal currently holds. The Inputs section opens on a page that carries a
-    complaint - the box the complaint is under has to be visible - and stays collapsed
-    otherwise.
+    ``form`` (the Underwriting Assumptions panel), ``court`` and ``matters`` (the court
+    search section) are the values a rejected submission was carrying: re-rendering with
+    them means a person fixes one box rather than retyping the block. Left out, the page
+    shows what the deal currently holds. The panel is always open; the court section opens
+    on a page that carries a complaint about it - the box the complaint is under has to be
+    visible - and stays collapsed otherwise.
     """
     deal = load_deal(session, deal_id)
     screen_row = latest_screen(session, deal.id)
@@ -346,8 +431,10 @@ def render_deal(
             # promise a run the assembly then declines.
             "readiness": underwrite_readiness(deal),
             "defaults": default_marks(deal),
-            "form": form if form is not None else override_form(deal),
+            "form": form if form is not None else assumptions_form(deal),
+            "court": court if court is not None else court_form(deal),
             "matters": matters if matters is not None else matter_rows(deal.court_records_team),
+            "court_open": court_open,
             # What the holding-cost percentage in force comes to in dollars (SPEC §8.1),
             # printed under the box that holds the percentage.
             "holding_costs_hint": (
@@ -383,7 +470,6 @@ def render_deal(
             # version (``services/history.py``); then the audit trail under it.
             "history": deal_history(session, deal.id),
             "trail": deal_trail(session, deal.id),
-            "inputs_open": complaints is not None and bool(complaints),
             "problems": complaints if complaints is not None else NO_PROBLEMS,
         },
         user=user,
@@ -657,21 +743,21 @@ def restore_intake_action(
     return redirect(deal_path(deal_id), f"Intake restored. {run.summary()}".strip())
 
 
-# --- team entry ----------------------------------------------------------------------------------
+# --- the Underwriting Assumptions panel (SPEC §8.1, §8.4-§8.6) ------------------------------------
 
 
-@router.post("/queue/deals/{deal_id}/overrides", response_model=None)
-def overrides_action(
+@router.post("/queue/deals/{deal_id}/assumptions", response_model=None)
+def assumptions_action(
     request: Request, deal_id: UUID, session: SessionDep, user: PageUser, form: FormDep
 ) -> HTMLResponse | RedirectResponse:
-    """Save the Inputs block: the economics, the valuation, the rent, the court search.  # SPEC §6.1
+    """Save & Run: the panel's sixteen boxes saved, then the analysis run as the person.
 
     A box left holding its default is stored and tagged as the default; a box left blank on
-    a defaulted input gets the default back (``services/defaults.py``). The analysis then
-    runs again on the deal as saved (``services/autorun.py``).
+    a defaulted input gets the default back (``services/defaults.py``). The save is kept
+    whatever the run then says - what stood down is in the notice - because the person
+    pressed one button for both and the first half is not undone by the second.
     """
-    submitted = fields(form, skip=("matter_",))
-    matters = submitted_matters(form)
+    submitted = fields(form)
     try:
         deal = load_deal(session, deal_id)
     except DealNotFound:
@@ -685,29 +771,125 @@ def overrides_action(
             deal_id,
             user,
             complaints=problems,
-            form={**dict.fromkeys(override_form(deal), ""), **masked(values)},
-            matters=redisplay(matters),
-            holding_costs_hint=submitted_holding_costs_hint(submitted),
+            form={**dict.fromkeys(assumptions_form(deal), ""), **masked(values)},
+            holding_costs_hint=submitted_holding_costs_hint(submitted, deal),
             status_code=code,
         )
 
     try:
-        overrides = TeamOverrides.model_validate({**values, "court_records_team": matters})
+        assumptions = UnderwritingAssumptions.model_validate(values)
     except ValidationError as exc:
         session.rollback()
-        problems = from_validation_error(exc, OVERRIDE_BOX_NAMES)
+        problems = from_validation_error(exc, ASSUMPTION_BOX_NAMES)
         return back(problems, status.HTTP_422_UNPROCESSABLE_CONTENT)
     try:
-        saved = save_overrides(session, deal_id, overrides, actor=user.email)
+        saved = save_assumptions(session, deal_id, assumptions, actor=user.email)
     except ValueError as exc:
-        # The split against the loan amount (SPEC §8.2), and the database's own rules (a
-        # term of no time at all), reach here as a ValueError or an integrity error on the
-        # flush - still a complaint about what was typed rather than a fault of the server's.
+        # The split against the loan amount (SPEC §8.2) reaches here as a ValueError - a
+        # complaint about what was typed rather than a fault of the server's.
         session.rollback()
         return back(at_top(str(exc)), status.HTTP_422_UNPROCESSABLE_CONTENT)
+    run = run_analysis(session, saved, actor=user.email)
+    session.commit()
+    return redirect(deal_path(deal_id), f"Assumptions saved. {run.summary()}".strip())
+
+
+def reset_page(
+    request: Request,
+    session: Session,
+    deal_id: UUID,
+    user: PageUser,
+    *,
+    status_code: int = status.HTTP_200_OK,
+) -> HTMLResponse | RedirectResponse:
+    """The confirmation in front of Reset all to defaults: what will move, and the two ways out."""
+    try:
+        deal = load_deal(session, deal_id)
+    except DealNotFound:
+        return redirect(HOME_PATH, "That deal does not exist.")
+    return page(
+        request,
+        "reset_assumptions.html",
+        {"deal": deal, "rows": reset_rows(deal), "back_url": deal_path(deal_id)},
+        user=user,
+        status_code=status_code,
+    )
+
+
+@router.get(
+    "/queue/deals/{deal_id}/assumptions/reset", response_class=HTMLResponse, response_model=None
+)
+def reset_assumptions_page(
+    request: Request, deal_id: UUID, session: SessionDep, user: PageUser
+) -> HTMLResponse | RedirectResponse:
+    """Ask before resetting: every typed-over assumption on the panel goes with it."""
+    return reset_page(request, session, deal_id, user)
+
+
+@router.post("/queue/deals/{deal_id}/assumptions/reset", response_model=None)
+def reset_assumptions_action(
+    request: Request, deal_id: UUID, session: SessionDep, user: PageUser, form: FormDep
+) -> HTMLResponse | RedirectResponse:
+    """Reset all to defaults, once the confirmation page's own form has said so, and run.
+
+    A post that does not carry the confirmation - a stale link, a form from somewhere else -
+    is answered with the confirmation page rather than a reset.
+    """
+    if fields(form).get("confirm") != "yes":
+        return reset_page(
+            request, session, deal_id, user, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+    try:
+        deal = reset_assumptions(session, deal_id, actor=user.email)
+    except DealNotFound:
+        session.rollback()
+        return redirect(HOME_PATH, "That deal does not exist.")
+    run = run_analysis(session, deal, actor=user.email)
+    session.commit()
+    return redirect(
+        deal_path(deal_id), f"Assumptions reset to the defaults. {run.summary()}".strip()
+    )
+
+
+# --- the court search section (SPEC §7.2) ---------------------------------------------------------
+
+
+@router.post("/queue/deals/{deal_id}/court", response_model=None)
+def court_action(
+    request: Request, deal_id: UUID, session: SessionDep, user: PageUser, form: FormDep
+) -> HTMLResponse | RedirectResponse:
+    """Save the court search: the outcome, the day, the typed matters; then the automatic run."""
+    submitted = fields(form, skip=("matter_",))
+    matters = submitted_matters(form)
+    try:
+        deal = load_deal(session, deal_id)
+    except DealNotFound:
+        return redirect(HOME_PATH, "That deal does not exist.")
+
+    def back(problems: FormProblems, code: int) -> HTMLResponse:
+        return render_deal(
+            request,
+            session,
+            deal_id,
+            user,
+            complaints=problems,
+            court={**dict.fromkeys(court_form(deal), ""), **submitted},
+            matters=redisplay(matters),
+            court_open=True,
+            status_code=code,
+        )
+
+    try:
+        search = CourtSearch.model_validate({**submitted, "court_records_team": matters})
+    except ValidationError as exc:
+        session.rollback()
+        return back(
+            from_validation_error(exc, COURT_BOX_NAMES), status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+    saved = save_court_search(session, deal_id, search, actor=user.email)
     run = auto_run(session, saved)
     session.commit()
-    return redirect(deal_path(deal_id), f"Inputs saved. {run.summary()}".strip())
+    return redirect(deal_path(deal_id), f"Court search saved. {run.summary()}".strip())
 
 
 # --- lifecycle actions (SPEC §4.6) ---------------------------------------------------------------

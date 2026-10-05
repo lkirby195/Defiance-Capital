@@ -27,6 +27,7 @@ from intake.normalize import normalize
 from intake.parsers.team_form import TeamEntryForm, parse_team_form
 from schema.models import AuditAction, Channel, Product
 from services import (
+    ASSUMPTIONS,
     DEALS,
     InputSource,
     TeamOverrides,
@@ -202,10 +203,13 @@ def test_an_existing_deal_is_populated_on_its_next_open_and_only_once(
         "interest_rate",
         "contingency_pct",
         "origination_fee_pct",
+        # the five analysis assumptions, which nothing but the panel types over
+        *ASSUMPTIONS,
         # the fixture's split is the formula's own numbers (see above)
         "loan_purchase_portion",
         "loan_rehab_portion",
     }
+    assert opened.broker_selling_pct == CONFIG.fees.broker_selling_pct
     # the team's own numbers were not migrated, and are not called defaults
     assert opened.closing_costs_usd == D("1500.00")
     assert opened.holding_costs_pct_of_cost == D("0.03")
@@ -215,6 +219,7 @@ def test_an_existing_deal_is_populated_on_its_next_open_and_only_once(
         "interest_rate",
         "contingency_pct",
         "origination_fee_pct",
+        *ASSUMPTIONS,
     }
 
     assert client.get(f"/queue/deals/{deal.id}").status_code == 200

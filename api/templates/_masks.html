@@ -52,5 +52,27 @@
           showTag(box);
         });
       });
+      // The two analysis toggles (SPEC 8.1): the tag follows the Default radio the way it
+      // follows a box's default text, and the reset link chooses that radio.
+      function showToggleTag(group) {
+        var badge = document.querySelector('[data-default-tag="' + group.dataset.toggle + '"]');
+        var chosen = group.querySelector("input[type=radio]:checked");
+        if (badge) badge.hidden = !chosen || chosen.value !== "";
+      }
+      document.querySelectorAll(".toggle[data-toggle]").forEach(function (group) {
+        group.querySelectorAll("input[type=radio]").forEach(function (radio) {
+          radio.addEventListener("change", function () { showToggleTag(group); });
+        });
+        showToggleTag(group);
+      });
+      document.querySelectorAll("[data-reset-toggle]").forEach(function (link) {
+        link.addEventListener("click", function () {
+          var group = document.querySelector('.toggle[data-toggle="' + link.dataset.resetToggle + '"]');
+          var blank = group && group.querySelector('input[type=radio][value=""]');
+          if (!blank) return;
+          blank.checked = true;
+          showToggleTag(group);
+        });
+      });
     })();
   </script>

@@ -72,9 +72,13 @@ def test_the_page_has_one_button_and_names_no_stage(
     ):
         assert gone not in body, gone
     assert "Not analyzed yet." in body
-    # the two collapsed sections are plain <details>, closed until clicked
-    assert '<details class="panel" id="inputs">' in body
+    # the assumptions panel is open; the collapsed sections are plain <details>, closed
+    # until clicked
+    assert '<section class="panel" id="assumptions">' in body
+    assert '<details class="panel" id="court">' in body
+    assert '<details class="panel" id="readiness">' in body
     assert '<details class="panel" id="history">' in body
+    assert 'id="inputs"' not in body
     assert "<script" not in body.split("</header>", 1)[1].split("<!-- masks", 1)[0] or True
 
 
@@ -96,8 +100,8 @@ def test_run_analysis_runs_both_as_the_person_and_reloads_on_the_result(
     assert "Verdict <strong>GO</strong>" in body
     assert "· IRR <strong>" in body
     assert "Scored as" in body and "Leverage against caps" in body
-    assert body.index("Return Overview") < body.index("<h2>Sensitivity")
-    assert body.index("<h2>Sensitivity") < body.index("Flip Analysis")
+    assert body.index("<h2>Return Overview") < body.index("<h2>Sensitivity")
+    assert body.index("<h2>Sensitivity") < body.index("<h2>Flip Analysis")
     assert "Not analyzed yet." not in body
 
 
@@ -150,15 +154,29 @@ def test_run_analysis_on_an_incomplete_deal_names_what_is_missing_and_writes_not
     assert actors(db_session, AuditAction.SCREEN_RUN) == []
 
 
-def test_the_inputs_section_opens_on_a_rejected_save(
+def test_a_rejected_panel_save_re_renders_with_the_complaint_under_the_box(
     client: QueueClient, deal_with_overrides: Deal
 ) -> None:
     response = client.post(
-        f"/queue/deals/{deal_with_overrides.id}/overrides",
-        data={"interest_rate": "lots", "term_months": "6"},
+        f"/queue/deals/{deal_with_overrides.id}/assumptions",
+        data={"interest_rate": "lots"},
     )
     assert response.status_code == 422
-    assert '<details class="panel" id="inputs" open>' in response.text
+    body = response.text
+    assert '<section class="panel" id="assumptions">' in body  # always open
+    assert '<span class="err" id="interest_rate-error">' in body
+    assert ">Save &amp; Run</button>" in body
+
+
+def test_the_court_section_opens_on_a_rejected_save(
+    client: QueueClient, deal_with_overrides: Deal
+) -> None:
+    response = client.post(
+        f"/queue/deals/{deal_with_overrides.id}/court",
+        data={"court_records_status": "FLAGS", "court_records_as_of": "2026-10-01"},
+    )
+    assert response.status_code == 422
+    assert '<details class="panel" id="court" open>' in response.text
     assert ">Save</button>" in response.text
 
 
@@ -166,19 +184,12 @@ def test_the_notice_after_a_save_reads_as_one_analysis(
     client: QueueClient, deal_with_overrides: Deal
 ) -> None:
     response = client.post(
-        f"/queue/deals/{deal_with_overrides.id}/overrides",
-        data={
-            "estimated_sale_price_team": "$210,000",
-            "closing_date": "2027-02-01",
-            "term_months": "6",
-            "interest_rate": "13%",
-            "court_records_status": "CLEAN",
-            "court_records_as_of": "2026-10-01",
-        },
+        f"/queue/deals/{deal_with_overrides.id}/assumptions",
+        data={"estimated_sale_price_team": "$210,000", "interest_rate": "13%"},
         follow_redirects=False,
     )
     assert response.status_code == 303, response.text
-    assert notice(response).startswith("Inputs saved. Analysis recorded: GO at an IRR of ")
+    assert notice(response).startswith("Assumptions saved. Analysis recorded: GO at an IRR of ")
 
 
 # --- Home -----------------------------------------------------------------------------------------

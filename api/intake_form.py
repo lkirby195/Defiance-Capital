@@ -144,7 +144,7 @@ def text_value(value: Any) -> str:
 
 def deal_defaults(
     deal: Deal | None, config: Config | None = None
-) -> dict[str, Decimal | date | None]:
+) -> dict[str, Decimal | int | date | None]:
     """The default for each defaultable §8.1 input, on this deal.  # SPEC §8.1, §8.2
 
     The five config numbers and the closing date on every deal; on a split product whose
@@ -201,14 +201,22 @@ def deal_holding_costs_hint(deal: Deal | None, config: Config | None = None) -> 
     return holding_costs_hint(pct, deal.purchase_price, deal.rehab_costs)
 
 
-def submitted_holding_costs_hint(submitted: Mapping[str, str], config: Config | None = None) -> str:
-    """The same line, for an override block on its way back to a person who got something wrong."""
+def submitted_holding_costs_hint(
+    submitted: Mapping[str, str], deal: Deal | None = None, config: Config | None = None
+) -> str:
+    """The same line, for a panel on its way back to a person who got something wrong.
+
+    The percentage is what was typed; the price and the rehab are the deal's own when there
+    is one (the Underwriting Assumptions panel posts neither), else whatever the form carried.
+    """
     settings = config if config is not None else get_config()
     values = unmasked(submitted)
     try:
         typed = Decimal(values["holding_costs_pct_of_cost"])
     except (ArithmeticError, KeyError, ValueError):
         typed = settings.fees.holding_costs_default_pct_of_cost
+    if deal is not None:
+        return holding_costs_hint(typed, deal.purchase_price, deal.rehab_costs)
     return holding_costs_hint(
         typed, money_value(submitted, "purchase_price"), money_value(submitted, "rehab_costs")
     )

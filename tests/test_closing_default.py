@@ -220,15 +220,17 @@ def test_the_default_counts_from_the_day_the_deal_came_in_not_the_edit(
 def test_the_deal_page_tags_the_default_and_offers_a_reset(
     client: QueueClient, db_session: Session, team_entry: dict[str, Any]
 ) -> None:
+    """The deal page tags the date; the box that edits it is the intake form's (SPEC §8.1),
+    pre-filled with the default, and a blank there puts the default back."""
     deal = store_deal(db_session, without(team_entry, "closing_date"))
     body = client.get(f"/queue/deals/{deal.id}").text
     shown = expected_default(deal).isoformat()
     row = re.search(r"<dt>Closing Date.*?</dt>\s*<dd>([^<]*)(.*?)</dd>", body, re.S)
     assert row is not None and row.group(1).strip() == shown
     assert 'class="dflt">default</span>' in row.group(2)
-    assert re.search(rf'id="closing_date"[^>]*data-default="{shown}"', body)
-    assert re.search(rf'id="closing_date"[^>]*value="{shown}"', body)
-    assert 'data-reset="closing_date"' in body
+    assert 'name="closing_date"' not in body  # not a box on the Underwriting Assumptions panel
+    form = client.get(f"/queue/deals/{deal.id}/intake").text
+    assert re.search(rf'id="closing_date"[^>]*value="{shown}"', form)
 
 
 def test_readiness_never_blocks_on_the_closing_date(

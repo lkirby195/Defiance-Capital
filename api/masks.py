@@ -18,17 +18,19 @@ always taken and what ``schema/intake.json`` documents; the percent convention i
 person types, not a change to what the deal carries.
 
 **Defaults.** Five of the §8.1 economics have a config default (SPEC §8.1) - the rate and
-the four fees - and the form pre-fills each box with it rather than leaving a blank that
-quietly means the same thing. The deal stores what comes back and ``services/defaults.py``
-marks a value equal to the default as the default, so the readiness checklist says DEFAULT
-rather than claiming somebody chose it. A person who wants the default gets it by leaving
-the box alone; a person who wants 2.5% types 2.5 and the deal carries it as theirs. The
-"default" tag on the page is that rule, said out loud.
+the four fees - and so do the five §8.4-§8.6 analysis assumptions the Underwriting
+Assumptions panel edits; the panel pre-fills each box with it rather than leaving a blank
+that quietly means the same thing. The deal stores what comes back and
+``services/defaults.py`` marks a value equal to the default as the default, so the readiness
+checklist says DEFAULT rather than claiming somebody chose it. A person who wants the
+default gets it by leaving the box alone; a person who wants 2.5% types 2.5 and the deal
+carries it as theirs. The "default" tag on the page is that rule, said out loud.
 
-All five are flat config values, so all five pre-fill on a blank new-deal form. Holding costs
-are a percentage of the price plus the rehab (SPEC §8.1), and the dollar figure it comes to is
-shown beside the box rather than typed into it — ``holding_costs_amount`` is that arithmetic,
-and it has an answer only once the price and the rehab are both on the page.
+All ten are flat config values. Holding costs are a percentage of the price plus the rehab
+(SPEC §8.1), and the dollar figure it comes to is shown beside the box rather than typed into
+it — ``holding_costs_amount`` is that arithmetic, and it has an answer only once the price
+and the rehab are both on the page. The take-back's lost-interest months are the one box
+that is a whole number rather than money or a percent: typed and shown bare.
 """
 
 from __future__ import annotations
@@ -46,7 +48,7 @@ from schema.masks import (
     phone_digits,
     phone_display,
 )
-from services.defaults import ECONOMICS, economics_defaults
+from services.defaults import FLAT, flat_defaults
 
 # Every box that holds dollars, on either form.
 MONEY_FIELDS: frozenset[str] = frozenset(
@@ -59,16 +61,28 @@ MONEY_FIELDS: frozenset[str] = frozenset(
         "closing_costs_usd",
         "estimated_sale_price_team",
         "monthly_rent",
+        "take_back_legal_costs_usd",
     }
 )
 # Every box a person types a percent into. The deal carries the fraction.
 PERCENT_FIELDS: frozenset[str] = frozenset(
-    {"interest_rate", "contingency_pct", "holding_costs_pct_of_cost", "origination_fee_pct"}
+    {
+        "interest_rate",
+        "contingency_pct",
+        "holding_costs_pct_of_cost",
+        "origination_fee_pct",
+        "broker_selling_pct",
+        "rental_expenses_pct_of_rent",
+        "rental_takeout_rate",
+    }
 )
 PHONE_FIELDS: frozenset[str] = frozenset({"borrower_phone"})
+# A whole number of months: typed and shown as the bare integer, no mask.
+MONTH_FIELDS: frozenset[str] = frozenset({"term_months", "take_back_lost_interest_months"})
 
-# The five §8.1 economics with a flat config default (``services/defaults.py``).
-DEFAULTED_FIELDS: tuple[str, ...] = ECONOMICS
+# The ten boxes with a flat config default (``services/defaults.py``): the five §8.1
+# economics and the five §8.4-§8.6 analysis assumptions.
+DEFAULTED_FIELDS: tuple[str, ...] = FLAT
 
 ZERO = Decimal(0)
 
@@ -147,14 +161,14 @@ def holding_costs_amount(
     return cost * pct
 
 
-def config_defaults(config: Config) -> dict[str, Decimal | None]:
-    """The five defaulted §8.1 economics, as numbers.  # SPEC §8.1
+def config_defaults(config: Config) -> dict[str, Decimal | int | None]:
+    """The ten boxes with a flat config default, as numbers.  # SPEC §8.1, §8.4-§8.6
 
-    Flat config values: none of them depends on anything else on the deal, so a blank
-    new-deal form pre-fills all five. The loan split's default does depend on the deal
-    (``services.defaults.defaults_for``) and is not here.
+    Flat config values: none of them depends on anything else on the deal, so a page with
+    no deal behind it can still pre-fill them. The loan split's default does depend on the
+    deal (``services.defaults.defaults_for``) and is not here.
     """
-    return dict(economics_defaults(config))
+    return dict(flat_defaults(config))
 
 
 def default_text(defaults: Mapping[str, object]) -> dict[str, str]:

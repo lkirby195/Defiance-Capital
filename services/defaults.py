@@ -1,9 +1,11 @@
 """The SPEC §8.1 inputs a deal is populated with when nobody has entered them.  # SPEC §8.1, §8.2
 
-Seven inputs have a defensible stand-in and every deal gets it at intake: the interest rate
-(``interest.default_annual_rate``), the four fees (``fees.*_default_*``), the closing date
-(``closing.default_lead_days``) and - on the two split products - the loan split, by the
-SPEC §8.2 formula:
+Twelve inputs have a defensible stand-in and every deal gets it at intake: the interest rate
+(``interest.default_annual_rate``), the four fees (``fees.*_default_*``), the five analysis
+assumptions (the broker's selling percentage, the rental's expense ratio and takeout rate,
+the take-back's legal costs and lost-interest months - SPEC §8.4-§8.6, each off its config
+section), the closing date (``closing.default_lead_days``) and - on the two split products -
+the loan split, by the SPEC §8.2 formula:
 
     rehab portion   = min(rehab_adj, loan amount)     rehab_adj = rehab x (1 + contingency)
     advance         = loan amount - rehab portion
@@ -51,7 +53,8 @@ from schema.models import SPLIT_PRODUCTS, AuditAction, Product
 from services.audit import DEALS, jsonable, record_audit
 from services.errors import DealNotFound
 
-# The five flat config defaults, by the ``deals`` column each stands in for.
+# The five flat config defaults of the §8.1 economics, by the ``deals`` column each stands
+# in for.
 ECONOMICS: tuple[str, ...] = (
     "interest_rate",
     "contingency_pct",
@@ -59,22 +62,33 @@ ECONOMICS: tuple[str, ...] = (
     "holding_costs_pct_of_cost",
     "origination_fee_pct",
 )
+# The five flat config defaults of the §8.4-§8.6 analysis assumptions, the same way.
+ASSUMPTIONS: tuple[str, ...] = (
+    "broker_selling_pct",
+    "rental_expenses_pct_of_rent",
+    "rental_takeout_rate",
+    "take_back_legal_costs_usd",
+    "take_back_lost_interest_months",
+)
+# Every flat config default: a column, a number in the yaml, nothing else on the deal read.
+FLAT: tuple[str, ...] = (*ECONOMICS, *ASSUMPTIONS)
 # The two halves of the loan split (SPEC §8.2), defaulted together or not at all.
 SPLIT: tuple[str, str] = ("loan_purchase_portion", "loan_rehab_portion")
 # The closing date (SPEC §8.1): a month end counted from the day the deal came in.
 CLOSING = "closing_date"
 # Everything ``defaulted_fields`` may name.
-DEFAULTABLE: tuple[str, ...] = (*ECONOMICS, *SPLIT, CLOSING)
+DEFAULTABLE: tuple[str, ...] = (*FLAT, *SPLIT, CLOSING)
 
-# What a default is: a number for the economics and the split, a date for the closing.
-DefaultValue = Decimal | date
+# What a default is: a number for the economics, the assumptions and the split (the
+# lost-interest months are a whole number), a date for the closing.
+DefaultValue = Decimal | int | date
 
 CENTS = Decimal("0.01")
 ZERO = Decimal(0)
 
 
 def economics_defaults(config: Config) -> dict[str, Decimal]:
-    """The five config defaults, keyed by the column each stands in for.  # SPEC §8.1"""
+    """The five §8.1 config defaults, keyed by the column each stands in for.  # SPEC §8.1"""
     fees = config.fees
     return {
         "interest_rate": config.interest.default_annual_rate,
@@ -83,6 +97,22 @@ def economics_defaults(config: Config) -> dict[str, Decimal]:
         "holding_costs_pct_of_cost": fees.holding_costs_default_pct_of_cost,
         "origination_fee_pct": fees.origination_default_pct,
     }
+
+
+def assumption_defaults(config: Config) -> dict[str, Decimal | int]:
+    """The five analysis assumptions' config values, by column.  # SPEC §8.4, §8.5, §8.6"""
+    return {
+        "broker_selling_pct": config.fees.broker_selling_pct,
+        "rental_expenses_pct_of_rent": config.rental.expenses_pct_of_rent,
+        "rental_takeout_rate": config.rental.takeout_rate,
+        "take_back_legal_costs_usd": config.take_back.legal_costs_usd,
+        "take_back_lost_interest_months": config.take_back.lost_interest_months,
+    }
+
+
+def flat_defaults(config: Config) -> dict[str, Decimal | int]:
+    """Every flat config default - the economics and the assumptions - by column."""
+    return {**economics_defaults(config), **assumption_defaults(config)}
 
 
 def default_closing_date(submitted_on: date, config: Config) -> date:
@@ -135,11 +165,12 @@ def defaults_for(deal: Deal, config: Config) -> dict[str, DefaultValue]:
     """Every defaultable column and the stand-in it would get on this deal.
 
     The split is only here on a split product with its loan amount and rehab known; the
-    five economics and the closing date are always here. Read by the page to pre-fill and
-    tag the boxes, by the readiness checklist to say DEFAULT, by the assembly to price a row
-    nobody has populated yet, and by ``populate`` to decide what to write.
+    five economics, the five assumptions and the closing date are always here. Read by the
+    page to pre-fill and tag the boxes, by the readiness checklist to say DEFAULT, by the
+    assembly to price a row nobody has populated yet, and by ``populate`` to decide what to
+    write.
     """
-    out: dict[str, DefaultValue] = dict(economics_defaults(config))
+    out: dict[str, DefaultValue] = dict(flat_defaults(config))
     split = deal_loan_split_default(deal, config)
     if split is not None:
         out[SPLIT[0]], out[SPLIT[1]] = split
@@ -162,7 +193,7 @@ def populate(deal: Deal, config: Config | None = None) -> dict[str, Any]:
     settings = config if config is not None else get_config()
     wanted = defaults_for(deal, settings)
     written: dict[str, Any] = {}
-    for column in (*ECONOMICS, CLOSING):
+    for column in (*FLAT, CLOSING):
         if getattr(deal, column) is None:
             setattr(deal, column, wanted[column])
             written[column] = jsonable(wanted[column])

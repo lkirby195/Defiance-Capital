@@ -146,7 +146,8 @@ def test_the_analysis_toggles_are_on_the_deal_page_and_not_on_the_form(
         assert f'name="{name}" value="true"' in body
         assert f'name="{name}" value="false"' in body
         assert f'name="{name}" value=""' in body
-    assert 'name="take_back' not in body
+    # the take-back has assumptions of its own on the panel (SPEC §8.6) and no toggle
+    assert 'name="take_back_analysis"' not in body
 
 
 # --- the form is exactly the listed boxes, and nothing else (SPEC §8.1) ---------------------------

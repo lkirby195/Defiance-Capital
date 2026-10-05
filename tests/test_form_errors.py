@@ -22,6 +22,7 @@ the payoff date is derived and there is no box for a message about it to sit und
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -32,10 +33,14 @@ from tests.conftest import QueueClient, form_body, requires_db, store_deal
 
 pytestmark = requires_db
 
+D = Decimal
+
 # Every state-changing POST the queue serves, and a body that satisfies each one's own form.
 QUEUE_POSTS: tuple[tuple[str, dict[str, str]], ...] = (
     ("run", {}),
-    ("overrides", {}),
+    ("assumptions", {}),
+    ("assumptions/reset", {"confirm": "yes"}),
+    ("court", {}),
     ("intake", {}),
     ("advance", {}),
     ("decline", {"reason": "not for us"}),
@@ -71,37 +76,38 @@ def top_problems(body: str) -> list[str]:
 # --- the term: months in, a month-end payoff date out (SPEC §8.1) --------------------------------
 
 
-def test_a_payoff_date_posted_to_the_override_block_is_refused_at_the_top(
+def test_a_payoff_date_posted_to_the_assumptions_panel_is_refused_at_the_top(
     client: QueueClient, db_session: Session, stored_deal: Deal
 ) -> None:
-    """No box takes a payoff date now; one that arrives anyway is named, above the block."""
+    """No box takes a payoff date, or a term, on the panel; one that arrives anyway is
+    named above it, and nothing is saved."""
     response = client.post(
-        f"/queue/deals/{stored_deal.id}/overrides",
-        data={
-            "closing_date": "2027-01-01",
-            "term_months": "6",
-            "payoff_date": "2027-10-01",
-            "interest_rate": "12%",
-        },
+        f"/queue/deals/{stored_deal.id}/assumptions",
+        data={"payoff_date": "2027-10-01", "term_months": "6", "interest_rate": "13%"},
         follow_redirects=False,
     )
 
     assert response.status_code == 422
     body = response.text
     assert any("payoff_date" in line for line in top_problems(body))
-    # ...and what was typed is still in the boxes.
-    assert 'id="term_months"' in body and 'value="6"' in body
+    assert any("term_months" in line for line in top_problems(body))
+    # ...and what was typed is still in the box.
+    assert re.search(r'id="interest_rate"[^>]*value="13%"', body)
     db_session.expire_all()
-    assert db_session.get(Deal, stored_deal.id).term_months == 9  # type: ignore[union-attr]
+    deal = db_session.get(Deal, stored_deal.id)
+    assert deal is not None and deal.term_months == 9 and deal.interest_rate != D("0.13")
 
 
 def test_a_term_in_months_derives_a_month_end_payoff_date(
-    client: QueueClient, db_session: Session, stored_deal: Deal
+    client: QueueClient, db_session: Session, stored_deal: Deal, team_entry: dict[str, Any]
 ) -> None:
-    """Closing 15 March, nine months: the payoff is 31 December, the ninth month end on."""
+    """Closing 15 March, nine months: the payoff is 31 December, the ninth month end on.
+
+    The term and the closing date are the intake form's boxes (SPEC §8.1).
+    """
     response = client.post(
-        f"/queue/deals/{stored_deal.id}/overrides",
-        data={"closing_date": "2027-03-15", "term_months": "9", "interest_rate": "12%"},
+        f"/queue/deals/{stored_deal.id}/intake",
+        data=form_body(team_entry, closing_date="2027-03-15", term_months="9"),
         follow_redirects=False,
     )
     assert response.status_code == 303, response.text
@@ -114,16 +120,37 @@ def test_a_term_in_months_derives_a_month_end_payoff_date(
 
 
 def test_a_term_of_no_months_is_answered_under_the_term_box(
-    client: QueueClient, stored_deal: Deal
+    client: QueueClient, stored_deal: Deal, team_entry: dict[str, Any]
 ) -> None:
     response = client.post(
-        f"/queue/deals/{stored_deal.id}/overrides",
-        data={"closing_date": "2027-03-15", "term_months": "0"},
+        f"/queue/deals/{stored_deal.id}/intake",
+        data=form_body(team_entry, closing_date="2027-03-15", term_months="0"),
         follow_redirects=False,
     )
     assert response.status_code == 422
     assert field_error(response.text, "term_months") is not None
     assert flagged(response.text, "term_months")
+
+
+def test_a_wrong_assumption_is_answered_under_its_own_box(
+    client: QueueClient, db_session: Session, stored_deal: Deal
+) -> None:
+    """One box on the panel is wrong, so one box carries the message and nothing is saved."""
+    response = client.post(
+        f"/queue/deals/{stored_deal.id}/assumptions",
+        data={"rental_takeout_rate": "lots", "take_back_lost_interest_months": "99"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 422
+    body = response.text
+    assert field_error(body, "rental_takeout_rate") is not None
+    assert flagged(body, "rental_takeout_rate")
+    assert field_error(body, "take_back_lost_interest_months") is not None
+    assert top_problems(body) == []
+    # the panel is re-rendered with what was typed still in its boxes
+    assert re.search(r'id="rental_takeout_rate"[^>]*value="lots"', body)
+    db_session.expire_all()
+    assert db_session.get(Deal, stored_deal.id).rental_takeout_rate == D("0.065")  # type: ignore[union-attr]
 
 
 # --- and one other: a box whose own value is wrong -----------------------------------------------
@@ -179,11 +206,11 @@ def test_several_wrong_boxes_are_all_answered_at_once(
 def test_a_court_matter_names_the_row_it_is_in(client: QueueClient, stored_deal: Deal) -> None:
     """A repeated row has no box of its own to sit under, so it says which row it is.
 
-    The court-matter table is on the deal page's override block; the team form has no box
-    for it (SPEC §8.1).
+    The court-matter table is the deal page's court search section; the team form has no
+    box for it (SPEC §8.1).
     """
     response = client.post(
-        f"/queue/deals/{stored_deal.id}/overrides",
+        f"/queue/deals/{stored_deal.id}/court",
         data={
             "court_records_status": "FLAGS",
             "court_records_as_of": "2026-09-16",
@@ -194,6 +221,8 @@ def test_a_court_matter_names_the_row_it_is_in(client: QueueClient, stored_deal:
 
     assert response.status_code == 422
     assert any("Matters found, row 1" in line for line in top_problems(response.text))
+    # ...and the section the complaint is about is the one that opens
+    assert '<details class="panel" id="court" open>' in response.text
 
 
 # --- Edit Intake answers the same way ------------------------------------------------------------

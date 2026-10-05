@@ -110,6 +110,8 @@
     fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 12px; padding: 10px 12px; }
     legend { color: var(--muted); font-size: 13px; padding: 0 4px; }
     .grid3 { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+    /* The Underwriting Assumptions panel (deal.html): two columns of boxes, one on a phone. */
+    .grid2 { display: grid; gap: 10px 20px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
     label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
     /* Every box says which it is (api/templates/_fields.html), in the label's own type:
        plain text, no weight and no colour of its own. */
@@ -167,5 +169,6 @@
       main { padding: 12px; }
       dl.facts { grid-template-columns: 1fr; gap: 0 0; }
       dl.facts dt { margin-top: 8px; }
+      .grid2 { grid-template-columns: 1fr; }
     }
   </style>

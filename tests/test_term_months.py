@@ -235,12 +235,13 @@ def test_the_deal_page_shows_the_term_and_the_derived_payoff_date(
     deal = stored(client, db_session, payload(closing_date="2026-10-15", term_months=9))
     body = client.get(f"/queue/deals/{deal.id}").text
     assert "<dt>Term" in body
-    assert 'name="term_months"' in body  # the override block carries a box
+    assert "9 month(s)" in body
     payoff = re.search(r"<dt>Payoff Date.*?</dt>\s*<dd>([^<]*)</dd>", body, re.S)
     assert payoff is not None and payoff.group(1).strip() == "2027-07-31"
-    # ...and the override block shows it beside the term, read-only and not posted
-    box = body[body.index('id="payoff_date"') :][:300]
-    assert "readonly" in box and "disabled" in box and 'value="2027-07-31"' in box
+    # the term is the intake form's box, not the deal page's (SPEC §8.1)
+    assert 'name="term_months"' not in body
+    form = client.get(f"/queue/deals/{deal.id}/intake").text
+    assert re.search(r'id="term_months"[^>]*value="9"', form)
 
 
 def test_the_page_says_the_button_is_off_on_a_deal_with_no_term(
