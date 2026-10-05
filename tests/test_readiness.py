@@ -1,6 +1,6 @@
-"""The Underwrite inputs checklist, and the button it governs.  # SPEC §8.1
+"""The ledger's inputs checklist, and the banner it governs.  # SPEC §8.1
 
-The Run underwrite button takes no form, so a person pressing it is betting on what the deal
+The Run Analysis button takes no form, so a person pressing it is betting on what the deal
 already holds. The checklist is that bet made visible: one row per SPEC §8.1 input, the value
 in force, and where it came from.
 
@@ -190,11 +190,10 @@ def test_a_complete_deal_is_ready(deal_with_overrides: Deal) -> None:
 @pytest.mark.parametrize(
     "clear,expected",
     [
-        (["closing_date"], "Closing date"),
         (["term_months"], "Term"),
     ],
 )
-def test_a_required_input_that_is_absent_turns_the_button_off(
+def test_a_required_input_that_is_absent_turns_the_ledger_off(
     db_session: Session, deal_with_overrides: Deal, clear: list[str], expected: str
 ) -> None:
     for column in clear:
@@ -306,7 +305,6 @@ def test_a_rate_nobody_entered_is_the_config_default_and_the_button_stays_on(
 @pytest.mark.parametrize(
     "clear",
     [
-        ["closing_date"],
         ["term_months"],
         ["purchase_price"],
     ],
@@ -343,7 +341,7 @@ def page(client: TestClient, deal: Deal) -> str:
 
 def test_the_deal_page_shows_the_checklist(client: TestClient, deal_with_overrides: Deal) -> None:
     body = page(client, deal_with_overrides)
-    assert "Underwrite inputs" in body
+    assert "What the ledger runs on" in body
     for label in (
         "Estimated sale price",
         "Monthly rent",
@@ -391,20 +389,21 @@ def test_the_holding_cost_note_falls_back_to_the_default_it_is_showing(
 
 def test_the_button_is_live_on_a_ready_deal(client: TestClient, deal_with_overrides: Deal) -> None:
     body = page(client, deal_with_overrides)
-    assert ">Run underwrite</button>" in body
-    assert "disabled>Run underwrite" not in body
-    assert "Run underwrite is off until these are entered" not in body
+    assert ">Run Analysis</button>" in body
+    assert "disabled>Run Analysis" not in body
+    assert "The ledger is off until these are entered" not in body
 
 
-def test_the_button_is_off_and_the_page_says_why(
+def test_the_page_says_why_the_ledger_is_off(
     client: TestClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    deal_with_overrides.closing_date = None
+    """The button stays live - the verdict still runs - and the banner names the gap."""
+    deal_with_overrides.term_months = None
     db_session.commit()
     body = page(client, deal_with_overrides)
-    assert "disabled>Run underwrite</button>" in body
-    assert "Run underwrite is off until these are entered" in body
-    assert "Closing date" in body
+    assert ">Run Analysis</button>" in body and "disabled>Run Analysis" not in body
+    assert "The ledger is off until these are entered" in body
+    assert "Term" in body
 
 
 # --- the borrower's own estimates (SPEC §4.2, §6.1) ---------------------------------------------

@@ -3,6 +3,18 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**1.5.0 (Phase 7a, 2026-10-04) adds the sensitivity table.** ``UnderwriteResult`` gains
+``sensitivity`` (``SensitivityTable``, SPEC §8.9): IRR by loan amount and rate, every cell a
+full re-sizing and re-ledgering of the deal in the same caps cell
+(``engine/calc/sensitivity.py``). Rows are the request and ``sensitivity.loan_steps`` rows
+above it, each ``sensitivity.loan_step_usd`` less, the request on the bottom row; columns run
+``sensitivity.rate_min`` to ``rate_max`` in ``rate_step`` steps (placeholders: $5,000 x 4,
+12.5% to 17.5% by 1%). A reduction comes off the advance at closing and leaves the rehab
+portion alone until the advance is gone. The deal's own cell is marked when its rate falls
+on a column. Nothing else moves: every fixture's ledger, totals and IRR stand, and the base
+row at the deal's own rate reproduces the deal's IRR exactly. The field defaults to None so a
+stored 1.4.0 row still loads; no migration.
+
 **1.4.0 (Phase 7, 2026-10-02) anchors the ledger to month ends and drops the exit
 inference.** Closing is treated as the last day of its month: month 0 of the ledger is dated
 that month end, month ``m`` the last day of the month ``m`` later, and the payoff date is the
@@ -94,4 +106,4 @@ REHAB_PORTION_EXCEEDS_BUDGET.
 
 from __future__ import annotations
 
-ENGINE_VERSION = "1.4.0"
+ENGINE_VERSION = "1.5.0"

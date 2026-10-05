@@ -2,7 +2,12 @@
 
 Server-rendered HTML, form posts, POST-redirect-GET. No frontend framework and no client-side
 state: the page a person is looking at is a render of the database, and the only script in
-the whole queue is the copy button on the suggested reply.
+the whole queue is the input masks.
+
+The deal page has one button for the engine: **Run Analysis** runs the screen and then the
+underwrite (``services/autorun.run_analysis``) as the person who pressed it, and the page
+reloads on the verdict and the ledger. The two stages are not named anywhere a person reads;
+the JSON routes (``api/routes/deals.py``), the CLI and the services keep them.
 
 Every action calls a service and commits once. The services do the deciding - which statuses
 an action runs from, what the audit row says, where a re-opened deal lands - and this module
@@ -17,9 +22,10 @@ button that does that in one click on a list is a button somebody will press by 
 Server-rendered, like everything else here - a ``confirm()`` dialog would be script that
 decides something, which the queue does not have (CLAUDE.md).
 
-Two edits run the engine again on their way out - the override block and Edit Intake
-(``services/autorun.py``, SPEC §4.6) - so the verdict and the ledger on the page are never
-older than the inputs beside them; the redirect's notice says what ran and what stood down.
+Three edits run the engine again on their way out - the Inputs block, Edit Intake and a
+restored intake version (``services/autorun.py``, SPEC §4.6) - so the verdict and the ledger
+on the page are never older than the inputs beside them; the redirect's notice says what ran
+and what stood down.
 Opening a deal populates its SPEC §8.1 defaults if it was stored before they existed
 (``services/defaults.py``): the one write a GET makes, idempotent, and recorded.
 
@@ -85,15 +91,12 @@ from services import (
     SYSTEM_ACTOR,
     ActionNotAllowed,
     DealNotFound,
-    DealNotPriceable,
-    DealNotReady,
-    DealNotUnderwritable,
     ReasonRequired,
     TeamOverrides,
-    UnderwriteRequest,
     add_note,
     apply_defaults,
     auto_run,
+    deal_history,
     deal_trail,
     decline,
     home_view,
@@ -106,8 +109,8 @@ from services import (
     pause,
     progress,
     reopen,
-    run_screen,
-    run_underwrite,
+    restore_intake,
+    run_analysis,
     save_overrides,
     screen_is_stale,
     screen_result,
@@ -183,13 +186,13 @@ OVERRIDE_BOX_NAMES: frozenset[str] = frozenset(OVERRIDE_NAMES)
 
 
 def override_form(deal: Deal) -> dict[str, str]:
-    """The override block as form values, so the page renders what the deal currently says.
+    """The Inputs block as form values, so the page renders what the deal currently says.
 
     Masked on the way out (``api/masks.py``): a rate shows as ``12%`` and a price as
-    ``$425,000``, which is what the box takes back. The §8.1 economics with a default - the
-    rate, the four fees, the loan split on a split product - are pre-filled with it where the
-    deal carries none, and the page tags them - a box holding the default and a box holding a
-    number somebody chose look different on purpose.
+    ``$425,000``. The §8.1 inputs with a default - the rate, the four fees, the closing date,
+    the loan split on a split product - are pre-filled with it where the deal carries none,
+    and the page tags them: a box holding the default and a box holding a number somebody
+    chose look different on purpose.
     """
     values: dict[str, object | None] = {name: getattr(deal, name) for name in OVERRIDE_NAMES}
     for name, default in deal_defaults(deal).items():
@@ -313,7 +316,9 @@ def render_deal(
 
     ``form`` and ``matters`` are the values a rejected submission was carrying: re-rendering
     with them means a person fixes one box rather than retyping the block. Left out, the page
-    shows what the deal currently holds.
+    shows what the deal currently holds. The Inputs section opens on a page that carries a
+    complaint - the box the complaint is under has to be visible - and stays collapsed
+    otherwise.
     """
     deal = load_deal(session, deal_id)
     screen_row = latest_screen(session, deal.id)
@@ -336,9 +341,9 @@ def render_deal(
             # An edit re-runs the screen (``services/autorun.py``); this is only ever true
             # when that run could not go ahead, and the page says so.
             "screen_is_stale": screen_is_stale(session, deal.id),
-            # What Run underwrite would run on, and why it is off when it is off
-            # (SPEC §8.1). The refusal behind the button reads the same rules, so the page
-            # cannot promise a run the assembly then declines.
+            # What the ledger would run on, and why it is off when it is off (SPEC §8.1).
+            # The refusal behind the button reads the same rules, so the page cannot
+            # promise a run the assembly then declines.
             "readiness": underwrite_readiness(deal),
             "defaults": default_marks(deal),
             "form": form if form is not None else override_form(deal),
@@ -374,7 +379,11 @@ def render_deal(
                     "result": underwrite_result(underwrite_row),
                 }
             ),
+            # Every intake version, screen and underwrite, newest first, Restore on each
+            # version (``services/history.py``); then the audit trail under it.
+            "history": deal_history(session, deal.id),
             "trail": deal_trail(session, deal.id),
+            "inputs_open": complaints is not None and bool(complaints),
             "problems": complaints if complaints is not None else NO_PROBLEMS,
         },
         user=user,
@@ -451,7 +460,7 @@ def new_deal_page(request: Request, user: PageUser) -> HTMLResponse:
 def deal_page(
     request: Request, deal_id: UUID, session: SessionDep, user: PageUser
 ) -> HTMLResponse | RedirectResponse:
-    """One deal: intake, overrides, the runs, the flags, and what was done to it.
+    """One deal: the verdict and the ledger, the §9 sections, the inputs, the history.
 
     A deal stored before the SPEC §8.1 defaults existed is populated with them here, on its
     next open, and the write committed before the page renders what it wrote. Idempotent:
@@ -465,86 +474,49 @@ def deal_page(
         return redirect(HOME_PATH, "That deal does not exist.")
 
 
-# --- runs ----------------------------------------------------------------------------------------
+# --- the analysis (SPEC §4.6, §7, §8) -------------------------------------------------------------
 
 
-@router.post("/queue/deals/{deal_id}/screen", response_model=None)
-def screen_action(
+@router.post("/queue/deals/{deal_id}/run", response_model=None)
+def run_action(
     request: Request, deal_id: UUID, session: SessionDep, user: PageUser
 ) -> HTMLResponse | RedirectResponse:
-    """Run the screen (SPEC §7) and record it against the person who asked for it."""
-    try:
-        result = run_screen(session, deal_id, actor=user.email)
-    except DealNotFound:
-        return redirect(HOME_PATH, "That deal does not exist.")
-    except (DealNotReady, DealNotPriceable) as exc:
-        session.rollback()
-        return render_deal(
-            request,
-            session,
-            deal_id,
-            user,
-            complaints=at_top(str(exc)),
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-        )
-    session.commit()
-    return redirect(deal_path(deal_id), f"Screen recorded: {result.verdict.value}.")
+    """Run Analysis: the screen, then the underwrite, recorded against the person who asked.
 
-
-@router.post("/queue/deals/{deal_id}/underwrite", response_model=None)
-def underwrite_action(
-    request: Request, deal_id: UUID, session: SessionDep, user: PageUser
-) -> HTMLResponse | RedirectResponse:
-    """Run the underwrite (SPEC §8) on what the deal already carries.
-
-    No form: every SPEC §8.1 input the team supplies lives on the deal by now (the override
-    block above), so the button runs the deal as it stands. A deal missing one is named
-    rather than priced on a guess.
+    No form: every SPEC §8.1 input lives on the deal by now (the Inputs block), so the button
+    runs the deal as it stands, a paused deal included. What ran is kept whatever happened
+    next; what stood down is said on the page - as a complaint when the deal is short of
+    something or the engine will not price it, as a conflict when its status refused the
+    ledger - rather than in a notice that reads as success.
     """
     try:
-        result = run_underwrite(session, deal_id, UnderwriteRequest(), actor=user.email)
+        deal = load_deal(session, deal_id)
     except DealNotFound:
         return redirect(HOME_PATH, "That deal does not exist.")
-    except DealNotUnderwritable as exc:
-        # A refusal can arrive with a real screen behind it: an unscreened deal is screened
-        # first (SPEC §8), and that screen ran. Keep it, exactly as the JSON route does.
-        session.commit()
-        return render_deal(
-            request,
-            session,
-            deal_id,
-            user,
-            complaints=at_top(str(exc)),
-            status_code=status.HTTP_409_CONFLICT,
-        )
-    except DealNotPriceable as exc:
-        # Every value the run needs is on the deal and the engine will not run on them
-        # (SPEC §8.2). The page says which, beside the deal it is about.
+    run = run_analysis(session, deal, actor=user.email)
+    if not run.ran:
         session.rollback()
         return render_deal(
             request,
             session,
             deal_id,
             user,
-            complaints=at_top(*exc.reasons),
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-        )
-    except DealNotReady as exc:
-        session.rollback()
-        return render_deal(
-            request,
-            session,
-            deal_id,
-            user,
-            complaints=at_top(str(exc)),
+            complaints=at_top(*run.skipped),
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
     session.commit()
-    irr = result.return_overview.irr
-    recorded = "Underwrite recorded" + (
-        "; the ledger has no IRR." if irr is None else f" at an IRR of {irr:.4%}."
-    )
-    return redirect(deal_path(deal_id), recorded)
+    if run.skipped:
+        return render_deal(
+            request,
+            session,
+            deal_id,
+            user,
+            complaints=at_top(*run.skipped),
+            status_code=(
+                status.HTTP_409_CONFLICT if run.refused else status.HTTP_422_UNPROCESSABLE_CONTENT
+            ),
+        )
+    return redirect(deal_path(deal_id), run.summary())
 
 
 # --- the intake, edited (SPEC §4.1) ---------------------------------------------------------------
@@ -643,6 +615,48 @@ def edit_intake_action(
     return redirect(deal_path(deal_id), f"Intake updated. {run.summary()}".strip())
 
 
+@router.post("/queue/deals/{deal_id}/intake/{submission_id}/restore", response_model=None)
+def restore_intake_action(
+    request: Request, deal_id: UUID, submission_id: UUID, session: SessionDep, user: PageUser
+) -> HTMLResponse | RedirectResponse:
+    """Restore an earlier intake version: a new submission row, an audit row, a re-run.
+
+    Append-only (SPEC §5): the version restored is still in the History afterwards, and so
+    is the one it replaced. The screen and the underwrite run again on what was restored
+    (``services/autorun.py``), and the notice says what ran.
+    """
+    try:
+        deal = restore_intake(session, deal_id, submission_id, actor=user.email)
+    except DealNotFound:
+        session.rollback()
+        return redirect(HOME_PATH, "That deal does not exist.")
+    except ActionNotAllowed as exc:
+        session.rollback()
+        return render_deal(
+            request,
+            session,
+            deal_id,
+            user,
+            complaints=at_top(str(exc)),
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    except ValueError as exc:
+        # A version that is not this deal's, or whose payload no parser reads back; the
+        # pydantic refusal of a stale payload is a ValueError too.
+        session.rollback()
+        return render_deal(
+            request,
+            session,
+            deal_id,
+            user,
+            complaints=at_top(str(exc)),
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    run = auto_run(session, deal)
+    session.commit()
+    return redirect(deal_path(deal_id), f"Intake restored. {run.summary()}".strip())
+
+
 # --- team entry ----------------------------------------------------------------------------------
 
 
@@ -650,11 +664,11 @@ def edit_intake_action(
 def overrides_action(
     request: Request, deal_id: UUID, session: SessionDep, user: PageUser, form: FormDep
 ) -> HTMLResponse | RedirectResponse:
-    """Save the team's own valuation, opex, structure and court search.  # SPEC §6.1
+    """Save the Inputs block: the economics, the valuation, the rent, the court search.  # SPEC §6.1
 
     A box left holding its default is stored and tagged as the default; a box left blank on
-    a defaulted economic gets the default back (``services/defaults.py``). The screen and
-    the underwrite then run again on the deal as saved (``services/autorun.py``).
+    a defaulted input gets the default back (``services/defaults.py``). The analysis then
+    runs again on the deal as saved (``services/autorun.py``).
     """
     submitted = fields(form, skip=("matter_",))
     matters = submitted_matters(form)
@@ -693,7 +707,7 @@ def overrides_action(
         return back(at_top(str(exc)), status.HTTP_422_UNPROCESSABLE_CONTENT)
     run = auto_run(session, saved)
     session.commit()
-    return redirect(deal_path(deal_id), f"Team entry saved. {run.summary()}".strip())
+    return redirect(deal_path(deal_id), f"Inputs saved. {run.summary()}".strip())
 
 
 # --- lifecycle actions (SPEC §4.6) ---------------------------------------------------------------

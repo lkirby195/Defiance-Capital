@@ -34,8 +34,12 @@ PAGE_ROUTES = [
     ("GET", "/queue/deals/00000000-0000-0000-0000-000000000000"),
     ("GET", "/queue/deals/00000000-0000-0000-0000-000000000000/intake"),
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/intake"),
-    ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/screen"),
-    ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/underwrite"),
+    (
+        "POST",
+        "/queue/deals/00000000-0000-0000-0000-000000000000/intake"
+        "/00000000-0000-0000-0000-000000000000/restore",
+    ),
+    ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/run"),
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/overrides"),
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/advance"),
     ("POST", "/queue/deals/00000000-0000-0000-0000-000000000000/pause"),
@@ -98,6 +102,7 @@ def test_every_route_is_accounted_for() -> None:
             ("GET", "/queue/deals/{deal_id}"),
             ("GET", "/queue/deals/{deal_id}/intake"),
             ("GET", "/queue/deals/{deal_id}/kill"),
+            ("POST", "/queue/deals/{deal_id}/intake/{submission_id}/restore"),
             ("GET", "/deals/{deal_id}"),
             ("GET", "/openapi.json"),
             ("GET", "/docs"),
@@ -112,8 +117,7 @@ def test_every_route_is_accounted_for() -> None:
             ("POST", f"/queue/deals/{{deal_id}}/{action}")
             for action in (
                 "intake",
-                "screen",
-                "underwrite",
+                "run",
                 "overrides",
                 "advance",
                 "pause",

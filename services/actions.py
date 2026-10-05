@@ -416,7 +416,7 @@ def _apply_term(
     loan?", it seeded this at intake, and a deal repriced to 7 months on a 6-month ask is a
     real thing rather than a row to reject.
 
-    This block is the only place in the queue a team member can set one: the Run underwrite
+    This block is the only place in the queue a team member can set one: the Run Analysis
     button posts no form of its own.
     """
     months = overrides.term_months

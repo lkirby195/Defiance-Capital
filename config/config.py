@@ -192,6 +192,48 @@ class InterestConfig(_Section):
     day_count_basis: Annotated[int, Field(ge=1, le=366)]
 
 
+class ClosingConfig(_Section):
+    """The closing date a deal gets when nobody entered one.  # SPEC §8.1
+
+    The last day of the month that is ``default_lead_days`` after the day the deal came in:
+    a deal submitted on the 4th closes, by default, at the end of that month, and one
+    submitted on the 20th at the end of the next. Stored on the deal and tagged DEFAULT
+    (``services/defaults.py``), so the ledger always has a month 0 and the team edits the
+    date rather than being refused a price for want of one.
+    """
+
+    default_lead_days: Annotated[int, Field(ge=0, le=366)]
+
+
+class SensitivityConfig(_Section):
+    """The shape of the IRR sensitivity table.  # SPEC §8.9
+
+    Rows are the loan amount: the request on the bottom row, then ``loan_steps`` rows above
+    it, each ``loan_step_usd`` less than the one below. Columns are the annual rate from
+    ``rate_min`` to ``rate_max`` in steps of ``rate_step``. Every cell is a full ledger re-run
+    at that loan amount and that rate (``engine/calc/sensitivity.py``), so the table's size is
+    a cost a lender may want to tune as much as its range.
+    """
+
+    loan_step_usd: Annotated[Decimal, Field(gt=0, max_digits=14, decimal_places=2)]
+    loan_steps: Annotated[int, Field(ge=0, le=20)]
+    rate_min: Pct
+    rate_max: Pct
+    rate_step: Annotated[Decimal, Field(gt=0, le=1)]
+
+    @model_validator(mode="after")
+    def _rates_run_upwards_and_stay_small(self) -> SensitivityConfig:
+        if self.rate_max < self.rate_min:
+            raise ValueError("sensitivity.rate_max must be at or above sensitivity.rate_min")
+        columns = int((self.rate_max - self.rate_min) / self.rate_step) + 1
+        if columns > 50:
+            raise ValueError(
+                f"sensitivity would have {columns} rate columns; widen rate_step or narrow "
+                "the range"
+            )
+        return self
+
+
 class RentalConfig(_Section):
     """Rental analysis assumptions.  # SPEC §8.5"""
 
@@ -259,6 +301,8 @@ class Config(_Section):
     fees: FeesConfig
     draws: DrawsConfig
     interest: InterestConfig
+    closing: ClosingConfig
+    sensitivity: SensitivityConfig
     rental: RentalConfig
     take_back: TakeBackConfig
     states: StatesConfig

@@ -1,11 +1,13 @@
-"""The SPEC §8.1 economics a deal is populated with when nobody has entered them.  # SPEC §8.1, §8.2
+"""The SPEC §8.1 inputs a deal is populated with when nobody has entered them.  # SPEC §8.1, §8.2
 
-Six inputs have a defensible stand-in and every deal gets it at intake: the interest rate
-(``interest.default_annual_rate``), the four fees (``fees.*_default_*``), and - on the two
-split products - the loan split, by the SPEC §8.2 formula:
+Seven inputs have a defensible stand-in and every deal gets it at intake: the interest rate
+(``interest.default_annual_rate``), the four fees (``fees.*_default_*``), the closing date
+(``closing.default_lead_days``) and - on the two split products - the loan split, by the
+SPEC §8.2 formula:
 
     rehab portion   = min(rehab_adj, loan amount)     rehab_adj = rehab x (1 + contingency)
     advance         = loan amount - rehab portion
+    closing date    = the last day of the month that is default_lead_days after the deal came in
 
 A ``NO_DRAW`` or ``WHOLETAIL`` loan is one advance and carries no split; its advance *is*
 the loan amount and nothing is stored for it (SPEC §8.2).
@@ -13,13 +15,19 @@ the loan amount and nothing is stored for it (SPEC §8.2).
 The value is stored on the deal, so what the engine runs on is what the page shows, and
 ``deals.defaulted_fields`` names which of them are stand-ins rather than a person's choice.
 That list is the whole of the DEFAULT / TEAM distinction the readiness checklist (SPEC
-§9.2) and the override block's "default" tag read. **A value equal to the default is the
+§9.2) and the Inputs block's "default" tag read. **A value equal to the default is the
 default**: a person who leaves a box holding the number it was pre-filled with has not
 chosen it, and the box says so; a person who wants that very number on purpose gets the
 same page and the same price, because the number is the same.
 
+The closing date's default is anchored to the day the deal was first submitted
+(``deals.created_at``), not to the latest edit: a default that moved every time somebody
+saved the page would relabel an untouched date as a choice. A row never stored - the CLI's
+fixture deal - has no such day and is anchored to today; every fixture carries its own date,
+so nothing the CLI prints depends on the clock.
+
 ``populate`` is idempotent and is the only writer of the list. It runs at intake on every
-channel, after every override save and intake edit, and when an existing deal is opened -
+channel, after every Inputs save and intake edit, and when an existing deal is opened -
 so a deal stored before this existed is populated the first time somebody looks at it, with
 a team value already on it left exactly as it was.
 
@@ -28,6 +36,7 @@ Nothing here commits; the caller owns the transaction, as every service does.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import UUID
@@ -37,6 +46,7 @@ from sqlalchemy.orm import Session
 from config.config import Config, get_config
 from db.models import Deal
 from engine.sizing import rehab_adjusted
+from schema.dates import month_end
 from schema.models import SPLIT_PRODUCTS, AuditAction, Product
 from services.audit import DEALS, jsonable, record_audit
 from services.errors import DealNotFound
@@ -51,8 +61,13 @@ ECONOMICS: tuple[str, ...] = (
 )
 # The two halves of the loan split (SPEC §8.2), defaulted together or not at all.
 SPLIT: tuple[str, str] = ("loan_purchase_portion", "loan_rehab_portion")
+# The closing date (SPEC §8.1): a month end counted from the day the deal came in.
+CLOSING = "closing_date"
 # Everything ``defaulted_fields`` may name.
-DEFAULTABLE: tuple[str, ...] = (*ECONOMICS, *SPLIT)
+DEFAULTABLE: tuple[str, ...] = (*ECONOMICS, *SPLIT, CLOSING)
+
+# What a default is: a number for the economics and the split, a date for the closing.
+DefaultValue = Decimal | date
 
 CENTS = Decimal("0.01")
 ZERO = Decimal(0)
@@ -68,6 +83,21 @@ def economics_defaults(config: Config) -> dict[str, Decimal]:
         "holding_costs_pct_of_cost": fees.holding_costs_default_pct_of_cost,
         "origination_fee_pct": fees.origination_default_pct,
     }
+
+
+def default_closing_date(submitted_on: date, config: Config) -> date:
+    """The last day of the month ``closing.default_lead_days`` after arrival.  # SPEC §8.1"""
+    return month_end(submitted_on + timedelta(days=config.closing.default_lead_days))
+
+
+def submitted_on(deal: Deal) -> date:
+    """The day the deal came in, which the closing default counts from.  # SPEC §8.1
+
+    ``created_at`` on a stored row; today on a row that was never stored (the CLI's fixture
+    deal), which is the one place a default here reads the clock.
+    """
+    created = deal.created_at
+    return created.date() if created is not None else date.today()
 
 
 def default_loan_split(
@@ -101,17 +131,19 @@ def deal_loan_split_default(deal: Deal, config: Config) -> tuple[Decimal, Decima
     )
 
 
-def defaults_for(deal: Deal, config: Config) -> dict[str, Decimal]:
+def defaults_for(deal: Deal, config: Config) -> dict[str, DefaultValue]:
     """Every defaultable column and the stand-in it would get on this deal.
 
     The split is only here on a split product with its loan amount and rehab known; the
-    five economics are always here. Read by the page to pre-fill and tag the boxes, and by
-    ``populate`` to decide what to write.
+    five economics and the closing date are always here. Read by the page to pre-fill and
+    tag the boxes, by the readiness checklist to say DEFAULT, by the assembly to price a row
+    nobody has populated yet, and by ``populate`` to decide what to write.
     """
-    out: dict[str, Decimal] = economics_defaults(config)
+    out: dict[str, DefaultValue] = dict(economics_defaults(config))
     split = deal_loan_split_default(deal, config)
     if split is not None:
         out[SPLIT[0]], out[SPLIT[1]] = split
+    out[CLOSING] = default_closing_date(submitted_on(deal), config)
     return out
 
 
@@ -130,7 +162,7 @@ def populate(deal: Deal, config: Config | None = None) -> dict[str, Any]:
     settings = config if config is not None else get_config()
     wanted = defaults_for(deal, settings)
     written: dict[str, Any] = {}
-    for column in ECONOMICS:
+    for column in (*ECONOMICS, CLOSING):
         if getattr(deal, column) is None:
             setattr(deal, column, wanted[column])
             written[column] = jsonable(wanted[column])
@@ -156,7 +188,7 @@ def is_defaulted(deal: Deal, column: str) -> bool:
     """Whether ``column`` holds a stand-in rather than a number somebody chose.
 
     True also for a column still NULL on a deal nobody has populated yet: the engine reads
-    the config default in its place, which is what DEFAULT means (SPEC §9.2).
+    the default in its place, which is what DEFAULT means (SPEC §9.2).
     """
     # ``or []``: a row built off a fixture and never flushed has not been given the column's
     # default yet (``db/repository.transient_deal``).

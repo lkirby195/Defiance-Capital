@@ -5,9 +5,9 @@ produced is shown at the precision it was computed to, next to the threshold it 
 against. Pure - text in, text out, no I/O - so the CLI stays a thin wrapper and the layout
 can be asserted in a test.
 
-The underwrite prints the SPEC §9 sections in order - Deal Economics, Return Overview, Flip,
-Rental, Take-Back, Flags - which is the same order the deal page shows and the workbook
-writes, so a person checking one against another reads down the same list.
+The underwrite prints the SPEC §9 sections in order - Deal Economics, Return Overview,
+Sensitivity, Flip, Rental, Take-Back, Flags - which is the same order the deal page shows and
+the workbook writes, so a person checking one against another reads down the same list.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from schema.models import (
     ReturnOverview,
     ScreenComponents,
     ScreenResult,
+    SensitivityTable,
     SizingResult,
     TakeBackAnalysis,
     UnderwriteInputs,
@@ -283,6 +284,26 @@ def render_return_overview(overview: ReturnOverview) -> list[str]:
     return lines
 
 
+def render_sensitivity(table: SensitivityTable | None) -> list[str]:
+    """IRR by loan amount (rows) and rate (columns); ``*`` is the deal's own cell.  # SPEC §8.9"""
+    lines = heading("SENSITIVITY", "IRR by loan amount (rows) and annual rate (columns)")
+    if table is None:
+        return [*lines, "  (not on this run: the ledger predates the table)"]
+    lines.append(f"  {'Loan amount':<16}" + "".join(f"{pct1(rate):>11}" for rate in table.rates))
+    for row in table.rows:
+        cells = "".join(
+            f"{pct4(cell.irr) + ('*' if cell.is_deal else ''):>11}" for cell in row.cells
+        )
+        lines.append(f"  {money(row.loan_amount):<16}{cells}")
+    marked = (
+        "* the deal as it stands"
+        if table.deal_cell is not None
+        else f"the deal's own rate ({pct1(table.interest_rate)}) is not a column"
+    )
+    lines.append(f"  reductions come off the advance at closing first; {marked} (SPEC 8.9)")
+    return lines
+
+
 def _status_note(status: AnalysisStatus, off: str, missing: str) -> str:
     if status is AnalysisStatus.OFF:
         return off
@@ -444,6 +465,7 @@ def render_underwrite(
         "(SPEC §8.1).",
         *render_economics(result),
         *render_return_overview(result.return_overview),
+        *render_sensitivity(result.sensitivity),
         *render_flip(result.flip),
         *render_rental(result.rental),
         *render_rent_provenance(inputs),

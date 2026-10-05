@@ -61,6 +61,17 @@ interest:                                 # SPEC §8.1, §8.3
                                           #   final stub period: stub interest is one month's
                                           #   interest x stub days / this. 30 is 30/360.
 
+closing:                                  # SPEC §8.1 - the closing date nobody entered
+  default_lead_days: 14                   # the default is the last day of the month that is
+                                          #   this many days after the deal came in
+
+sensitivity:                              # SPEC §8.9 - the IRR grid on the deal page and the workbook
+  loan_step_usd: 5000.00                  # each row above the request is this much less loan
+  loan_steps: 4                           # rows above the request: -5,000 ... -20,000
+  rate_min: 0.125                         # the first column's annual rate
+  rate_max: 0.175                         # the last column's annual rate
+  rate_step: 0.01                         # the spacing between columns
+
 rental:                                   # SPEC §8.5 rental analysis
   expenses_pct_of_rent: 0.35              # operating expenses as a share of the monthly rent
   takeout_rate: 0.065                     # the rate a takeout lender would amortize at

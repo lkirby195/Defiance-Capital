@@ -261,7 +261,7 @@ def test_the_deal_page_shows_the_split(client: TestClient, db_session: Session) 
 
 def test_the_sizing_table_names_the_portions(client: TestClient, db_session: Session) -> None:
     deal = store_deal(db_session, split_entry())
-    client.post(f"/queue/deals/{deal.id}/underwrite", follow_redirects=False)
+    client.post(f"/queue/deals/{deal.id}/run", follow_redirects=False)
     body = client.get(f"/queue/deals/{deal.id}").text
     assert "Rehab holdback" in body  # SPLIT_DRAW names, not SPLIT_PRINCIPAL's
     assert re.search(r"<dt>Rehab holdback</dt>\s*<dd>\$48,000\.00", body)

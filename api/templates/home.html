@@ -5,7 +5,7 @@
 {# Four sections, always in this order and always present (services/home.py): the
    borrower's own submissions, the deals the team entered, the ones on pause, the dead. A
    row is who, where, how much, which product, the latest verdict and IRR, where it came
-   from and when it last moved, then the three controls. Each control is a plain form post
+   from and when it last moved, then Open and the three controls. Each control is a plain form post
    carrying ``return_to=home`` so the action lands back here; Kill is a link to its
    confirmation page rather than a one-click post. A control the deal's status rules out is
    off, with the reason on its hover. #}
@@ -40,6 +40,7 @@
     <td>{{ deal.channel | label }}{% if deal.intake_source %} · {{ deal.intake_source }}{% endif %}</td>
     <td class="small muted">{{ entry.last_activity | when }}</td>
     <td class="controls">
+      <a class="btn small" href="/queue/deals/{{ deal.id }}" title="The deal page">Open</a>
       {{ control_button(entry, "advance", "Progress", entry.can_progress,
                         "Returns a paused deal to where it was; otherwise the next status") }}
       {{ control_button(entry, "pause", "Pause", entry.can_pause,

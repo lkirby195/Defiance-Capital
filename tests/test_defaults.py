@@ -381,8 +381,7 @@ def test_the_deal_page_tags_each_default_and_offers_a_reset(
     assert re.search(r'id="interest_rate"[^>]*value="12%"', body)
     assert re.search(r'id="loan_rehab_portion"[^>]*value="\$48,000"', body)
     # and the checklist calls every one of them present
-    assert "Run underwrite is off until these are entered" not in body
-    assert "disabled>Run underwrite" not in body
+    assert "The ledger is off until these are entered" not in body
 
 
 def test_a_single_note_deal_shows_the_whole_loan_at_closing(

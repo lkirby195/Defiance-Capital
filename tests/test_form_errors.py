@@ -34,8 +34,7 @@ pytestmark = requires_db
 
 # Every state-changing POST the queue serves, and a body that satisfies each one's own form.
 QUEUE_POSTS: tuple[tuple[str, dict[str, str]], ...] = (
-    ("screen", {}),
-    ("underwrite", {}),
+    ("run", {}),
     ("overrides", {}),
     ("intake", {}),
     ("advance", {}),
@@ -259,7 +258,7 @@ def test_a_deal_the_engine_cannot_price_says_so_on_the_page(
     client: QueueClient, unpriceable_deal: Deal
 ) -> None:
     """Not a 500: every value is present, and what they add up to is the problem."""
-    response = client.post(f"/queue/deals/{unpriceable_deal.id}/underwrite", follow_redirects=False)
+    response = client.post(f"/queue/deals/{unpriceable_deal.id}/run", follow_redirects=False)
 
     assert response.status_code == 422
     assert any("no commitment cannot be priced" in line for line in top_problems(response.text))

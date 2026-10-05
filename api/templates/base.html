@@ -5,11 +5,11 @@
    The top bar carries two buttons on every page: Home, the list of every deal, and New
    Deal, the team-entry form.
 
-   Two pieces of client-side script exist in the whole queue: the copy button on the
-   suggested reply (deal.html), and the input masks (_masks.html). Both are conveniences and
-   neither is load-bearing — the server parses `$425,000`, `425000`, `12%` and `12` alike
-   (`schema/masks.py`), so a browser that runs none of this still posts a deal that saves.
-   Nothing here validates, fetches, or decides anything. #}
+   One piece of client-side script exists in the whole queue: the input masks (_masks.html).
+   A convenience and not load-bearing — the server parses `$425,000`, `425000`, `12%` and
+   `12` alike (`schema/masks.py`), so a browser that runs none of this still posts a deal that
+   saves. The collapsed sections on the deal page are the browser's own <details>. Nothing
+   here validates, fetches, or decides anything. #}
 {% import "_csrf.html" as csrf %}
 <!doctype html>
 <html lang="en">

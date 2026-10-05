@@ -39,6 +39,7 @@ from services import (
     home_view,
     last_activity,
     latest_screen,
+    latest_underwrite,
     mark_dead,
     pause,
     paused_from,
@@ -48,6 +49,7 @@ from services import (
     run_underwrite,
     save_overrides,
     section_of,
+    underwrite_result,
 )
 from services.home import RunSummary
 from services.requests import UnderwriteRequest
@@ -408,7 +410,7 @@ def test_an_edit_on_a_paused_deal_is_stored_and_waits(
         follow_redirects=False,
     )
     assert response.status_code == 303, response.text
-    assert response.headers["location"].endswith("notice=Team%20entry%20saved.")
+    assert response.headers["location"].endswith("notice=Inputs%20saved.")
     db_session.expire_all()
     deal = db_session.get(Deal, deal_with_overrides.id)
     assert deal is not None
@@ -609,8 +611,8 @@ def test_the_deal_page_shows_intake_missing_fields_and_the_overrides(
     assert response.status_code == 200
     assert "NEEDS_INFO" in response.text
     assert "borrower.credit_range" in response.text
-    assert "Not screened yet" in response.text
-    assert "Not underwritten yet" in response.text
+    assert "Not analyzed yet." in response.text
+    assert "No analysis yet." in response.text
     assert 'name="estimated_sale_price_team"' in response.text
     assert 'name="asset_type"' not in response.text and 'name="stated_exit"' not in response.text
     assert "Asset Type" not in response.text and "<dt>Exit</dt>" not in response.text
@@ -625,12 +627,11 @@ def test_the_deal_page_renders_a_screen_and_an_underwrite(
     response = client.get(f"/queue/deals/{deal_with_overrides.id}")
     assert response.status_code == 200
     body = response.text
-    assert "Score components" in body
-    assert "Suggested reply" in body
-    assert "Copy reply" in body
-    assert "Sizing against caps" in body
+    assert "Scored as" in body
+    assert "Leverage against caps" in body
     assert ">LTV<" in body and ">LTC<" in body
-    assert body.index("Return Overview") < body.index("Flip Analysis")
+    assert body.index("Return Overview") < body.index("<h2>Sensitivity")
+    assert body.index("<h2>Sensitivity") < body.index("Flip Analysis")
     assert body.index("Flip Analysis") < body.index("Rental Analysis")
     assert body.index("Rental Analysis") < body.index("Take-Back Analysis")
     assert "Future Draws" in body
@@ -642,21 +643,17 @@ def test_the_deal_page_renders_a_screen_and_an_underwrite(
     assert payoff is not None and payoff.group(1).strip() == "2027-08-31"
 
 
-def test_the_run_buttons_screen_and_underwrite_the_deal(
+def test_the_run_analysis_button_screens_and_underwrites_the_deal(
     client: TestClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    screened = client.post(f"/queue/deals/{deal_with_overrides.id}/screen", follow_redirects=False)
-    assert screened.status_code == 303
-    priced = client.post(
-        f"/queue/deals/{deal_with_overrides.id}/underwrite", follow_redirects=False
-    )
-    assert priced.status_code == 303
+    ran = client.post(f"/queue/deals/{deal_with_overrides.id}/run", follow_redirects=False)
+    assert ran.status_code == 303
     db_session.expire_all()
     deal = db_session.get(Deal, deal_with_overrides.id)
     assert deal is not None and deal.status is Status.UNDERWRITING
 
 
-def test_the_underwrite_button_runs_without_a_rent(
+def test_the_analysis_runs_without_a_rent(
     client: TestClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
     """The rent is optional: without one, both DSCR analyses stand down (SPEC §8.5, §8.6)."""
@@ -674,33 +671,35 @@ def test_the_underwrite_button_runs_without_a_rent(
         actor=ACTOR,
     )
     db_session.commit()
-    response = client.post(
-        f"/queue/deals/{deal_with_overrides.id}/underwrite", follow_redirects=False
-    )
+    response = client.post(f"/queue/deals/{deal_with_overrides.id}/run", follow_redirects=False)
     assert response.status_code == 303, response.text
     page = client.get(f"/queue/deals/{deal_with_overrides.id}").text
     assert "NOT_EVALUATED" in page
-    assert "MONTHLY_RENT_MISSING" in page
+    # the flag is on the stored result, not the page (SPEC §9)
+    row = latest_underwrite(db_session, deal_with_overrides.id)
+    assert row is not None
+    assert "MONTHLY_RENT_MISSING" in {flag.code.value for flag in underwrite_result(row).flags}
+    assert "MONTHLY_RENT_MISSING" not in page
 
 
-def test_the_underwrite_button_names_what_the_deal_still_needs(
+def test_the_analysis_names_what_the_deal_still_needs(
     client: TestClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    deal_with_overrides.closing_date = None
+    deal_with_overrides.term_months = None
     db_session.commit()
-    response = client.post(f"/queue/deals/{deal_with_overrides.id}/underwrite")
+    response = client.post(f"/queue/deals/{deal_with_overrides.id}/run")
     assert response.status_code == 422
-    assert "deal.closing_date" in response.text
-    assert "Run underwrite is off until these are entered" in response.text
+    assert "deal.term_months" in response.text
+    assert "The ledger is off until these are entered" in response.text
 
 
-def test_the_underwrite_button_refuses_a_closed_deal_and_keeps_the_page(
+def test_the_analysis_refuses_a_closed_deal_and_keeps_the_page(
     client: TestClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
     at(db_session, deal_with_overrides, Status.DEAD)
-    response = client.post(f"/queue/deals/{deal_with_overrides.id}/underwrite")
+    response = client.post(f"/queue/deals/{deal_with_overrides.id}/run")
     assert response.status_code == 409
-    assert "cannot be underwritten" in response.text
+    assert "The ledger did not run: the deal is DEAD." in response.text
 
 
 def test_a_declining_deal_lands_in_the_dead_section(
@@ -736,7 +735,7 @@ def test_every_team_entry_fixture_renders_its_screen_and_underwrite(
 
     response = client.get(f"/queue/deals/{deal.id}")
     assert response.status_code == 200, response.text
-    assert "Score components" in response.text
-    assert "Return Overview" in response.text
+    assert "Scored as" in response.text
+    assert "Return Overview" in response.text and "<h2>Sensitivity" in response.text
     assert "Take-Back Analysis" in response.text
     assert client.get("/queue").status_code == 200

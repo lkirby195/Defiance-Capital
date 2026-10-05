@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from db.models import Deal
 from schema.labels import enum_label
 from schema.models import CourtFlag, CourtRecordsStatus, LienKind, Severity
+from services import latest_screen, screen_result
 from tests.conftest import QueueClient, requires_db, store_deal
 
 pytestmark = requires_db
@@ -104,18 +105,22 @@ def test_the_deal_pages_override_block_labels_the_same_three(
     }
 
 
-def test_a_flags_severity_reads_as_a_word_and_is_still_styled_by_its_code(
+def test_a_verdict_is_styled_by_its_code_and_a_severity_reads_as_a_word(
     client: QueueClient, db_session: Session, team_entry: dict[str, Any]
 ) -> None:
-    """The class the stylesheet is keyed on stays the code; the text beside it is the word."""
+    """The class the stylesheet is keyed on stays the code; the words a person reads are the
+    label. The flags themselves are on the stored row, not the page (SPEC §9)."""
     deal = store_deal(db_session, {**team_entry, "estimated_sale_price_team": "220000.00"})
-    assert client.post(f"/queue/deals/{deal.id}/screen", follow_redirects=False).status_code == 303
+    # the leverage declines it, so the ledger stands down: a conflict, with the verdict kept
+    assert client.post(f"/queue/deals/{deal.id}/run").status_code == 409
 
     body = client.get(f"/queue/deals/{deal.id}").text
-    assert '<span class="tag HARD">Hard</span>' in body
-    assert '<span class="tag HARD">HARD</span>' not in body
-    # ...and the flag's own code is still printed, because a code is what it is.
-    assert "LTV_OVER_CAP" in body
+    assert '<span class="tag DECLINE">DECLINE</span>' in body
+    assert "LTV_OVER_CAP" not in body
+    row = latest_screen(db_session, deal.id)
+    assert row is not None
+    (flag,) = [flag for flag in screen_result(row).flags if flag.code.value == "LTV_OVER_CAP"]
+    assert flag.severity is Severity.HARD and enum_label(flag.severity) == "Hard"
 
 
 def test_the_readiness_checklist_shows_the_court_search_as_words(

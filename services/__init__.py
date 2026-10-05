@@ -32,15 +32,17 @@ from services.actions import (
     save_overrides,
 )
 from services.audit import DEALS, USERS, deal_trail, jsonable, last_action_at, record_audit
-from services.autorun import NOTHING_RAN, SYSTEM_ACTOR, AutoRun, auto_run
+from services.autorun import NOTHING_RAN, SYSTEM_ACTOR, AutoRun, auto_run, run_analysis
 from services.defaults import (
     DEFAULTABLE,
     apply_defaults,
+    default_closing_date,
     default_loan_split,
     defaults_for,
     economics_defaults,
     is_defaulted,
     populate,
+    submitted_on,
 )
 from services.enrichment import NO_ADAPTER_VALUES, AdapterValues, adapter_values
 from services.errors import (
@@ -54,6 +56,7 @@ from services.errors import (
     UserExists,
     UserNotFound,
 )
+from services.history import HistoryEntry, HistoryKind, deal_history
 from services.home import (
     SECTION_TITLES,
     HomeEntry,
@@ -68,6 +71,8 @@ from services.intake import (
     EDIT_INTAKE_FROM,
     create_deal,
     latest_submission,
+    record_from_submission,
+    restore_intake,
     screen_is_stale,
     update_intake,
 )
@@ -130,6 +135,8 @@ __all__ = [
     "DealNotPriceable",
     "DealNotReady",
     "DealNotUnderwritable",
+    "HistoryEntry",
+    "HistoryKind",
     "HomeEntry",
     "HomeSection",
     "HomeView",
@@ -158,8 +165,10 @@ __all__ = [
     "create_deal",
     "create_user",
     "deactivate_user",
+    "deal_history",
     "deal_trail",
     "decline",
+    "default_closing_date",
     "default_loan_split",
     "defaults_for",
     "economics_defaults",
@@ -184,10 +193,13 @@ __all__ = [
     "purge_deals",
     "record_audit",
     "record_screen",
+    "record_from_submission",
     "record_underwrite",
     "reopen",
     "reopen_status",
+    "restore_intake",
     "resume",
+    "run_analysis",
     "run_screen",
     "run_underwrite",
     "save_overrides",
@@ -196,6 +208,7 @@ __all__ = [
     "section_of",
     "status_after_screen",
     "status_after_underwrite",
+    "submitted_on",
     "underwrite_readiness",
     "underwrite_result",
     "update_intake",

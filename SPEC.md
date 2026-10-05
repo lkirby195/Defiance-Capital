@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.7
+# GLENWOOD Underwriting Platform — SPEC v0.8
 
-Status: **v0.6**, 2026-10-02, engine `1.3.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.8**, 2026-10-04, engine `1.5.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.8** is one button and a leaner deal page. **Run Analysis** runs the screen and the underwrite together, as the person who pressed it, and the two stages are not named anywhere a person reads (§4.6, §9); the automatic runs stay. The deal page keeps the verdict line and loses the Flags, the Reasons and the Suggested Reply, which stay on the stored results, the CLI report and the workbook. Everything the team enters by hand is one collapsed **Inputs** section with Save at the bottom; a collapsed **History** lists every intake version, screen and underwrite with its actor and engine, and each version can be **restored** as a new submission (§9.1). The **closing date is optional on every channel** and defaults to the last day of the month `closing.default_lead_days` (14) after the deal came in, stored and tagged `DEFAULT` (§8.1), so the term is the one input that can keep a deal from being priced. A **sensitivity table** - IRR by loan amount and rate, every cell a full ledger re-run (§8.9, engine `1.5.0`) - sits under the Return Overview and in the workbook.
 
 **v0.6** is the queue running on its own. Every deal is **populated with its §8.1 defaults at intake** — the config rate (new: `interest.default_annual_rate`, placeholder 12%), the four config fees and, on a split product, the §8.2 formula loan split — stored on the deal, tagged `DEFAULT`, editable and resettable; a `DEFAULT` counts as present, so only the closing date and the term can turn Run underwrite off (§8.1, §8.2, §9.2). A complete intake is **screened and priced on the way in** on every channel, and run again after every team edit, as the actor `system` (§4.6). The deal page is labels and values only, with every definition behind a (?) on its label (§9); the public form's consent is the line above its button (§4.2).
 
@@ -251,8 +253,9 @@ channel, is screened and then priced before anyone opens it, on whatever it carr
 Edit Intake runs both again on what was saved. The underwrite stands down by name when the
 deal is short of a closing date or a term, when the engine will not price what is there, or
 when the screen declined it; the edit that triggered the run is kept either way, and the page
-says what ran. Every automatic run is recorded against the actor `system` (§11). The buttons
-stay: a person can re-run either stage whenever they like.
+says what ran. Every automatic run is recorded against the actor `system` (§11). One button
+stays - **Run Analysis** - which runs both again, as the person who pressed it, on any deal
+a paused one included; the page names no stage, only the verdict and the ledger.
 
 **The three controls on a Home row** (§9.1) are team actions, and each writes an `audit_log`
 row (§5):
@@ -507,8 +510,8 @@ Descriptive: captured, stored on `properties`, and reported. None of them feeds 
 |---|---|---|
 | `loan_purpose` | — | `PURCHASE` \| `REFINANCE` \| `CASH_OUT` \| `CONSTRUCTION`, team-selected. Recorded and reported; it feeds no math |
 | `loan_type` | — | The §3 product, labelled "Loan Type" wherever a person reads it, with that product's §3 one-liner under the box |
-| `closing_date` | — | Any date. The model treats closing as the **last day of that month**: month 0 of the ledger is that month end (§8.3). **Required to underwrite** |
-| `term_months` | — | Whole months. **Required to underwrite**; the team form requires the box. `payoff_date` derives: the last day of the month that is the closing month plus the term, shown read-only on the deal page |
+| `closing_date` | the last day of the month `closing.default_lead_days` (14) after the deal came in | Optional on every channel. Any date; the model treats closing as the **last day of that month**: month 0 of the ledger is that month end (§8.3). Populated at intake when absent, stored and tagged `DEFAULT`, edited on the deal page; readiness never blocks on it |
+| `term_months` | — | Whole months. **Required to underwrite** - the one input nothing stands in for; the team form requires the box, the public form seeds it from the bucket. `payoff_date` derives: the last day of the month that is the closing month plus the term, shown read-only on the deal page |
 | `purchase_price` | — | |
 | `rehab_costs` | — | 0 allowed |
 | `loan_requested` | — | Labelled **Loan Amount** wherever it is shown |
@@ -795,6 +798,9 @@ UnderwriteResult
                              fees, payoff, net}],
                     total_funding, total_draws, total_interest, total_fees,
                     total_payoff, total_profit, irr}           # §8.3
+  sensitivity: {loan_requested, interest_rate, rates: [...],
+                rows: [{loan_amount, reduction, loan_purchase_portion,
+                        loan_rehab_portion, cells: [{interest_rate, irr, is_deal}]}]}  # §8.9
   flip: {status, estimated_sale_price, broker_costs, financing_costs,
          total_costs, net_profit, profit_yield}                # §8.4
   rental: {status, monthly_rent, expenses, holding_costs_monthly, net_monthly_income,
@@ -828,18 +834,45 @@ The §7.2 court codes and the credit, experience and leverage codes the screen r
 | `SALE_PRICE_MISSING` | Info (fixed) | §8.4: the Flip analysis is on and there is no `estimated_sale_price`, so it is `NOT_EVALUATED`. Not raised when the toggle is off — that is a decision, not a gap — and the screen's own `ESTIMATED_SALE_PRICE_MISSING` (Soft) reports the same absence on the leverage side either way |
 | `NO_REHAB_PERIOD` | Info (fixed) | §8.3: a split product whose term leaves `rehab_months = 0`, so the rehab portion is advanced at close instead of drawn |
 
+### 8.9 Sensitivity table
+
+IRR by loan amount and annual rate, on the deal page under the Return Overview and as the
+`Sensitivity` sheet of the workbook. **Every cell is a full ledger re-run**: the deal is
+re-sized in the same caps cell and the §8.3 ledger laid out again at that loan amount and
+that rate, and the cell is its XIRR. Nothing is interpolated.
+
+```
+rows     the request on the bottom row, then sensitivity.loan_steps rows above it,
+         each sensitivity.loan_step_usd less (placeholders: 4 x $5,000, so -$20,000 .. request)
+columns  sensitivity.rate_min .. rate_max in rate_step steps (placeholders: 12.5% .. 17.5% by 1%)
+```
+
+**A reduction comes off the advance at closing**; the rehab portion is what the work costs
+and is unchanged until the advance reaches zero, after which it gives dollar for dollar.
+A single-note product simply lends less. A row whose reduced amount is nothing at all, or
+whose commitment sizes to nothing, is left out. The deal's own cell - the request at its
+actual rate - is marked when its rate falls on a column; a deal priced at a rate between
+two columns has no marked cell and the page says so. The base row at the deal's own rate
+reproduces the Return Overview's IRR exactly.
+
 ---
 
 ## 9. Outputs
 
 One order, everywhere a run is shown — the deal page, the CLI report, and the workbook:
 
-**Overview · Property Overview · Deal Economics · Return Overview · Flip Analysis · Rental Analysis · Take-Back Analysis · Flags**
+**Overview · Property Overview · Deal Economics · Return Overview · Sensitivity · Flip Analysis · Rental Analysis · Take-Back Analysis · Flags**
 
 The first three are the §8.1 input groups, shown back as the run read them; the rest are the
-result. The deal page keeps its own furniture around that block — the run buttons and the
-readiness checklist, the team-entry block, the screen summary, and the audit trail — and the
-screen summary keeps its structure unchanged (§7).
+result. The CLI report and the workbook show all of it. The deal page opens on the one
+**Run Analysis** button and the verdict line - the verdict, the IRR, when it ran and on which
+engine - with the score components under it, and shows every section but the Flags: the
+flags, the screen's reasons and the suggested reply stay on the stored rows, the CLI and the
+workbook. Its own furniture sits below the sections: **Inputs** (collapsed; everything the
+team enters by hand, the readiness checklist, Save at the bottom), **Actions**, and
+**History** (collapsed; every intake version, screen and underwrite with its timestamp,
+actor and engine version, a Restore on each version, and the audit trail under it). The
+page names no engine stage; the two it runs are an implementation.
 
 **The deal page is labels and values only.** No explanatory sub-line, parenthetical or inline
 definition beside a value; where a definition is still useful it sits behind a small (?) on
@@ -848,7 +881,15 @@ carries the "default" tag (§8.1). A web deal's provenance reads "Source: <slug>
 they heard of us: <text>" (§4.2).
 
 ### 9.1 Screen summary
-One page in the review queue: intake facts, enrichment hits, score components, verdict, reasons, suggested reply, missing fields.
+One page in the review queue: intake facts, enrichment hits, score components, verdict and
+missing fields on the deal page; the reasons and the suggested reply on the stored `screens`
+row, the CLI report and the workbook, where a person drafting a message reads them.
+
+**Restore** saves an earlier intake version as a new `intake_submissions` row - read back
+through the parser for the channel it arrived on, applied exactly as Edit Intake applies a
+form, audited as `INTAKE_RESTORED` naming the version it came from - and runs the analysis
+again. Nothing is rewound: the version restored and the one it replaced are both still in
+the History afterwards. Refused where an edit is refused (§4.6).
 
 **A rejected form is a page, not an error.** Every `ValueError` and `ValidationError` raised
 while handling the team-entry form, the deal page's override block, Edit Intake or an
@@ -865,7 +906,7 @@ flag's severity. The stored value is untouched — an `<option>` still posts `BA
 and a flag tag is still styled by its code — only the words change.
 
 ### 9.2 Readiness checklist
-Above the Run underwrite button, one row per §8.1 input with the value in force, where it came from (`ADAPTER` / `TEAM` / `BORROWER` / `DEFAULT` / `MISSING`, shown as words), and whether the run needs it; what the run does with or without it sits behind the (?) on the row's label. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months`, shown as months and, where there is one, the stub days after them), and the loan split on a split product. **A `DEFAULT` counts as present**: the rate and the split always have one (§8.1, §8.2), so the two that can turn the button off are the closing date and the term. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
+In the Inputs section, one row per §8.1 input with the value in force, where it came from (`ADAPTER` / `TEAM` / `BORROWER` / `DEFAULT` / `MISSING`, shown as words), and whether the run needs it; what the run does with or without it sits behind the (?) on the row's label. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months`, shown as months and, where there is one, the stub days after them), and the loan split on a split product. **A `DEFAULT` counts as present**: the rate, the closing date and the split always have one (§8.1, §8.2), so the one that can turn the ledger off is the term; readiness never blocks on the closing date. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
 
 ### 9.3 Credit memo
 Generated from `UnderwriteResult` into GLENWOOD's template (to be supplied; docx). Sections: borrower, property, deal structure, sizing vs caps, the return overview (ledger and IRR), flip, rental, take-back, flags with pass/fail, recommendation. Every flag shows the threshold it was tested against.
@@ -883,7 +924,7 @@ against caps, then the §9 sections in order: the deal economics, the full month
 its IRR, the flip, the rental, the take-back, and the flags.
 
 `uv run glenwood export <fixture.json> <out.xlsx>` writes the same run as a workbook, sheets
-`Inputs`, `Return Overview`, `Flip`, `Rental`, `Take-Back`, `Flags`. Every figure is a number
+`Inputs`, `Return Overview`, `Sensitivity`, `Flip`, `Rental`, `Take-Back`, `Flags`. Every figure is a number
 under a currency, percent or date format — never preformatted text — so the cells add up and
 compare. The `Return Overview` sheet carries the ledger with its dates and its `net` column
 and an **`XIRR` formula over them**, so the workbook recomputes the IRR itself and a reader
@@ -911,6 +952,8 @@ so the math can be checked by hand against a spreadsheet; neither is shown to a 
 - `draws.listing_months` (3): `rehab_months = term_months − listing_months`, whole periods only
 - `interest.default_annual_rate` (12%, placeholder): the **default for `interest_rate`** (§8.1), populated on every deal until the team enters its own
 - `interest.day_count_basis` (30): the days a whole monthly period counts as, for the final stub period's prorated interest (§8.3)
+- `closing.default_lead_days` (14): the **default for `closing_date`** (§8.1) is the last day of the month this many days after the deal came in
+- sensitivity (§8.9): `loan_step_usd` (5,000), `loan_steps` (4), `rate_min` (12.5%), `rate_max` (17.5%), `rate_step` (1%) - the shape of the IRR grid; every cell is a ledger re-run
 - rental takeout: `expenses_pct_of_rent` (35%), `takeout_rate` (6.5%), `amortization_years` (30), `dscr_floor` (1.20)
 - take-back: `lost_interest_months` (3), `legal_costs_usd` (5,000), `amortization_years` (30), `dscr_floor` (1.00)
 - underwrite flag severities: `DSCR_BELOW_FLOOR`, `TAKE_BACK_DSCR_BELOW_FLOOR`. The informational codes (§8.8) are fixed `Info` in code and the loader refuses to grade them
@@ -999,6 +1042,17 @@ Overview, the Property Overview and seven Deal Economics boxes (§8.1); the asse
 exit are gone with the §3 inference; the ledger anchors to month ends (§8.3) and the payoff
 date is read-only. `glenwood deals purge --all --confirm` is the one-time cleanup (README).
 
+Phase 7a (engine `1.5.0`, no migration) is the one-button deal page. **Run Analysis** runs
+the screen and the underwrite together as the person who pressed it (§4.6); the page names
+no stage, keeps the verdict line, and drops the Flags section, the Reasons and the Suggested
+Reply (they stay on the stored rows, the CLI and the workbook). The hand-entered values are
+one collapsed **Inputs** section; a collapsed **History** lists every intake version, screen
+and underwrite with actor and engine and restores any version as a new submission (§9.1).
+Home rows carry an Open button. The closing date is optional on every channel and defaults
+to the month end `closing.default_lead_days` after arrival, tagged `DEFAULT` (§8.1). The
+sensitivity table (§8.9) is new: IRR by loan amount and rate, each cell a full ledger
+re-run, config-shaped, on the page and in the workbook.
+
 ---
 
 ## 13. Open items
@@ -1033,3 +1087,9 @@ date is read-only. `glenwood deals purge --all --confirm` is the one-time cleanu
   them at creation. Confirm the JSON body should go on accepting them
 - The actual-payoff entry the stub arithmetic is kept for (§8.1): where it lives and what it
   records when it comes
+- `closing.default_lead_days`, placeholder 14: the closing date a deal gets when nobody
+  entered one, anchored to the day the deal first came in rather than to the latest edit
+- The sensitivity grid's placeholders (§8.9): $5,000 steps, four rows above the request,
+  12.5% to 17.5% by 1%. The default rate (12%) is off that grid, so a deal nobody has
+  re-priced shows no marked cell; confirm the range, or whether the deal's own rate should
+  always be a column

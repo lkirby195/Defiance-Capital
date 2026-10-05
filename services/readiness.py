@@ -1,6 +1,6 @@
-"""What the underwrite has to run on, and where each of it came from.  # SPEC §8.1, §9.2
+"""What the ledger has to run on, and where each of it came from.  # SPEC §8.1, §9.2
 
-The queue's Run underwrite button takes no form: every SPEC §8.1 input lives on the deal by
+The queue's Run Analysis button takes no form: every SPEC §8.1 input lives on the deal by
 the time somebody presses it (``api/routes/queue.py``). That is convenient and it used to be
 opaque - the button either worked or came back with a refusal naming values the page had
 never mentioned. This module is the page's answer to "what is it going to run on", one row
@@ -16,20 +16,21 @@ per §8.1 input, each with the value in force and where it came from:
 ``required`` marks the rows the run cannot proceed without, and ``missing`` is exactly those
 of them that are MISSING. It is derived from the same rules the assembly raises
 ``DealNotReady`` on (``services/assemble.py``) rather than a second list beside them, so the
-disabled button and the refusal behind it can never name different things. A DEFAULT is
-present: the rate and the loan split are required rows, and a deal nobody has entered them
-on runs on the config rate and the SPEC §8.2 formula split (``services/defaults.py``). What
-turns the button off is the two inputs nothing stands in for - the closing date and the
-term.
+banner on the page and the refusal behind it can never name different things. A DEFAULT is
+present: the rate, the closing date and the loan split are required rows, and a deal nobody
+has entered them on runs on the config rate, the month end two weeks after it came in and
+the SPEC §8.2 formula split (``services/defaults.py``). What turns the ledger off is the one
+input nothing stands in for - the term.
 
 An optional row that is MISSING is not a problem to fix before running - it is a thing the
-underwrite will do without, and the note says what that costs: no DSCR at all without a
+ledger will do without, and the note says what that costs: no DSCR at all without a
 monthly rent, no LTV and no flip without an estimated sale price, the self-reported tranche
 without a verified score.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
@@ -130,10 +131,10 @@ def _resolved_row(
     label: str,
     *,
     fmt: RowFormat = "money",
-    adapter: Decimal | None = None,
-    team: Decimal | None = None,
-    borrower: Decimal | None = None,
-    default: Decimal | None = None,
+    adapter: Any = None,
+    team: Any = None,
+    borrower: Any = None,
+    default: Any = None,
     required: bool = False,
     note: str = "",
 ) -> InputRow:
@@ -256,7 +257,7 @@ def _defaulted_row(
     column: str,
     key: str,
     label: str,
-    defaults: dict[str, Decimal],
+    defaults: Mapping[str, object],
     *,
     fmt: RowFormat = "money",
     required: bool = False,
@@ -281,7 +282,7 @@ def _defaulted_row(
     return _resolved_row(key, label, fmt=fmt, team=value, required=required, note=note)
 
 
-def _split_rows(deal: Deal, defaults: dict[str, Decimal]) -> list[InputRow]:
+def _split_rows(deal: Deal, defaults: Mapping[str, object]) -> list[InputRow]:
     """The two halves of a split loan; nothing at all on a product that has no split.
 
     Required, and present on every split product whose loan amount and rehab are known: a
@@ -371,12 +372,19 @@ def underwrite_readiness(
     flip_on = flip_is_on(deal, empty, adapters)
     rental_on = rental_is_on(deal, empty, adapters)
     rows = [
-        _row(
+        _defaulted_row(
+            deal,
+            "closing_date",
             "deal.closing_date",
             "Closing date",
-            deal.closing_date,
+            defaults,
+            fmt="plain",
             required=True,
-            note="any date; the ledger's month 0 is the last day of its month (SPEC §8.3)",
+            note=(
+                "any date; the ledger's month 0 is the last day of its month (SPEC §8.3). "
+                f"Default: the last day of the month {settings.closing.default_lead_days} days "
+                "after the deal came in (SPEC §8.1)"
+            ),
         ),
         _term_row(deal),
         _payoff_row(deal),
