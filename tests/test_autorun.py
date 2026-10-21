@@ -107,6 +107,7 @@ def test_a_screen_that_declines_stops_the_underwrite_and_closes_the_deal(
     assert response.status_code == 303
     assert notice(response) == (
         "Deal created. Analysis recorded: DECLINE. The ledger did not run: the deal is DECLINED."
+        " Saved as Auto v1 (Working)."
     )
     deal = one_deal(db_session)
     assert deal.status is Status.DECLINED

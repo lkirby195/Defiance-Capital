@@ -6,11 +6,19 @@
     uv run glenwood users deactivate --email sam@glenwood.example
     uv run glenwood users reset-password --email sam@glenwood.example
     uv run glenwood users list
+    uv run glenwood deals run <deal-id> [--version 3]
+    uv run glenwood deals export <deal-id> out.xlsx [--version "Base case"]
     uv run glenwood deals purge --all --confirm
 
 ``run`` and ``export`` read a fixture off disk, load ``config/glenwood.yaml``, and call the
 pure engine. No database, no network. The point is to check the math by hand before it is
 wired to anything, so nothing is rounded for presentation beyond the place it is printed at.
+
+``deals run`` and ``deals export`` are the same report and the same workbook for a stored
+deal: one of its versions (SPEC §5), the Working one unless ``--version`` names another by
+its number or its exact name. Nothing is run again - the screen and the underwrite the
+version recorded are rebuilt off their rows, so what is printed is what was stored, engine
+version and all.
 
 ``users`` and ``deals`` are the other kind of command and the only ones that open the
 database. ``users`` is here rather than in the queue because there is no self-signup and no
@@ -32,6 +40,7 @@ import getpass
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -42,11 +51,15 @@ from outputs.console import render
 from outputs.excel import write_workbook
 from services import (
     ServiceError,
+    VersionResults,
     create_user,
     deactivate_user,
+    find_version,
     list_users,
+    load_deal,
     purge_deals,
     reset_password,
+    version_results,
 )
 from services.passwords import MIN_LENGTH, WeakPassword
 
@@ -114,8 +127,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     users.add_parser("list", help="every user, active first")
 
-    deals_cmd = commands.add_parser("deals", help="the one-time cleanup of every deal")
+    deals_cmd = commands.add_parser(
+        "deals", help="a stored deal's report or workbook, by version; the one-time cleanup"
+    )
     deals = deals_cmd.add_subparsers(dest="deals_command", required=True)
+    version_help = "a version's number or exact name; the Working version when left out"
+    deal_run_cmd = deals.add_parser("run", help="print one version of a stored deal")
+    deal_run_cmd.add_argument("deal", type=UUID, help="the deal's id")
+    deal_run_cmd.add_argument("--version", help=version_help)
+    deal_export_cmd = deals.add_parser(
+        "export", help="write one version of a stored deal to an .xlsx workbook"
+    )
+    deal_export_cmd.add_argument("deal", type=UUID, help="the deal's id")
+    deal_export_cmd.add_argument("out", type=Path, help="workbook to write (.xlsx)")
+    deal_export_cmd.add_argument("--version", help=version_help)
     purge_cmd = deals.add_parser(
         "purge",
         help="delete every deal and everything hanging off it; the users stay (README)",
@@ -198,16 +223,69 @@ def command_users(args: argparse.Namespace) -> str:
         )
 
 
-def command_deals(args: argparse.Namespace) -> str:
-    """The deal commands: today, the purge and nothing else.
+def stored_version(session: Session, deal_id: UUID, wanted: str | None) -> VersionResults:
+    """The version a person asked for, rebuilt off its rows."""
+    load_deal(session, deal_id)
+    return version_results(session, find_version(session, deal_id, wanted))
 
-    Both flags are checked before the database is opened, so a half-typed command costs
-    nothing and touches nothing.
+
+def version_heading(found: VersionResults) -> str:
+    """One line naming the version: which, Working or not, when and for whom."""
+    version = found.version
+    mark = "Working" if version.is_working else "draft"
+    return (
+        f"{version.name} ({mark}), run {version.created_at:%Y-%m-%d %H:%M} by "
+        f"{version.actor}, engine {version.engine_version}"
+    )
+
+
+def command_deal_run(deal_id: UUID, wanted: str | None, config: Config) -> str:
+    """``glenwood deals run``: one stored version as the console report."""
+    with Session(get_engine()) as session:
+        found = stored_version(session, deal_id, wanted)
+        if found.screen is None:
+            raise ValueError(f"{found.version.name} has no stored screen to print")
+        return render(
+            f"deal {deal_id}",
+            version_heading(found),
+            found.screen,
+            found.underwrite,
+            config,
+            found.underwrite_inputs,
+        )
+
+
+def command_deal_export(deal_id: UUID, out: Path, wanted: str | None, config: Config) -> str:
+    """``glenwood deals export``: one stored version as the workbook."""
+    with Session(get_engine()) as session:
+        found = stored_version(session, deal_id, wanted)
+        if (
+            found.screen_inputs is None
+            or found.underwrite_inputs is None
+            or found.underwrite is None
+        ):
+            raise ValueError(
+                f"{found.version.name} has no ledger to export: the underwrite did not run"
+            )
+        write_workbook(out, found.screen_inputs, found.underwrite_inputs, found.underwrite, config)
+        return f"wrote {out} ({found.version.name})"
+
+
+def command_deals(args: argparse.Namespace) -> str:
+    """The deal commands: a version's report or workbook, and the purge.
+
+    The purge's two flags are checked before the database is opened, so a half-typed
+    command costs nothing and touches nothing.
     """
+    if args.deals_command == "run":
+        return command_deal_run(args.deal, args.version, load_config())
+    if args.deals_command == "export":
+        return command_deal_export(args.deal, args.out, args.version, load_config())
     if not (args.purge_all and args.confirm):
         raise ValueError(
             "deals purge deletes every deal, borrower, property, submission, screen, "
-            "underwrite, enrichment run, document, ma_sync and audit row and cannot be undone; "
+            "underwrite, version, enrichment run, document, ma_sync and audit row and cannot "
+            "be undone; "
             "pass both --all and --confirm to run it"
         )
     with Session(get_engine()) as session:

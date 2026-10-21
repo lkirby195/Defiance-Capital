@@ -428,19 +428,23 @@ def test_a_full_submission_lands_in_the_queue_as_a_web_deal(
     assert payload["language"] == "en"
     assert payload["consent"] is True, "sending the form is the consent, and it is recorded"
     assert payload["purchase_price"] == "185000" and payload["borrower_phone"] == "9185550142"
-    # ...and the audit row names the borrower as the actor, and the runs the system
+    # ...and the audit row names the borrower as the actor, and the runs - one version,
+    # Auto v1 - the system
     rows = list(db_session.scalars(select(AuditLog).order_by(AuditLog.created_at)))
     assert [row.action for row in rows] == [
         AuditAction.INTAKE_CREATED.value,
         AuditAction.SCREEN_RUN.value,
         AuditAction.UNDERWRITE_RUN.value,
+        AuditAction.VERSION_RECORDED.value,
     ]
-    created, screened, priced = rows
+    created, screened, priced, versioned = rows
     assert created.actor == "web:maria@ortizbuilds.example"
     assert created.after is not None and created.after["channel"] == "WEB"
     assert created.after["intake_source"] == "tulsa-reia"
     assert created.after["defaults"]["interest_rate"] == "0.12"
     assert screened.actor == "system" and priced.actor == "system"
+    assert versioned.actor == "system" and versioned.after is not None
+    assert versioned.after["name"] == "Auto v1" and versioned.after["working"] is True
     # on Home, under Borrower Submissions, at UNDERWRITING
     view = home_view(db_session)
     [entry] = view.section(Section.BORROWER).entries

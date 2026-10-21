@@ -4,8 +4,9 @@
 
 {# Four sections, always in this order and always present (services/home.py): the
    borrower's own submissions, the deals the team entered, the ones on pause, the dead. A
-   row is who, where, how much, which product, the latest verdict and IRR, where it came
-   from and when it last moved, then Open and the three controls. Each control is a plain form post
+   row is who, where, how much, which product, the Working version's verdict and IRR (and
+   its name), where it came from and when it last moved, then Open and the three controls.
+   Each control is a plain form post
    carrying ``return_to=home`` so the action lands back here; Kill is a link to its
    confirmation page rather than a one-click post. A control the deal's status rules out is
    off, with the reason on its hover. #}
@@ -35,6 +36,7 @@
     <td>
       {% if entry.verdict %}<span class="tag {{ entry.verdict | plain }}">{{ entry.verdict | plain }}</span>
       {% else %}<span class="muted">—</span>{% endif %}
+      {% if entry.working %}<span class="small muted" title="The Working version">{{ entry.working.name }}</span>{% endif %}
     </td>
     <td class="num">{{ entry.irr | rate }}</td>
     <td>{{ deal.channel | label }}{% if deal.intake_source %} · {{ deal.intake_source }}{% endif %}</td>
