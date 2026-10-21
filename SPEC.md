@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.10
+# GLENWOOD Underwriting Platform — SPEC v0.11
 
-Status: **v0.10**, 2026-10-20, engine `1.7.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.11**, 2026-10-20, engine `1.8.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.11** is a solved price and versions. The **pricing matrix solves its rate** rather than reading it off the grid: for each loan amount step it bisects on the ledger for the lowest rate, to 0.01%, at which the lender's XIRR reaches the target, and reports that rate (two decimals of a percent, rounded up so it still clears), the IRR there and the borrower's profit and cash-on-cash there; the grid stays for the two sensitivity tables (§8.10, engine `1.8.0`). And every analysis run is a **version** (§5, §9): a name, the person or `system` it ran for, its screen and its underwrite, and a snapshot of every input it read, so it can be reproduced and its inputs restored whatever is edited later. Exactly one version per deal is **Working** - the first run is, and Mark as Working moves it - and the rest are drafts. The deal page shows the Working version, a switcher at the top of the outputs shows any other read-only with a Draft badge in the header, Restore inputs loads a version's snapshot back into the deal and runs a new version, and Home shows the Working version's verdict and IRR. Run Analysis and Save & Run take an optional Version name. History lists the versions, and the intake edits no run has picked up. The CLI prints or exports any version of a stored deal, the Working one by default (§9.6). Migration `0018` adds the `versions` table and backfills one version per stored run pair.
 
 **v0.10** is the borrower's side and a pricing answer. The sensitivity table is the **Lender Sensitivity** everywhere it is shown, and a **Borrower Sensitivity** sits under it on the same rows and columns: each cell the Flip Analysis's net profit at that loan amount and rate and the borrower's cash-on-cash, `NOT_EVALUATED` when the flip is off or there is no sale price (§8.9). A **Pricing** section under both names, per `pricing.loan_amount_steps` entry, the lowest grid rate at which the lender's IRR reaches `pricing.target_lender_irr`, with the borrower's profit and cash-on-cash there and one plain-English line per row (§8.10, engine `1.7.0`). A read-only **Defaults** page (`/defaults`, linked from the top bar) lists every value in `config/glenwood.yaml`, grouped, with its dotted key (§10). And a fix: a team-form deal with no phone kept neither the guarantor's name nor the entity, because the borrower row they live on was only ever created for a phone; a phoneless borrower now gets its row (§5).
 
@@ -290,6 +292,7 @@ Tables (one-line intent each; full DDL via Alembic migrations):
 - `enrichment_runs` — one row per adapter call: source, timestamp, status, raw response ref, parsed result
 - `screens` — screen inputs, score components, verdict, reasons; one per run (re-screen creates a new row)
 - `underwrites` — full underwrite inputs and outputs (JSONB, the monthly ledger included), version of engine used
+- `versions` — one per analysis run: deal_id, number, name, created_at, actor, engine_version, config_hash, inputs_snapshot (JSONB), screen_id, underwrite_id, is_working
 - `documents` — credit reports, valuations, contracts, generated memos/LOIs; file storage ref + hash
 - `ma_sync` — handoff log to Mortgage Automator: payload, MA ids, status
 - `users` — the people who sign in to the review queue; what `audit_log.actor` resolves to
@@ -327,6 +330,29 @@ value, rather than deleting a deal a borrower typed in.
 §6.1) and moves each untouched `WEB` deal's two numbers out of the team columns into them.
 No run is deleted: engine `1.3.0` adds to two enums and gives `UnderwriteInputs` one optional
 field, and every stored row still rebuilds.
+
+**Versions** (`0018`). A version is one analysis run - the screen and the underwrite Run
+Analysis, Save & Run, Reset all, Restore inputs and every automatic run produce together
+(§4.6) - numbered from 1 per deal, named, and recorded against the person or `system` it ran
+for. `inputs_snapshot` is everything the run read: the intake submission in force (its id,
+channel and payload), every `deals` column but the row's identity, channel, status,
+public-form provenance and timestamps (so the §8.1 economics, the split, the valuation, the
+rent, the five analysis assumptions, the toggles, the court search and the `defaulted_fields`
+tags all travel), and the borrower and property the deal pointed at. The column list is read
+off the table, so a column added later is snapshotted without anyone remembering to.
+`underwrite_id` is empty when the ledger stood down. **Exactly one version per deal is
+Working**: the first run on a deal is, every later one is a draft until a person marks it
+Working, and a partial unique index refuses a second Working row. `is_working` is the one
+column on the table that ever changes. A run the screen refused wrote nothing and is no
+version; the JSON stage routes (`POST /deals/{id}/screen`, `/underwrite`) run one stage and
+record no version.
+
+`0018` backfills the runs already stored: each `screens` row with the first `underwrites` row
+after it and before the next screen is one version, an underwrite left over is a version of
+its own beside the screen before it, numbered in order, named `v<number>`, the latest
+Working, the actor off the run's audit row. Their snapshot is `{"legacy": true}` and the
+submission then in force - the runs never recorded the deal they came from - so a backfilled
+version is listed and viewable but cannot be restored.
 
 ---
 
@@ -832,9 +858,10 @@ UnderwriteResult
                          rows: [{loan_amount, reduction,
                                  cells: [{interest_rate, net_profit, cash_invested,
                                           cash_on_cash, is_deal}]}]}           # §8.9
-  pricing: {target_lender_irr, rates: [...], borrower_status,
+  pricing: {target_lender_irr, borrower_status, rate_precision, rate_ceiling,
             rows: [{step, loan_amount, interest_rate, lender_irr, borrower_profit,
                     borrower_cash_invested, borrower_cash_on_cash, sentence}]}  # §8.10
+            # a 1.7.0 matrix carries rates: [...] (the grid it searched) and no solve fields
   flip: {status, estimated_sale_price, broker_costs, financing_costs,
          total_costs, net_profit, profit_yield}                # §8.4
   rental: {status, monthly_rent, expenses, holding_costs_monthly, net_monthly_income,
@@ -909,18 +936,31 @@ each cell; the workbook adds the cash so a reader can divide one by the other.
 
 One row per `pricing.loan_amount_steps` entry (placeholder `[0, -10000, -20000]`), each a
 change to the request that only ever lends less, taken off the advance at closing as a
-sensitivity row's reduction is. For each, the Lender Sensitivity's columns are searched lowest
-first, and the row is priced at the **first rate whose lender XIRR reaches
-`pricing.target_lender_irr`** (placeholder 20%): that rate, the lender IRR there, and the
-borrower's profit and cash-on-cash there (§8.9). Nothing is interpolated between columns. A
-row no grid rate gets to the target says so; a step that leaves no loan says it cannot be
-priced; the borrower's figures are empty whenever the Borrower Sensitivity is not evaluated.
-Each row carries one plain-English sentence, written by the engine so every output words it
-the same:
+sensitivity row's reduction is. For each, the row is priced at the **lowest rate, to 0.01%,
+whose lender XIRR reaches `pricing.target_lender_irr`** (placeholder 20%), **solved on the
+ledger** (engine `1.8.0`): every candidate rate is a full ledger re-run at that loan amount,
+exactly as a Lender Sensitivity cell is, and the search bisects on whole 0.01% steps, which is
+valid because the lender's IRR only rises with the rate - the advance, the draws, the fee and
+the payoff do not depend on it. The rate reported is that step: two decimals of a percent,
+**rounded up, never down**, because a rate rounded down to the nearest 0.01% no longer
+clears the target it was solved for. Beside it, the lender IRR at it and the borrower's
+profit and cash-on-cash at it (§8.9).
+
+The Lender Sensitivity's columns only set the starting bracket - the highest that falls
+short below, the lowest that clears above - and stay what the two sensitivity tables show. A
+row they never clear is searched up to 100%, the most the model accepts as a rate; one that
+does not clear even there says so ("No rate up to 100% gets ..."). A step that leaves no loan
+says it cannot be priced; the borrower's figures are empty whenever the Borrower Sensitivity
+is not evaluated. Each row carries one plain-English sentence, written by the engine so every
+output words it the same:
 
 ```
-A $140,000 loan at 14.5% returns $21,400 profit (28.2% cash-on-cash).
+A $140,000 loan at 14.37% returns $21,400 profit (28.2% cash-on-cash).
 ```
+
+The solve is checked against an independent one on two fixtures - Wichita's NO_DRAW note
+and Denver's SPLIT_DRAW draws - each a float secant root-find on the continuous rate,
+rounded up to the next 0.01% and confirmed a step either side (`tests/test_pricing.py`).
 
 The Pricing section sits under the Borrower Sensitivity on the deal page and is the `Pricing`
 sheet of the workbook.
@@ -950,9 +990,28 @@ beside it, which confirms on a page of its own, puts every box with a default ba
 runs again. Its other furniture sits below the sections: the **court and filing search**
 (collapsed; the outcome, the date and the typed matters, its own Save), **What the ledger
 runs on** (collapsed; the readiness checklist), **Actions**, and **History** (collapsed;
-every intake version, screen and underwrite with its timestamp, actor and engine version, a
-Restore on each version, and the audit trail under it). The page names no engine stage; the
-two it runs are an implementation.
+every version with its name, timestamp, actor, Working or Draft and engine version, a View on
+each; every intake edit no version has run on as an "edit" row with a Restore; and the audit
+trail under it). The page names no engine stage; the two it runs are an implementation.
+
+**Versions on the page** (§5). Every result on the page - the verdict line, the score
+components, and every section from the Return Overview down - is one version's: the
+**Working** one unless `?version=<number>` asks for another. The header names the Working
+version ("Working: v3") and carries a **Draft** badge whenever the page is showing a
+different one. At the top of the outputs, between the Underwriting Assumptions panel and the
+Return Overview, sits the **version switcher**: a dropdown of every version (name, Working or
+Draft, when, who) with a Show button - a plain GET form, no script - and, for the version
+shown, **Mark as Working** (when it is not already; audited `VERSION_MARKED_WORKING`) and
+**Restore inputs**. Restore inputs loads the version's snapshot back into the deal - its
+intake payload applied as a new submission (`INTAKE_RESTORED`), then every snapshotted column
+put back and the deal re-pointed at the borrower and property it had (`VERSION_RESTORED`) -
+and runs a new version on it as the person who pressed it; it is refused where an edit is
+refused (§4.6) and on a backfilled version, which kept no inputs. Run Analysis and Save &
+Run each take an optional **Version name** (at most 100 characters); a person's unnamed run
+is `v<number>` and an automatic run `Auto v<number>`. A run lands on the version it recorded,
+so the person sees what they ran - a draft, once the deal has a Working version - and the
+notice ends "Saved as v4 (draft)." A shown version is read-only: the panel above it is the
+deal's current inputs, which the next run reads.
 
 **The deal page is labels and values only.** No explanatory sub-line, parenthetical or inline
 definition beside a value; where a definition is still useful it sits behind a small (?) on
@@ -965,11 +1024,12 @@ One page in the review queue: intake facts, enrichment hits, score components, v
 missing fields on the deal page; the reasons and the suggested reply on the stored `screens`
 row, the CLI report and the workbook, where a person drafting a message reads them.
 
-**Restore** saves an earlier intake version as a new `intake_submissions` row - read back
+**Restore** on an edit row saves that intake as a new `intake_submissions` row - read back
 through the parser for the channel it arrived on, applied exactly as Edit Intake applies a
-form, audited as `INTAKE_RESTORED` naming the version it came from - and runs the analysis
-again. Nothing is rewound: the version restored and the one it replaced are both still in
-the History afterwards. Refused where an edit is refused (§4.6).
+form, audited as `INTAKE_RESTORED` naming the submission it came from - and runs the analysis
+again. Nothing is rewound: the intake restored and the one it replaced are both still on the
+deal afterwards. Refused where an edit is refused (§4.6). A version's **Restore inputs** is
+the same thing for the whole snapshot (§9).
 
 **A rejected form is a page, not an error.** Every `ValueError` and `ValidationError` raised
 while handling the team-entry form, the deal page's Underwriting Assumptions panel and court
@@ -1015,6 +1075,14 @@ can see the engine's number and Excel's agree rather than taking the engine's wo
 
 Both read a fixture off disk and call the pure engine: no database, no network. They exist
 so the math can be checked by hand against a spreadsheet; neither is shown to a borrower.
+
+`uv run glenwood deals run <deal-id> [--version V]` and `uv run glenwood deals export
+<deal-id> <out.xlsx> [--version V]` are the same report and the same workbook for one
+version of a **stored** deal (§5): the Working version unless `--version` names another by its
+number or its exact name (a name two versions share is refused with both numbers). Nothing
+is run again - the version's screen and underwrite are rebuilt off their rows - so the report
+is what was recorded, engine version and all; a version whose ledger did not run has no
+workbook to export.
 
 ---
 
@@ -1161,6 +1229,15 @@ lost-interest months - become per-deal columns with the config value as their de
 (§8.4-§8.6), and the engine reads the deal's when present. Three audit codes are new:
 `ASSUMPTIONS_SAVED`, `ASSUMPTIONS_RESET`, `COURT_SEARCH_SAVED`.
 
+Phase 8b (engine `1.8.0`, migration `0018`) solves the pricing rate on the ledger to 0.01%
+(§8.10) and makes every analysis run a version (§5, §9): a snapshot of its inputs, a name,
+one Working version per deal, a switcher and a Draft badge on the deal page, Mark as Working,
+Restore inputs, Home on the Working version, History as the version list, and the CLI's
+`deals run` / `deals export` by version (§9.6). Three audit codes are new:
+`VERSION_RECORDED`, `VERSION_MARKED_WORKING`, `VERSION_RESTORED`. It also fixes Edit Intake
+moving a deal off a split product, which the database refused with a 500 because the old
+split was flushed beside the new product.
+
 Phase 8a (engine `1.7.0`, no migration) renames the table the Lender Sensitivity and adds the
 Borrower Sensitivity (§8.9), the pricing matrix and its `pricing` config block (§8.10), and
 the read-only Defaults page (§10). It fixes the names a phoneless team-form deal lost: the
@@ -1209,8 +1286,17 @@ the deal's own phoneless row rather than minting another.
   first column beside them until the range is tuned
 - The pricing placeholders (§8.10): a 20% target lender IRR and steps of 0, -$10,000 and
   -$20,000. Steps only lend less; a larger loan has no defined advance and is refused by the
-  loader. The search is over the Lender Sensitivity's columns only, so a target the grid's
-  top rate cannot reach reads "no rate on the grid", not a solved rate above it
+  loader. The solved rate (v0.11) is rounded **up** to the next 0.01% so it still clears the
+  target, and the search runs to 100% - the model's own bound - with no lender-set ceiling;
+  confirm whether a quoted rate should be capped (a usury limit, say) and say so on the row
+- Versions (v0.11): a run after the first is a draft until somebody marks it Working, the
+  automatic runs after an edit included, so Home keeps the old numbers until a person moves
+  the mark - confirm that is wanted for the automatic runs too. Version names need not be
+  unique (the CLI refuses an ambiguous one). Restore inputs runs as the person, like Save &
+  Run, where an intake restore runs as `system`. The JSON stage routes record no version, and
+  a deal priced only through them shows its latest runs on Home and the deal page. The
+  workbook is a CLI export only; there is no download on the deal page. Backfilled versions
+  (`0018`) cannot be restored
 - Borrower cash-on-cash is profit over (total project costs - loan), with total project costs
   the flip's own stack - financing included, broker's selling costs not (§8.4). Confirm that
   is the cash GLENWOOD means

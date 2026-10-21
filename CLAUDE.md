@@ -67,7 +67,7 @@ glenwood-uw/
     autorun.py             # the analysis: screen then underwrite, behind Run Analysis and on arrival / edit as `system`
     defaults.py            # the SPEC 8.1 defaults every deal is populated with, and which are defaults
     enrichment.py          # what the adapters produced (Phase 3); the precedence rule
-    history.py             # every intake version, screen and underwrite on a deal, with its actor
+    history.py             # a deal's versions, and the intake edits no version ran on
     intake.py              # store an IntakeRecord with an actor; re-apply an edited one; restore an earlier one
     lifecycle.py           # the two automatic status transitions (SPEC 4.6)
     passwords.py           # PBKDF2 hash / verify; pure
@@ -78,6 +78,7 @@ glenwood-uw/
     requests.py            # UnderwriteRequest / TeamOverrides: what the team supplies by hand
     runner.py              # run_screen, run_underwrite
     users.py               # create / deactivate / authenticate a queue user
+    versions.py            # one per analysis run: its inputs snapshotted, one Working per deal
   api/
     main.py, routes/       # auth, queue, intake, deals, defaults, apply (the public borrower form)
     security.py            # the signed session cookie and the who-is-signed-in dependencies
@@ -150,15 +151,27 @@ own `deals` columns since migration `0017`, config value as default, engine read
 when present) and the two toggles - each tagged "default" while it holds its default and
 resettable one at a time, with one **Save & Run** at the bottom and a **Reset all to
 defaults** beside it that goes through a confirmation page. The court search is its own
-collapsed section with its own Save; the readiness checklist and the versions and runs
-(History) are collapsed too, each a plain `<details>`; History restores any intake version
-as a new submission (`services/intake.restore_intake`). The deal page prints no explanatory
-prose beside a value: a definition that is still useful goes behind the (?) on its label, as
+collapsed section with its own Save; the readiness checklist and the versions (History) are
+collapsed too, each a plain `<details>`; History lists the versions and the intake edits no
+version ran on, and an edit row restores that intake as a new submission
+(`services/intake.restore_intake`). The deal page prints no explanatory prose beside a value: a definition that is still useful goes behind the (?) on its label, as
 a hover title (`_fields.html`, `help`). The team form prints nothing but labels and boxes,
 each marked Required or Optional in plain text, and asks only for the Overview, the Property
 Overview and seven Deal Economics boxes; everything with a default populates from config and
 is edited on the deal page, and Edit Intake writes only the columns the form has a box for
 (`db/repository.form_columns`).
+
+**Every analysis run is a version, and one version is Working.** `services/autorun.py`
+records each run that wrote anything as a `versions` row (`services/versions.py`, SPEC §5):
+a name - typed beside Run Analysis or Save & Run, else `v<n>`, `Auto v<n>` for an automatic
+run - the actor, the two rows it wrote and a snapshot of every input it read, taken off the
+`deals` table's own column list so a new column is snapshotted by default. The first run on
+a deal is Working and the rest are drafts until Mark as Working moves the mark; the deal
+page and Home show the Working version, a switcher at the top of the outputs shows any other
+read-only under a Draft badge, and Restore inputs puts a version's snapshot back on the deal
+and runs a new version. A restore must reproduce the version exactly, which
+`tests/test_versions.py` holds it to after changing every input; a new input that is not a
+`deals` column has to be put in the snapshot by hand.
 
 **The ledger anchors to month ends.** A deal closes on whatever date the team enters; the
 model treats closing as the last day of that month, every period is a month end, and the
@@ -248,6 +261,10 @@ uv run glenwood deals purge --all --confirm
 # run the engine on a fixture deal, no database:
 uv run glenwood run fixtures/synthetic/deals/go_split_draw_denver.json --underwrite
 uv run glenwood export fixtures/synthetic/deals/go_split_draw_denver.json denver.xlsx
+
+# a stored deal's version, rebuilt off its rows (the Working one unless --version says):
+uv run glenwood deals run <deal-id> --version 3
+uv run glenwood deals export <deal-id> deal.xlsx --version "Base case"
 ```
 
 ## When unsure
