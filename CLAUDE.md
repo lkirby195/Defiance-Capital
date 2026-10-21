@@ -166,10 +166,12 @@ records each run that wrote anything as a `versions` row (`services/versions.py`
 a name - typed beside Run Analysis or Save & Run, else `v<n>`, `Auto v<n>` for an automatic
 run - the actor, the two rows it wrote and a snapshot of every input it read, taken off the
 `deals` table's own column list so a new column is snapshotted by default. The first run on
-a deal is Working and the rest are drafts until Mark as Working moves the mark; the deal
-page and Home show the Working version, a switcher at the top of the outputs shows any other
-read-only under a Draft badge, and Restore inputs puts a version's snapshot back on the deal
-and runs a new version. A restore must reproduce the version exactly, which
+a deal is Working; after that an automatic run takes the mark unless the Working version is
+`human_selected` (named by the person who ran it, or set with Mark as Working), a person's
+own run is a draft, and Mark as Working moves the mark and records the choice. The deal page
+and Home show the Working version, a switcher at the top of the outputs shows any other
+read-only under a Draft badge with Download Excel beside it, and Restore inputs puts a
+version's snapshot back on the deal and runs a new version. A restore must reproduce the version exactly, which
 `tests/test_versions.py` holds it to after changing every input; a new input that is not a
 `deals` column has to be put in the snapshot by hand.
 

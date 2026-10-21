@@ -328,11 +328,18 @@
         {% endfor %}
       </select>
       <button class="quiet" type="submit">Show</button>
+      {% if shown.underwrite_id %}
+        <a class="btn quiet" id="download-excel" href="/queue/deals/{{ deal.id }}/versions/{{ shown.number }}/workbook" title="The workbook for {{ shown.name }}, the version in view">Download Excel</a>
+      {% else %}
+        <span class="btn quiet off" id="download-excel" title="{{ shown.name }} has no ledger: the underwrite did not run">Download Excel</span>
+      {% endif %}
     </form>
     <dl class="facts small">
       <dt>Name</dt><dd>{{ shown.name }} <span class="tag {{ 'WORKING' if shown.is_working else 'DRAFT' }}">{{ "Working" if shown.is_working else "Draft" }}</span></dd>
       <dt>Run</dt><dd>{{ shown.created_at | when }} by {{ shown.actor }}</dd>
       <dt>Engine</dt><dd>{{ shown.engine_version }} · config {{ shown.config_hash[:12] }}</dd>
+      <dt>Chosen by a person{{ help("Named by the person who ran it, or set with Mark as Working. While the Working version is one a person chose, the automatic run after an edit is a draft; otherwise it becomes the Working version.") }}</dt>
+      <dd>{{ "Yes" if shown.human_selected else "No" }}</dd>
     </dl>
     <div class="actions">
       {% if not shown.is_working %}
@@ -489,11 +496,14 @@
 
 {# --- 5b. Pricing (SPEC §8.10) -------------------------------------------------------------- #}
 <section class="panel" id="pricing">
-  <h2>Pricing{{ help("For each loan amount step (config pricing.loan_amount_steps), the lowest rate at which the lender's IRR reaches the target (pricing.target_lender_irr), solved on the ledger to 0.01% and rounded up so it still clears, with the borrower's profit and cash-on-cash at that rate (SPEC §8.10).") }}</h2>
+  <h2>Pricing{{ help("For each loan amount step (config pricing.loan_amount_steps), the lowest rate at which the lender's IRR reaches the target (pricing.target_lender_irr), solved on the ledger to 0.01% and rounded up so it still clears, with the borrower's profit and cash-on-cash at that rate (SPEC §8.10). A rate above the max quoted rate (pricing.max_quoted_rate) is not quoted; the row says what it needs.") }}</h2>
   {% if result and result.pricing %}
     {% set matrix = result.pricing %}
     <dl class="facts small">
       <dt>Target lender IRR</dt><dd>{{ matrix.target_lender_irr | pct }}</dd>
+      {% if matrix.max_quoted_rate is not none %}
+        <dt>Max quoted rate</dt><dd>{{ matrix.max_quoted_rate | quoted }}</dd>
+      {% endif %}
     </dl>
     <div class="scroll">
       <table>
@@ -515,6 +525,8 @@
                 <td class="num">{{ row.lender_irr | rate }}</td>
                 <td class="num">{{ row.borrower_profit | money }}</td>
                 <td class="num">{{ row.borrower_cash_on_cash | pct }}</td>
+              {% elif row.over_max_quote %}
+                <td colspan="4">exceeds max quoted rate ({{ row.rate_needed | quoted }} needed)</td>
               {% else %}
                 <td colspan="4">{{ "No rate reaches the target." if matrix.solved else "No grid rate reaches the target." }}</td>
               {% endif %}

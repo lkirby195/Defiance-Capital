@@ -26,6 +26,7 @@ checks the engine against an independent solve to 1e-6.
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -548,6 +549,9 @@ def _sheet_pricing(book: Workbook, result: UnderwriteResult) -> None:
         return
     sheet.cell(row=2, column=1, value="Target lender IRR")
     sheet.cell(row=2, column=2, value=matrix.target_lender_irr).number_format = PCT1
+    if matrix.max_quoted_rate is not None:
+        sheet.cell(row=2, column=3, value="Max quoted rate")
+        sheet.cell(row=2, column=4, value=matrix.max_quoted_rate).number_format = PCT2
     at = _header(
         sheet,
         4,
@@ -560,6 +564,7 @@ def _sheet_pricing(book: Workbook, result: UnderwriteResult) -> None:
             "Borrower cash in",
             "Cash-on-cash",
             "In plain English",
+            "Rate needed",
         ],
     )
     for row in matrix.rows:
@@ -572,13 +577,14 @@ def _sheet_pricing(book: Workbook, result: UnderwriteResult) -> None:
             (row.borrower_cash_invested, MONEY),
             (row.borrower_cash_on_cash, PCT1),
             (row.sentence, None),
+            (row.rate_needed, PCT2),
         )
         for column, (value, fmt) in enumerate(values, start=1):
             cell = sheet.cell(row=at, column=column, value=value)
             if fmt is not None:
                 cell.number_format = fmt
         at += 1
-    _widths(sheet, 16, 12, 9, 12, 16, 17, 13, 90)
+    _widths(sheet, 16, 12, 9, 12, 16, 17, 13, 90, 12)
 
 
 def _sheet_flip(book: Workbook, result: UnderwriteResult) -> None:
@@ -721,6 +727,18 @@ def build_workbook(
     _sheet_take_back(book, result)
     _sheet_flags(book, result)
     return book
+
+
+def workbook_bytes(
+    screen_inputs: ScreenInputs,
+    underwrite_inputs: UnderwriteInputs,
+    result: UnderwriteResult,
+    config: Config,
+) -> bytes:
+    """The workbook as the bytes of an .xlsx file, for the deal page's Download Excel."""
+    buffer = BytesIO()
+    build_workbook(screen_inputs, underwrite_inputs, result, config).save(buffer)
+    return buffer.getvalue()
 
 
 def write_workbook(

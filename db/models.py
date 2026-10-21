@@ -5,8 +5,9 @@ columns persist the enum *values* (``"12_PLUS"``, not the member name) so the
 database matches ``schema/intake.json``. Rows on ``intake_submissions``,
 ``enrichment_runs``, ``screens``, ``underwrites``, ``documents``, ``ma_sync`` and
 ``audit_log`` are append-only: re-runs create new rows (CLAUDE.md, "Record everything").
-``versions`` is append-only but for one column: ``is_working`` moves when a person marks a
-different version as the deal's Working one.
+``versions`` is append-only but for two columns: ``is_working`` moves when a person marks a
+different version Working or an automatic run takes the mark, and ``human_selected`` is set
+on the version a person marks.
 """
 
 from __future__ import annotations
@@ -431,11 +432,14 @@ class Version(Base):
     is NULL if a later migration deletes the row it named. ``number`` counts from 1 per deal
     and ``name`` is what a person called it, or ``v<number>`` / ``Auto v<number>``.
 
-    Exactly one version of a deal is the **Working** one - the first run on a deal is, and a
-    team member moves it with Mark as Working - and every other is a draft. The partial
-    unique index says so to the database too: a second ``is_working`` row on one deal is
-    refused there rather than trusted to the service. ``engine_version`` and ``config_hash``
-    repeat the two runs' own, so the list does not have to open them to say which engine ran.
+    Exactly one version of a deal is the **Working** one and every other is a draft. The
+    first run on a deal is Working; an automatic run takes the mark unless the Working version
+    is ``human_selected`` - a person named it when they ran it, or set it with Mark as Working
+    - and a person's own run never takes it (``services/versions.record_version``). The
+    partial unique index says so to the database too: a second ``is_working`` row on one deal
+    is refused there rather than trusted to the service. ``engine_version`` and
+    ``config_hash`` repeat the two runs' own, so the list does not have to open them to say
+    which engine ran.
     """
 
     __tablename__ = "versions"
@@ -467,6 +471,11 @@ class Version(Base):
         Uuid, ForeignKey("underwrites.id", ondelete="SET NULL")
     )
     is_working: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    # A person chose this one: they named it when they ran it, or marked it Working. An
+    # automatic run does not take the Working mark from a version that says so.
+    human_selected: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
 

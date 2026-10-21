@@ -26,10 +26,16 @@ keeps every one it lays out). A row the columns never clear is searched up to
 so, and so does a step that leaves no loan to price. The reduction comes off the advance at
 closing exactly as a Lender Sensitivity row's does.
 
+**A rate above ``pricing.max_quoted_rate`` is not a quote.** The solve still finds it, and
+the row says so in its place - no rate, no IRR, no borrower figures, ``rate_needed`` set and
+the sentence "exceeds max quoted rate (20.15% needed)" - so a reader sees how far the loan is
+from quotable rather than a number nobody would offer. A rate equal to the maximum is quoted.
+
 Each row carries one plain-English sentence, written here so that the deal page, the
 workbook and the CLI cannot word the same row three ways:
 
     A $140,000 loan at 14.37% returns $21,400 profit (28.2% cash-on-cash).
+    A $150,000 loan exceeds max quoted rate (20.15% needed).
 
 Pure: ``UnderwriteInputs``, the caps cell, the flip toggle and a ``Config`` in, a
 ``PricingMatrix`` out.
@@ -116,8 +122,18 @@ def pricing_sentence(
     )
 
 
-def unpriced_row(step: Decimal, amount: Decimal, sentence: str) -> PricingRow:
-    """A row no rate prices: every figure None, the sentence saying why."""
+def over_max_sentence(loan_amount: Decimal, rate: Decimal) -> str:
+    """The row whose solved rate is above ``pricing.max_quoted_rate``.  # SPEC §8.10"""
+    return f"A {dollars(loan_amount)} loan exceeds max quoted rate ({rate_text(rate)} needed)."
+
+
+def unpriced_row(
+    step: Decimal, amount: Decimal, sentence: str, rate_needed: Decimal | None = None
+) -> PricingRow:
+    """A row no rate is quoted on: every figure None, the sentence saying why.
+
+    ``rate_needed`` is the solved rate when the reason is that it is above the maximum quote.
+    """
     return PricingRow(
         step=step,
         loan_amount=amount,
@@ -127,6 +143,7 @@ def unpriced_row(step: Decimal, amount: Decimal, sentence: str) -> PricingRow:
         borrower_cash_invested=None,
         borrower_cash_on_cash=None,
         sentence=sentence,
+        rate_needed=rate_needed,
     )
 
 
@@ -220,6 +237,9 @@ def pricing_matrix(
             rows.append(unpriced_row(step, amount, sentence))
             continue
         rate, point = solved
+        if rate > config.pricing.max_quoted_rate:
+            rows.append(unpriced_row(step, amount, over_max_sentence(amount, rate), rate))
+            continue
         returns = borrower_returns(point, config) if status is AnalysisStatus.EVALUATED else None
         rows.append(
             PricingRow(
@@ -239,4 +259,5 @@ def pricing_matrix(
         rows=rows,
         rate_precision=RATE_PRECISION,
         rate_ceiling=ceiling,
+        max_quoted_rate=config.pricing.max_quoted_rate,
     )

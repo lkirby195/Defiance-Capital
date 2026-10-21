@@ -1414,11 +1414,19 @@ class PricingRow(BaseModel):
     borrower_cash_invested: Decimal | None
     borrower_cash_on_cash: Decimal | None
     sentence: str
+    # 1.9.0 on: the solved rate when it is above ``pricing.max_quoted_rate``, so the row is
+    # not a quote and says what it would have needed; None on every other row.
+    rate_needed: Decimal | None = None
 
     @property
     def cleared(self) -> bool:
-        """True when some rate reaches the target."""
+        """True when the row quotes a rate that reaches the target."""
         return self.interest_rate is not None
+
+    @property
+    def over_max_quote(self) -> bool:
+        """True when the target needs a rate above the maximum quote."""
+        return self.rate_needed is not None
 
 
 class PricingMatrix(BaseModel):
@@ -1438,6 +1446,7 @@ class PricingMatrix(BaseModel):
     rows: list[PricingRow]
     rate_precision: Decimal | None = None  # 1.8.0 on: the solve's step
     rate_ceiling: Decimal | None = None  # 1.8.0 on: the highest rate the solve tries
+    max_quoted_rate: Decimal | None = None  # 1.9.0 on: pricing.max_quoted_rate as it ran
     rates: list[Decimal] = Field(default_factory=list)  # 1.7.0 only: the columns searched
 
     @property

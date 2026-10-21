@@ -236,17 +236,21 @@ class SensitivityConfig(_Section):
 
 
 class PricingConfig(_Section):
-    """The pricing matrix: the lowest grid rate that earns the lender its target.  # SPEC §8.10
+    """The pricing matrix: the lowest rate that earns the lender its target.  # SPEC §8.10
 
     One row per ``loan_amount_steps`` entry, each a signed change to the request (0 is the
-    request itself, -10,000 is ten thousand less); for each, the lowest rate on the Lender
-    Sensitivity columns at which the lender's XIRR reaches ``target_lender_irr``
+    request itself, -10,000 is ten thousand less); for each, the lowest rate, solved on the
+    ledger to 0.01%, at which the lender's XIRR reaches ``target_lender_irr``
     (``engine/calc/pricing.py``). A step only lends less: a reduction comes off the advance at
     closing the way the sensitivity rows' does, and nothing defines what a larger loan would
     advance, so a positive step is refused here rather than guessed at.
+
+    ``max_quoted_rate`` is the highest rate a row may quote: a row whose solved rate is above
+    it is not a quote, and says what it would have needed instead.
     """
 
     target_lender_irr: Pct
+    max_quoted_rate: Annotated[Decimal, Field(gt=0, le=1)]
     loan_amount_steps: Annotated[
         list[Annotated[Decimal, Field(le=0, max_digits=14, decimal_places=2)]],
         Field(min_length=1, max_length=20),

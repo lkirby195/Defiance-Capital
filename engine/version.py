@@ -3,6 +3,14 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**1.9.0 (Phase 8c prep, 2026-10-20) caps what the pricing matrix quotes.** A row whose solved
+rate is above ``pricing.max_quoted_rate`` (placeholder 18%) is no longer a quote: its rate,
+IRR and borrower figures are None, ``PricingRow.rate_needed`` carries the solved rate, and the
+sentence reads "A $150,000 loan exceeds max quoted rate (20.15% needed)." A rate equal to the
+maximum is quoted. ``PricingMatrix`` records ``max_quoted_rate``; both new fields default to
+None, so a stored 1.8.0 result loads. No fixture's rate is above the placeholder, so nothing
+else moves; ``tests/test_pricing.py`` lowers the maximum under Wichita's 16.34%.
+
 **1.8.0 (Phase 8b, 2026-10-20) solves the pricing rate.** The pricing matrix no longer
 picks the lowest Lender Sensitivity column whose lender XIRR reaches
 ``pricing.target_lender_irr``; for each loan amount step it bisects on the ledger itself,
@@ -153,4 +161,4 @@ REHAB_PORTION_EXCEEDS_BUDGET.
 
 from __future__ import annotations
 
-ENGINE_VERSION = "1.8.0"
+ENGINE_VERSION = "1.9.0"
