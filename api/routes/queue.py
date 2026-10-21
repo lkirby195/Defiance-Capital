@@ -33,6 +33,13 @@ follows an edit. Reset all goes through a confirmation page first
 Opening a deal populates its SPEC §8.1 defaults if it was stored before they existed
 (``services/defaults.py``): the one write a GET makes, idempotent, and recorded.
 
+**Every run is a version** (``services/versions.py``), and the deal page shows the deal's
+Working version unless ``?version=<number>`` asks for another, read-only, with a switcher
+at the top of the outputs, Mark as Working and Restore inputs beside it. Run Analysis and
+Save & Run take an optional Version name. A run redirects to the version it recorded, so the
+person sees what they just ran - a draft, once the deal has a Working version - rather than
+the Working one it did not replace.
+
 The team-entry form posts to ``/intake/team``, the route the JSON API already uses. It is one
 intake path with two content types, not two paths that can drift. Editing the intake on a deal
 that already exists is the one thing that route cannot do - it creates - so that lives here,
@@ -98,11 +105,14 @@ from services import (
     DealNotFound,
     ReasonRequired,
     UnderwritingAssumptions,
+    VersionNotFound,
     add_note,
     apply_defaults,
     auto_run,
+    clean_name,
     deal_history,
     deal_trail,
+    deal_versions,
     decline,
     home_view,
     is_defaulted,
@@ -111,21 +121,26 @@ from services import (
     latest_underwrite,
     load_deal,
     mark_dead,
+    mark_working,
     pause,
     progress,
     reopen,
     reset_assumptions,
     restore_intake,
+    restore_version,
     run_analysis,
     save_assumptions,
     save_court_search,
     screen_is_stale,
     screen_result,
+    snapshot_complete,
     underwrite_readiness,
     underwrite_result,
     update_intake,
+    version_rows,
 )
 from services.actions import RESETTABLE, TOGGLE_FIELDS
+from services.autorun import AutoRun
 from services.readiness import deal_term
 
 # Every state-changing request through this router carries a CSRF token, by living here
@@ -135,6 +150,8 @@ router = APIRouter(tags=["queue"], dependencies=[Depends(require_csrf)])
 SessionDep = Annotated[Session, Depends(get_session)]
 
 HOME_PATH = "/queue"
+# The optional box beside Run Analysis and Save & Run: what to call the version it records.
+VERSION_NAME = "version_name"
 # The hidden field a Home row's controls carry, so the action goes back to the list.
 RETURN_TO = "return_to"
 HOME = "home"
@@ -325,8 +342,15 @@ def _allowed(deal: Deal) -> dict[str, bool]:
     }
 
 
-def deal_path(deal_id: UUID) -> str:
-    return f"/queue/deals/{deal_id}"
+def deal_path(deal_id: UUID, version: int | None = None) -> str:
+    """The deal page; with ``version``, that version of it rather than the Working one."""
+    path = f"/queue/deals/{deal_id}"
+    return path if version is None else f"{path}?version={version}"
+
+
+def ran_path(deal_id: UUID, run: AutoRun) -> str:
+    """Where a run lands: the version it recorded, else the deal page."""
+    return deal_path(deal_id, run.version.number if run.version is not None else None)
 
 
 def return_path(deal_id: UUID, return_to: str | None) -> str:
@@ -394,6 +418,7 @@ def render_deal(
     matters: list[dict[str, str]] | None = None,
     holding_costs_hint: str | None = None,
     court_open: bool = False,
+    version: int | None = None,
     status_code: int = status.HTTP_200_OK,
 ) -> HTMLResponse:
     """The deal page, rebuilt from the database plus whatever the last post left behind.
@@ -404,10 +429,25 @@ def render_deal(
     shows what the deal currently holds. The panel is always open; the court section opens
     on a page that carries a complaint about it - the box the complaint is under has to be
     visible - and stays collapsed otherwise.
+
+    The results are the Working version's, or version ``version``'s when one is asked for
+    (``VersionNotFound`` when there is none by that number); a deal with runs and no version
+    - only the JSON stage routes ever priced it - shows its latest screen and underwrite.
     """
     deal = load_deal(session, deal_id)
-    screen_row = latest_screen(session, deal.id)
-    underwrite_row = latest_underwrite(session, deal.id)
+    versions = deal_versions(session, deal.id)
+    working = next((each for each in versions if each.is_working), None)
+    # The Working version; the newest should a deal ever have versions and none Working.
+    shown = working or (versions[0] if versions else None)
+    if version is not None:
+        shown = next((each for each in versions if each.number == version), None)
+        if shown is None:
+            raise VersionNotFound(deal.id, str(version))
+    if shown is not None:
+        screen_row, underwrite_row = version_rows(session, shown)
+    else:
+        screen_row = latest_screen(session, deal.id)
+        underwrite_row = latest_underwrite(session, deal.id)
     return page(
         request,
         "deal.html",
@@ -423,6 +463,13 @@ def render_deal(
             "economics": economics_in_force(deal),
             "allowed": _allowed(deal),
             "enums": enum_values(),
+            # Every version, newest first, for the switcher; the Working one, and the one
+            # this page is showing (SPEC §9).
+            "versions": versions,
+            "working": working,
+            "shown": shown,
+            "drafting": shown is not None and not shown.is_working,
+            "shown_restorable": shown is not None and snapshot_complete(shown.inputs_snapshot),
             # An edit re-runs the screen (``services/autorun.py``); this is only ever true
             # when that run could not go ahead, and the page says so.
             "screen_is_stale": screen_is_stale(session, deal.id),
@@ -544,20 +591,27 @@ def new_deal_page(request: Request, user: PageUser) -> HTMLResponse:
 
 @router.get("/queue/deals/{deal_id}", response_class=HTMLResponse, response_model=None)
 def deal_page(
-    request: Request, deal_id: UUID, session: SessionDep, user: PageUser
+    request: Request,
+    deal_id: UUID,
+    session: SessionDep,
+    user: PageUser,
+    version: int | None = None,
 ) -> HTMLResponse | RedirectResponse:
     """One deal: the verdict and the ledger, the §9 sections, the inputs, the history.
 
-    A deal stored before the SPEC §8.1 defaults existed is populated with them here, on its
-    next open, and the write committed before the page renders what it wrote. Idempotent:
-    every later open writes nothing (``services/defaults.py``).
+    The Working version's results, or ``?version=<number>``'s. A deal stored before the
+    SPEC §8.1 defaults existed is populated with them here, on its next open, and the write
+    committed before the page renders what it wrote. Idempotent: every later open writes
+    nothing (``services/defaults.py``).
     """
     try:
         if apply_defaults(session, deal_id, actor=SYSTEM_ACTOR):
             session.commit()
-        return render_deal(request, session, deal_id, user)
+        return render_deal(request, session, deal_id, user, version=version)
     except DealNotFound:
         return redirect(HOME_PATH, "That deal does not exist.")
+    except VersionNotFound:
+        return redirect(deal_path(deal_id), "That version does not exist.")
 
 
 # --- the analysis (SPEC §4.6, §7, §8) -------------------------------------------------------------
@@ -565,21 +619,33 @@ def deal_page(
 
 @router.post("/queue/deals/{deal_id}/run", response_model=None)
 def run_action(
-    request: Request, deal_id: UUID, session: SessionDep, user: PageUser
+    request: Request, deal_id: UUID, session: SessionDep, user: PageUser, form: FormDep
 ) -> HTMLResponse | RedirectResponse:
     """Run Analysis: the screen, then the underwrite, recorded against the person who asked.
 
-    No form: every SPEC §8.1 input lives on the deal by now (the Inputs block), so the button
-    runs the deal as it stands, a paused deal included. What ran is kept whatever happened
-    next; what stood down is said on the page - as a complaint when the deal is short of
-    something or the engine will not price it, as a conflict when its status refused the
-    ledger - rather than in a notice that reads as success.
+    Every SPEC §8.1 input lives on the deal by now (the Underwriting Assumptions panel), so
+    the button runs the deal as it stands, a paused deal included; the one box beside it is
+    the Version name. What ran is kept whatever happened next; what stood down is said on
+    the page - as a complaint when the deal is short of something or the engine will not
+    price it, as a conflict when its status refused the ledger - rather than in a notice
+    that reads as success.
     """
     try:
         deal = load_deal(session, deal_id)
     except DealNotFound:
         return redirect(HOME_PATH, "That deal does not exist.")
-    run = run_analysis(session, deal, actor=user.email)
+    try:
+        name = clean_name(fields(form).get(VERSION_NAME))
+    except ValueError as exc:
+        return render_deal(
+            request,
+            session,
+            deal_id,
+            user,
+            complaints=at_top(str(exc)),
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    run = run_analysis(session, deal, actor=user.email, name=name)
     if not run.ran:
         session.rollback()
         return render_deal(
@@ -598,11 +664,12 @@ def run_action(
             deal_id,
             user,
             complaints=at_top(*run.skipped),
+            version=run.version.number if run.version is not None else None,
             status_code=(
                 status.HTTP_409_CONFLICT if run.refused else status.HTTP_422_UNPROCESSABLE_CONTENT
             ),
         )
-    return redirect(deal_path(deal_id), run.summary())
+    return redirect(ran_path(deal_id, run), run.summary())
 
 
 # --- the intake, edited (SPEC §4.1) ---------------------------------------------------------------
@@ -698,7 +765,7 @@ def edit_intake_action(
         return back(at_top(str(exc)), status.HTTP_422_UNPROCESSABLE_CONTENT)
     run = auto_run(session, deal)
     session.commit()
-    return redirect(deal_path(deal_id), f"Intake updated. {run.summary()}".strip())
+    return redirect(ran_path(deal_id, run), f"Intake updated. {run.summary()}".strip())
 
 
 @router.post("/queue/deals/{deal_id}/intake/{submission_id}/restore", response_model=None)
@@ -740,7 +807,7 @@ def restore_intake_action(
         )
     run = auto_run(session, deal)
     session.commit()
-    return redirect(deal_path(deal_id), f"Intake restored. {run.summary()}".strip())
+    return redirect(ran_path(deal_id, run), f"Intake restored. {run.summary()}".strip())
 
 
 # --- the Underwriting Assumptions panel (SPEC §8.1, §8.4-§8.6) ------------------------------------
@@ -758,6 +825,7 @@ def assumptions_action(
     pressed one button for both and the first half is not undone by the second.
     """
     submitted = fields(form)
+    typed_name = submitted.pop(VERSION_NAME, None)
     try:
         deal = load_deal(session, deal_id)
     except DealNotFound:
@@ -777,6 +845,10 @@ def assumptions_action(
         )
 
     try:
+        name = clean_name(typed_name)
+    except ValueError as exc:
+        return back(at_top(str(exc)), status.HTTP_422_UNPROCESSABLE_CONTENT)
+    try:
         assumptions = UnderwritingAssumptions.model_validate(values)
     except ValidationError as exc:
         session.rollback()
@@ -789,9 +861,9 @@ def assumptions_action(
         # complaint about what was typed rather than a fault of the server's.
         session.rollback()
         return back(at_top(str(exc)), status.HTTP_422_UNPROCESSABLE_CONTENT)
-    run = run_analysis(session, saved, actor=user.email)
+    run = run_analysis(session, saved, actor=user.email, name=name)
     session.commit()
-    return redirect(deal_path(deal_id), f"Assumptions saved. {run.summary()}".strip())
+    return redirect(ran_path(deal_id, run), f"Assumptions saved. {run.summary()}".strip())
 
 
 def reset_page(
@@ -847,7 +919,7 @@ def reset_assumptions_action(
     run = run_analysis(session, deal, actor=user.email)
     session.commit()
     return redirect(
-        deal_path(deal_id), f"Assumptions reset to the defaults. {run.summary()}".strip()
+        ran_path(deal_id, run), f"Assumptions reset to the defaults. {run.summary()}".strip()
     )
 
 
@@ -889,7 +961,72 @@ def court_action(
     saved = save_court_search(session, deal_id, search, actor=user.email)
     run = auto_run(session, saved)
     session.commit()
-    return redirect(deal_path(deal_id), f"Court search saved. {run.summary()}".strip())
+    return redirect(ran_path(deal_id, run), f"Court search saved. {run.summary()}".strip())
+
+
+# --- versions (SPEC §5, §9) ---------------------------------------------------------------------
+
+
+@router.post("/queue/deals/{deal_id}/versions/{number}/working", response_model=None)
+def mark_working_action(
+    request: Request, deal_id: UUID, number: int, session: SessionDep, user: PageUser
+) -> HTMLResponse | RedirectResponse:
+    """Mark as Working: this version becomes the one the deal page and Home show."""
+    try:
+        version = mark_working(session, deal_id, number, actor=user.email)
+    except DealNotFound:
+        session.rollback()
+        return redirect(HOME_PATH, "That deal does not exist.")
+    except VersionNotFound:
+        session.rollback()
+        return redirect(deal_path(deal_id), "That version does not exist.")
+    session.commit()
+    return redirect(deal_path(deal_id), f"{version.name} is now the Working version.")
+
+
+@router.post("/queue/deals/{deal_id}/versions/{number}/restore", response_model=None)
+def restore_version_action(
+    request: Request, deal_id: UUID, number: int, session: SessionDep, user: PageUser
+) -> HTMLResponse | RedirectResponse:
+    """Restore inputs: the version's snapshot loaded back into the deal, then a new version.
+
+    The run is the person's, as Save & Run's is: they pressed a button that says it runs.
+    Refused, on the page it came from, where an edit is refused and on a version that kept
+    no inputs.
+    """
+    try:
+        deal = restore_version(session, deal_id, number, actor=user.email)
+    except DealNotFound:
+        session.rollback()
+        return redirect(HOME_PATH, "That deal does not exist.")
+    except VersionNotFound:
+        session.rollback()
+        return redirect(deal_path(deal_id), "That version does not exist.")
+    except ActionNotAllowed as exc:
+        session.rollback()
+        return render_deal(
+            request,
+            session,
+            deal_id,
+            user,
+            complaints=at_top(str(exc)),
+            version=number,
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    except ValueError as exc:
+        session.rollback()
+        return render_deal(
+            request,
+            session,
+            deal_id,
+            user,
+            complaints=at_top(str(exc)),
+            version=number,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    run = run_analysis(session, deal, actor=user.email)
+    session.commit()
+    return redirect(ran_path(deal_id, run), f"Inputs restored. {run.summary()}".strip())
 
 
 # --- lifecycle actions (SPEC §4.6) ---------------------------------------------------------------

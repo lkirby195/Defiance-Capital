@@ -3,6 +3,20 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**1.8.0 (Phase 8b, 2026-10-20) solves the pricing rate.** The pricing matrix no longer
+picks the lowest Lender Sensitivity column whose lender XIRR reaches
+``pricing.target_lender_irr``; for each loan amount step it bisects on the ledger itself,
+over whole steps of 0.01%, for the lowest rate whose XIRR reaches the target, and reports
+that rate (two decimals of a percent, rounded up so it still clears), the XIRR there and the
+borrower's profit, cash and cash-on-cash there (``engine/calc/pricing.py``). The grid's
+columns only set the starting bracket; a row they never clear is searched up to 100%, the
+most the model accepts. ``PricingMatrix`` gains ``rate_precision`` and ``rate_ceiling`` and
+leaves ``rates`` (the columns a 1.7.0 matrix searched) empty, so a stored 1.7.0 result
+still loads. Wichita prices at 16.34% where the grid said 16.5%, Denver at 13.82%, 13.72%
+and 13.61%, each checked against an independent solve (``tests/test_pricing.py``). Nothing
+else moves: the ledger, the IRR, the two sensitivity tables and the three analyses are
+unchanged on every fixture.
+
 **1.7.0 (Phase 8a, 2026-10-20) adds the borrower's side and the pricing matrix.**
 ``UnderwriteResult`` gains ``borrower_sensitivity`` (``BorrowerSensitivityTable``, SPEC §8.9)
 and ``pricing`` (``PricingMatrix``, SPEC §8.10). The Borrower Sensitivity has the Lender
@@ -139,4 +153,4 @@ REHAB_PORTION_EXCEEDS_BUDGET.
 
 from __future__ import annotations
 
-ENGINE_VERSION = "1.7.0"
+ENGINE_VERSION = "1.8.0"

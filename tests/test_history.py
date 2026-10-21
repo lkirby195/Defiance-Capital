@@ -1,10 +1,10 @@
-"""The History section: every version and run, who did it, and Restore.  # SPEC §5, §9.1, §11
+"""The History section: every version, the edits no run picked up, and Restore.  # SPEC §5, §9
 
-Three append-only tables and the audit rows beside them, read back as one list
-(``services/history.py``); and the one write the section offers, which saves an earlier intake
-version as a new submission and runs the analysis again (``services/intake.restore_intake``).
-Nothing is rewound: the version restored is still there afterwards, and so is the one it
-replaced.
+The versions table and the intake submissions beside it, read back as one list
+(``services/history.py``); and the one write an edit row offers, which saves that intake as
+a new submission and runs the analysis again (``services/intake.restore_intake``). Nothing is
+rewound: the intake restored is still there afterwards, and so is the one it replaced. The
+versions' own Restore inputs is ``tests/test_versions.py``.
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ def submissions(session: Session, deal: Deal) -> list[IntakeSubmission]:
 # --- the list -------------------------------------------------------------------------------------
 
 
-def test_history_lists_every_version_and_run_with_who_and_which_engine(
+def test_history_lists_every_version_with_who_and_which_engine(
     client: QueueClient, db_session: Session, team_entry: dict[str, Any]
 ) -> None:
     created = client.post("/intake/team", data=form_body(team_entry), follow_redirects=False)
@@ -80,20 +80,16 @@ def test_history_lists_every_version_and_run_with_who_and_which_engine(
     assert pressed.status_code == 303, pressed.text
 
     history = deal_history(db_session, deal.id)
-    assert [entry.kind for entry in history] == [
-        HistoryKind.UNDERWRITE,  # the button, newest first
-        HistoryKind.SCREEN,
-        HistoryKind.UNDERWRITE,  # the automatic run on arrival
-        HistoryKind.SCREEN,
-        HistoryKind.INTAKE,
-    ]
-    assert [entry.actor for entry in history] == [SAM, SAM, "system", "system", SAM]
-    assert [entry.engine_version for entry in history][:4] == [ENGINE_VERSION] * 4
-    intake = history[-1]
-    assert intake.engine_version is None and intake.note == "team created"
-    assert intake.restorable
-    assert history[1].verdict is Verdict.CONDITIONAL and history[1].irr is None
-    assert history[0].irr is not None and history[0].verdict is None
+    # the button's version, newest first, then the automatic run on arrival; the intake the
+    # deal was created from is the first version's, so it is not an edit row of its own
+    assert [entry.kind for entry in history] == [HistoryKind.VERSION, HistoryKind.VERSION]
+    assert [entry.name for entry in history] == ["v2", "Auto v1"]
+    assert [entry.actor for entry in history] == [SAM, "system"]
+    assert [entry.working for entry in history] == [False, True]
+    assert [entry.engine_version for entry in history] == [ENGINE_VERSION] * 2
+    for entry in history:
+        assert entry.verdict is Verdict.CONDITIONAL and entry.irr is not None
+        assert entry.restorable
     assert all(earlier.at <= later.at for later, earlier in zip(history, history[1:], strict=False))
 
 
@@ -116,7 +112,7 @@ def test_an_intake_row_written_before_submission_ids_still_finds_its_actor(
     )
     db_session.commit()
     (entry,) = deal_history(db_session, deal.id)
-    assert entry.kind is HistoryKind.INTAKE
+    assert entry.kind is HistoryKind.EDIT
     assert entry.actor == "an older queue" and entry.note == "team created"
 
 
@@ -175,9 +171,10 @@ def test_restore_saves_the_old_version_as_a_new_submission_and_re_runs(
     assert db_session.scalar(select(func.count()).select_from(Screen)) == screens_before + 1
     latest = db_session.scalars(select(Screen).order_by(Screen.created_at.desc())).first()
     assert latest is not None and D(latest.inputs["deal"]["purchase_price"]) == D("200000")
+    # each of the three intakes was run on, so each is a version and none an edit row
     history = deal_history(db_session, again.id)
-    notes = [entry.note for entry in history if entry.kind is HistoryKind.INTAKE]
-    assert notes == ["team restored", "team edited", "team created"]
+    assert [entry.kind for entry in history] == [HistoryKind.VERSION] * 3
+    assert [entry.name for entry in history] == ["Auto v3", "Auto v2", "Auto v1"]
 
 
 def test_a_web_version_restores_through_the_web_parser(
@@ -242,7 +239,7 @@ def test_restore_on_a_deal_that_does_not_exist_goes_home(client: QueueClient) ->
 # --- the section ----------------------------------------------------------------------------------
 
 
-def test_the_history_section_is_collapsed_and_offers_restore_on_each_version(
+def test_the_history_section_is_collapsed_and_offers_restore_on_an_edit(
     client: QueueClient, db_session: Session, team_entry: dict[str, Any]
 ) -> None:
     deal = store_deal(db_session, team_entry)
@@ -254,7 +251,7 @@ def test_the_history_section_is_collapsed_and_offers_restore_on_each_version(
     assert "<h2>History" in section
     assert f'action="/queue/deals/{deal.id}/intake/{version.id}/restore"' in section
     assert ">Restore</button>" in section
-    assert "<th>When</th><th>What</th><th>Who</th><th>Engine</th>" in section
+    assert "<th>When</th><th>Version</th><th>Who</th><th>Working</th><th>Engine</th>" in section
     assert "<h3>Actions and notes</h3>" in section
 
 

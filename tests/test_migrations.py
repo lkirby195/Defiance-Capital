@@ -290,3 +290,131 @@ def test_0014_moves_an_untouched_web_deal_s_numbers_to_the_borrower_s_columns(
     command.downgrade(alembic_cfg, "base")
     with test_engine.begin() as conn:
         conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
+
+
+# Two deals written against 0017: one run three times - two Run Analysis pairs and a JSON
+# underwrite on its own after them - and one screened once (SPEC §5, phase 8b).
+DEAL_0017 = text(
+    """
+    INSERT INTO deals (id, channel, status, missing_fields, court_records_team,
+                       credit_authorization_signed, created_at, updated_at, defaulted_fields)
+    VALUES (:id, 'TEAM', 'UNDERWRITING', '[]', '[]', false, :at, :at, '[]')
+    """
+)
+SUBMISSION_0017 = text(
+    """
+    INSERT INTO intake_submissions (id, deal_id, channel, raw_payload, received_at)
+    VALUES (:id, :deal_id, 'TEAM', '{}', :at)
+    """
+)
+SCREEN_0017 = text(
+    """
+    INSERT INTO screens (id, deal_id, engine_version, config_hash, inputs, score_components,
+                         verdict, reasons, created_at)
+    VALUES (:id, :deal_id, '1.7.0', 'screen-hash', '{}', '{}', 'GO', '[]', :at)
+    """
+)
+UNDERWRITE_0017 = text(
+    """
+    INSERT INTO underwrites (id, deal_id, engine_version, config_hash, inputs, outputs, irr,
+                             created_at)
+    VALUES (:id, :deal_id, '1.7.0', 'uw-hash', '{}', '{}', 0.18, :at)
+    """
+)
+RUN_AUDIT_0017 = text(
+    """
+    INSERT INTO audit_log (id, actor, action, table_name, row_id, after, created_at)
+    VALUES (:id, :actor, :action, 'deals', :deal_id, CAST(:after AS JSONB), :at)
+    """
+)
+
+
+def test_0018_backfills_a_legacy_version_per_run_pair_with_the_latest_working(
+    alembic_cfg: AlembicConfig, test_engine: Engine
+) -> None:
+    import json
+    from datetime import UTC, datetime, timedelta
+
+    command.upgrade(alembic_cfg, "0017")
+    start = datetime(2026, 10, 1, 12, tzinfo=UTC)
+    worked, screened = uuid.uuid4(), uuid.uuid4()
+    first_sub, second_sub, other_sub = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    s1, u1, s2, u2, u3, lone = (uuid.uuid4() for _ in range(6))
+
+    def at(minutes: int) -> datetime:
+        return start + timedelta(minutes=minutes)
+
+    with test_engine.begin() as conn:
+        conn.execute(DEAL_0017, {"id": worked, "at": at(0)})
+        conn.execute(DEAL_0017, {"id": screened, "at": at(0)})
+        conn.execute(SUBMISSION_0017, {"id": first_sub, "deal_id": worked, "at": at(0)})
+        conn.execute(SUBMISSION_0017, {"id": second_sub, "deal_id": worked, "at": at(5)})
+        conn.execute(SUBMISSION_0017, {"id": other_sub, "deal_id": screened, "at": at(0)})
+        for row_id, minute, statement in (
+            (s1, 1, SCREEN_0017),
+            (u1, 2, UNDERWRITE_0017),
+            (s2, 6, SCREEN_0017),
+            (u2, 7, UNDERWRITE_0017),
+            (u3, 9, UNDERWRITE_0017),
+        ):
+            conn.execute(statement, {"id": row_id, "deal_id": worked, "at": at(minute)})
+        conn.execute(SCREEN_0017, {"id": lone, "deal_id": screened, "at": at(3)})
+        for actor, action, key, row_id in (
+            ("sam@glenwood.example", "SCREEN_RUN", "screen_id", s1),
+            ("sam@glenwood.example", "UNDERWRITE_RUN", "underwrite_id", u1),
+            ("system", "SCREEN_RUN", "screen_id", s2),
+            ("system", "UNDERWRITE_RUN", "underwrite_id", u2),
+            ("api@glenwood.example", "UNDERWRITE_RUN", "underwrite_id", u3),
+        ):
+            conn.execute(
+                RUN_AUDIT_0017,
+                {
+                    "id": uuid.uuid4(),
+                    "actor": actor,
+                    "action": action,
+                    "deal_id": str(worked),
+                    "after": json.dumps({key: str(row_id)}),
+                    "at": at(1),
+                },
+            )
+
+    command.upgrade(alembic_cfg, "0018")
+
+    with test_engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT deal_id, number, name, actor, engine_version, config_hash, screen_id, "
+                "underwrite_id, is_working, inputs_snapshot, created_at FROM versions "
+                "ORDER BY deal_id = :worked DESC, number"
+            ),
+            {"worked": worked},
+        ).all()
+    mine = [row for row in rows if row.deal_id == worked]
+    assert [(row.number, row.name) for row in mine] == [(1, "v1"), (2, "v2"), (3, "v3")]
+    assert [(row.screen_id, row.underwrite_id) for row in mine] == [(s1, u1), (s2, u2), (s2, u3)]
+    assert [row.actor for row in mine] == [
+        "sam@glenwood.example",
+        "system",
+        "api@glenwood.example",
+    ]
+    assert [row.is_working for row in mine] == [False, False, True]
+    assert [row.config_hash for row in mine] == ["uw-hash"] * 3
+    assert [row.created_at for row in mine] == [at(2), at(7), at(9)]
+    assert [row.inputs_snapshot for row in mine] == [
+        {"legacy": True, "intake": {"submission_id": str(first_sub)}},
+        {"legacy": True, "intake": {"submission_id": str(second_sub)}},
+        {"legacy": True, "intake": {"submission_id": str(second_sub)}},
+    ]
+    (theirs,) = [row for row in rows if row.deal_id == screened]
+    assert (theirs.number, theirs.screen_id, theirs.underwrite_id) == (1, lone, None)
+    assert theirs.is_working and theirs.actor == "unknown"
+    assert theirs.engine_version == "1.7.0" and theirs.config_hash == "screen-hash"
+
+    command.downgrade(alembic_cfg, "0017")
+    with test_engine.connect() as conn:
+        assert "versions" not in inspect(conn).get_table_names()
+        assert conn.execute(text("SELECT count(*) FROM underwrites")).scalar() == 3
+
+    command.downgrade(alembic_cfg, "base")
+    with test_engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")

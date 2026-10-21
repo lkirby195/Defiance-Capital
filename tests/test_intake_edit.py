@@ -232,6 +232,33 @@ def test_an_edit_leaves_the_deal_page_s_own_columns_alone(
     assert set(row.after or {}) == {"loan_purpose", "submission_id"}
 
 
+def test_moving_a_deal_off_a_split_product_clears_its_split(
+    client: QueueClient, db_session: Session, team_entry: dict[str, Any], stored_deal: Deal
+) -> None:
+    """A single-note loan has no split; the edit takes the old one off before anything flushes.
+
+    The relink queries the borrower and the property, which flushes the row; before the split
+    was reconciled first, that flush carried the new product beside the old split and the
+    database refused it (``ck_deals_loan_split_only_on_split_products``) with a 500.
+    """
+    assert stored_deal.loan_purchase_portion == Decimal("147000.00")
+    body = {
+        name: value
+        for name, value in form_body(team_entry, product="NO_DRAW").items()
+        if name in TEAM_ENTRY_FIELDS
+    }
+
+    response = edit(client, stored_deal.id, body)
+
+    assert response.status_code == 303, response.text
+    db_session.expire_all()
+    deal = db_session.get(Deal, stored_deal.id)
+    assert deal is not None and deal.product is not None and deal.product.value == "NO_DRAW"
+    assert (deal.loan_purchase_portion, deal.loan_rehab_portion) == (None, None)
+    [row] = trail(db_session, AuditAction.INTAKE_EDITED)
+    assert row.after is not None and row.after["loan_purchase_portion"] is None
+
+
 def test_completing_an_intake_records_the_status_move(
     client: QueueClient, db_session: Session, team_entry: dict[str, Any]
 ) -> None:

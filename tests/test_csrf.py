@@ -55,6 +55,8 @@ GUARDED: list[tuple[str, dict[str, Any]]] = [
     ("/queue/deals/{deal}/assumptions", {"estimated_sale_price_team": "$250,000"}),
     ("/queue/deals/{deal}/assumptions/reset", {"confirm": "yes"}),
     ("/queue/deals/{deal}/court", {"court_records_status": "NOT_CHECKED"}),
+    ("/queue/deals/{deal}/versions/1/working", {}),
+    ("/queue/deals/{deal}/versions/1/restore", {}),
     ("/queue/deals/{deal}/advance", {}),
     ("/queue/deals/{deal}/pause", {}),
     ("/queue/deals/{deal}/decline", {"reason": "leverage"}),

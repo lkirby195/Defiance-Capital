@@ -26,17 +26,25 @@ alone (SPEC §4.6) and records every row against the actor ``system``, because n
 for it, and a trail that named the borrower or the team member who saved an edit as the
 person who priced the deal would be wrong about who decided (SPEC §11).
 
+**Every run that records anything is a version** (``services/versions.py``): the inputs it
+read, snapshotted before the screen ran, the two rows it wrote - the underwrite's empty when
+the ledger stood down - and a name. A person's run takes the name they typed, else
+``v<number>``; an automatic one is ``Auto v<number>``. The first version on a deal is its
+Working one and every later one a draft, which the summary says. A run the screen refused
+wrote nothing and is no version.
+
 Nothing here commits; the caller owns the transaction, as every service does.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from sqlalchemy.orm import Session
 
 from config.config import Config, get_config
-from db.models import Deal
+from db.models import Deal, Underwrite, Version
 from schema.models import ScreenResult, Status, UnderwriteResult
 from services.errors import (
     DealNotPriceable,
@@ -45,7 +53,8 @@ from services.errors import (
 )
 from services.lifecycle import UNDERWRITE_REFUSED_FROM, UNDERWRITE_REFUSED_UNTIL_COMPLETE
 from services.requests import UnderwriteRequest
-from services.runner import run_screen, run_underwrite
+from services.runner import screen_run, underwrite_run
+from services.versions import record_version, take_snapshot
 
 # The actor every automatic run is recorded as (SPEC §11): not a person, on purpose.
 SYSTEM_ACTOR = "system"
@@ -59,19 +68,37 @@ NOT_RUN_FROM: frozenset[Status] = (
 
 
 @dataclass(frozen=True)
+class VersionStamp:
+    """The version a run recorded, as the page names it."""
+
+    number: int
+    name: str
+    working: bool
+
+    @classmethod
+    def of(cls, version: Version) -> VersionStamp:
+        return cls(version.number, version.name, version.is_working)
+
+    def words(self) -> str:
+        return f"Saved as {self.name} ({'Working' if self.working else 'draft'})."
+
+
+@dataclass(frozen=True)
 class AutoRun:
     """What one analysis did, for the page to say.
 
     ``screen`` and ``underwrite`` are the results that were recorded, None where that stage
     did not run; ``skipped`` is one line per thing that stopped, in the order it stopped;
     ``refused`` is true when what stopped the ledger was the deal's status rather than its
-    inputs, which the page answers with a conflict rather than a complaint.
+    inputs, which the page answers with a conflict rather than a complaint. ``version`` is
+    the version the run recorded, None when nothing ran.
     """
 
     screen: ScreenResult | None = None
     underwrite: UnderwriteResult | None = None
     skipped: list[str] = field(default_factory=list)
     refused: bool = False
+    version: VersionStamp | None = None
 
     @property
     def ran(self) -> bool:
@@ -96,6 +123,8 @@ class AutoRun:
                 recorded += "."
             parts.append(recorded)
         parts.extend(self.skipped)
+        if self.version is not None:
+            parts.append(self.version.words())
         return " ".join(parts)
 
 
@@ -103,44 +132,65 @@ NOTHING_RAN = AutoRun()
 
 
 def run_analysis(
-    session: Session, deal: Deal, *, actor: str, config: Config | None = None
+    session: Session,
+    deal: Deal,
+    *,
+    actor: str,
+    config: Config | None = None,
+    name: str | None = None,
+    auto: bool = False,
 ) -> AutoRun:
     """Screen the deal, then underwrite it, each as far as the deal allows.  # SPEC §4.6, §7, §8
 
     The screen's own refusals - an intake gap the status did not catch, values the engine
     will not size - end the run before anything is written. The underwrite's leave the
-    screen in place and are reported. Flushes; no commit.
+    screen in place and are reported. Whatever was recorded is one version, named ``name``
+    or by default (``services/versions.py``). Flushes; no commit.
     """
     cfg = config or get_config()
+    snapshot = take_snapshot(session, deal)
     try:
-        screened = run_screen(session, deal.id, cfg, actor=actor)
+        screened = screen_run(session, deal.id, cfg, actor=actor)
     except DealNotReady as exc:
         return AutoRun(skipped=[f"The analysis did not run: missing {', '.join(exc.missing)}."])
     except DealNotPriceable as exc:
         return AutoRun(skipped=[f"The analysis did not run: {'; '.join(exc.reasons)}."])
+
+    def recorded(ledger: Underwrite | None, **outcome: Any) -> AutoRun:
+        version = record_version(
+            session,
+            deal,
+            actor=actor,
+            snapshot=snapshot,
+            screen=screened.row,
+            underwrite=ledger,
+            name=name,
+            auto=auto,
+        )
+        return AutoRun(screen=screened.result, version=VersionStamp.of(version), **outcome)
+
     try:
-        priced = run_underwrite(session, deal.id, UnderwriteRequest(), cfg, actor=actor)
+        priced = underwrite_run(session, deal.id, UnderwriteRequest(), cfg, actor=actor)
     except DealNotUnderwritable:
-        return AutoRun(
-            screen=screened,
+        return recorded(
+            None,
             skipped=[f"The ledger did not run: the deal is {deal.status.value}."],
             refused=True,
         )
     except DealNotReady as exc:
-        return AutoRun(
-            screen=screened,
-            skipped=[f"The ledger did not run: it still needs {', '.join(exc.missing)}."],
+        return recorded(
+            None, skipped=[f"The ledger did not run: it still needs {', '.join(exc.missing)}."]
         )
     except DealNotPriceable as exc:
-        return AutoRun(
-            screen=screened,
-            skipped=[f"The ledger did not run: {'; '.join(exc.reasons)}."],
-        )
-    return AutoRun(screen=screened, underwrite=priced)
+        return recorded(None, skipped=[f"The ledger did not run: {'; '.join(exc.reasons)}."])
+    return recorded(priced.row, underwrite=priced.result)
 
 
 def auto_run(session: Session, deal: Deal, config: Config | None = None) -> AutoRun:
-    """The automatic analysis, as ``system``, on a deal that is live and complete.  # SPEC §4.6"""
+    """The automatic analysis, as ``system``, on a deal that is live and complete.  # SPEC §4.6
+
+    Its version is named ``Auto v<number>``.
+    """
     if deal.status in NOT_RUN_FROM:
         return NOTHING_RAN
-    return run_analysis(session, deal, actor=SYSTEM_ACTOR, config=config)
+    return run_analysis(session, deal, actor=SYSTEM_ACTOR, config=config, auto=True)

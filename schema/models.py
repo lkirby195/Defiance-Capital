@@ -262,6 +262,12 @@ class AuditAction(StrEnum):
     moved. ``OVERRIDES_SAVED`` is the whole-block save the services and the CLI fixtures
     still make (``services.actions.save_overrides``), and what every row before Phase 7c
     was written under.
+
+    ``VERSION_RECORDED`` sits beside every analysis run's two ``*_RUN`` rows and names the
+    version it made; ``VERSION_MARKED_WORKING`` is Mark as Working, ``before`` / ``after``
+    naming the version the mark left and the one it went to; ``VERSION_RESTORED`` is Restore
+    inputs, naming the version and the columns that moved, beside the ``INTAKE_RESTORED`` row
+    for the submission it re-applied (SPEC §5, §9).
     """
 
     # Deals
@@ -282,6 +288,9 @@ class AuditAction(StrEnum):
     PAUSED = "PAUSED"  # SPEC §4.6: set aside; before.status is where it goes back to
     RESUMED = "RESUMED"  # SPEC §4.6: Progress on a paused deal
     NOTE_ADDED = "NOTE_ADDED"
+    VERSION_RECORDED = "VERSION_RECORDED"  # SPEC §5: one analysis run, named, Working or not
+    VERSION_MARKED_WORKING = "VERSION_MARKED_WORKING"  # the deal's Working version moved
+    VERSION_RESTORED = "VERSION_RESTORED"  # a version's inputs loaded back onto the deal
     DEALS_PURGED = "DEALS_PURGED"  # the one-time cleanup (README); row_id is "*"
     LOI_SENT = "LOI_SENT"  # SPEC §9.3, Phase 5
     HANDED_OFF = "HANDED_OFF"  # SPEC §9.4, Phase 6
@@ -1385,13 +1394,14 @@ class BorrowerSensitivityTable(BaseModel):
 
 
 class PricingRow(BaseModel):
-    """One loan amount step: the lowest grid rate that earns the target, and what it leaves.
+    """One loan amount step: the lowest rate that earns the target, and what it leaves.
 
-    # SPEC §8.10. ``interest_rate`` and ``lender_irr`` are None when no rate on the grid reaches
-    ``target_lender_irr`` (or the step leaves no loan to price); the three borrower figures are
-    None then too, and whenever the borrower side was not evaluated. ``sentence`` is the row
-    in plain English, written once by the engine so the page, the workbook and the CLI say
-    the same thing.
+    # SPEC §8.10. ``interest_rate`` is solved to 0.01% from engine 1.8.0 (the lowest grid
+    column before it); it and ``lender_irr`` are None when no rate up to the solve's ceiling
+    reaches ``target_lender_irr`` (or the step leaves no loan to price). The three borrower
+    figures are None then too, and whenever the borrower side was not evaluated. ``sentence``
+    is the row in plain English, written once by the engine so the page, the workbook and
+    the CLI say the same thing.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1407,19 +1417,33 @@ class PricingRow(BaseModel):
 
     @property
     def cleared(self) -> bool:
-        """True when some rate on the grid reaches the target."""
+        """True when some rate reaches the target."""
         return self.interest_rate is not None
 
 
 class PricingMatrix(BaseModel):
-    """One row per ``pricing.loan_amount_steps`` entry.  # SPEC §8.10"""
+    """One row per ``pricing.loan_amount_steps`` entry.  # SPEC §8.10
+
+    From engine 1.8.0 each row's rate is solved: ``rate_precision`` is the step it is solved
+    to (0.0001, two decimals of a percent) and ``rate_ceiling`` the highest rate the search
+    tries. A 1.7.0 matrix searched the Lender Sensitivity's columns instead and recorded them
+    in ``rates``; it still loads, with the two solve fields None, and a 1.8.0 one leaves
+    ``rates`` empty.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     target_lender_irr: Decimal
-    rates: list[Decimal]  # the Lender Sensitivity's columns, searched lowest first
     borrower_status: AnalysisStatus
     rows: list[PricingRow]
+    rate_precision: Decimal | None = None  # 1.8.0 on: the solve's step
+    rate_ceiling: Decimal | None = None  # 1.8.0 on: the highest rate the solve tries
+    rates: list[Decimal] = Field(default_factory=list)  # 1.7.0 only: the columns searched
+
+    @property
+    def solved(self) -> bool:
+        """True on a matrix whose rates were solved (1.8.0 on) rather than looked up."""
+        return self.rate_precision is not None
 
 
 class UnderwriteResult(BaseModel):

@@ -9,7 +9,7 @@ and compare. Sheets, in the SPEC §9 order:
     Return Overview  the monthly ledger, its totals, and an XIRR formula over it
     Lender Sensitivity    the IRR at every loan amount and rate on the grid (SPEC §8.9)
     Borrower Sensitivity  the borrower's profit, cash and cash-on-cash on the same grid
-    Pricing          the lowest grid rate that earns the target lender IRR, per loan step
+    Pricing          the lowest rate, solved to 0.01%, that earns the target lender IRR
                      (SPEC §8.10)
     Flip             the project's margin if it sells
     Rental           whether the rent carries a takeout loan
@@ -50,6 +50,7 @@ from schema.models import (
 
 MONEY = '"$"#,##0.00'
 PCT1 = "0.0%"
+PCT2 = "0.00%"
 PCT4 = "0.0000%"
 RATIO = '0.00"x"'
 INTEGER = "0"
@@ -533,9 +534,9 @@ def _sheet_borrower_sensitivity(book: Workbook, result: UnderwriteResult) -> Non
 
 
 def _sheet_pricing(book: Workbook, result: UnderwriteResult) -> None:
-    """The lowest grid rate that earns the target, per loan amount step.  # SPEC §8.10"""
+    """The lowest rate that earns the target, per loan amount step.  # SPEC §8.10"""
     sheet = book.create_sheet("Pricing")
-    _title(sheet, "Pricing — the lowest grid rate that earns the target lender IRR")
+    _title(sheet, "Pricing — the lowest rate that earns the target lender IRR")
     matrix = result.pricing
     if matrix is None:
         sheet.cell(
@@ -565,7 +566,7 @@ def _sheet_pricing(book: Workbook, result: UnderwriteResult) -> None:
         values = (
             (row.loan_amount, MONEY),
             (row.step, MONEY),
-            (row.interest_rate, PCT1),
+            (row.interest_rate, PCT2),
             (row.lender_irr, PCT4),
             (row.borrower_profit, MONEY),
             (row.borrower_cash_invested, MONEY),

@@ -13,9 +13,13 @@
    analyses run on that the team may set by hand, two columns, Save & Run at the bottom and
    Reset all to defaults beside it. The working furniture sits below the sections: the court
    search (collapsed, its own Save), what the ledger runs on (collapsed), the Actions open,
-   and the History (every intake version and every run, Restore on each version) collapsed.
+   and the History (every version, and every intake edit no version ran on) collapsed.
    The flags, the reasons and the suggested reply are on the stored results, the CLI report
    and the workbook, not here.
+
+   Every result on the page is one version's (SPEC §5, §9): the Working one, unless the
+   switcher at the top of the outputs asked for another, which the header then marks Draft.
+   A shown version is read-only; Mark as Working and Restore inputs sit beside the switcher.
 
    Labels and values only. Every definition is behind a (?) on its label (``help``), nothing
    visible until hovered; a value that is a config or formula stand-in rather than a person's
@@ -33,6 +37,8 @@
     {% else %}Deal {{ deal.id }}{% endif %}
     <span class="tag status">{{ deal.status | plain }}</span>
     {% if screen %}<span class="tag {{ screen.result.verdict | plain }}">{{ screen.result.verdict | plain }}</span>{% endif %}
+    {% if working %}<span class="tag WORKING" id="working-version" title="The version the deal stands on: Home and this page show it unless asked for another">Working: {{ working.name }}</span>{% endif %}
+    {% if drafting %}<span class="tag DRAFT" id="draft-badge" title="This page is showing {{ shown.name }}, not the Working version">Draft</span>{% endif %}
   </h1>
   {% if allowed.edit_intake %}
     <a class="btn" href="/queue/deals/{{ deal.id }}/intake">Edit Intake</a>
@@ -54,14 +60,17 @@
 {# --- the analysis (SPEC §4.6, §7, §8) ------------------------------------------------------ #}
 <section class="panel">
   <div class="actions">
-    <form method="post" action="/queue/deals/{{ deal.id }}/run">
+    <form class="actions" method="post" action="/queue/deals/{{ deal.id }}/run">
       {{ csrf.field(csrf_token) }}
+      {{ fields.text_box("version_name", "Version name", "", maxlength=100, id="run_version_name",
+                         help="What to call the version this run records. Left blank, it is v and its number.") }}
       <button type="submit" title="Scores the deal and lays out its ledger on what it carries now; the page reloads on the result">Run Analysis</button>
     </form>
     <p class="lede small" style="margin:0">
       {% if screen %}
         Verdict <strong>{{ screen.result.verdict | plain }}</strong>
         {%- if result %} · IRR <strong>{{ result.return_overview.irr | rate }}</strong>{% endif %}
+        {%- if shown %} · {{ shown.name }} by {{ shown.actor }}{% endif %}
         · run {{ screen.created_at | when }} · engine {{ screen.result.engine_version }}
         · config {{ screen.result.config_hash[:12] }}
       {% else %}Not analyzed yet.{% endif %}
@@ -296,11 +305,52 @@
       {{ fields.toggle_box("rental_analysis", "Rental Analysis", form.rental_analysis, default=true,
                            help="Default: on when there is a rent (SPEC §8.1). The Take-Back analysis has no toggle; it runs on every deal.") }}
     </div>
+    <div class="grid2">
+      {{ fields.text_box("version_name", "Version name", "", maxlength=100, id="save_version_name",
+                         help="What to call the version Save & Run records. Left blank, it is v and its number.") }}
+    </div>
     <div class="actions">
       <button type="submit" title="Saves every box on this panel and runs the analysis on it">Save &amp; Run</button>
       <a class="btn danger" href="/queue/deals/{{ deal.id }}/assumptions/reset" title="Puts every box with a default back to it and runs the analysis, after a confirmation">Reset all to defaults</a>
     </div>
   </form>
+</section>
+
+{# --- the version switcher, at the top of the outputs (SPEC §5, §9) ------------------------- #}
+<section class="panel" id="versions">
+  <h2>Version{{ help("Every analysis run is a version: its results and a snapshot of every input it ran on. The page shows the Working version unless another is picked here; any other is shown read-only and marked Draft. Mark as Working makes the one shown the deal's Working version, which Home shows. Restore inputs loads the version's inputs back into the deal and runs a new version on them.") }}</h2>
+  {% if versions and shown %}
+    <form class="actions switcher" method="get" action="/queue/deals/{{ deal.id }}">
+      <label for="version">Showing</label>
+      <select id="version" name="version">
+        {% for each in versions %}
+          <option value="{{ each.number }}"{% if shown and each.number == shown.number %} selected{% endif %}>{{ each.name }} · {{ "Working" if each.is_working else "Draft" }} · {{ each.created_at | when }} · {{ each.actor }}</option>
+        {% endfor %}
+      </select>
+      <button class="quiet" type="submit">Show</button>
+    </form>
+    <dl class="facts small">
+      <dt>Name</dt><dd>{{ shown.name }} <span class="tag {{ 'WORKING' if shown.is_working else 'DRAFT' }}">{{ "Working" if shown.is_working else "Draft" }}</span></dd>
+      <dt>Run</dt><dd>{{ shown.created_at | when }} by {{ shown.actor }}</dd>
+      <dt>Engine</dt><dd>{{ shown.engine_version }} · config {{ shown.config_hash[:12] }}</dd>
+    </dl>
+    <div class="actions">
+      {% if not shown.is_working %}
+        <form method="post" action="/queue/deals/{{ deal.id }}/versions/{{ shown.number }}/working">
+          {{ csrf.field(csrf_token) }}
+          <button type="submit" title="Makes this the version Home and this page show">Mark as Working</button>
+        </form>
+      {% endif %}
+      <form method="post" action="/queue/deals/{{ deal.id }}/versions/{{ shown.number }}/restore">
+        {{ csrf.field(csrf_token) }}
+        <button class="quiet" type="submit"
+                title="{% if not shown_restorable %}This version was recorded before versions kept their inputs{% elif not allowed.edit_intake %}The inputs are locked on a {{ deal.status | plain }} deal{% else %}Loads this version's inputs into the deal and runs a new version on them{% endif %}"
+                {% if not shown_restorable or not allowed.edit_intake %}disabled{% endif %}>Restore inputs</button>
+      </form>
+    </div>
+  {% else %}
+    <p class="small muted">No versions yet: the first analysis run is the Working version.</p>
+  {% endif %}
 </section>
 
 {# --- 4. Return Overview (SPEC §8.3) -------------------------------------------------------- #}
@@ -439,7 +489,7 @@
 
 {# --- 5b. Pricing (SPEC §8.10) -------------------------------------------------------------- #}
 <section class="panel" id="pricing">
-  <h2>Pricing{{ help("For each loan amount step (config pricing.loan_amount_steps), the lowest rate on the Lender Sensitivity's columns at which the lender's IRR reaches the target (pricing.target_lender_irr), with the borrower's profit and cash-on-cash at that rate (SPEC §8.10). Nothing is interpolated between columns.") }}</h2>
+  <h2>Pricing{{ help("For each loan amount step (config pricing.loan_amount_steps), the lowest rate at which the lender's IRR reaches the target (pricing.target_lender_irr), solved on the ledger to 0.01% and rounded up so it still clears, with the borrower's profit and cash-on-cash at that rate (SPEC §8.10).") }}</h2>
   {% if result and result.pricing %}
     {% set matrix = result.pricing %}
     <dl class="facts small">
@@ -461,12 +511,12 @@
             <tr>
               <td class="num">{{ row.loan_amount | money }}</td>
               {% if row.cleared %}
-                <td class="num">{{ row.interest_rate | pct }}</td>
+                <td class="num">{{ row.interest_rate | quoted }}</td>
                 <td class="num">{{ row.lender_irr | rate }}</td>
                 <td class="num">{{ row.borrower_profit | money }}</td>
                 <td class="num">{{ row.borrower_cash_on_cash | pct }}</td>
               {% else %}
-                <td colspan="4">No grid rate reaches the target.</td>
+                <td colspan="4">{{ "No rate reaches the target." if matrix.solved else "No grid rate reaches the target." }}</td>
               {% endif %}
             </tr>
           {% endfor %}
@@ -664,35 +714,47 @@
 
 {# --- the history (SPEC §5, §11), collapsed -------------------------------------------------- #}
 <details class="panel" id="history">
-  <summary><h2>History{{ help("Every intake version, score and ledger on the deal, newest first, with who recorded it and the engine that ran. Restore saves an earlier intake version as a new one - nothing is rewound - and runs the analysis again on it. The actions and notes are below.") }}</h2></summary>
-  <h3>Versions and runs</h3>
+  <summary><h2>History{{ help("Every version of the deal, newest first - one per analysis run, with its name, who ran it, whether it is the Working version and the engine that ran it - and every intake edit no version has run on yet. View shows a version's results; an edit's Restore saves that intake as a new one and runs the analysis again. The actions and notes are below.") }}</h2></summary>
+  <h3>Versions</h3>
   {% if history %}
     <div class="scroll">
       <table>
         <thead>
-          <tr><th>When</th><th>What</th><th>Who</th><th>Engine</th><th>Detail</th><th></th></tr>
+          <tr><th>When</th><th>Version</th><th>Who</th><th>Working</th><th>Engine</th><th>Detail</th><th></th></tr>
         </thead>
         <tbody>
           {% for entry in history %}
-            <tr>
-              <td class="small">{{ entry.at | when }}</td>
-              <td class="small"><strong>{{ entry.label }}</strong></td>
-              <td class="small">{{ entry.actor | plain }}</td>
-              <td class="small">{{ entry.engine_version | plain }}</td>
-              <td class="small">
-                {% if entry.verdict %}<span class="tag {{ entry.verdict | plain }}">{{ entry.verdict | plain }}</span>
-                {% elif entry.kind | plain == "UNDERWRITE" %}IRR {{ entry.irr | rate }}
-                {% else %}{{ entry.note }}{% endif %}
-              </td>
-              <td class="small">
-                {% if entry.restorable %}
-                  <form method="post" action="/queue/deals/{{ deal.id }}/intake/{{ entry.id }}/restore">
-                    {{ csrf.field(csrf_token) }}
-                    <button class="quiet small" type="submit" title="Saves this version as a new intake and runs the analysis again" {% if not allowed.edit_intake %}disabled{% endif %}>Restore</button>
-                  </form>
-                {% endif %}
-              </td>
-            </tr>
+            {% if entry.kind | plain == "VERSION" %}
+              <tr data-version="{{ entry.number }}">
+                <td class="small">{{ entry.at | when }}</td>
+                <td class="small"><strong>{{ entry.name }}</strong></td>
+                <td class="small">{{ entry.actor | plain }}</td>
+                <td class="small"><span class="tag {{ 'WORKING' if entry.working else 'DRAFT' }}">{{ "Working" if entry.working else "Draft" }}</span></td>
+                <td class="small">{{ entry.engine_version | plain }}</td>
+                <td class="small">
+                  {% if entry.verdict %}<span class="tag {{ entry.verdict | plain }}">{{ entry.verdict | plain }}</span>{% endif %}
+                  IRR {{ entry.irr | rate }}
+                </td>
+                <td class="small"><a class="btn small quiet" href="/queue/deals/{{ deal.id }}?version={{ entry.number }}">View</a></td>
+              </tr>
+            {% else %}
+              <tr data-edit="{{ entry.id }}">
+                <td class="small">{{ entry.at | when }}</td>
+                <td class="small"><strong>edit</strong></td>
+                <td class="small">{{ entry.actor | plain }}</td>
+                <td class="small">—</td>
+                <td class="small">—</td>
+                <td class="small">{{ entry.note }}</td>
+                <td class="small">
+                  {% if entry.restorable %}
+                    <form method="post" action="/queue/deals/{{ deal.id }}/intake/{{ entry.id }}/restore">
+                      {{ csrf.field(csrf_token) }}
+                      <button class="quiet small" type="submit" title="Saves this intake as a new one and runs the analysis again" {% if not allowed.edit_intake %}disabled{% endif %}>Restore</button>
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endif %}
           {% endfor %}
         </tbody>
       </table>

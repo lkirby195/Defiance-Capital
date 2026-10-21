@@ -64,6 +64,11 @@ def rate(value: Decimal | None) -> str:
     return "—" if value is None else f"{value * 100:.4f}%"
 
 
+def quoted(value: Decimal | None) -> str:
+    """``14.37%`` - two decimals, the way a solved pricing rate is quoted (SPEC §8.10)."""
+    return "—" if value is None else f"{value * 100:.2f}%"
+
+
 def points(value: Decimal | None) -> str:
     """A tolerance band in percentage points: ``5.0 pts``."""
     return "—" if value is None else f"{value * 100:.1f} pts"
@@ -173,6 +178,7 @@ templates.env.filters.update(
     months=months,
     pct=pct,
     rate=rate,
+    quoted=quoted,
     points=points,
     ratio=ratio,
     whole=whole,

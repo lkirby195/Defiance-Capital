@@ -53,7 +53,7 @@ uv run glenwood deals purge --all --confirm
 ```
 
 Deletes **every** deal and everything hanging off it — borrowers, entities, properties,
-submissions, screens, underwrites, enrichment runs, documents, `ma_sync` rows and the audit log
+submissions, screens, underwrites, versions, enrichment runs, documents, `ma_sync` rows and the audit log
 — and leaves the `users` table alone. It is for wiping the test deals out of a database before
 the real ones arrive, and for nothing else: there is no undo and it takes no backup. It
 refuses to run without both flags on the line, and it opens the database only once they are.
@@ -159,8 +159,11 @@ Check it landed, then sign in at `https://<service>.onrender.com/login`:
 DATABASE_URL='…' uv run glenwood users list
 ```
 
-`glenwood users` and `glenwood deals purge` are the only commands that touch a database;
-`glenwood run` and `glenwood export` read a fixture off disk and never open one.
+`glenwood users` and `glenwood deals` (`run`, `export` and `purge`) are the only commands
+that touch a database; `glenwood run` and `glenwood export` read a fixture off disk and never
+open one. `glenwood deals run <deal-id>` prints a stored deal's Working version and
+`glenwood deals export <deal-id> out.xlsx` writes its workbook; `--version` takes another
+version's number or exact name.
 
 ### Rotating SESSION_SECRET
 

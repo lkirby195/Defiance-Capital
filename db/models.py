@@ -5,6 +5,8 @@ columns persist the enum *values* (``"12_PLUS"``, not the member name) so the
 database matches ``schema/intake.json``. Rows on ``intake_submissions``,
 ``enrichment_runs``, ``screens``, ``underwrites``, ``documents``, ``ma_sync`` and
 ``audit_log`` are append-only: re-runs create new rows (CLAUDE.md, "Record everything").
+``versions`` is append-only but for one column: ``is_working`` moves when a person marks a
+different version as the deal's Working one.
 """
 
 from __future__ import annotations
@@ -29,8 +31,10 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -414,6 +418,57 @@ class Underwrite(Base):
     outputs: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     irr: Mapped[Decimal | None] = mapped_column(RATE)
     created_at: Mapped[datetime] = _event_at()
+
+
+class Version(Base):
+    """One analysis run - the screen and the underwrite together - and its inputs whole.
+
+    # SPEC §5, §9. ``inputs_snapshot`` is everything the run read off the deal: the intake
+    submission in force (channel and payload), every input column, the borrower and the
+    property it was linked to (``services/versions.py``), so the run can be reproduced and
+    its inputs restored whatever is edited afterwards. ``screen_id`` and ``underwrite_id``
+    are the two rows it wrote; the underwrite is NULL when the ledger stood down, and either
+    is NULL if a later migration deletes the row it named. ``number`` counts from 1 per deal
+    and ``name`` is what a person called it, or ``v<number>`` / ``Auto v<number>``.
+
+    Exactly one version of a deal is the **Working** one - the first run on a deal is, and a
+    team member moves it with Mark as Working - and every other is a draft. The partial
+    unique index says so to the database too: a second ``is_working`` row on one deal is
+    refused there rather than trusted to the service. ``engine_version`` and ``config_hash``
+    repeat the two runs' own, so the list does not have to open them to say which engine ran.
+    """
+
+    __tablename__ = "versions"
+    __table_args__ = (
+        UniqueConstraint("deal_id", "number", name="uq_versions_deal_number"),
+        Index(
+            "uq_versions_one_working_per_deal",
+            "deal_id",
+            unique=True,
+            postgresql_where=text("is_working"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    deal_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("deals.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = _event_at()
+    actor: Mapped[str] = mapped_column(String(200), nullable=False)
+    engine_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    inputs_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    screen_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("screens.id", ondelete="SET NULL")
+    )
+    underwrite_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("underwrites.id", ondelete="SET NULL")
+    )
+    is_working: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
 
 class Document(Base):
