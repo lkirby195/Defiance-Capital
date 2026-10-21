@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.9
+# GLENWOOD Underwriting Platform — SPEC v0.10
 
-Status: **v0.9**, 2026-10-05, engine `1.6.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.10**, 2026-10-20, engine `1.7.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.10** is the borrower's side and a pricing answer. The sensitivity table is the **Lender Sensitivity** everywhere it is shown, and a **Borrower Sensitivity** sits under it on the same rows and columns: each cell the Flip Analysis's net profit at that loan amount and rate and the borrower's cash-on-cash, `NOT_EVALUATED` when the flip is off or there is no sale price (§8.9). A **Pricing** section under both names, per `pricing.loan_amount_steps` entry, the lowest grid rate at which the lender's IRR reaches `pricing.target_lender_irr`, with the borrower's profit and cash-on-cash there and one plain-English line per row (§8.10, engine `1.7.0`). A read-only **Defaults** page (`/defaults`, linked from the top bar) lists every value in `config/glenwood.yaml`, grouped, with its dotted key (§10). And a fix: a team-form deal with no phone kept neither the guarantor's name nor the entity, because the borrower row they live on was only ever created for a phone; a phoneless borrower now gets its row (§5).
 
 **v0.9** is the **Underwriting Assumptions** panel. The collapsed Inputs section is gone; directly under Deal Economics, open by default, sits a two-column panel of every number the ledger and the three analyses run on that the team may set by hand - the §8.1 economics with their config defaults, the loan split, the valuation, the rent, the two toggles and, new, the **five analysis assumptions** that only config carried until now: the broker's selling percentage (§8.4), the rental's expense ratio and takeout rate (§8.5), the take-back's legal costs and lost-interest months (§8.6). Each of the five is a column on `deals` (migration `0017`), populated with the config value and tagged `DEFAULT` like the economics, and the engine reads the deal's number when it carries one and config otherwise (engine `1.6.0`). Every box shows its value, carries the "default" tag while it holds its default, and has a reset of its own; one **Save & Run** saves the panel and runs the analysis as the person; **Reset all to defaults** puts every one back after a confirmation page and runs again. The court search is its own collapsed section with its own Save; the readiness checklist is collapsed below it (§9).
 
@@ -826,6 +828,13 @@ UnderwriteResult
   sensitivity: {loan_requested, interest_rate, rates: [...],
                 rows: [{loan_amount, reduction, loan_purchase_portion,
                         loan_rehab_portion, cells: [{interest_rate, irr, is_deal}]}]}  # §8.9
+  borrower_sensitivity: {status, loan_requested, interest_rate, rates: [...],
+                         rows: [{loan_amount, reduction,
+                                 cells: [{interest_rate, net_profit, cash_invested,
+                                          cash_on_cash, is_deal}]}]}           # §8.9
+  pricing: {target_lender_irr, rates: [...], borrower_status,
+            rows: [{step, loan_amount, interest_rate, lender_irr, borrower_profit,
+                    borrower_cash_invested, borrower_cash_on_cash, sentence}]}  # §8.10
   flip: {status, estimated_sale_price, broker_costs, financing_costs,
          total_costs, net_profit, profit_yield}                # §8.4
   rental: {status, monthly_rent, expenses, holding_costs_monthly, net_monthly_income,
@@ -859,10 +868,10 @@ The §7.2 court codes and the credit, experience and leverage codes the screen r
 | `SALE_PRICE_MISSING` | Info (fixed) | §8.4: the Flip analysis is on and there is no `estimated_sale_price`, so it is `NOT_EVALUATED`. Not raised when the toggle is off — that is a decision, not a gap — and the screen's own `ESTIMATED_SALE_PRICE_MISSING` (Soft) reports the same absence on the leverage side either way |
 | `NO_REHAB_PERIOD` | Info (fixed) | §8.3: a split product whose term leaves `rehab_months = 0`, so the rehab portion is advanced at close instead of drawn |
 
-### 8.9 Sensitivity table
+### 8.9 Lender and Borrower Sensitivity
 
-IRR by loan amount and annual rate, on the deal page under the Return Overview and as the
-`Sensitivity` sheet of the workbook. **Every cell is a full ledger re-run**: the deal is
+**Lender Sensitivity** is IRR by loan amount and annual rate, on the deal page under the
+Return Overview and as the `Lender Sensitivity` sheet of the workbook. **Every cell is a full ledger re-run**: the deal is
 re-sized in the same caps cell and the §8.3 ledger laid out again at that loan amount and
 that rate, and the cell is its XIRR. Nothing is interpolated.
 
@@ -881,13 +890,48 @@ written twice when it lands on a grid rate - so the deal's own cell, the request
 actual rate, is always on the grid and marked, and reproduces the Return Overview's IRR
 exactly.
 
+**Borrower Sensitivity** sits directly under it on the deal page and is the `Borrower
+Sensitivity` sheet: the same rows, the same columns, the same rows left out, and in each cell
+the borrower's side of that same re-sized, re-ledgered deal:
+
+```
+net_profit    = the Flip Analysis's net profit (§8.4) at that loan amount and rate
+cash_invested = the flip's total_costs - the loan amount (the commitment the ledger lent)
+cash_on_cash  = net_profit / cash_invested     (none when cash_invested <= 0)
+```
+
+Only the financing costs move from cell to cell; the rest of the cost stack and the sale do
+not depend on the loan. The table is `NOT_EVALUATED`, with no rows, when the Flip Analysis is
+off or there is no estimated sale price. The page shows the profit and the cash-on-cash in
+each cell; the workbook adds the cash so a reader can divide one by the other.
+
+### 8.10 Pricing matrix
+
+One row per `pricing.loan_amount_steps` entry (placeholder `[0, -10000, -20000]`), each a
+change to the request that only ever lends less, taken off the advance at closing as a
+sensitivity row's reduction is. For each, the Lender Sensitivity's columns are searched lowest
+first, and the row is priced at the **first rate whose lender XIRR reaches
+`pricing.target_lender_irr`** (placeholder 20%): that rate, the lender IRR there, and the
+borrower's profit and cash-on-cash there (§8.9). Nothing is interpolated between columns. A
+row no grid rate gets to the target says so; a step that leaves no loan says it cannot be
+priced; the borrower's figures are empty whenever the Borrower Sensitivity is not evaluated.
+Each row carries one plain-English sentence, written by the engine so every output words it
+the same:
+
+```
+A $140,000 loan at 14.5% returns $21,400 profit (28.2% cash-on-cash).
+```
+
+The Pricing section sits under the Borrower Sensitivity on the deal page and is the `Pricing`
+sheet of the workbook.
+
 ---
 
 ## 9. Outputs
 
 One order, everywhere a run is shown — the deal page, the CLI report, and the workbook:
 
-**Overview · Property Overview · Deal Economics · Return Overview · Sensitivity · Flip Analysis · Rental Analysis · Take-Back Analysis · Flags**
+**Overview · Property Overview · Deal Economics · Return Overview · Lender Sensitivity · Borrower Sensitivity · Pricing · Flip Analysis · Rental Analysis · Take-Back Analysis · Flags**
 
 The first three are the §8.1 input groups, shown back as the run read them; the rest are the
 result. The CLI report and the workbook show all of it. The deal page opens on the one
@@ -958,10 +1002,12 @@ On "LOI accepted": create borrower (if not matched), property, and loan in MA vi
 
 `uv run glenwood run <fixture.json> [--underwrite]` prints a run — verdict, reasons, sizing
 against caps, then the §9 sections in order: the deal economics, the full monthly ledger and
-its IRR, the flip, the rental, the take-back, and the flags.
+its IRR, the Lender and Borrower Sensitivity, the pricing rows, the flip, the rental, the
+take-back, and the flags.
 
 `uv run glenwood export <fixture.json> <out.xlsx>` writes the same run as a workbook, sheets
-`Inputs`, `Return Overview`, `Sensitivity`, `Flip`, `Rental`, `Take-Back`, `Flags`. Every figure is a number
+`Inputs`, `Return Overview`, `Lender Sensitivity`, `Borrower Sensitivity`, `Pricing`, `Flip`,
+`Rental`, `Take-Back`, `Flags`. Every figure is a number
 under a currency, percent or date format — never preformatted text — so the cells add up and
 compare. The `Return Overview` sheet carries the ledger with its dates and its `net` column
 and an **`XIRR` formula over them**, so the workbook recomputes the IRR itself and a reader
@@ -991,6 +1037,7 @@ so the math can be checked by hand against a spreadsheet; neither is shown to a 
 - `interest.day_count_basis` (30): the days a whole monthly period counts as, for the final stub period's prorated interest (§8.3)
 - `closing.default_lead_days` (14): the **default for `closing_date`** (§8.1) is the last day of the month this many days after the deal came in
 - sensitivity (§8.9): `loan_step_usd` (5,000), `loan_steps` (4), `rate_min` (12.5%), `rate_max` (17.5%), `rate_step` (1%) - the shape of the IRR grid; every cell is a ledger re-run
+- pricing (§8.10): `target_lender_irr` (20%, placeholder) and `loan_amount_steps` (`[0, -10000, -20000]`, placeholder; each 0 or less, no duplicates, at least one)
 - rental takeout: `expenses_pct_of_rent` (35%), `takeout_rate` (6.5%), `amortization_years` (30), `dscr_floor` (1.20)
 - take-back: `lost_interest_months` (3), `legal_costs_usd` (5,000), `amortization_years` (30), `dscr_floor` (1.00)
 - underwrite flag severities: `DSCR_BELOW_FLOOR`, `TAKE_BACK_DSCR_BELOW_FLOOR`. The informational codes (§8.8) are fixed `Info` in code and the loader refuses to grade them
@@ -1008,6 +1055,12 @@ input), `draws.draw_avg_utilization` (the ledger makes it unnecessary), and — 
 `leverage_caps.*.ltarv` and `leverage_caps.*.ltv_as_is`, which one `ltv` replaces (§7.4).
 
 Config is versioned; each `screens`/`underwrites` row records the config hash used.
+
+Every value is shown, read-only, on the **Defaults** page (`/defaults`, signed in, linked from
+the top bar), grouped Economics, Flip, Rental, Take-Back, Pricing, Sensitivity, Screen caps and
+thresholds, Dates, each beside its dotted key (`fees.origination_default_pct`). The leverage
+caps show as one table per loan type. A test reads the yaml itself and fails on any key the
+page does not show, so a new key has to be placed in a group (`api/defaults_page.py`).
 
 ---
 
@@ -1108,6 +1161,13 @@ lost-interest months - become per-deal columns with the config value as their de
 (§8.4-§8.6), and the engine reads the deal's when present. Three audit codes are new:
 `ASSUMPTIONS_SAVED`, `ASSUMPTIONS_RESET`, `COURT_SEARCH_SAVED`.
 
+Phase 8a (engine `1.7.0`, no migration) renames the table the Lender Sensitivity and adds the
+Borrower Sensitivity (§8.9), the pricing matrix and its `pricing` config block (§8.10), and
+the read-only Defaults page (§10). It fixes the names a phoneless team-form deal lost: the
+guarantor's name, the email and the entity live on the `borrowers` row, which was created only
+when there was a phone; a phoneless intake that names anybody now gets one, and an edit reuses
+the deal's own phoneless row rather than minting another.
+
 ---
 
 ## 13. Open items
@@ -1147,6 +1207,13 @@ lost-interest months - become per-deal columns with the config value as their de
 - The sensitivity grid's placeholders (§8.9): $5,000 steps, four rows above the request,
   12.5% to 17.5% by 1%; the deal's own rate joins the columns, so the default 12% shows as a
   first column beside them until the range is tuned
+- The pricing placeholders (§8.10): a 20% target lender IRR and steps of 0, -$10,000 and
+  -$20,000. Steps only lend less; a larger loan has no defined advance and is refused by the
+  loader. The search is over the Lender Sensitivity's columns only, so a target the grid's
+  top rate cannot reach reads "no rate on the grid", not a solved rate above it
+- Borrower cash-on-cash is profit over (total project costs - loan), with total project costs
+  the flip's own stack - financing included, broker's selling costs not (§8.4). Confirm that
+  is the cash GLENWOOD means
 - The Underwriting Assumptions panel (v0.9) gave per-deal columns to the five analysis
   assumptions that had none; the amortization years and the two DSCR floors are still config
   alone. Confirm nothing else from §8.5/§8.6 should be per-deal. Save & Run and Reset all run

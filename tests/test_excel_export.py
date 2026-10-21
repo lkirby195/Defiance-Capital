@@ -30,7 +30,17 @@ FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures/synthetic/deals"
 CONFIG = Config.load()
 D = Decimal
 
-SHEETS = ["Inputs", "Return Overview", "Sensitivity", "Flip", "Rental", "Take-Back", "Flags"]
+SHEETS = [
+    "Inputs",
+    "Return Overview",
+    "Lender Sensitivity",
+    "Borrower Sensitivity",
+    "Pricing",
+    "Flip",
+    "Rental",
+    "Take-Back",
+    "Flags",
+]
 
 
 def underwritten() -> list[Path]:
@@ -218,7 +228,7 @@ def test_the_sensitivity_sheet_is_numbers_under_formats_with_the_request_on_the_
     path = FIXTURE_DIR / "go_split_draw_denver.json"
     result = run(path).underwrite_result
     assert result is not None and result.sensitivity is not None
-    sheet = book_for(path)["Sensitivity"]
+    sheet = book_for(path)["Lender Sensitivity"]
     # the rate columns are numbers under a percent format, not text
     rates = [
         sheet.cell(row=4, column=column) for column in range(5, 5 + len(result.sensitivity.rates))
@@ -262,7 +272,7 @@ def test_the_deals_own_cell_is_shaded_when_its_rate_is_a_column() -> None:
     inputs = denver_inputs(interest_rate="0.145")
     result = underwrite(inputs, CONFIG)
     assert result.sensitivity is not None and result.sensitivity.deal_cell is not None
-    sheet = build_workbook(fixture.screen_inputs, inputs, result, CONFIG)["Sensitivity"]
+    sheet = build_workbook(fixture.screen_inputs, inputs, result, CONFIG)["Lender Sensitivity"]
     bottom = 4 + len(result.sensitivity.rows)
     column = 5 + result.sensitivity.rates.index(Decimal("0.145"))
     shaded = sheet.cell(row=bottom, column=column)
@@ -277,9 +287,67 @@ def test_a_result_from_before_the_table_still_exports_and_says_so() -> None:
     assert fixture.underwrite_inputs is not None and fixture.underwrite_result is not None
     older = fixture.underwrite_result.model_copy(update={"sensitivity": None})
     sheet = build_workbook(fixture.screen_inputs, fixture.underwrite_inputs, older, CONFIG)[
-        "Sensitivity"
+        "Lender Sensitivity"
     ]
     assert "predates the sensitivity table" in str(sheet.cell(row=3, column=1).value)
+
+
+# --- the borrower sensitivity and pricing sheets (SPEC §8.9, §8.10) ----------------------------
+
+
+def test_the_borrower_sheet_is_profit_cash_and_cash_on_cash_under_each_rate() -> None:
+    fixture = run(FIXTURE_DIR / "go_no_draw_wichita.json")
+    result = fixture.underwrite_result
+    assert result is not None and result.borrower_sensitivity is not None
+    grid = result.borrower_sensitivity
+    sheet = book_for(FIXTURE_DIR / "go_no_draw_wichita.json")["Borrower Sensitivity"]
+    assert [D(str(sheet.cell(row=4, column=2 + 3 * n).value)) for n in range(len(grid.rates))] == (
+        grid.rates
+    )
+    assert [sheet.cell(row=5, column=c).value for c in range(1, 5)] == [
+        "Loan amount",
+        "Profit",
+        "Cash in",
+        "Cash-on-cash",
+    ]
+    bottom = 5 + len(grid.rows)
+    assert D(str(sheet.cell(row=bottom, column=1).value)) == D("150000")
+    profit, cash, coc = (sheet.cell(row=bottom, column=c) for c in (2, 3, 4))
+    assert (D(str(profit.value)), D(str(cash.value))) == (D("23600"), D("76000"))
+    assert round(D(str(coc.value)), 6) == D("0.310526")
+    assert profit.fill.fgColor.rgb == "00E7F3EC" and coc.number_format == "0.0%"
+
+
+def test_the_pricing_sheet_carries_every_row_and_its_sentence() -> None:
+    fixture = run(FIXTURE_DIR / "go_no_draw_wichita.json")
+    result = fixture.underwrite_result
+    assert result is not None and result.pricing is not None
+    sheet = book_for(FIXTURE_DIR / "go_no_draw_wichita.json")["Pricing"]
+    assert D(str(sheet.cell(row=2, column=2).value)) == D("0.20")
+    for offset, row in enumerate(result.pricing.rows, start=5):
+        assert D(str(sheet.cell(row=offset, column=1).value)) == row.loan_amount
+        assert D(str(sheet.cell(row=offset, column=3).value)) == row.interest_rate
+        assert sheet.cell(row=offset, column=8).value == row.sentence
+
+
+def test_a_flip_off_borrower_sheet_says_not_evaluated() -> None:
+    fixture = run(FIXTURE_DIR / "go_hold_flip_off_denver.json")
+    assert fixture.underwrite_inputs is not None and fixture.underwrite_result is not None
+    sheet = build_workbook(
+        fixture.screen_inputs, fixture.underwrite_inputs, fixture.underwrite_result, CONFIG
+    )["Borrower Sensitivity"]
+    assert "NOT EVALUATED" in str(sheet.cell(row=3, column=1).value)
+
+
+def test_a_result_from_before_1_7_0_exports_both_sheets_saying_so() -> None:
+    fixture = run(FIXTURE_DIR / "go_no_draw_wichita.json")
+    assert fixture.underwrite_inputs is not None and fixture.underwrite_result is not None
+    older = fixture.underwrite_result.model_copy(
+        update={"borrower_sensitivity": None, "pricing": None}
+    )
+    book = build_workbook(fixture.screen_inputs, fixture.underwrite_inputs, older, CONFIG)
+    assert "engine 1.7.0" in str(book["Borrower Sensitivity"].cell(row=3, column=1).value)
+    assert "engine 1.7.0" in str(book["Pricing"].cell(row=3, column=1).value)
 
 
 # --- the rest of the sheets ----------------------------------------------------------------------

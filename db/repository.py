@@ -17,11 +17,28 @@ from db.models import Borrower, Deal, Entity, IntakeSubmission, Property
 from schema.models import BorrowerInfo, IntakeRecord, PropertyInfo
 
 
-def find_or_create_borrower(session: Session, info: BorrowerInfo) -> Borrower | None:
-    """Borrower row keyed by phone; None until a phone is known."""
-    if not info.phone:
+def find_or_create_borrower(
+    session: Session, info: BorrowerInfo, current: Borrower | None = None
+) -> Borrower | None:
+    """Borrower row keyed by phone when there is one; None when the intake names nobody.
+
+    The phone is optional (SPEC §4.1) and the row is where the guarantor's name, the email and
+    the entity live, so an intake with a name, an email or an entity and no phone still gets a
+    row - it simply matches nothing. ``current`` is the borrower the deal already points at,
+    passed by an edit: a phoneless row is that deal's own, so a second phoneless edit updates
+    it rather than minting another, and the first phone typed onto it is adopted by it when no
+    other borrower holds that number.
+    """
+    phoneless = current if current is not None and current.phone is None else None
+    if info.phone:
+        borrower = session.scalar(select(Borrower).where(Borrower.phone == info.phone))
+        if borrower is None and phoneless is not None:
+            borrower = phoneless
+            borrower.phone = info.phone
+    elif info.name or info.email or info.entity_name:
+        borrower = phoneless
+    else:
         return None
-    borrower = session.scalar(select(Borrower).where(Borrower.phone == info.phone))
     if borrower is None:
         borrower = Borrower(phone=info.phone, name=info.name, email=info.email)
         session.add(borrower)

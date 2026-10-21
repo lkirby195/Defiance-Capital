@@ -235,6 +235,30 @@ class SensitivityConfig(_Section):
         return self
 
 
+class PricingConfig(_Section):
+    """The pricing matrix: the lowest grid rate that earns the lender its target.  # SPEC §8.10
+
+    One row per ``loan_amount_steps`` entry, each a signed change to the request (0 is the
+    request itself, -10,000 is ten thousand less); for each, the lowest rate on the Lender
+    Sensitivity columns at which the lender's XIRR reaches ``target_lender_irr``
+    (``engine/calc/pricing.py``). A step only lends less: a reduction comes off the advance at
+    closing the way the sensitivity rows' does, and nothing defines what a larger loan would
+    advance, so a positive step is refused here rather than guessed at.
+    """
+
+    target_lender_irr: Pct
+    loan_amount_steps: Annotated[
+        list[Annotated[Decimal, Field(le=0, max_digits=14, decimal_places=2)]],
+        Field(min_length=1, max_length=20),
+    ]
+
+    @model_validator(mode="after")
+    def _steps_are_distinct(self) -> PricingConfig:
+        if len(set(self.loan_amount_steps)) != len(self.loan_amount_steps):
+            raise ValueError("pricing.loan_amount_steps has duplicates")
+        return self
+
+
 class RentalConfig(_Section):
     """Rental analysis assumptions.  # SPEC §8.5
 
@@ -311,6 +335,7 @@ class Config(_Section):
     interest: InterestConfig
     closing: ClosingConfig
     sensitivity: SensitivityConfig
+    pricing: PricingConfig
     rental: RentalConfig
     take_back: TakeBackConfig
     states: StatesConfig

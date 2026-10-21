@@ -129,7 +129,7 @@
         %}{{ deal.borrower.entities | map(attribute="name") | join(", ") }}
         {%- else %}—{% endif %}</dd>
     <dt>Guarantor Name</dt>
-    <dd>{{ deal.borrower.name if deal.borrower else "—" }}</dd>
+    <dd>{{ deal.borrower.name | plain if deal.borrower else "—" }}</dd>
     <dt>Phone</dt>
     <dd>{{ deal.borrower.phone | phone if deal.borrower else "—" }}</dd>
     <dt>Email</dt>
@@ -363,9 +363,9 @@
   {% endif %}
 </section>
 
-{# --- 5. Sensitivity (SPEC §8.9) ------------------------------------------------------------ #}
-<section class="panel">
-  <h2>Sensitivity{{ help("IRR by loan amount and rate: every cell is the whole ledger laid out again at that amount and that annual rate, in the same caps cell (SPEC §8.9). Lending less comes off the advance at closing first; the rehab portion gives only once the advance is gone. The request is the bottom row; the deal's own rate is always a column, and the marked cell is the deal as it stands.") }}</h2>
+{# --- 5. Lender Sensitivity (SPEC §8.9) ----------------------------------------------------- #}
+<section class="panel" id="lender-sensitivity">
+  <h2>Lender Sensitivity{{ help("IRR by loan amount and rate: every cell is the whole ledger laid out again at that amount and that annual rate, in the same caps cell (SPEC §8.9). Lending less comes off the advance at closing first; the rehab portion gives only once the advance is gone. The request is the bottom row; the deal's own rate is always a column, and the marked cell is the deal as it stands.") }}</h2>
   {% if result and result.sensitivity %}
     {% set grid = result.sensitivity %}
     {% set show_split = grid.rows and grid.rows[0].loan_purchase_portion is not none %}
@@ -394,6 +394,88 @@
         </tbody>
       </table>
     </div>
+  {% elif result %}
+    <p class="small muted">Not on this ledger; run the analysis again for the table.</p>
+  {% else %}
+    <p class="small muted">No analysis yet.</p>
+  {% endif %}
+</section>
+
+{# --- 5a. Borrower Sensitivity (SPEC §8.9) -------------------------------------------------- #}
+<section class="panel" id="borrower-sensitivity">
+  <h2>Borrower Sensitivity{{ help("The Lender Sensitivity's rows and columns from the borrower's side: each cell is the Flip Analysis's net profit with the deal re-sized and re-ledgered at that loan amount and rate, and the cash-on-cash under it - profit over the cash the borrower puts in, which is the total project costs less the loan (SPEC §8.9). Not evaluated when the Flip Analysis is off or there is no sale price.") }}</h2>
+  {% if result and result.borrower_sensitivity %}
+    {% set grid = result.borrower_sensitivity %}
+    {% if grid.status.value == "EVALUATED" %}
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="num">Loan amount</th>
+            {% for rate in grid.rates %}<th class="num">{{ rate | pct }}</th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in grid.rows %}
+            <tr>
+              <td class="num">{{ row.loan_amount | money }}{% if row.reduction %} <span class="small muted">(−{{ row.reduction | money }})</span>{% endif %}</td>
+              {% for cell in row.cells %}
+                <td class="num grid-cell{% if cell.is_deal %} hit{% endif %}">{{ cell.net_profit | money }}<br><span class="small">{{ cell.cash_on_cash | pct }}</span></td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="small muted">Not evaluated: {{ "the Flip Analysis is off" if not result.analyses.flip_analysis else "there is no estimated sale price" }}.</p>
+    {% endif %}
+  {% elif result %}
+    <p class="small muted">Not on this ledger; run the analysis again for the table.</p>
+  {% else %}
+    <p class="small muted">No analysis yet.</p>
+  {% endif %}
+</section>
+
+{# --- 5b. Pricing (SPEC §8.10) -------------------------------------------------------------- #}
+<section class="panel" id="pricing">
+  <h2>Pricing{{ help("For each loan amount step (config pricing.loan_amount_steps), the lowest rate on the Lender Sensitivity's columns at which the lender's IRR reaches the target (pricing.target_lender_irr), with the borrower's profit and cash-on-cash at that rate (SPEC §8.10). Nothing is interpolated between columns.") }}</h2>
+  {% if result and result.pricing %}
+    {% set matrix = result.pricing %}
+    <dl class="facts small">
+      <dt>Target lender IRR</dt><dd>{{ matrix.target_lender_irr | pct }}</dd>
+    </dl>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="num">Loan amount</th>
+            <th class="num">Rate</th>
+            <th class="num">Lender IRR</th>
+            <th class="num">Borrower profit</th>
+            <th class="num">Cash-on-cash</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in matrix.rows %}
+            <tr>
+              <td class="num">{{ row.loan_amount | money }}</td>
+              {% if row.cleared %}
+                <td class="num">{{ row.interest_rate | pct }}</td>
+                <td class="num">{{ row.lender_irr | rate }}</td>
+                <td class="num">{{ row.borrower_profit | money }}</td>
+                <td class="num">{{ row.borrower_cash_on_cash | pct }}</td>
+              {% else %}
+                <td colspan="4">No grid rate reaches the target.</td>
+              {% endif %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <ul class="small">
+      {% for row in matrix.rows %}<li>{{ row.sentence }}</li>{% endfor %}
+    </ul>
   {% elif result %}
     <p class="small muted">Not on this ledger; run the analysis again for the table.</p>
   {% else %}

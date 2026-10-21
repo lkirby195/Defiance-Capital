@@ -3,6 +3,21 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**1.7.0 (Phase 8a, 2026-10-20) adds the borrower's side and the pricing matrix.**
+``UnderwriteResult`` gains ``borrower_sensitivity`` (``BorrowerSensitivityTable``, SPEC §8.9)
+and ``pricing`` (``PricingMatrix``, SPEC §8.10). The Borrower Sensitivity has the Lender
+Sensitivity's rows and columns, and each cell is the Flip Analysis's net profit at that loan
+amount and rate, the cash the borrower puts in (total project costs less the loan) and the
+one over the other; it is ``NOT_EVALUATED`` when the flip is off or there is no sale price
+(``engine/calc/borrower.py``). The pricing matrix takes each ``pricing.loan_amount_steps``
+entry and names the lowest grid rate at which the lender's XIRR reaches
+``pricing.target_lender_irr`` (placeholders 20% and 0 / -10,000 / -20,000), with the lender
+IRR and the borrower's profit and cash-on-cash there, and one plain-English sentence per
+row (``engine/calc/pricing.py``). The three tables share one memo of ledgers
+(``engine/calc/sensitivity.Grid``), so the new tables cost almost nothing on top of the
+lender's. The old table is the **Lender Sensitivity** wherever it is shown; its numbers and
+every other figure are unchanged, and a stored 1.6.0 result loads with both new fields None.
+
 **1.6.0 (Phase 7c, 2026-10-05) lets a deal carry its own analysis assumptions.** Five
 numbers the three analyses read from config alone become per-deal inputs with the config
 value as their default, on the same rule as the origination fee and the holding costs:
@@ -124,4 +139,4 @@ REHAB_PORTION_EXCEEDS_BUDGET.
 
 from __future__ import annotations
 
-ENGINE_VERSION = "1.6.0"
+ENGINE_VERSION = "1.7.0"

@@ -295,8 +295,12 @@ def _relink(
     only thing that ever set it. A new entity is linked; an old one is not unlinked, because
     the link is shared with the borrower's other deals and is not this form's to remove.
     """
-    borrower = find_or_create_borrower(session, record.borrower)
+    had_phone = deal.borrower.phone if deal.borrower is not None else None
+    borrower = find_or_create_borrower(session, record.borrower, current=deal.borrower)
     if borrower is not None:
+        if borrower is deal.borrower and borrower.phone != had_phone:
+            before["borrower.phone"] = had_phone
+            after["borrower.phone"] = borrower.phone
         for attribute in ("name", "email"):
             value = getattr(record.borrower, attribute)
             if value and value != getattr(borrower, attribute):

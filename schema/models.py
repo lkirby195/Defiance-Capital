@@ -1321,11 +1321,113 @@ class SensitivityTable(BaseModel):
         return None
 
 
+class BorrowerSensitivityCell(BaseModel):
+    """The borrower's side of one loan amount and rate.  # SPEC §8.9
+
+    ``net_profit`` is the Flip Analysis's net profit with the deal re-sized and re-ledgered at
+    this amount and rate (``engine/calc/borrower.py``); ``cash_invested`` is the flip's total
+    project costs less the loan, which is what the borrower funds themselves.
+    ``cash_on_cash`` is profit over that cash, and None when the loan covers every cost - a
+    return on no cash at all is not a number.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    interest_rate: Decimal
+    net_profit: Decimal
+    cash_invested: Decimal
+    cash_on_cash: Decimal | None
+    is_deal: bool = False
+
+
+class BorrowerSensitivityRow(BaseModel):
+    """One loan amount, and the borrower's profit and cash-on-cash at every rate.  # SPEC §8.9"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    loan_amount: Decimal
+    reduction: Decimal
+    cells: list[BorrowerSensitivityCell]
+
+
+class BorrowerSensitivityTable(BaseModel):
+    """The Lender Sensitivity's rows and columns, seen from the borrower's side.  # SPEC §8.9
+
+    ``NOT_EVALUATED`` when the Flip Analysis is off or there is no sale price: profit is the
+    flip's, and a flip nobody asked for or nobody can price has none. ``rows`` is empty then,
+    rather than a grid of zeros that would read as a borrower breaking even.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: AnalysisStatus
+    loan_requested: Decimal
+    interest_rate: Decimal
+    rates: list[Decimal]
+    rows: list[BorrowerSensitivityRow]
+
+    @model_validator(mode="after")
+    def _rows_only_when_evaluated(self) -> BorrowerSensitivityTable:
+        if self.status is AnalysisStatus.OFF:
+            raise ValueError("the borrower sensitivity is EVALUATED or NOT_EVALUATED, never OFF")
+        if self.status is AnalysisStatus.NOT_EVALUATED and self.rows:
+            raise ValueError("a NOT_EVALUATED borrower sensitivity carries no rows")
+        return self
+
+    @property
+    def deal_cell(self) -> BorrowerSensitivityCell | None:
+        """The cell at the deal's own loan amount and rate, when the table was evaluated."""
+        for row in self.rows:
+            for cell in row.cells:
+                if cell.is_deal:
+                    return cell
+        return None
+
+
+class PricingRow(BaseModel):
+    """One loan amount step: the lowest grid rate that earns the target, and what it leaves.
+
+    # SPEC §8.10. ``interest_rate`` and ``lender_irr`` are None when no rate on the grid reaches
+    ``target_lender_irr`` (or the step leaves no loan to price); the three borrower figures are
+    None then too, and whenever the borrower side was not evaluated. ``sentence`` is the row
+    in plain English, written once by the engine so the page, the workbook and the CLI say
+    the same thing.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    step: Decimal  # the signed change to the request: 0, -10,000, ...
+    loan_amount: Decimal
+    interest_rate: Decimal | None
+    lender_irr: Decimal | None
+    borrower_profit: Decimal | None
+    borrower_cash_invested: Decimal | None
+    borrower_cash_on_cash: Decimal | None
+    sentence: str
+
+    @property
+    def cleared(self) -> bool:
+        """True when some rate on the grid reaches the target."""
+        return self.interest_rate is not None
+
+
+class PricingMatrix(BaseModel):
+    """One row per ``pricing.loan_amount_steps`` entry.  # SPEC §8.10"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    target_lender_irr: Decimal
+    rates: list[Decimal]  # the Lender Sensitivity's columns, searched lowest first
+    borrower_status: AnalysisStatus
+    rows: list[PricingRow]
+
+
 class UnderwriteResult(BaseModel):
     """Full underwrite output; stored whole on ``underwrites.outputs``.  # SPEC §8.7
 
-    ``sensitivity`` is None only on a row written before engine 1.5.0 added it: every run
-    since carries the table, and a stored result from before loads rather than failing.
+    ``sensitivity`` is None only on a row written before engine 1.5.0 added it, and
+    ``borrower_sensitivity`` and ``pricing`` only on one written before 1.7.0: every run since
+    carries them, and a stored result from before loads rather than failing.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1344,6 +1446,8 @@ class UnderwriteResult(BaseModel):
     economics: DealEconomics
     return_overview: ReturnOverview
     sensitivity: SensitivityTable | None = None  # SPEC §8.9
+    borrower_sensitivity: BorrowerSensitivityTable | None = None  # SPEC §8.9
+    pricing: PricingMatrix | None = None  # SPEC §8.10
     flip: FlipAnalysis
     rental: RentalAnalysis
     take_back: TakeBackAnalysis

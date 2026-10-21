@@ -37,7 +37,8 @@ glenwood-uw/
     sizing.py              # LTC / LTV, product-specific commitment split
     screen.py              # score components + verdict + reasons
     calc/                  # the v0.3 ledger model: terms.py, ledger.py, irr.py,
-                           #   flip.py, rental.py, analyses.py, sensitivity.py
+                           #   flip.py, rental.py, analyses.py, sensitivity.py (the lender's),
+                           #   borrower.py (the Borrower Sensitivity), pricing.py (the matrix)
     version.py             # ENGINE_VERSION string, bump on any math change
   adapters/
     base.py                # Adapter Protocol + AdapterResult
@@ -78,12 +79,13 @@ glenwood-uw/
     runner.py              # run_screen, run_underwrite
     users.py               # create / deactivate / authenticate a queue user
   api/
-    main.py, routes/       # auth, queue, intake, deals, apply (the public borrower form)
+    main.py, routes/       # auth, queue, intake, deals, defaults, apply (the public borrower form)
     security.py            # the signed session cookie and the who-is-signed-in dependencies
     forms.py, render.py    # HTML form parsing; the Jinja environment and its filters
     masks.py               # which box holds which kind of number, and the config defaults
     intake_form.py         # the team-entry form: its fields, which are required, a deal as one
     apply_form.py          # the public form: its fields, which are required, the complaints
+    defaults_page.py       # /defaults: every yaml value, grouped, by its dotted key
     i18n.py                # every string the public form shows, English and Spanish
     ratelimit.py           # posts per address per hour on the public form
     templates/             # the review queue's own pages and the public form's (committed)

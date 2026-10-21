@@ -72,6 +72,10 @@ sensitivity:                              # SPEC §8.9 - the IRR grid on the dea
   rate_max: 0.175                         # the last column's annual rate
   rate_step: 0.01                         # the spacing between columns
 
+pricing:                                  # SPEC §8.10 - the Pricing section and its workbook sheet
+  target_lender_irr: 0.20                 # PLACEHOLDER: the lender XIRR a row's rate must reach
+  loan_amount_steps: [0, -10000, -20000]  # PLACEHOLDER: each row's change to the request; 0 or less
+
 rental:                                   # SPEC §8.5 rental analysis
   expenses_pct_of_rent: 0.35              # operating expenses as a share of the monthly rent
   takeout_rate: 0.065                     # the rate a takeout lender would amortize at

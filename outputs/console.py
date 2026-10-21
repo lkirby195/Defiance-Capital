@@ -6,8 +6,9 @@ against. Pure - text in, text out, no I/O - so the CLI stays a thin wrapper and 
 can be asserted in a test.
 
 The underwrite prints the SPEC §9 sections in order - Deal Economics, Return Overview,
-Sensitivity, Flip, Rental, Take-Back, Flags - which is the same order the deal page shows and
-the workbook writes, so a person checking one against another reads down the same list.
+Lender Sensitivity, Borrower Sensitivity, Pricing, Flip, Rental, Take-Back, Flags - which is
+the same order the deal page shows and the workbook writes, so a person checking one against
+another reads down the same list.
 """
 
 from __future__ import annotations
@@ -20,8 +21,10 @@ from config.config import Config
 from schema.models import (
     SPLIT_PRODUCTS,
     AnalysisStatus,
+    BorrowerSensitivityTable,
     FlipAnalysis,
     LeverageMetric,
+    PricingMatrix,
     Product,
     RentalAnalysis,
     ReturnOverview,
@@ -286,7 +289,7 @@ def render_return_overview(overview: ReturnOverview) -> list[str]:
 
 def render_sensitivity(table: SensitivityTable | None) -> list[str]:
     """IRR by loan amount (rows) and rate (columns); ``*`` is the deal's own cell.  # SPEC §8.9"""
-    lines = heading("SENSITIVITY", "IRR by loan amount (rows) and annual rate (columns)")
+    lines = heading("LENDER SENSITIVITY", "IRR by loan amount (rows) and annual rate (columns)")
     if table is None:
         return [*lines, "  (not on this run: the ledger predates the table)"]
     lines.append(f"  {'Loan amount':<16}" + "".join(f"{pct1(rate):>11}" for rate in table.rates))
@@ -298,6 +301,47 @@ def render_sensitivity(table: SensitivityTable | None) -> list[str]:
     lines.append(
         "  reductions come off the advance at closing first; * the deal as it stands (SPEC 8.9)"
     )
+    return lines
+
+
+def render_borrower_sensitivity(table: BorrowerSensitivityTable | None) -> list[str]:
+    """Profit, then cash-on-cash, by loan amount and rate; ``*`` is the deal's own.  # SPEC §8.9"""
+    lines = heading("BORROWER SENSITIVITY", "profit and cash-on-cash by loan amount and rate")
+    if table is None:
+        return [*lines, "  (not on this run: the ledger predates the table)"]
+    if table.status is not AnalysisStatus.EVALUATED:
+        return [*lines, "  NOT EVALUATED: the Flip Analysis is off or there is no sale price."]
+    lines.append(f"  {'Loan amount':<16}" + "".join(f"{pct1(rate):>11}" for rate in table.rates))
+    for row in table.rows:
+        profits = "".join(
+            f"{whole(cell.net_profit) + ('*' if cell.is_deal else ''):>11}" for cell in row.cells
+        )
+        ratios = "".join(
+            f"{'n/a' if cell.cash_on_cash is None else pct1(cell.cash_on_cash):>11}"
+            for cell in row.cells
+        )
+        lines.append(f"  {money(row.loan_amount):<16}{profits}")
+        lines.append(f"  {'  cash-on-cash':<16}{ratios}")
+    lines.append("  profit per the flip; cash = total project costs - loan; * the deal (SPEC 8.9)")
+    return lines
+
+
+def whole(amount: Decimal) -> str:
+    """Whole dollars, for a grid cell: ``$26,400``."""
+    return f"${amount:,.0f}" if amount >= 0 else f"-${-amount:,.0f}"
+
+
+def render_pricing(matrix: PricingMatrix | None) -> list[str]:
+    """One line per loan amount step, in plain English.  # SPEC §8.10"""
+    if matrix is None:
+        lines = heading("PRICING", "lowest grid rate that earns the target lender IRR")
+        return [*lines, "  (not on this run: the ledger predates the matrix)"]
+    lines = heading(
+        "PRICING", f"lowest grid rate whose lender IRR reaches {pct1(matrix.target_lender_irr)}"
+    )
+    for row in matrix.rows:
+        irr = "" if row.lender_irr is None else f"  (lender IRR {pct4(row.lender_irr)})"
+        lines.append(f"  {row.sentence}{irr}")
     return lines
 
 
@@ -463,6 +507,8 @@ def render_underwrite(
         *render_economics(result),
         *render_return_overview(result.return_overview),
         *render_sensitivity(result.sensitivity),
+        *render_borrower_sensitivity(result.borrower_sensitivity),
+        *render_pricing(result.pricing),
         *render_flip(result.flip),
         *render_rental(result.rental),
         *render_rent_provenance(inputs),
