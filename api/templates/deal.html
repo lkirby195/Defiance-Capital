@@ -489,11 +489,14 @@
 
 {# --- 5b. Pricing (SPEC §8.10) -------------------------------------------------------------- #}
 <section class="panel" id="pricing">
-  <h2>Pricing{{ help("For each loan amount step (config pricing.loan_amount_steps), the lowest rate at which the lender's IRR reaches the target (pricing.target_lender_irr), solved on the ledger to 0.01% and rounded up so it still clears, with the borrower's profit and cash-on-cash at that rate (SPEC §8.10).") }}</h2>
+  <h2>Pricing{{ help("For each loan amount step (config pricing.loan_amount_steps), the lowest rate at which the lender's IRR reaches the target (pricing.target_lender_irr), solved on the ledger to 0.01% and rounded up so it still clears, with the borrower's profit and cash-on-cash at that rate (SPEC §8.10). A rate above the max quoted rate (pricing.max_quoted_rate) is not quoted; the row says what it needs.") }}</h2>
   {% if result and result.pricing %}
     {% set matrix = result.pricing %}
     <dl class="facts small">
       <dt>Target lender IRR</dt><dd>{{ matrix.target_lender_irr | pct }}</dd>
+      {% if matrix.max_quoted_rate is not none %}
+        <dt>Max quoted rate</dt><dd>{{ matrix.max_quoted_rate | quoted }}</dd>
+      {% endif %}
     </dl>
     <div class="scroll">
       <table>
@@ -515,6 +518,8 @@
                 <td class="num">{{ row.lender_irr | rate }}</td>
                 <td class="num">{{ row.borrower_profit | money }}</td>
                 <td class="num">{{ row.borrower_cash_on_cash | pct }}</td>
+              {% elif row.over_max_quote %}
+                <td colspan="4">exceeds max quoted rate ({{ row.rate_needed | quoted }} needed)</td>
               {% else %}
                 <td colspan="4">{{ "No rate reaches the target." if matrix.solved else "No grid rate reaches the target." }}</td>
               {% endif %}

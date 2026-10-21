@@ -330,6 +330,31 @@ def test_the_pricing_sheet_carries_every_row_and_its_sentence() -> None:
         assert sheet.cell(row=offset, column=8).value == row.sentence
 
 
+def test_the_pricing_sheet_carries_the_max_quote_and_the_rate_a_row_needs() -> None:
+    """Wichita needs 16.34%; under a 16% maximum the Rate cell is empty and Rate needed set."""
+    from config.config import DEFAULT_PATH, load_yaml
+    from engine.underwrite import underwrite
+
+    data = load_yaml(DEFAULT_PATH.read_text(encoding="utf-8"))
+    data["pricing"]["max_quoted_rate"] = "0.16"
+    capped = Config.from_dict(data)
+    fixture = run(FIXTURE_DIR / "go_no_draw_wichita.json")
+    assert fixture.underwrite_inputs is not None
+    result = underwrite(fixture.underwrite_inputs, capped)
+    sheet = build_workbook(fixture.screen_inputs, fixture.underwrite_inputs, result, capped)[
+        "Pricing"
+    ]
+    assert sheet.cell(row=2, column=3).value == "Max quoted rate"
+    assert D(str(sheet.cell(row=2, column=4).value)) == D("0.16")
+    assert sheet.cell(row=4, column=9).value == "Rate needed"
+    assert sheet.cell(row=5, column=3).value is None
+    needed = sheet.cell(row=5, column=9)
+    assert D(str(needed.value)) == D("0.1634") and needed.number_format == "0.00%"
+    assert sheet.cell(row=5, column=8).value == (
+        "A $150,000 loan exceeds max quoted rate (16.34% needed)."
+    )
+
+
 def test_a_flip_off_borrower_sheet_says_not_evaluated() -> None:
     fixture = run(FIXTURE_DIR / "go_hold_flip_off_denver.json")
     assert fixture.underwrite_inputs is not None and fixture.underwrite_result is not None

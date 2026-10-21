@@ -74,6 +74,7 @@ sensitivity:                              # SPEC §8.9 - the IRR grid on the dea
 
 pricing:                                  # SPEC §8.10 - the Pricing section and its workbook sheet
   target_lender_irr: 0.20                 # PLACEHOLDER: the lender XIRR a row's rate must reach
+  max_quoted_rate: 0.18                   # PLACEHOLDER: above this a row is not a quote; it says the rate it needs
   loan_amount_steps: [0, -10000, -20000]  # PLACEHOLDER: each row's change to the request; 0 or less
 
 rental:                                   # SPEC §8.5 rental analysis

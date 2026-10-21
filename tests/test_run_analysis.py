@@ -9,9 +9,11 @@ success; what ran is kept either way. The Home rows open the deal with a button 
 from __future__ import annotations
 
 import html
+from decimal import Decimal
 from typing import Any
 from urllib.parse import unquote
 
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -108,6 +110,36 @@ def test_run_analysis_runs_both_as_the_person_and_reloads_on_the_result(
     assert body.index("<h2>Borrower Sensitivity") < body.index("<h2>Pricing")
     assert body.index("<h2>Pricing") < body.index("<h2>Flip Analysis")
     assert "Not analyzed yet." not in body
+
+
+def test_a_row_above_the_max_quote_says_what_it_needs_on_the_page(
+    client: QueueClient,
+    db_session: Session,
+    deal_with_overrides: Deal,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under a 12% maximum the Tulsa deal's rows are not quotes: each names the rate it needs."""
+    import services.autorun
+    from config.config import DEFAULT_PATH, Config, load_yaml
+
+    data = load_yaml(DEFAULT_PATH.read_text(encoding="utf-8"))
+    data["pricing"]["max_quoted_rate"] = "0.12"
+    monkeypatch.setattr(services.autorun, "get_config", lambda: Config.from_dict(data))
+    assert run(client, deal_with_overrides).status_code == 303
+    row = latest_underwrite(db_session, deal_with_overrides.id)
+    assert row is not None
+    result = UnderwriteResult.model_validate(row.outputs)
+    assert result.pricing is not None and result.pricing.max_quoted_rate == Decimal("0.12")
+    needed = [pricing_row.rate_needed for pricing_row in result.pricing.rows]
+    assert all(rate is not None and rate > Decimal("0.12") for rate in needed)
+
+    body = client.get(f"/queue/deals/{deal_with_overrides.id}").text
+    pricing = body[body.index('<section class="panel" id="pricing">') :]
+    pricing = pricing[: pricing.index("</section>")]
+    assert "<dt>Max quoted rate</dt><dd>12.00%</dd>" in pricing
+    for rate in needed:
+        assert rate is not None
+        assert f"exceeds max quoted rate ({rate * 100:.2f}% needed)" in pricing
 
 
 def test_the_page_shows_the_borrower_sensitivity_and_the_pricing_rows(

@@ -127,6 +127,7 @@ def independent_min_rate(irr_at: Callable[[float], float], target: float) -> Dec
 
 def test_placeholders_and_the_solve_constants() -> None:
     assert CONFIG.pricing.target_lender_irr == D("0.20")
+    assert CONFIG.pricing.max_quoted_rate == D("0.18")
     assert CONFIG.pricing.loan_amount_steps == [D(0), D(-10000), D(-20000)]
     assert (RATE_PRECISION, RATE_CEILING) == (D("0.0001"), D(1))
 
@@ -228,6 +229,60 @@ def test_the_grid_seeds_are_only_a_bracket() -> None:
     assert answers == {D("0.1634")}
 
 
+# --- the max quoted rate (SPEC §8.10, engine 1.9.0) ----------------------------------------------
+
+
+def test_a_rate_above_the_max_quote_is_not_a_quote() -> None:
+    """Wichita needs 16.34% everywhere; at a 16% maximum no row is quoted and each says so."""
+    matrix = matrix_for(wichita_inputs(), config_with(max_quoted_rate="0.16"))
+    assert matrix.max_quoted_rate == D("0.16")
+    for row in matrix.rows:
+        assert not row.cleared and row.over_max_quote
+        assert row.rate_needed == D("0.1634")
+        assert row.lender_irr is None
+        assert (row.borrower_profit, row.borrower_cash_invested, row.borrower_cash_on_cash) == (
+            None,
+            None,
+            None,
+        )
+    assert [row.sentence for row in matrix.rows] == [
+        "A $150,000 loan exceeds max quoted rate (16.34% needed).",
+        "A $140,000 loan exceeds max quoted rate (16.34% needed).",
+        "A $130,000 loan exceeds max quoted rate (16.34% needed).",
+    ]
+
+
+def test_a_rate_equal_to_the_max_quote_is_quoted() -> None:
+    rows = matrix_for(wichita_inputs(), config_with(max_quoted_rate="0.1634")).rows
+    assert {row.interest_rate for row in rows} == {D("0.1634")}
+    assert not any(row.over_max_quote for row in rows)
+
+
+def test_the_max_quote_is_per_row() -> None:
+    """Denver's rows need 13.82%, 13.72% and 13.61%: a 13.7% maximum quotes only the last."""
+    rows = matrix_for(denver_inputs(), config_with(max_quoted_rate="0.137")).rows
+    assert [row.rate_needed for row in rows] == [D("0.1382"), D("0.1372"), None]
+    assert [row.interest_rate for row in rows] == [None, None, D("0.1361")]
+    assert rows[0].sentence == "A $195,000 loan exceeds max quoted rate (13.82% needed)."
+    assert rows[2].sentence.startswith("A $175,000 loan at 13.61% returns")
+
+
+def test_the_placeholder_maximum_quotes_every_fixture_row() -> None:
+    for inputs in (wichita_inputs(), denver_inputs()):
+        assert all(row.cleared for row in matrix_for(inputs).rows)
+
+
+def test_a_1_8_0_matrix_still_loads() -> None:
+    stored = underwrite(wichita_inputs(), CONFIG).model_dump(mode="json")
+    assert stored["pricing"] is not None
+    del stored["pricing"]["max_quoted_rate"]
+    for row in stored["pricing"]["rows"]:
+        del row["rate_needed"]
+    older = UnderwriteResult.model_validate(stored)
+    assert older.pricing is not None and older.pricing.max_quoted_rate is None
+    assert not any(row.over_max_quote for row in older.pricing.rows)
+
+
 def test_a_step_that_leaves_no_loan_cannot_be_priced() -> None:
     rows = matrix_for(wichita_inputs(), config_with(loan_amount_steps=[0, -150000])).rows
     assert rows[0].cleared
@@ -284,8 +339,10 @@ def test_the_sentence_wording() -> None:
         {"loan_amount_steps": [0, 5000]},
         {"loan_amount_steps": [0, 0]},
         {"target_lender_irr": "1.5"},
+        {"max_quoted_rate": "0"},
+        {"max_quoted_rate": "1.2"},
     ],
-    ids=["empty", "positive", "duplicate", "irr_over_one"],
+    ids=["empty", "positive", "duplicate", "irr_over_one", "max_quote_zero", "max_quote_over_one"],
 )
 def test_config_refuses_a_bad_pricing_block(pricing: dict[str, Any]) -> None:
     with pytest.raises(ConfigError):
