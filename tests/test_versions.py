@@ -16,7 +16,9 @@ latest run, the History list, and the CLI's ``--version``.
 from __future__ import annotations
 
 import json
+import re
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
@@ -30,15 +32,17 @@ from sqlalchemy.orm import Session
 
 import db.session as db_session_module
 from api.intake_form import intake_form_values
+from api.routes.queue import workbook_filename
 from cli.main import main
-from db.models import AuditLog, Deal, Version
-from schema.models import AuditAction, Status
+from db.models import AuditLog, Deal, Property, Version
+from schema.models import AuditAction, State, Status
 from services import (
     DEALS,
     NOT_SNAPSHOTTED,
     SNAPSHOT_COLUMNS,
     HistoryKind,
     Section,
+    auto_run,
     deal_history,
     deal_versions,
     get_version,
@@ -619,3 +623,204 @@ def test_a_fixture_deal_round_trips_through_a_version(db_session: Session) -> No
         assert set(snapshot["deal"]) == set(SNAPSHOT_COLUMNS)
         assert snapshot["intake"]["submission_id"] == str(deal.submissions[-1].id)
         assert snapshot["intake"]["payload"] == deal.submissions[-1].raw_payload
+
+
+# --- the Working rule for automatic runs (SPEC §5, phase 8c prep) ---------------------------------
+
+
+def edit_intake(client: QueueClient, session: Session, deal_id: UUID, **changes: str) -> Any:
+    """Post Edit Intake with the deal's own values and ``changes``; it runs as system."""
+    session.expire_all()
+    deal = session.get(Deal, deal_id)
+    assert deal is not None
+    body = {name: value for name, value in intake_form_values(deal).items() if value}
+    body.update(changes)
+    return client.post(f"/queue/deals/{deal_id}/intake", data=body, follow_redirects=False)
+
+
+def save_court(client: QueueClient, deal_id: UUID) -> Any:
+    return client.post(
+        f"/queue/deals/{deal_id}/court",
+        data={"court_records_status": "CLEAN", "court_records_as_of": "2026-10-02"},
+        follow_redirects=False,
+    )
+
+
+def marks(session: Session, deal_id: UUID) -> list[tuple[str, bool, bool]]:
+    """(name, Working, human-selected) for every version, oldest first."""
+    session.expire_all()
+    return [
+        (version.name, version.is_working, version.human_selected)
+        for version in reversed(deal_versions(session, deal_id))
+    ]
+
+
+def test_an_automatic_run_takes_the_mark_from_a_version_nobody_chose(
+    client: QueueClient, db_session: Session, team_entry: dict[str, Any]
+) -> None:
+    """Auto v1 on arrival, a person's unnamed run (a draft), then each automatic run moves it."""
+    created = client.post("/intake/team", data=form_body(team_entry), follow_redirects=False)
+    assert created.status_code == 303
+    (deal,) = list(db_session.scalars(select(Deal)))
+    assert run(client, deal.id).status_code == 303
+    assert marks(db_session, deal.id) == [("Auto v1", True, False), ("v2", False, False)]
+
+    edited = edit_intake(client, db_session, deal.id, purchase_price="$201,000")
+    assert edited.status_code == 303, edited.text
+    assert notice(edited).endswith("Saved as Auto v3 (Working).")
+    assert marks(db_session, deal.id) == [
+        ("Auto v1", False, False),
+        ("v2", False, False),
+        ("Auto v3", True, False),
+    ]
+    assert save_court(client, deal.id).status_code == 303
+    assert marks(db_session, deal.id)[-1] == ("Auto v4", True, False)
+    assert working_count(db_session, deal.id) == 1
+    rows = audit(db_session, deal.id, AuditAction.VERSION_RECORDED)
+    assert [row.after["replaced_working"] for row in rows if row.after] == [None, None, 1, 3]
+    assert [row.after["human_selected"] for row in rows if row.after] == [False] * 4
+
+
+def test_an_automatic_run_is_a_draft_beside_a_version_a_person_named(
+    client: QueueClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    deal_id = deal_with_overrides.id
+    assert run(client, deal_id, "Base case").status_code == 303
+    assert marks(db_session, deal_id) == [("Base case", True, True)]
+
+    edited = edit_intake(client, db_session, deal_id, purchase_price="$151,000")
+    assert edited.status_code == 303, edited.text
+    assert notice(edited).endswith("Saved as Auto v2 (draft).")
+    assert save_court(client, deal_id).status_code == 303
+    assert marks(db_session, deal_id) == [
+        ("Base case", True, True),
+        ("Auto v2", False, False),
+        ("Auto v3", False, False),
+    ]
+    [entry] = home_view(db_session).section(Section.DCF).entries
+    assert entry.working is not None and entry.working.name == "Base case"
+
+
+def test_an_automatic_run_is_a_draft_beside_a_version_marked_working(
+    client: QueueClient, db_session: Session, team_entry: dict[str, Any]
+) -> None:
+    created = client.post("/intake/team", data=form_body(team_entry), follow_redirects=False)
+    assert created.status_code == 303
+    (deal,) = list(db_session.scalars(select(Deal)))
+    assert run(client, deal.id).status_code == 303
+    marked = client.post(f"/queue/deals/{deal.id}/versions/2/working", follow_redirects=False)
+    assert marked.status_code == 303
+    assert marks(db_session, deal.id) == [("Auto v1", False, False), ("v2", True, True)]
+
+    assert edit_intake(client, db_session, deal.id, rehab_costs="$50,000").status_code == 303
+    assert marks(db_session, deal.id)[-1] == ("Auto v3", False, False)
+    working = working_version(db_session, deal.id)
+    assert working is not None and working.number == 2
+
+
+def test_marking_the_working_version_records_the_choice(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """A Working version nobody chose becomes one a person chose: the next auto run is a draft."""
+    deal = deal_with_overrides
+    auto_run(db_session, deal)
+    db_session.commit()
+    assert marks(db_session, deal.id) == [("Auto v1", True, False)]
+
+    mark_working(db_session, deal.id, 1, actor=ACTOR)
+    db_session.commit()
+    assert marks(db_session, deal.id) == [("Auto v1", True, True)]
+    (row,) = audit(db_session, deal.id, AuditAction.VERSION_MARKED_WORKING)
+    assert row.before == {"version": 1, "name": "Auto v1"} and row.after == row.before
+
+    auto_run(db_session, deal)
+    db_session.commit()
+    assert marks(db_session, deal.id) == [("Auto v1", True, True), ("Auto v2", False, False)]
+
+
+def test_the_page_says_whether_a_person_chose_the_version(
+    client: QueueClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    deal_id = deal_with_overrides.id
+    run(client, deal_id, "Base")
+    run(client, deal_id)
+    chosen = client.get(f"/queue/deals/{deal_id}").text
+    unchosen = client.get(f"/queue/deals/{deal_id}?version=2").text
+    for body, word in ((chosen, "Yes"), (unchosen, "No")):
+        section = body[body.index('id="versions"') :]
+        assert re.search(r"<dt>Chosen by a person.*?</dt>\s*<dd>" + word + "</dd>", section, re.S)
+
+
+# --- Download Excel (SPEC §9) ---------------------------------------------------------------------
+
+
+def test_download_excel_exports_the_version_in_view(
+    client: QueueClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    deal_id = deal_with_overrides.id
+    assert run(client, deal_id, "Base case").status_code == 303
+    assert save_and_run(client, deal_id, interest_rate="15%").status_code == 303
+    base, draft = (version_results(db_session, get_version(db_session, deal_id, n)) for n in (1, 2))
+    assert base.underwrite is not None and draft.underwrite is not None
+    assert base.underwrite.return_overview.irr != draft.underwrite.return_overview.irr
+
+    working_page = client.get(f"/queue/deals/{deal_id}").text
+    draft_page = client.get(f"/queue/deals/{deal_id}?version=2").text
+    assert f'href="/queue/deals/{deal_id}/versions/1/workbook"' in working_page
+    assert f'href="/queue/deals/{deal_id}/versions/2/workbook"' in draft_page
+    switcher = working_page[working_page.index('class="actions switcher"') :]
+    assert switcher.index(">Show</button>") < switcher.index(">Download Excel</a>")
+    assert switcher.index(">Download Excel</a>") < switcher.index("</form>")
+
+    for number, found, name in ((1, base, "Base-case"), (2, draft, "v2")):
+        response = client.get(f"/queue/deals/{deal_id}/versions/{number}/workbook")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        assert response.headers["content-disposition"] == (
+            f'attachment; filename="1412-S-Trenton-Ave-Tulsa-OK-74120-{name}.xlsx"'
+        )
+        book = load_workbook(BytesIO(response.content))
+        assert found.underwrite is not None and found.underwrite.pricing is not None
+        assert book["Pricing"].cell(row=5, column=8).value == (
+            found.underwrite.pricing.rows[0].sentence
+        )
+        overview = book["Return Overview"]
+        irr_cells = [
+            row[1].value
+            for row in overview.iter_rows(min_col=1, max_col=2)
+            if row[0].value == "IRR (engine)"
+        ]
+        [irr] = irr_cells
+        assert found.underwrite.return_overview.irr is not None
+        assert abs(float(irr) - float(found.underwrite.return_overview.irr)) < 1e-12
+
+
+def test_a_version_with_no_ledger_has_no_workbook(
+    client: QueueClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    deal_with_overrides.term_months = None  # the ledger stands down; the screen still runs
+    db_session.commit()
+    deal_id = deal_with_overrides.id
+    assert run(client, deal_id).status_code == 422
+    version = get_version(db_session, deal_id, 1)
+    assert version.underwrite_id is None
+    page = client.get(f"/queue/deals/{deal_id}").text
+    assert 'class="btn quiet off" id="download-excel"' in page
+    response = client.get(f"/queue/deals/{deal_id}/versions/1/workbook", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"].startswith(f"/queue/deals/{deal_id}?version=1&")
+    assert notice(response) == "v1 has no ledger to export: the underwrite did not run."
+    missing = client.get(f"/queue/deals/{deal_id}/versions/9/workbook", follow_redirects=False)
+    assert missing.status_code == 303 and notice(missing) == "That version does not exist."
+
+
+def test_the_workbook_filename() -> None:
+    deal = Deal(id=UUID("12345678-1234-5678-1234-567812345678"))
+    assert workbook_filename(deal, "v1") == "deal-12345678-v1.xlsx"
+    deal.property = Property(address_raw="88 Larimer St., Denver, CO 80202", state=State.CO)
+    assert workbook_filename(deal, "Auto v3") == "88-Larimer-St-Denver-CO-80202-Auto-v3.xlsx"
+    assert workbook_filename(deal, "Rate 15% / ARV!") == (
+        "88-Larimer-St-Denver-CO-80202-Rate-15-ARV.xlsx"
+    )

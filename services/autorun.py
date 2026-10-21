@@ -30,7 +30,9 @@ person who priced the deal would be wrong about who decided (SPEC §11).
 read, snapshotted before the screen ran, the two rows it wrote - the underwrite's empty when
 the ledger stood down - and a name. A person's run takes the name they typed, else
 ``v<number>``; an automatic one is ``Auto v<number>``. The first version on a deal is its
-Working one and every later one a draft, which the summary says. A run the screen refused
+Working one; after that an automatic run takes the mark unless a person chose the Working
+version, and a person's run is a draft (``services/versions.record_version``); the summary
+says which. A run the screen refused
 wrote nothing and is no version.
 
 Nothing here commits; the caller owns the transaction, as every service does.

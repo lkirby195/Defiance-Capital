@@ -418,3 +418,84 @@ def test_0018_backfills_a_legacy_version_per_run_pair_with_the_latest_working(
     command.downgrade(alembic_cfg, "base")
     with test_engine.begin() as conn:
         conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
+
+
+# Versions written against 0018: default names, a typed one, and one a person marked Working
+# (SPEC §5, phase 8c prep).
+VERSION_0018 = text(
+    """
+    INSERT INTO versions (id, deal_id, number, name, created_at, actor, engine_version,
+                          config_hash, inputs_snapshot, is_working)
+    VALUES (:id, :deal_id, :number, :name, now(), 'sam@glenwood.example', '1.8.0', 'h',
+            '{"schema": 1}', :working)
+    """
+)
+MARKED_0018 = text(
+    """
+    INSERT INTO audit_log (id, actor, action, table_name, row_id, after, created_at)
+    VALUES (:id, 'sam@glenwood.example', 'VERSION_MARKED_WORKING', 'deals', :deal_id,
+            CAST(:after AS JSONB), now())
+    """
+)
+
+
+def test_0019_marks_the_versions_a_person_named_or_marked(
+    alembic_cfg: AlembicConfig, test_engine: Engine
+) -> None:
+    import json
+    from datetime import UTC, datetime
+
+    command.upgrade(alembic_cfg, "0018")
+    one, other = uuid.uuid4(), uuid.uuid4()
+    with test_engine.begin() as conn:
+        for deal_id in (one, other):
+            conn.execute(DEAL_0017, {"id": deal_id, "at": datetime(2026, 10, 1, tzinfo=UTC)})
+        for number, name, working in (
+            (1, "Auto v1", False),
+            (2, "v2", False),
+            (3, "Base case", False),
+            (4, "Auto v4", True),
+        ):
+            conn.execute(
+                VERSION_0018,
+                {
+                    "id": uuid.uuid4(),
+                    "deal_id": one,
+                    "number": number,
+                    "name": name,
+                    "working": working,
+                },
+            )
+        conn.execute(
+            VERSION_0018,
+            {"id": uuid.uuid4(), "deal_id": other, "number": 4, "name": "v4", "working": True},
+        )
+        conn.execute(
+            MARKED_0018,
+            {"id": uuid.uuid4(), "deal_id": str(one), "after": json.dumps({"version": 4})},
+        )
+
+    command.upgrade(alembic_cfg, "0019")
+
+    with test_engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT deal_id, number, human_selected FROM versions ORDER BY number")
+        ).all()
+    flags = {(row.deal_id, row.number): row.human_selected for row in rows}
+    assert flags == {
+        (one, 1): False,  # a default automatic name
+        (one, 2): False,  # a default name
+        (one, 3): True,  # typed by a person
+        (one, 4): True,  # marked Working by a person
+        (other, 4): False,  # the mark was on the other deal
+    }
+
+    command.downgrade(alembic_cfg, "0018")
+    with test_engine.connect() as conn:
+        columns = {column["name"] for column in inspect(conn).get_columns("versions")}
+        assert "human_selected" not in columns
+        assert conn.execute(text("SELECT count(*) FROM versions")).scalar() == 5
+
+    command.downgrade(alembic_cfg, "base")
+    with test_engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")

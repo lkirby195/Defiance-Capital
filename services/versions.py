@@ -22,10 +22,21 @@ engine is pure and every input it reads came back. The column list is derived fr
 rather than written out, so a column added later is snapshotted without anyone remembering
 to; a snapshot from before it existed leaves that column as it is on restore.
 
-**Exactly one version per deal is Working**; the rest are drafts. The first run on a deal is
-Working, every later one a draft until a person moves the mark (``mark_working``), and the
-database refuses a second Working row (``versions.uq_versions_one_working_per_deal``). The
-deal page and Home show the Working version unless a person asks for another.
+**Exactly one version per deal is Working**; the rest are drafts, and the database refuses a
+second Working row (``versions.uq_versions_one_working_per_deal``). Who gets the mark:
+
+    the first run on a deal                           Working
+    an automatic run (arrival, Edit Intake, court     Working, unless the Working version is
+      search save, an intake restore)                   human-selected - then a draft
+    a person's run (Run Analysis, Save & Run,         a draft
+      Reset all, Restore inputs)
+    Mark as Working                                   Working, and human-selected
+
+A version is **human-selected** when a person named it as they ran it or marked it Working
+(``versions.human_selected``): a choice somebody made is not overwritten by the run that
+follows the next edit, and an unchosen Working version is, so the page and Home keep up with
+the inputs until somebody picks one to hold. The deal page and Home show the Working version
+unless a person asks for another.
 
 Every write here takes an actor and writes an ``audit_log`` row - ``VERSION_RECORDED``,
 ``VERSION_MARKED_WORKING``, ``VERSION_RESTORED`` - and nothing commits.
@@ -266,20 +277,29 @@ def record_version(
     name: str | None = None,
     auto: bool = False,
 ) -> Version:
-    """Append the version one analysis wrote; Working when the deal has none yet.  # SPEC §5
+    """Append the version one analysis wrote, Working or a draft by the rule above.  # SPEC §5
 
-    The deal row is locked for the numbering, so two runs on one deal at once take numbers
-    one after the other rather than the same one. Flushes; no commit.
+    Working when the deal has no Working version yet, or when ``auto`` and the Working
+    version is not human-selected - the mark then moves, flushed off the old one before it
+    goes on the new. A person's typed name makes the version human-selected. The deal row is
+    locked for the numbering, so two runs on one deal at once take numbers one after the
+    other rather than the same one. Flushes; no commit.
     """
     session.execute(select(Deal.id).where(Deal.id == deal.id).with_for_update())
     number = (
         session.scalar(select(func.max(Version.number)).where(Version.deal_id == deal.id)) or 0
     ) + 1
-    working = working_version(session, deal.id) is None
+    typed = None if auto else clean_name(name)
+    current = working_version(session, deal.id)
+    working = current is None or (auto and not current.human_selected)
+    replaced = current if working and current is not None else None
+    if replaced is not None:
+        replaced.is_working = False
+        session.flush()
     version = Version(
         deal_id=deal.id,
         number=number,
-        name=clean_name(name) or default_name(number, auto),
+        name=typed or default_name(number, auto),
         actor=actor,
         engine_version=screen.engine_version,
         config_hash=screen.config_hash,
@@ -287,6 +307,7 @@ def record_version(
         screen_id=screen.id,
         underwrite_id=underwrite.id if underwrite is not None else None,
         is_working=working,
+        human_selected=typed is not None,
     )
     session.add(version)
     session.flush()
@@ -300,6 +321,8 @@ def record_version(
             "version": number,
             "name": version.name,
             "working": working,
+            "human_selected": version.human_selected,
+            "replaced_working": replaced.number if replaced is not None else None,
             "screen_id": str(screen.id),
             "underwrite_id": str(underwrite.id) if underwrite is not None else None,
         },
@@ -308,21 +331,25 @@ def record_version(
 
 
 def mark_working(session: Session, deal_id: UUID, number: int, *, actor: str) -> Version:
-    """Make version ``number`` the deal's Working one; the one before it becomes a draft.
+    """Make version ``number`` the deal's Working one, chosen by a person.
 
-    Allowed from any status: it says which analysis the deal stands on, and changes no input.
-    The old mark comes off and is flushed before the new one goes on, so the one-Working
-    index never sees two. A version already Working is left alone with no audit row.
+    The one before it becomes a draft, and this one is human-selected: no automatic run
+    takes the mark from it. Allowed from any status: it says which analysis the deal stands
+    on, and changes no input. The old mark comes off and is flushed before the new one goes
+    on, so the one-Working index never sees two. Marking the Working version records the
+    choice when nobody had made it yet, and is left alone with no audit row when somebody
+    had.
     """
     deal = load_deal(session, deal_id)
     version = get_version(session, deal.id, number)
-    if version.is_working:
+    if version.is_working and version.human_selected:
         return version
     current = working_version(session, deal.id)
-    if current is not None:
+    if current is not None and current is not version:
         current.is_working = False
         session.flush()
     version.is_working = True
+    version.human_selected = True
     session.flush()
     record_audit(
         session,

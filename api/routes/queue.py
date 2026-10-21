@@ -48,6 +48,7 @@ rendered from the same template through the same ``team_entry_page``.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any
@@ -56,7 +57,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request, status
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
-from starlette.responses import HTMLResponse, RedirectResponse
+from starlette.responses import HTMLResponse, RedirectResponse, Response
 
 from api.forms import FormDep, fields, rows
 from api.intake_form import (
@@ -76,8 +77,10 @@ from api.masks import holding_costs_amount, mask_one, masked, unmasked
 from api.problems import NO_PROBLEMS, FormProblems, at_top, from_validation_error
 from api.render import page, redirect
 from api.security import PageUser, require_csrf
+from config.config import get_config
 from db.models import Deal
 from db.session import get_session
+from outputs.excel import workbook_bytes
 from schema.dates import payoff_date_for
 from schema.models import (
     SPLIT_PRODUCTS,
@@ -114,6 +117,7 @@ from services import (
     deal_trail,
     deal_versions,
     decline,
+    get_version,
     home_view,
     is_defaulted,
     latest_screen,
@@ -137,6 +141,7 @@ from services import (
     underwrite_readiness,
     underwrite_result,
     update_intake,
+    version_results,
     version_rows,
 )
 from services.actions import RESETTABLE, TOGGLE_FIELDS
@@ -152,6 +157,7 @@ SessionDep = Annotated[Session, Depends(get_session)]
 HOME_PATH = "/queue"
 # The optional box beside Run Analysis and Save & Run: what to call the version it records.
 VERSION_NAME = "version_name"
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 # The hidden field a Home row's controls carry, so the action goes back to the list.
 RETURN_TO = "return_to"
 HOME = "home"
@@ -346,6 +352,24 @@ def deal_path(deal_id: UUID, version: int | None = None) -> str:
     """The deal page; with ``version``, that version of it rather than the Working one."""
     path = f"/queue/deals/{deal_id}"
     return path if version is None else f"{path}?version={version}"
+
+
+def file_part(text: str | None) -> str:
+    """``text`` as a piece of a file name: letters and digits, runs of anything else one ``-``."""
+    return re.sub(r"[^A-Za-z0-9]+", "-", text or "").strip("-")
+
+
+def workbook_filename(deal: Deal, version_name: str) -> str:
+    """``<address>-<version>.xlsx``: ``1412-S-Trenton-Ave-Tulsa-OK-74120-v3.xlsx``.
+
+    The address the deal page is titled with - the street address, else the listing link -
+    and the version's name, each reduced to what every file system and a plain
+    Content-Disposition header accept. A deal with neither is ``deal-<first 8 of its id>``.
+    """
+    prop = deal.property
+    address = (prop.address_raw or prop.listing_url) if prop is not None else None
+    stem = file_part(address) or f"deal-{str(deal.id)[:8]}"
+    return f"{stem}-{file_part(version_name) or 'version'}.xlsx"
 
 
 def ran_path(deal_id: UUID, run: AutoRun) -> str:
@@ -982,6 +1006,39 @@ def mark_working_action(
         return redirect(deal_path(deal_id), "That version does not exist.")
     session.commit()
     return redirect(deal_path(deal_id), f"{version.name} is now the Working version.")
+
+
+@router.get("/queue/deals/{deal_id}/versions/{number}/workbook", response_model=None)
+def version_workbook(
+    request: Request, deal_id: UUID, number: int, session: SessionDep, user: PageUser
+) -> Response:
+    """Download Excel: the workbook for the version in view, ``<address>-<version>.xlsx``.
+
+    The version's stored runs rebuilt (``services.versions.version_results``), nothing run
+    again, laid out as ``glenwood deals export`` lays them out (SPEC §9.6). A version whose
+    ledger did not run has no workbook and goes back to its page saying so.
+    """
+    try:
+        deal = load_deal(session, deal_id)
+        found = version_results(session, get_version(session, deal.id, number))
+    except DealNotFound:
+        return redirect(HOME_PATH, "That deal does not exist.")
+    except VersionNotFound:
+        return redirect(deal_path(deal_id), "That version does not exist.")
+    if found.screen_inputs is None or found.underwrite_inputs is None or found.underwrite is None:
+        return redirect(
+            deal_path(deal_id, number),
+            f"{found.version.name} has no ledger to export: the underwrite did not run.",
+        )
+    body = workbook_bytes(
+        found.screen_inputs, found.underwrite_inputs, found.underwrite, get_config()
+    )
+    filename = workbook_filename(deal, found.version.name)
+    return Response(
+        body,
+        media_type=XLSX,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/queue/deals/{deal_id}/versions/{number}/restore", response_model=None)

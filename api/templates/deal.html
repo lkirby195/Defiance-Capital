@@ -328,11 +328,18 @@
         {% endfor %}
       </select>
       <button class="quiet" type="submit">Show</button>
+      {% if shown.underwrite_id %}
+        <a class="btn quiet" id="download-excel" href="/queue/deals/{{ deal.id }}/versions/{{ shown.number }}/workbook" title="The workbook for {{ shown.name }}, the version in view">Download Excel</a>
+      {% else %}
+        <span class="btn quiet off" id="download-excel" title="{{ shown.name }} has no ledger: the underwrite did not run">Download Excel</span>
+      {% endif %}
     </form>
     <dl class="facts small">
       <dt>Name</dt><dd>{{ shown.name }} <span class="tag {{ 'WORKING' if shown.is_working else 'DRAFT' }}">{{ "Working" if shown.is_working else "Draft" }}</span></dd>
       <dt>Run</dt><dd>{{ shown.created_at | when }} by {{ shown.actor }}</dd>
       <dt>Engine</dt><dd>{{ shown.engine_version }} · config {{ shown.config_hash[:12] }}</dd>
+      <dt>Chosen by a person{{ help("Named by the person who ran it, or set with Mark as Working. While the Working version is one a person chose, the automatic run after an edit is a draft; otherwise it becomes the Working version.") }}</dt>
+      <dd>{{ "Yes" if shown.human_selected else "No" }}</dd>
     </dl>
     <div class="actions">
       {% if not shown.is_working %}

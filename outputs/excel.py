@@ -26,6 +26,7 @@ checks the engine against an independent solve to 1e-6.
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -726,6 +727,18 @@ def build_workbook(
     _sheet_take_back(book, result)
     _sheet_flags(book, result)
     return book
+
+
+def workbook_bytes(
+    screen_inputs: ScreenInputs,
+    underwrite_inputs: UnderwriteInputs,
+    result: UnderwriteResult,
+    config: Config,
+) -> bytes:
+    """The workbook as the bytes of an .xlsx file, for the deal page's Download Excel."""
+    buffer = BytesIO()
+    build_workbook(screen_inputs, underwrite_inputs, result, config).save(buffer)
+    return buffer.getvalue()
 
 
 def write_workbook(
