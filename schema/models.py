@@ -262,6 +262,12 @@ class AuditAction(StrEnum):
     moved. ``OVERRIDES_SAVED`` is the whole-block save the services and the CLI fixtures
     still make (``services.actions.save_overrides``), and what every row before Phase 7c
     was written under.
+
+    ``VERSION_RECORDED`` sits beside every analysis run's two ``*_RUN`` rows and names the
+    version it made; ``VERSION_MARKED_WORKING`` is Mark as Working, ``before`` / ``after``
+    naming the version the mark left and the one it went to; ``VERSION_RESTORED`` is Restore
+    inputs, naming the version and the columns that moved, beside the ``INTAKE_RESTORED`` row
+    for the submission it re-applied (SPEC §5, §9).
     """
 
     # Deals
@@ -282,6 +288,9 @@ class AuditAction(StrEnum):
     PAUSED = "PAUSED"  # SPEC §4.6: set aside; before.status is where it goes back to
     RESUMED = "RESUMED"  # SPEC §4.6: Progress on a paused deal
     NOTE_ADDED = "NOTE_ADDED"
+    VERSION_RECORDED = "VERSION_RECORDED"  # SPEC §5: one analysis run, named, Working or not
+    VERSION_MARKED_WORKING = "VERSION_MARKED_WORKING"  # the deal's Working version moved
+    VERSION_RESTORED = "VERSION_RESTORED"  # a version's inputs loaded back onto the deal
     DEALS_PURGED = "DEALS_PURGED"  # the one-time cleanup (README); row_id is "*"
     LOI_SENT = "LOI_SENT"  # SPEC §9.3, Phase 5
     HANDED_OFF = "HANDED_OFF"  # SPEC §9.4, Phase 6

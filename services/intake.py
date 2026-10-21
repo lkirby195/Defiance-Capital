@@ -178,13 +178,21 @@ def record_from_submission(submission: IntakeSubmission, deal: Deal) -> IntakeRe
     were. The public form's provenance stays the deal's own: ``intake_source`` is on the
     deal rather than in the payload, and the referral note is in the payload.
     """
-    payload = submission.raw_payload
+    return record_from_payload(submission.channel, submission.raw_payload, deal)
+
+
+def record_from_payload(channel: Channel, payload: Any, deal: Deal) -> IntakeRecord:
+    """The ``IntakeRecord`` one channel's stored payload normalizes to.  # SPEC §4.2, §4.5
+
+    ``record_from_submission`` reads a submission row through this; a version restore reads
+    the payload its snapshot kept (``services/versions.py``).
+    """
     if not isinstance(payload, dict):
         raise ValueError("that intake version has no form payload to read back")
-    if submission.channel is Channel.TEAM:
+    if channel is Channel.TEAM:
         team = TeamEntryForm.model_validate(payload)
         return normalize(parse_team_form(team), Channel.TEAM, raw_payload=payload)
-    if submission.channel is Channel.WEB:
+    if channel is Channel.WEB:
         web = WebApplyForm.model_validate(
             {key: value for key, value in payload.items() if key != LANGUAGE_KEY}
         )
@@ -196,8 +204,34 @@ def record_from_submission(submission: IntakeSubmission, deal: Deal) -> IntakeRe
             referral_note=web.referral_note,
         )
     raise ValueError(
-        f"an intake version from the {submission.channel.value} channel cannot be restored; "
+        f"an intake version from the {channel.value} channel cannot be restored; "
         "no parser reads it back yet"
+    )
+
+
+def reapply_intake(
+    session: Session,
+    deal: Deal,
+    record: IntakeRecord,
+    *,
+    actor: str,
+    note: dict[str, Any],
+    config: Config | None = None,
+) -> Deal:
+    """Apply a record as a new ``INTAKE_RESTORED`` submission, ``note`` on its audit row.
+
+    The intake half of restoring a version's inputs (``services/versions.py``): exactly what
+    ``restore_intake`` does with a submission row, for a payload a version kept. The caller
+    checks the status. Flushes; no commit.
+    """
+    return _apply_record(
+        session,
+        deal,
+        record,
+        actor=actor,
+        action=AuditAction.INTAKE_RESTORED,
+        config=config,
+        note=note,
     )
 
 
@@ -210,6 +244,7 @@ def _apply_record(
     action: AuditAction,
     config: Config | None,
     restored_from: IntakeSubmission | None = None,
+    note: dict[str, Any] | None = None,
 ) -> Deal:
     """Write a record's form columns onto a deal, append the submission, record who did it."""
     before: dict[str, Any] = {}
@@ -246,6 +281,8 @@ def _apply_record(
     after["submission_id"] = str(submission.id)
     if restored_from is not None:
         after["restored_from"] = str(restored_from.id)
+    if note:
+        after.update(note)
     record_audit(
         session,
         actor=actor,

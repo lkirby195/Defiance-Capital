@@ -18,9 +18,16 @@ nobody has opened in a fortnight, which is backwards: the deal being worked is t
 seeing.
 
 Each row carries what a person scans a list for - who, where, how much, which product, the
-latest verdict and IRR, where it came from, when it last moved - and the three controls
+Working version's verdict and IRR, where it came from, when it last moved - and the three
+controls
 (``services/actions.py``): Progress, Pause and Kill, each live only from the statuses it
 applies from, so a button that would be refused is off rather than a surprise.
+
+**The verdict and the IRR are the Working version's** (``services/versions.py``), not the
+latest run's: a draft somebody ran to try a number does not change what the list says the
+deal is until they mark it Working. A deal with runs and no version at all - one priced
+only through the JSON stage routes - shows its latest screen and underwrite instead, so a
+result is never hidden for want of a version. The runs still count as activity either way.
 """
 
 from __future__ import annotations
@@ -34,7 +41,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from db.models import AuditLog, Deal, IntakeSubmission, Screen, Underwrite
+from db.models import AuditLog, Deal, IntakeSubmission, Screen, Underwrite, Version
 from schema.models import Channel, Status, Verdict
 from services.actions import MARK_DEAD_FROM, PAUSE_FROM, PROGRESS_FROM
 from services.audit import DEALS
@@ -82,6 +89,16 @@ class RunSummary:
 
 
 @dataclass(frozen=True)
+class WorkingSummary:
+    """The deal's Working version, reduced to what the list shows."""
+
+    number: int
+    name: str
+    verdict: Verdict | None
+    irr: Decimal | None
+
+
+@dataclass(frozen=True)
 class HomeEntry:
     """One deal on the list, with what the row shows and which controls are live."""
 
@@ -89,13 +106,18 @@ class HomeEntry:
     screen: RunSummary | None
     underwrite: RunSummary | None
     last_activity: datetime
+    working: WorkingSummary | None = None
 
     @property
     def verdict(self) -> Verdict | None:
+        if self.working is not None:
+            return self.working.verdict
         return self.screen.verdict if self.screen is not None else None
 
     @property
     def irr(self) -> Decimal | None:
+        if self.working is not None:
+            return self.working.irr
         return self.underwrite.irr if self.underwrite is not None else None
 
     @property
@@ -173,6 +195,22 @@ def _latest_underwrites(session: Session, deal_ids: list[UUID]) -> dict[UUID, Ru
     }
 
 
+def _working(session: Session, deal_ids: list[UUID]) -> dict[UUID, WorkingSummary]:
+    """Each analyzed deal's Working version: its name, its screen's verdict, its IRR."""
+    if not deal_ids:
+        return {}
+    rows = session.execute(
+        select(Version.deal_id, Version.number, Version.name, Screen.verdict, Underwrite.irr)
+        .outerjoin(Screen, Screen.id == Version.screen_id)
+        .outerjoin(Underwrite, Underwrite.id == Version.underwrite_id)
+        .where(Version.deal_id.in_(deal_ids), Version.is_working)
+    )
+    return {
+        deal_id: WorkingSummary(number, name, verdict, irr)
+        for deal_id, number, name, verdict, irr in rows
+    }
+
+
 def _latest_submissions(session: Session, deal_ids: list[UUID]) -> dict[UUID, datetime]:
     """When each deal last had something come in on it.  # SPEC §4.2
 
@@ -240,6 +278,7 @@ def home_view(session: Session) -> HomeView:
     deal_ids = [deal.id for deal in deals]
     screens = _latest_screens(session, deal_ids)
     underwrites = _latest_underwrites(session, deal_ids)
+    working = _working(session, deal_ids)
     submissions = _latest_submissions(session, deal_ids)
     actions = _latest_audit(session, deal_ids)
 
@@ -255,6 +294,7 @@ def home_view(session: Session) -> HomeView:
                 submissions.get(deal.id),
                 actions.get(deal.id),
             ),
+            working=working.get(deal.id),
         )
         for deal in deals
     ]

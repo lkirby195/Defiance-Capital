@@ -1,10 +1,10 @@
 """Delete every deal and everything hanging off it, and leave the users.  # README
 
 The one-time cleanup ``glenwood deals purge --all --confirm`` runs through here: every deal,
-borrower, entity, property, submission, screen, underwrite, enrichment run, document,
-``ma_sync`` row and audit row goes, and the ``users`` table does not. It exists for wiping
-the test deals out of a database before the real ones arrive, and for nothing else - which
-is why the command demands two flags and the README calls it what it is.
+borrower, entity, property, submission, screen, underwrite, version, enrichment run,
+document, ``ma_sync`` row and audit row goes, and the ``users`` table does not. It exists for
+wiping the test deals out of a database before the real ones arrive, and for nothing else -
+which is why the command demands two flags and the README calls it what it is.
 
 What it leaves behind, apart from the users, is one audit row (``DEALS_PURGED``) carrying the
 count of every table it emptied. Every service write records one (CLAUDE.md, "Record
@@ -30,6 +30,7 @@ from db.models import (
     Property,
     Screen,
     Underwrite,
+    Version,
     borrower_entities,
 )
 from schema.models import AuditAction
@@ -45,6 +46,7 @@ PURGED_TABLES: tuple[type, ...] = (
     MASync,
     Document,
     EnrichmentRun,
+    Version,
     Underwrite,
     Screen,
     IntakeSubmission,

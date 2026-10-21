@@ -19,6 +19,15 @@ class DealNotFound(ServiceError):
         self.deal_id = deal_id
 
 
+class VersionNotFound(ServiceError):
+    """The deal has no version by that number or name (``services/versions.py``)."""
+
+    def __init__(self, deal_id: UUID, wanted: str) -> None:
+        super().__init__(f"deal {deal_id} has no version {wanted}")
+        self.deal_id = deal_id
+        self.wanted = wanted
+
+
 class DealNotReady(ServiceError):
     """The deal is missing values a run needs; ``missing`` names them.
 

@@ -19,13 +19,14 @@ queue.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import NamedTuple
 from uuid import UUID
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from config.config import Config, get_config
-from db.models import Deal
+from db.models import Deal, Screen, Underwrite
 from engine.screen import screen
 from engine.underwrite import underwrite
 from schema.models import AuditAction, ScreenResult, Status, UnderwriteResult, Verdict
@@ -77,6 +78,20 @@ def priced[T](deal_id: UUID, run: Callable[[], T]) -> T:
         raise DealNotPriceable(deal_id, _reasons(exc)) from exc
 
 
+class ScreenRun(NamedTuple):
+    """A screen as it was recorded: the ``screens`` row and the result it holds."""
+
+    row: Screen
+    result: ScreenResult
+
+
+class UnderwriteRun(NamedTuple):
+    """An underwrite as it was recorded: the ``underwrites`` row and the result it holds."""
+
+    row: Underwrite
+    result: UnderwriteResult
+
+
 def run_screen(
     session: Session,
     deal_id: UUID,
@@ -90,6 +105,18 @@ def run_screen(
     ``adapters`` is what enrichment produced; leaving it None reads it from the deal, which
     is nothing until Phase 3, so the team's own entries are what the engine runs on.
     """
+    return screen_run(session, deal_id, config, adapters, actor=actor).result
+
+
+def screen_run(
+    session: Session,
+    deal_id: UUID,
+    config: Config | None = None,
+    adapters: AdapterValues | None = None,
+    *,
+    actor: str,
+) -> ScreenRun:
+    """``run_screen``, handing back the row as well: a version names the rows it wrote."""
     cfg = config or get_config()
     deal = load_deal(session, deal_id)
     before = deal.status
@@ -112,7 +139,7 @@ def run_screen(
             "engine_version": result.engine_version,
         },
     )
-    return result
+    return ScreenRun(row, result)
 
 
 def run_underwrite(
@@ -136,6 +163,19 @@ def run_underwrite(
     the minimum viable intake raises ``DealNotReady`` naming the fields the team has yet to
     collect (SPEC §4.1).
     """
+    return underwrite_run(session, deal_id, request, config, adapters, actor=actor).result
+
+
+def underwrite_run(
+    session: Session,
+    deal_id: UUID,
+    request: UnderwriteRequest,
+    config: Config | None = None,
+    adapters: AdapterValues | None = None,
+    *,
+    actor: str,
+) -> UnderwriteRun:
+    """``run_underwrite``, handing back the row as well: a version names the rows it wrote."""
     cfg = config or get_config()
     deal = load_deal(session, deal_id)
     check_intake_complete(deal)
@@ -165,4 +205,4 @@ def run_underwrite(
             "engine_version": result.engine_version,
         },
     )
-    return result
+    return UnderwriteRun(row, result)
