@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.11
+# GLENWOOD Underwriting Platform — SPEC v0.12
 
-Status: **v0.11**, 2026-10-20, engine `1.8.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.12**, 2026-10-21, engine `1.9.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.12** answers three of the v0.11 questions. A **maximum quoted rate** (`pricing.max_quoted_rate`, placeholder 18%): a pricing row whose solved rate is above it is not a quote and reads "exceeds max quoted rate (X% needed)" (§8.10, engine `1.9.0`). **Who holds the Working mark**: an automatic run - on arrival, after Edit Intake, after a court search save - becomes the Working version unless the Working version is one a person chose, by naming it as they ran it or with Mark as Working; then it is a draft. Each version records whether it was chosen by a person (`versions.human_selected`, migration `0019`) (§5). And a **Download Excel** button beside the version switcher exports the version in view as `<address>-<version>.xlsx` (§9).
 
 **v0.11** is a solved price and versions. The **pricing matrix solves its rate** rather than reading it off the grid: for each loan amount step it bisects on the ledger for the lowest rate, to 0.01%, at which the lender's XIRR reaches the target, and reports that rate (two decimals of a percent, rounded up so it still clears), the IRR there and the borrower's profit and cash-on-cash there; the grid stays for the two sensitivity tables (§8.10, engine `1.8.0`). And every analysis run is a **version** (§5, §9): a name, the person or `system` it ran for, its screen and its underwrite, and a snapshot of every input it read, so it can be reproduced and its inputs restored whatever is edited later. Exactly one version per deal is **Working** - the first run is, and Mark as Working moves it - and the rest are drafts. The deal page shows the Working version, a switcher at the top of the outputs shows any other read-only with a Draft badge in the header, Restore inputs loads a version's snapshot back into the deal and runs a new version, and Home shows the Working version's verdict and IRR. Run Analysis and Save & Run take an optional Version name. History lists the versions, and the intake edits no run has picked up. The CLI prints or exports any version of a stored deal, the Working one by default (§9.6). Migration `0018` adds the `versions` table and backfills one version per stored run pair.
 
@@ -341,11 +343,27 @@ rent, the five analysis assumptions, the toggles, the court search and the `defa
 tags all travel), and the borrower and property the deal pointed at. The column list is read
 off the table, so a column added later is snapshotted without anyone remembering to.
 `underwrite_id` is empty when the ledger stood down. **Exactly one version per deal is
-Working**: the first run on a deal is, every later one is a draft until a person marks it
-Working, and a partial unique index refuses a second Working row. `is_working` is the one
-column on the table that ever changes. A run the screen refused wrote nothing and is no
+Working**, and a partial unique index refuses a second Working row. Who holds the mark (v0.12):
+
+| Run | Becomes |
+|---|---|
+| the first run on a deal, of any kind | Working |
+| an automatic run (on arrival, after Edit Intake, after a court search save, after an intake restore) | Working, unless the Working version is human-selected; then a draft |
+| a person's run (Run Analysis, Save & Run, Reset all, Restore inputs) | a draft |
+| Mark as Working | Working, and human-selected |
+
+A version is **human-selected** (`versions.human_selected`, migration `0019`) when the person
+who ran it typed its name, or a person marked it Working - marking the version already
+Working records the choice too. A choice somebody made is not overwritten by the run after
+the next edit; an unchosen Working version is, so the page and Home keep up with the inputs
+until somebody picks a version to hold. `is_working` and `human_selected` are the two
+columns on the table that ever change; `VERSION_RECORDED` names the version an automatic run
+took the mark from (`replaced_working`). A run the screen refused wrote nothing and is no
 version; the JSON stage routes (`POST /deals/{id}/screen`, `/underwrite`) run one stage and
 record no version.
+
+`0019` backfills `human_selected`: true on a version whose name is neither `v<number>` nor
+`Auto v<number>` (a person typed it) and on one a `VERSION_MARKED_WORKING` row names.
 
 `0018` backfills the runs already stored: each `screens` row with the first `underwrites` row
 after it and before the next screen is one version, an underwrite left over is a version of
@@ -951,11 +969,20 @@ short below, the lowest that clears above - and stay what the two sensitivity ta
 row they never clear is searched up to 100%, the most the model accepts as a rate; one that
 does not clear even there says so ("No rate up to 100% gets ..."). A step that leaves no loan
 says it cannot be priced; the borrower's figures are empty whenever the Borrower Sensitivity
-is not evaluated. Each row carries one plain-English sentence, written by the engine so every
-output words it the same:
+is not evaluated.
+
+**A rate above `pricing.max_quoted_rate`** (placeholder 18%, engine `1.9.0`) **is not a
+quote.** The solve still finds it; the row carries no rate, no IRR and no borrower figures,
+records the solved rate as `rate_needed`, and says "exceeds max quoted rate (X% needed)" -
+on the deal page in place of the figures, in the workbook's sentence and its `Rate needed`
+column. A rate equal to the maximum is quoted. The matrix records the maximum it ran with.
+
+Each row carries one plain-English sentence, written by the engine so every output words it
+the same:
 
 ```
 A $140,000 loan at 14.37% returns $21,400 profit (28.2% cash-on-cash).
+A $150,000 loan exceeds max quoted rate (20.15% needed).
 ```
 
 The solve is checked against an independent one on two fixtures - Wichita's NO_DRAW note
@@ -1009,9 +1036,18 @@ and runs a new version on it as the person who pressed it; it is refused where a
 refused (§4.6) and on a backfilled version, which kept no inputs. Run Analysis and Save &
 Run each take an optional **Version name** (at most 100 characters); a person's unnamed run
 is `v<number>` and an automatic run `Auto v<number>`. A run lands on the version it recorded,
-so the person sees what they ran - a draft, once the deal has a Working version - and the
-notice ends "Saved as v4 (draft)." A shown version is read-only: the panel above it is the
-deal's current inputs, which the next run reads.
+so the person sees what they ran - Working or a draft by the §5 rule - and the notice ends
+"Saved as v4 (draft)." The version facts say whether it was **chosen by a person**. A shown
+version is read-only: the panel above it is the deal's current inputs, which the next run
+reads.
+
+**Download Excel** sits in the switcher's row, after Show, and exports the version in view -
+not the dropdown's selection - as the §9.6 workbook (`GET
+/queue/deals/{id}/versions/{n}/workbook`), named `<address>-<version>.xlsx` with the address
+and the version's name each reduced to letters, digits and dashes
+(`1412-S-Trenton-Ave-Tulsa-OK-74120-v3.xlsx`; `deal-<first 8 of the id>` with no address). A
+version whose ledger did not run has no workbook: the button is off, and the route goes back
+to the version saying so.
 
 **The deal page is labels and values only.** No explanatory sub-line, parenthetical or inline
 definition beside a value; where a definition is still useful it sits behind a small (?) on
@@ -1105,7 +1141,7 @@ workbook to export.
 - `interest.day_count_basis` (30): the days a whole monthly period counts as, for the final stub period's prorated interest (§8.3)
 - `closing.default_lead_days` (14): the **default for `closing_date`** (§8.1) is the last day of the month this many days after the deal came in
 - sensitivity (§8.9): `loan_step_usd` (5,000), `loan_steps` (4), `rate_min` (12.5%), `rate_max` (17.5%), `rate_step` (1%) - the shape of the IRR grid; every cell is a ledger re-run
-- pricing (§8.10): `target_lender_irr` (20%, placeholder) and `loan_amount_steps` (`[0, -10000, -20000]`, placeholder; each 0 or less, no duplicates, at least one)
+- pricing (§8.10): `target_lender_irr` (20%, placeholder), `max_quoted_rate` (18%, placeholder; above 0, at most 100%) and `loan_amount_steps` (`[0, -10000, -20000]`, placeholder; each 0 or less, no duplicates, at least one)
 - rental takeout: `expenses_pct_of_rent` (35%), `takeout_rate` (6.5%), `amortization_years` (30), `dscr_floor` (1.20)
 - take-back: `lost_interest_months` (3), `legal_costs_usd` (5,000), `amortization_years` (30), `dscr_floor` (1.00)
 - underwrite flag severities: `DSCR_BELOW_FLOOR`, `TAKE_BACK_DSCR_BELOW_FLOOR`. The informational codes (§8.8) are fixed `Info` in code and the loader refuses to grade them
@@ -1229,6 +1265,11 @@ lost-interest months - become per-deal columns with the config value as their de
 (§8.4-§8.6), and the engine reads the deal's when present. Three audit codes are new:
 `ASSUMPTIONS_SAVED`, `ASSUMPTIONS_RESET`, `COURT_SEARCH_SAVED`.
 
+Phase 8c prep (engine `1.9.0`, migration `0019`) adds `pricing.max_quoted_rate` and the row
+that exceeds it (§8.10), the rule that lets an automatic run take the Working mark from a
+version nobody chose and `versions.human_selected` (§5), and Download Excel on the deal page
+(§9).
+
 Phase 8b (engine `1.8.0`, migration `0018`) solves the pricing rate on the ledger to 0.01%
 (§8.10) and makes every analysis run a version (§5, §9): a snapshot of its inputs, a name,
 one Working version per deal, a switcher and a Draft badge on the deal page, Mark as Working,
@@ -1287,16 +1328,17 @@ the deal's own phoneless row rather than minting another.
 - The pricing placeholders (§8.10): a 20% target lender IRR and steps of 0, -$10,000 and
   -$20,000. Steps only lend less; a larger loan has no defined advance and is refused by the
   loader. The solved rate (v0.11) is rounded **up** to the next 0.01% so it still clears the
-  target, and the search runs to 100% - the model's own bound - with no lender-set ceiling;
-  confirm whether a quoted rate should be capped (a usury limit, say) and say so on the row
-- Versions (v0.11): a run after the first is a draft until somebody marks it Working, the
-  automatic runs after an edit included, so Home keeps the old numbers until a person moves
-  the mark - confirm that is wanted for the automatic runs too. Version names need not be
-  unique (the CLI refuses an ambiguous one). Restore inputs runs as the person, like Save &
-  Run, where an intake restore runs as `system`. The JSON stage routes record no version, and
-  a deal priced only through them shows its latest runs on Home and the deal page. The
-  workbook is a CLI export only; there is no download on the deal page. Backfilled versions
-  (`0018`) cannot be restored
+  target. `pricing.max_quoted_rate` (v0.12) is an 18% placeholder for whatever cap GLENWOOD
+  quotes under (a usury limit, say); the search itself still runs to 100%, so a row above
+  the cap can say what it needs
+- Versions (v0.11, v0.12): a person's own run is always a draft beside an existing Working
+  version, even unnamed, while the automatic run after an edit can take the mark - confirm
+  that asymmetry is wanted. Version names need not be unique (the CLI refuses an ambiguous
+  one). Restore inputs runs as the person, like Save & Run, where an intake restore runs as
+  `system`. The JSON stage routes record no version, and a deal priced only through them
+  shows its latest runs on Home and the deal page. Backfilled versions (`0018`) cannot be
+  restored. Download Excel uses the config the server runs today for the Inputs sheet's
+  config notes, not the one the version ran on (its hash is on the version)
 - Borrower cash-on-cash is profit over (total project costs - loan), with total project costs
   the flip's own stack - financing included, broker's selling costs not (§8.4). Confirm that
   is the cash GLENWOOD means
