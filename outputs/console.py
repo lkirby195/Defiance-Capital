@@ -334,10 +334,11 @@ def whole(amount: Decimal) -> str:
 def render_pricing(matrix: PricingMatrix | None) -> list[str]:
     """One line per loan amount step, in plain English.  # SPEC §8.10"""
     if matrix is None:
-        lines = heading("PRICING", "lowest grid rate that earns the target lender IRR")
+        lines = heading("PRICING", "lowest rate that earns the target lender IRR")
         return [*lines, "  (not on this run: the ledger predates the matrix)"]
+    method = "lowest rate, solved to 0.01%," if matrix.solved else "lowest grid rate"
     lines = heading(
-        "PRICING", f"lowest grid rate whose lender IRR reaches {pct1(matrix.target_lender_irr)}"
+        "PRICING", f"{method} whose lender IRR reaches {pct1(matrix.target_lender_irr)}"
     )
     for row in matrix.rows:
         irr = "" if row.lender_irr is None else f"  (lender IRR {pct4(row.lender_irr)})"

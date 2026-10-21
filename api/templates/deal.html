@@ -439,7 +439,7 @@
 
 {# --- 5b. Pricing (SPEC §8.10) -------------------------------------------------------------- #}
 <section class="panel" id="pricing">
-  <h2>Pricing{{ help("For each loan amount step (config pricing.loan_amount_steps), the lowest rate on the Lender Sensitivity's columns at which the lender's IRR reaches the target (pricing.target_lender_irr), with the borrower's profit and cash-on-cash at that rate (SPEC §8.10). Nothing is interpolated between columns.") }}</h2>
+  <h2>Pricing{{ help("For each loan amount step (config pricing.loan_amount_steps), the lowest rate at which the lender's IRR reaches the target (pricing.target_lender_irr), solved on the ledger to 0.01% and rounded up so it still clears, with the borrower's profit and cash-on-cash at that rate (SPEC §8.10).") }}</h2>
   {% if result and result.pricing %}
     {% set matrix = result.pricing %}
     <dl class="facts small">
@@ -461,12 +461,12 @@
             <tr>
               <td class="num">{{ row.loan_amount | money }}</td>
               {% if row.cleared %}
-                <td class="num">{{ row.interest_rate | pct }}</td>
+                <td class="num">{{ row.interest_rate | quoted }}</td>
                 <td class="num">{{ row.lender_irr | rate }}</td>
                 <td class="num">{{ row.borrower_profit | money }}</td>
                 <td class="num">{{ row.borrower_cash_on_cash | pct }}</td>
               {% else %}
-                <td colspan="4">No grid rate reaches the target.</td>
+                <td colspan="4">{{ "No rate reaches the target." if matrix.solved else "No grid rate reaches the target." }}</td>
               {% endif %}
             </tr>
           {% endfor %}

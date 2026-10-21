@@ -1385,13 +1385,14 @@ class BorrowerSensitivityTable(BaseModel):
 
 
 class PricingRow(BaseModel):
-    """One loan amount step: the lowest grid rate that earns the target, and what it leaves.
+    """One loan amount step: the lowest rate that earns the target, and what it leaves.
 
-    # SPEC §8.10. ``interest_rate`` and ``lender_irr`` are None when no rate on the grid reaches
-    ``target_lender_irr`` (or the step leaves no loan to price); the three borrower figures are
-    None then too, and whenever the borrower side was not evaluated. ``sentence`` is the row
-    in plain English, written once by the engine so the page, the workbook and the CLI say
-    the same thing.
+    # SPEC §8.10. ``interest_rate`` is solved to 0.01% from engine 1.8.0 (the lowest grid
+    column before it); it and ``lender_irr`` are None when no rate up to the solve's ceiling
+    reaches ``target_lender_irr`` (or the step leaves no loan to price). The three borrower
+    figures are None then too, and whenever the borrower side was not evaluated. ``sentence``
+    is the row in plain English, written once by the engine so the page, the workbook and
+    the CLI say the same thing.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1407,19 +1408,33 @@ class PricingRow(BaseModel):
 
     @property
     def cleared(self) -> bool:
-        """True when some rate on the grid reaches the target."""
+        """True when some rate reaches the target."""
         return self.interest_rate is not None
 
 
 class PricingMatrix(BaseModel):
-    """One row per ``pricing.loan_amount_steps`` entry.  # SPEC §8.10"""
+    """One row per ``pricing.loan_amount_steps`` entry.  # SPEC §8.10
+
+    From engine 1.8.0 each row's rate is solved: ``rate_precision`` is the step it is solved
+    to (0.0001, two decimals of a percent) and ``rate_ceiling`` the highest rate the search
+    tries. A 1.7.0 matrix searched the Lender Sensitivity's columns instead and recorded them
+    in ``rates``; it still loads, with the two solve fields None, and a 1.8.0 one leaves
+    ``rates`` empty.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     target_lender_irr: Decimal
-    rates: list[Decimal]  # the Lender Sensitivity's columns, searched lowest first
     borrower_status: AnalysisStatus
     rows: list[PricingRow]
+    rate_precision: Decimal | None = None  # 1.8.0 on: the solve's step
+    rate_ceiling: Decimal | None = None  # 1.8.0 on: the highest rate the solve tries
+    rates: list[Decimal] = Field(default_factory=list)  # 1.7.0 only: the columns searched
+
+    @property
+    def solved(self) -> bool:
+        """True on a matrix whose rates were solved (1.8.0 on) rather than looked up."""
+        return self.rate_precision is not None
 
 
 class UnderwriteResult(BaseModel):
