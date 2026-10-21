@@ -29,6 +29,7 @@ from api.render import templates
 from api.routes.apply import router as apply_router
 from api.routes.auth import router as auth_router
 from api.routes.deals import router as deals_router
+from api.routes.defaults import router as defaults_router
 from api.routes.intake import router as intake_router
 from api.routes.queue import router as queue_router
 from api.security import SIGN_IN_PATH, CsrfRejected, NotSignedIn
@@ -38,6 +39,7 @@ app.include_router(auth_router)
 app.include_router(queue_router)
 app.include_router(intake_router)
 app.include_router(deals_router)
+app.include_router(defaults_router)
 app.include_router(apply_router)
 
 

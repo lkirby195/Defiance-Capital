@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Defaults — GLENWOOD{% endblock %}
+
+{# Every value in config/glenwood.yaml, grouped, read-only (api/defaults_page.py). Each value
+   carries its dotted yaml key in data-key, which is what tests/test_defaults_page.py checks
+   against the yaml itself. #}
+
+{% block content %}
+<h1>Defaults</h1>
+<p class="small muted">config/glenwood.yaml · config hash <code>{{ config_hash[:12] }}</code></p>
+
+{% for group in groups %}
+<section class="panel">
+  <h2>{{ group.heading }}</h2>
+  <table>
+    <thead><tr><th>Setting</th><th class="num">Value</th><th>Key</th></tr></thead>
+    <tbody>
+      {% for leaf in group.leaves %}
+        <tr>
+          <td>{{ leaf.label }}</td>
+          <td class="num" data-key="{{ leaf.key }}">{{ leaf.value }}</td>
+          <td class="small muted"><code>{{ leaf.key }}</code></td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if group.heading == "Screen caps and thresholds" %}
+    <h3>Leverage caps <span class="small muted"><code>leverage_caps.&lt;loan type&gt;.&lt;tranche&gt;.&lt;tier&gt;</code></span></h3>
+    {% for table in caps %}
+      <h4>{{ table.product }}</h4>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr><th>Tranche</th>{% for tier in table.tiers %}<th class="num">{{ tier }}</th>{% endfor %}</tr>
+          </thead>
+          <tbody>
+            {% for tranche, cells in table.rows %}
+              <tr>
+                <td>{{ tranche }}</td>
+                {% for ltc, ltv in cells %}
+                  <td class="num small">LTC <span data-key="{{ ltc.key }}">{{ ltc.value }}</span> · LTV <span data-key="{{ ltv.key }}">{{ ltv.value }}</span></td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endfor %}
+  {% endif %}
+</section>
+{% endfor %}
+{% endblock %}
