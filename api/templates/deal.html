@@ -129,7 +129,7 @@
         %}{{ deal.borrower.entities | map(attribute="name") | join(", ") }}
         {%- else %}—{% endif %}</dd>
     <dt>Guarantor Name</dt>
-    <dd>{{ deal.borrower.name if deal.borrower else "—" }}</dd>
+    <dd>{{ deal.borrower.name | plain if deal.borrower else "—" }}</dd>
     <dt>Phone</dt>
     <dd>{{ deal.borrower.phone | phone if deal.borrower else "—" }}</dd>
     <dt>Email</dt>
