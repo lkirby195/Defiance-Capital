@@ -225,8 +225,11 @@ def _apply_record(
         after[column] = jsonable(value)
         setattr(deal, column, value)
 
-    _relink(session, deal, record, before, after)
+    # The split first: the relink below queries, which flushes the row, and a product moved
+    # off a split product with its old split still on it is a row the database refuses
+    # (``ck_deals_loan_split_only_on_split_products``).
     _reconcile_split(deal, before, after)
+    _relink(session, deal, record, before, after)
     _apply_completeness(deal, record, before, after)
     # A box the form left blank on a defaulted economic is the default again, not nothing -
     # and a column that ends where it started is not a change, so it leaves the audit row.
