@@ -52,7 +52,9 @@ def test_run_underwrite_prints_every_section(
     for section in (
         "DEAL ECONOMICS",
         "RETURN OVERVIEW",
-        "SENSITIVITY",
+        "LENDER SENSITIVITY",
+        "BORROWER SENSITIVITY",
+        "PRICING",
         "FLIP ANALYSIS",
         "RENTAL ANALYSIS",
         "TAKE-BACK ANALYSIS",
@@ -63,11 +65,21 @@ def test_run_underwrite_prints_every_section(
     assert "IRR" in out and "Yield (Profit / Costs)" in out
     assert "DSCR at loan cost" in out
     # the sensitivity grid: the rate columns across the top, the request on the bottom row
-    grid = out[out.index("SENSITIVITY") : out.index("FLIP ANALYSIS")]
+    grid = out[out.index("LENDER SENSITIVITY") : out.index("BORROWER SENSITIVITY")]
     assert "12.5%" in grid and "17.5%" in grid
     assert "reductions come off the advance at closing first" in grid
     # the deal's own rate is a column and its cell is starred, whatever rate it was priced at
     assert grid.count("%*") == 1 and "* the deal as it stands" in grid
+    # the borrower's side and the pricing matrix (SPEC 8.9, 8.10)
+    borrower = out[out.index("BORROWER SENSITIVITY") : out.index("PRICING")]
+    pricing = out[out.index("PRICING") : out.index("FLIP ANALYSIS")]
+    flip = expected["flip"]
+    if flip["status"] == "EVALUATED":
+        assert "cash-on-cash" in borrower and borrower.count("*") >= 1
+    else:
+        assert "NOT EVALUATED" in borrower
+    assert "lender IRR reaches 20.0%" in pricing
+    assert pricing.count(" loan ") >= 3
     # the numbers on the page are the numbers the fixture pins
     plain = out.replace("$", "").replace(",", "")
     assert expected["ledger"]["total_interest"] in plain

@@ -8,15 +8,18 @@ success; what ran is kept either way. The Home rows open the deal with a button 
 
 from __future__ import annotations
 
+import html
 from typing import Any
 from urllib.parse import unquote
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from api.render import money
 from db.models import AuditLog, Deal, Screen, Underwrite
-from schema.models import AuditAction, Status
+from schema.models import AuditAction, Status, UnderwriteResult
 from services import DEALS
+from services.persistence import latest_underwrite
 from tests.conftest import QueueClient, requires_db, store_deal
 
 pytestmark = requires_db
@@ -100,9 +103,45 @@ def test_run_analysis_runs_both_as_the_person_and_reloads_on_the_result(
     assert "Verdict <strong>GO</strong>" in body
     assert "· IRR <strong>" in body
     assert "Scored as" in body and "Leverage against caps" in body
-    assert body.index("<h2>Return Overview") < body.index("<h2>Sensitivity")
-    assert body.index("<h2>Sensitivity") < body.index("<h2>Flip Analysis")
+    assert body.index("<h2>Return Overview") < body.index("<h2>Lender Sensitivity")
+    assert body.index("<h2>Lender Sensitivity") < body.index("<h2>Borrower Sensitivity")
+    assert body.index("<h2>Borrower Sensitivity") < body.index("<h2>Pricing")
+    assert body.index("<h2>Pricing") < body.index("<h2>Flip Analysis")
     assert "Not analyzed yet." not in body
+
+
+def test_the_page_shows_the_borrower_sensitivity_and_the_pricing_rows(
+    client: QueueClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """The run's own tables, on the page, in the run's own words (SPEC §8.9, §8.10)."""
+    assert run(client, deal_with_overrides).status_code == 303
+    body = client.get(f"/queue/deals/{deal_with_overrides.id}").text
+    db_session.expire_all()
+    stored = latest_underwrite(db_session, deal_with_overrides.id)
+    assert stored is not None
+    result = UnderwriteResult.model_validate(stored.outputs)
+    assert result.borrower_sensitivity is not None and result.pricing is not None
+    borrower = body[body.index('<section class="panel" id="borrower-sensitivity">') :]
+    borrower = borrower[: borrower.index("</section>")]
+    assert borrower.count("grid-cell hit") == 1
+    deal_cell = result.borrower_sensitivity.deal_cell
+    assert deal_cell is not None and money(deal_cell.net_profit) in borrower
+    pricing = body[body.index('<section class="panel" id="pricing">') :]
+    pricing = pricing[: pricing.index("</section>")]
+    assert "Target lender IRR" in pricing
+    for row in result.pricing.rows:
+        assert html.escape(row.sentence) in pricing
+
+
+def test_a_flip_off_deal_says_the_borrower_side_was_not_evaluated(
+    client: QueueClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    deal_with_overrides.flip_analysis = False
+    db_session.commit()
+    assert run(client, deal_with_overrides).status_code == 303
+    body = client.get(f"/queue/deals/{deal_with_overrides.id}").text
+    assert "Not evaluated: the Flip Analysis is off." in body
+    assert "the borrower&#39;s profit is not evaluated" in body or "No rate on the grid" in body
 
 
 def test_run_analysis_on_a_paused_deal_runs_and_leaves_it_paused(

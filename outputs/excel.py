@@ -7,7 +7,10 @@ and compare. Sheets, in the SPEC §9 order:
 
     Inputs           what went in, screen and underwrite, plus the sizing it produced
     Return Overview  the monthly ledger, its totals, and an XIRR formula over it
-    Sensitivity      the IRR at every loan amount and rate on the grid (SPEC §8.9)
+    Lender Sensitivity    the IRR at every loan amount and rate on the grid (SPEC §8.9)
+    Borrower Sensitivity  the borrower's profit, cash and cash-on-cash on the same grid
+    Pricing          the lowest grid rate that earns the target lender IRR, per loan step
+                     (SPEC §8.10)
     Flip             the project's margin if it sells
     Rental           whether the rent carries a takeout loan
     Take-Back        whether the rent carries what the loan cost GLENWOOD
@@ -418,8 +421,8 @@ def _sheet_sensitivity(book: Workbook, result: UnderwriteResult) -> None:
     so a reader can sort, chart or recompute from them. The shaded cell is the deal's own;
     its rate is always one of the columns (SPEC §8.9).
     """
-    sheet = book.create_sheet("Sensitivity")
-    _title(sheet, "Sensitivity — IRR by loan amount and annual rate")
+    sheet = book.create_sheet("Lender Sensitivity")
+    _title(sheet, "Lender Sensitivity — IRR by loan amount and annual rate")
     grid = result.sensitivity
     if grid is None:
         sheet.cell(
@@ -466,6 +469,115 @@ def _sheet_sensitivity(book: Workbook, result: UnderwriteResult) -> None:
                 cell.font = HEAD
         at += 1
     _widths(sheet, 16, 18, 19, 15, *([11] * len(grid.rates)))
+
+
+def _sheet_borrower_sensitivity(book: Workbook, result: UnderwriteResult) -> None:
+    """The borrower's profit, cash and cash-on-cash on the lender's grid.  # SPEC §8.9
+
+    Three columns under each rate - Profit, Cash in, Cash-on-cash - so a reader can divide
+    the first by the second and get the third. The rows are the Lender Sensitivity's; the
+    shaded cells are the deal as it stands.
+    """
+    sheet = book.create_sheet("Borrower Sensitivity")
+    _title(sheet, "Borrower Sensitivity — profit and cash-on-cash by loan amount and rate")
+    grid = result.borrower_sensitivity
+    if grid is None:
+        sheet.cell(
+            row=3,
+            column=1,
+            value="Not on this run: the ledger predates the borrower table (engine 1.7.0).",
+        )
+        _widths(sheet, 80)
+        return
+    sheet.cell(
+        row=2,
+        column=1,
+        value=(
+            "Profit is the Flip Analysis's net profit with the deal re-sized and re-ledgered at "
+            "that loan amount and rate; cash in is the total project costs less the loan; "
+            "cash-on-cash is the one over the other (SPEC §8.9)."
+        ),
+    )
+    if grid.status is not AnalysisStatus.EVALUATED:
+        sheet.cell(
+            row=3,
+            column=1,
+            value="NOT EVALUATED: the Flip Analysis is off or there is no estimated sale price.",
+        )
+        _widths(sheet, 80)
+        return
+    for offset, rate in enumerate(grid.rates):
+        cell = sheet.cell(row=4, column=2 + 3 * offset, value=rate)
+        cell.number_format = PCT1
+        cell.font = HEAD
+    at = _header(
+        sheet, 5, ["Loan amount", *(["Profit", "Cash in", "Cash-on-cash"] * len(grid.rates))]
+    )
+    for row in grid.rows:
+        sheet.cell(row=at, column=1, value=row.loan_amount).number_format = MONEY
+        for offset, point in enumerate(row.cells):
+            column = 2 + 3 * offset
+            values = (
+                (point.net_profit, MONEY),
+                (point.cash_invested, MONEY),
+                (point.cash_on_cash, PCT1),
+            )
+            for step, (value, fmt) in enumerate(values):
+                cell = sheet.cell(row=at, column=column + step, value=value)
+                cell.number_format = fmt
+                if point.is_deal:
+                    cell.fill = HIT
+                    cell.font = HEAD
+        at += 1
+    _widths(sheet, 16, *([13, 13, 12] * len(grid.rates)))
+
+
+def _sheet_pricing(book: Workbook, result: UnderwriteResult) -> None:
+    """The lowest grid rate that earns the target, per loan amount step.  # SPEC §8.10"""
+    sheet = book.create_sheet("Pricing")
+    _title(sheet, "Pricing — the lowest grid rate that earns the target lender IRR")
+    matrix = result.pricing
+    if matrix is None:
+        sheet.cell(
+            row=3,
+            column=1,
+            value="Not on this run: the ledger predates the pricing matrix (engine 1.7.0).",
+        )
+        _widths(sheet, 80)
+        return
+    sheet.cell(row=2, column=1, value="Target lender IRR")
+    sheet.cell(row=2, column=2, value=matrix.target_lender_irr).number_format = PCT1
+    at = _header(
+        sheet,
+        4,
+        [
+            "Loan amount",
+            "Change",
+            "Rate",
+            "Lender IRR",
+            "Borrower profit",
+            "Borrower cash in",
+            "Cash-on-cash",
+            "In plain English",
+        ],
+    )
+    for row in matrix.rows:
+        values = (
+            (row.loan_amount, MONEY),
+            (row.step, MONEY),
+            (row.interest_rate, PCT1),
+            (row.lender_irr, PCT4),
+            (row.borrower_profit, MONEY),
+            (row.borrower_cash_invested, MONEY),
+            (row.borrower_cash_on_cash, PCT1),
+            (row.sentence, None),
+        )
+        for column, (value, fmt) in enumerate(values, start=1):
+            cell = sheet.cell(row=at, column=column, value=value)
+            if fmt is not None:
+                cell.number_format = fmt
+        at += 1
+    _widths(sheet, 16, 12, 9, 12, 16, 17, 13, 90)
 
 
 def _sheet_flip(book: Workbook, result: UnderwriteResult) -> None:
@@ -601,6 +713,8 @@ def build_workbook(
     _sheet_inputs(book, screen_inputs, underwrite_inputs, result, config)
     _sheet_return_overview(book, result)
     _sheet_sensitivity(book, result)
+    _sheet_borrower_sensitivity(book, result)
+    _sheet_pricing(book, result)
     _sheet_flip(book, result)
     _sheet_rental(book, result)
     _sheet_take_back(book, result)

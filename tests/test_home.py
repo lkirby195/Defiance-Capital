@@ -657,8 +657,10 @@ def test_the_deal_page_renders_a_screen_and_an_underwrite(
     assert "Scored as" in body
     assert "Leverage against caps" in body
     assert ">LTV<" in body and ">LTC<" in body
-    assert body.index("<h2>Return Overview") < body.index("<h2>Sensitivity")
-    assert body.index("<h2>Sensitivity") < body.index("<h2>Flip Analysis")
+    assert body.index("<h2>Return Overview") < body.index("<h2>Lender Sensitivity")
+    assert body.index("<h2>Lender Sensitivity") < body.index("<h2>Borrower Sensitivity")
+    assert body.index("<h2>Borrower Sensitivity") < body.index("<h2>Pricing")
+    assert body.index("<h2>Pricing") < body.index("<h2>Flip Analysis")
     assert body.index("<h2>Flip Analysis") < body.index("<h2>Rental Analysis")
     assert body.index("<h2>Rental Analysis") < body.index("<h2>Take-Back Analysis")
     assert "Future Draws" in body
@@ -763,6 +765,6 @@ def test_every_team_entry_fixture_renders_its_screen_and_underwrite(
     response = client.get(f"/queue/deals/{deal.id}")
     assert response.status_code == 200, response.text
     assert "Scored as" in response.text
-    assert "Return Overview" in response.text and "<h2>Sensitivity" in response.text
+    assert "Return Overview" in response.text and "<h2>Lender Sensitivity" in response.text
     assert "Take-Back Analysis" in response.text
     assert client.get("/queue").status_code == 200
