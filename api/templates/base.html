@@ -1,10 +1,10 @@
 {# Shared shell for the review queue. One stylesheet, inline (_style.html), because the
-   queue is one small internal app and a second request for 4kB of CSS buys nothing. The
-   public borrower form has its own shell (public.html) on the same stylesheet.
+   queue is one small internal app and a second request for a few kB of CSS buys nothing.
+   The public borrower form has its own shell (public.html) on the same stylesheet.
 
-   The top bar carries two buttons on every page: Home, the list of every deal, and New
-   Deal, the team-entry form; and, beside the signed-in person's name, Change password and
-   Sign out.
+   The top bar is the same on every page: the wordmark (plain text, standing in for a logo),
+   Home, New Deal and Defaults, then the signed-in person's name, Change password and Sign
+   out. Everything in it is a plain text link; the one accent colour is kept for actions.
 
    One piece of client-side script exists in the whole queue: the input masks (_masks.html).
    A convenience and not load-bearing — the server parses `$425,000`, `425000`, `12%` and
@@ -17,13 +17,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}GLENWOOD{% endblock %}</title>
+  <title>{% block title %}Defiance Capital{% endblock %}</title>
   {# The one stylesheet, shared with the public borrower form (public.html). #}
   {% include "_style.html" %}
 </head>
 <body>
   <header class="bar">
-    <span class="brand">GLENWOOD</span>
+    <span class="brand">Defiance Capital</span>
     <nav>
       <a class="btn" href="/queue">Home</a>
       <a class="btn" href="/queue/new">New Deal</a>
@@ -31,7 +31,7 @@
     </nav>
     {% if user %}
       <span class="who">
-        {{ user.name }} &lt;{{ user.email }}&gt;
+        <span class="name" title="{{ user.email }}">{{ user.name }}</span>
         <a class="btn small" href="/account/password">Change password</a>
         <form method="post" action="/logout">
           {{ csrf.field(csrf_token) }}

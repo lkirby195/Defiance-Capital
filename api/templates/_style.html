@@ -1,178 +1,340 @@
-{# The stylesheet, included inline by both shells: base.html (the review queue) and
-   public.html (the borrower form). One file so the two cannot drift apart in colour. #}
+{# The one stylesheet, included inline by both shells: base.html (the review queue) and
+   public.html (the borrower form). One file so the two cannot drift apart.
+
+   The system: one typeface (Inter where installed, else the system face), 15px on a 1.5
+   line, a 4/8/16/24/32 spacing scale, one accent for actions and neutral grays for
+   everything else on a white page. Cards are a 1px border and a title row; no shadows, no
+   gradients. Chips carry the verdicts and the severities in green / amber / red / gray.
+   Numbers in tables are tabular and right-aligned. Content stops at 1200px and every
+   section stacks in the same order on a phone. #}
   <style>
     :root {
-      --bg: #f6f7f9;
+      --bg: #ffffff;
       --panel: #ffffff;
-      --ink: #14181f;
-      --muted: #5c6673;
-      --line: #dde1e7;
-      --accent: #1f4f8f;
-      --hard: #8f1f24;
-      --hard-bg: #fbeced;
-      --soft: #8a5a08;
-      --soft-bg: #fdf3e2;
-      --info: #2c5566;
-      --info-bg: #e9f2f6;
-      --go: #1d6236;
-      --go-bg: #e7f3ec;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #14171c;
-        --panel: #1c2027;
-        --ink: #e8eaee;
-        --muted: #9aa4b1;
-        --line: #2c323b;
-        --accent: #7fb0ea;
-        --hard: #f2a3a7; --hard-bg: #3a2124;
-        --soft: #e8c184; --soft-bg: #3a3020;
-        --info: #9fc8d8; --info-bg: #1e2c33;
-        --go: #8fd3aa; --go-bg: #1c2f24;
-      }
+      --well: #f6f7f9;
+      --ink: #111827;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --line-strong: #cfd4dc;
+      --accent: #1d4ed8;
+      --accent-ink: #ffffff;
+      --accent-soft: #dbe4ff;
+      --green: #15803d;  --green-bg: #dcfce7;
+      --amber: #b45309;  --amber-bg: #fef3c7;
+      --red: #b91c1c;    --red-bg: #fee2e2;
+      --gray: #4b5563;   --gray-bg: #f3f4f6;
+      --s1: 4px; --s2: 8px; --s3: 16px; --s4: 24px; --s5: 32px;
+      --radius: 6px;
     }
     * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
     body {
       margin: 0;
       background: var(--bg);
       color: var(--ink);
-      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      font: 15px/1.5 Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
     }
-    header.bar {
-      display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline;
-      padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
-    }
-    header.bar .brand { font-weight: 700; letter-spacing: .04em; }
-    header.bar nav { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-    header.bar .who { margin-left: auto; color: var(--muted); font-size: 13px; }
-    header.bar form { display: inline; }
-    main { max-width: 1100px; margin: 0 auto; padding: 16px; }
-    h1 { font-size: 22px; margin: 4px 0 16px; }
-    /* The deal's name and the way back into its intake, on one line. */
-    .title { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline;
-             justify-content: space-between; }
-    .title h1 { margin-bottom: 8px; }
-    a.btn, span.btn {
-      display: inline-block; font: inherit; font-weight: 600; font-size: 14px; padding: 7px 13px;
-      border-radius: 5px; border: 1px solid var(--accent); color: var(--accent);
-      text-decoration: none; white-space: nowrap;
-    }
-    .btn.small, button.small { font-size: 12px; padding: 3px 9px; }
-    .btn.danger { color: var(--hard); border-color: var(--hard); }
-    /* The three controls on a Home row sit on one line. */
-    td.controls { white-space: nowrap; }
-    td.controls form { display: inline; margin-right: 4px; }
-    h2 { font-size: 17px; margin: 0 0 10px; }
-    h3 { font-size: 14px; margin: 16px 0 6px; color: var(--muted); text-transform: uppercase;
-         letter-spacing: .06em; }
     a { color: var(--accent); }
+    code { font-size: 13px; }
+
+    /* --- the top bar ------------------------------------------------------------------- */
+    header.bar {
+      display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); align-items: center;
+      padding: var(--s2) var(--s3); min-height: 52px;
+      background: var(--panel); border-bottom: 1px solid var(--line);
+    }
+    header.bar .brand { font-weight: 700; font-size: 16px; letter-spacing: .01em; color: var(--ink);
+                        text-decoration: none; margin-right: var(--s2); }
+    header.bar nav { display: flex; flex-wrap: wrap; gap: var(--s1); align-items: center; }
+    /* In the bar, every control is a plain text link: the one accent is kept for actions. */
+    header.bar a.btn, header.bar button {
+      display: inline-block; font: inherit; font-size: 14px; font-weight: 500; line-height: 20px;
+      padding: 6px 10px; border: 0; border-radius: var(--radius); background: transparent;
+      color: var(--ink); text-decoration: none; cursor: pointer; white-space: nowrap;
+    }
+    header.bar a.btn:hover, header.bar button:hover { background: var(--gray-bg); }
+    header.bar .who {
+      margin-left: auto; display: flex; flex-wrap: wrap; gap: var(--s1); align-items: center;
+      color: var(--muted); font-size: 14px;
+    }
+    header.bar .who .name { padding: 0 var(--s2); color: var(--ink); }
+    header.bar form { display: inline; margin: 0; }
+    header.bar .lang { margin-left: auto; font-size: 15px; font-weight: 600; padding: var(--s2) var(--s2); }
+
+    /* --- the page ---------------------------------------------------------------------- */
+    main { max-width: 1200px; margin: 0 auto; padding: var(--s4) var(--s3) 56px; }
+    h1 { font-size: 24px; line-height: 1.25; font-weight: 650; margin: 0 0 var(--s3); letter-spacing: -.01em; }
+    h2 { font-size: 16px; line-height: 1.3; font-weight: 600; margin: 0 0 var(--s3); }
+    h3 { font-size: 12px; line-height: 1.4; font-weight: 600; margin: var(--s3) 0 var(--s2); color: var(--muted);
+         text-transform: uppercase; letter-spacing: .06em; }
+    h3:first-child { margin-top: 0; }
+    h4 { font-size: 14px; margin: var(--s3) 0 var(--s2); }
+    p { margin: 0 0 var(--s2); }
+    p.lede { color: var(--muted); margin: 0 0 var(--s3); }
+    .muted { color: var(--muted); }
+    .small { font-size: 13px; }
+    .num, .tabular { font-variant-numeric: tabular-nums; }
+    .unit { color: var(--muted); font-size: 12px; font-weight: 400; }
+
+    /* --- cards ------------------------------------------------------------------------- */
     section.panel, details.panel {
       background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-      padding: 14px 16px; margin-bottom: 16px;
+      padding: var(--s3); margin: 0 0 var(--s3);
     }
-    /* A collapsed section (deal.html): the heading is the thing a person clicks, and the
-       browser's own disclosure marker is the whole mechanism - no script. */
-    details.panel > summary { cursor: pointer; }
-    details.panel > summary h2 { display: inline; }
-    details.panel[open] > summary { margin-bottom: 10px; }
-    p.lede { color: var(--muted); margin: 0 0 12px; }
-    .notice, .problem {
-      padding: 10px 12px; border-radius: 6px; margin: 0 0 12px; border: 1px solid;
+    section.panel > h2, details.panel > summary h2 { margin-bottom: var(--s3); }
+    /* A card's title row: the heading on the left, a control or a count on the right. */
+    .row { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); align-items: center;
+           justify-content: space-between; margin-bottom: var(--s3); }
+    .row > h2 { margin: 0; }
+    .count { color: var(--muted); font-weight: 500; font-size: 14px; margin-left: var(--s2); }
+    /* A collapsed section: the heading is the thing a person clicks, and the browser's own
+       disclosure marker is the whole mechanism - no script. */
+    details.panel > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: var(--s2); }
+    details.panel > summary::-webkit-details-marker { display: none; }
+    details.panel > summary::before {
+      content: ""; width: 7px; height: 7px; flex: none; margin-left: 2px;
+      border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted);
+      transform: rotate(-45deg); transition: transform .12s;
     }
-    .notice { background: var(--go-bg); border-color: var(--go); color: var(--go); }
-    .problem { background: var(--hard-bg); border-color: var(--hard); color: var(--hard); }
-    .banner {
-      background: var(--hard-bg); border: 1px solid var(--hard); color: var(--hard);
-      border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;
+    details.panel[open] > summary::before { transform: rotate(45deg); }
+    details.panel > summary h2 { display: inline; margin: 0; }
+    details.panel[open] > summary { margin-bottom: var(--s3); }
+    details.panel > summary .count { font-weight: 400; }
+    .narrow { max-width: 440px; margin: var(--s5) auto; }
+    .narrow.wide { max-width: 720px; }
+
+    /* --- notices ----------------------------------------------------------------------- */
+    .notice, .problem, .banner {
+      padding: 10px 12px; border-radius: var(--radius); margin: 0 0 var(--s3); border: 1px solid;
+      font-size: 14px;
     }
-    .banner strong { display: block; margin-bottom: 4px; }
+    .notice { background: var(--green-bg); border-color: #86efac; color: var(--green); }
+    .problem { background: var(--red-bg); border-color: #fca5a5; color: var(--red); }
+    .banner { background: var(--red-bg); border-color: #fca5a5; color: var(--red); }
+    .banner strong { display: block; margin-bottom: var(--s1); }
+    .banner ul { margin: 0; padding-left: 18px; }
+
+    /* --- buttons ----------------------------------------------------------------------- */
+    button, a.btn, span.btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      font: inherit; font-size: 14px; font-weight: 600; line-height: 20px; padding: 7px 14px;
+      border-radius: var(--radius); border: 1px solid var(--line-strong); cursor: pointer;
+      background: var(--panel); color: var(--ink); text-decoration: none; white-space: nowrap;
+    }
+    button:hover, a.btn:hover { border-color: #9aa3b2; }
+    /* The primary: the one accent, for the thing a page is for. A bare <button> is it. */
+    button:not(.quiet):not(.danger):not(.linky), a.btn.primary, td.controls > a.btn {
+      background: var(--accent); border-color: var(--accent); color: var(--accent-ink);
+    }
+    button:not(.quiet):not(.danger):not(.linky):hover, a.btn.primary:hover, td.controls > a.btn:hover {
+      background: #1a44c2; border-color: #1a44c2;
+    }
+    button.quiet, a.btn.quiet { background: var(--panel); color: var(--ink); border-color: var(--line-strong); }
+    button.danger, a.btn.danger, span.btn.danger, td.controls > a.btn.danger {
+      background: var(--panel); color: var(--red); border-color: #fca5a5;
+    }
+    button.danger:hover, a.btn.danger:hover, td.controls > a.btn.danger:hover { background: var(--red-bg); border-color: #f87171; }
+    .btn.small, button.small { font-size: 12px; line-height: 18px; padding: 3px 10px; }
+    button:disabled, .btn.off { opacity: .5; cursor: not-allowed; }
+    button:disabled:hover { border-color: var(--line-strong); }
+    button.linky {
+      background: none; border: 0; color: var(--accent); padding: 2px 0; font-size: 12px;
+      font-weight: 600; text-decoration: underline; cursor: pointer; width: auto; display: inline;
+      line-height: 1.4;
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: flex-end; }
+    .actions form { margin: 0; }
+    a.small { font-size: 13px; }
+    .actions > a.small { padding: 7px var(--s1); }
+
+    /* --- chips ------------------------------------------------------------------------- */
+    .tag {
+      display: inline-flex; align-items: center; padding: 0 8px; border-radius: 999px;
+      font-size: 12px; font-weight: 600; line-height: 20px; white-space: nowrap;
+      border: 1px solid transparent; vertical-align: middle;
+      background: var(--gray-bg); color: var(--gray);
+    }
+    .tag.GO, .tag.WORKING { background: var(--green-bg); color: var(--green); }
+    .tag.CONDITIONAL, .tag.SOFT, .tag.DRAFT { background: var(--amber-bg); color: var(--amber); }
+    .tag.DECLINE, .tag.HARD { background: var(--red-bg); color: var(--red); }
+    .tag.INFO, .tag.status { background: var(--gray-bg); color: var(--gray); }
+    /* A plain fact worn as a chip (the deal header): white, a hairline, the page's own ink. */
+    .tag.fact { background: var(--panel); color: var(--ink); border-color: var(--line-strong); font-weight: 500; }
+    .tag.fact strong { font-weight: 600; margin-left: 4px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 var(--s2); }
+    /* A box pre-filled with its config default says so, and stops saying so the moment
+       somebody types over it (SPEC 8.1). Small gray text, no colour of its own. */
+    .dflt {
+      display: inline-block; font-size: 11px; font-weight: 500; letter-spacing: .02em;
+      color: var(--muted); background: var(--gray-bg); border-radius: 4px; padding: 0 5px;
+      line-height: 16px; vertical-align: middle; white-space: nowrap;
+    }
+    /* A definition behind a hover, where the page used to print it (deal.html). */
+    .help {
+      display: inline-block; width: 15px; height: 15px; line-height: 13px; text-align: center;
+      border: 1px solid var(--line-strong); border-radius: 50%; font-size: 10px; font-weight: 700;
+      color: var(--muted); cursor: help; vertical-align: middle; margin-left: 3px;
+    }
+
+    /* --- tables ------------------------------------------------------------------------ */
     .scroll { overflow-x: auto; }
     table { border-collapse: collapse; width: 100%; font-size: 14px; }
-    th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line);
-             vertical-align: top; }
-    th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+    th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; white-space: nowrap; }
+    thead th { border-bottom: 1px solid var(--line-strong); }
+    tfoot th { color: var(--ink); font-size: 14px; border-bottom: 0; border-top: 1px solid var(--line-strong); }
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody + tfoot tr:first-child th { border-top: 1px solid var(--line-strong); }
     td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+    td.controls { white-space: nowrap; text-align: right; }
+    td.controls form { display: inline; margin-left: var(--s1); }
+    td.controls > a.btn { margin-right: var(--s1); }
+    /* The sensitivity tables' one marked cell: the deal's own loan amount at its own rate. */
+    .grid-cell.hit { background: var(--green-bg); color: var(--green); font-weight: 600;
+                     box-shadow: inset 0 0 0 1px #86efac; }
+
+    /* --- facts: a label and a value, in columns ---------------------------------------- */
+    dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--s1) var(--s3); margin: 0; }
     dl.facts dt { color: var(--muted); }
     dl.facts dd { margin: 0; font-variant-numeric: tabular-nums; }
-    .tag {
-      display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 12px;
-      font-weight: 600; border: 1px solid;
-    }
-    .tag.HARD, .tag.DECLINE { background: var(--hard-bg); color: var(--hard); border-color: var(--hard); }
-    .tag.SOFT, .tag.CONDITIONAL { background: var(--soft-bg); color: var(--soft); border-color: var(--soft); }
-    .tag.INFO { background: var(--info-bg); color: var(--info); border-color: var(--info); }
-    .tag.GO { background: var(--go-bg); color: var(--go); border-color: var(--go); }
-    .tag.status { background: var(--info-bg); color: var(--info); border-color: var(--info); }
-    .tag.WORKING { background: var(--go-bg); color: var(--go); border-color: var(--go); }
-    .tag.DRAFT { background: var(--soft-bg); color: var(--soft); border-color: var(--soft); }
-    .switcher { align-items: center; margin-bottom: 10px; }
-    .switcher select { width: auto; min-width: 280px; max-width: 100%; }
+    dl.facts.small { gap: 2px var(--s3); }
+    /* Three fact blocks side by side (the read-only intake summary on the deal page). */
+    .facts-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s3) var(--s4); }
+    .facts-grid dl.facts { grid-template-columns: minmax(0, max-content) minmax(0, 1fr); align-content: start; }
+    .facts-grid dl.facts dd { overflow-wrap: anywhere; }
     ul.plain { margin: 0; padding-left: 18px; }
     ul.plain li { margin-bottom: 3px; }
-    form.stack { display: grid; gap: 10px; }
-    fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 12px; padding: 10px 12px; }
-    legend { color: var(--muted); font-size: 13px; padding: 0 4px; }
-    .grid3 { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
-    /* The Underwriting Assumptions panel (deal.html): two columns of boxes, one on a phone. */
-    .grid2 { display: grid; gap: 10px 20px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
+
+    /* --- the deal header: who and what on the left, the controls on the right ---------- */
+    .deal-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 400px); gap: var(--s3) var(--s4);
+                 align-items: start; margin-bottom: var(--s3); }
+    /* Grid children may shrink below their content: a long version name in the switcher's
+       select must not widen the page. */
+    .deal-head > *, .deal-tools > * { min-width: 0; max-width: 100%; }
+    .deal-head h1 { margin-bottom: var(--s2); overflow-wrap: anywhere; }
+    .deal-head p.meta { margin: 0 0 var(--s1); font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+    .deal-head p.meta strong { color: var(--ink); }
+    .deal-tools { display: grid; gap: var(--s2); justify-items: stretch; }
+    .deal-tools section.panel { margin: 0; padding: var(--s2) 12px; }
+    .deal-tools .switcher { align-items: center; gap: var(--s2); margin-bottom: var(--s2); }
+    .deal-tools .switcher label { flex: 1 1 100%; margin: 0; }
+    .deal-tools .switcher select { flex: 1 1 100%; width: 100%; min-width: 0; }
+    .deal-tools dl.facts.small { grid-template-columns: max-content 1fr; font-size: 13px; margin-bottom: var(--s2); }
+    .deal-tools form.run { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: flex-end; }
+    .deal-tools form.run > div { flex: 1 1 160px; min-width: 0; }
+    select { max-width: 100%; }
+    .deal-tools form.run label { white-space: nowrap; }
+    .deal-tools .edit { justify-self: start; }
+    .stale { margin-top: 0; }
+
+    /* --- the output grids: two tables side by side, three stat cards in a row ---------- */
+    .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); margin-bottom: var(--s3); }
+    .trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s3); margin-bottom: var(--s3); }
+    .pair > section.panel, .trio > section.panel { margin: 0; min-width: 0; }
+    /* Two tables in one row: a notch smaller, and the reduction under its loan amount. */
+    .pair table { font-size: 12px; }
+    .pair th, .pair td { padding: 6px; }
+    .sub { display: block; }
+    .trio dl.facts.small { grid-template-columns: minmax(0, 1fr) max-content; }
+    .trio dl.facts.small dd { text-align: right; }
+    /* The headline figure on a stat card, and the quiet one when there is nothing to show. */
+    .headline { font-size: 28px; line-height: 1.15; font-weight: 650; letter-spacing: -.01em;
+                font-variant-numeric: tabular-nums; margin: 0 0 var(--s1); }
+    .headline.na { font-size: 18px; font-weight: 500; color: var(--muted); }
+    .headline-label { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase;
+                      letter-spacing: .06em; margin-bottom: var(--s3); }
+    /* The Return Overview's one line: five figures, the ledger folded under them. */
+    .summary { display: flex; flex-wrap: wrap; gap: var(--s3) var(--s5); margin: 0 0 var(--s3); padding: 0; list-style: none; }
+    .summary li { margin: 0; }
+    .summary .k { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+    .summary .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    details.ledger { border-top: 1px solid var(--line); padding-top: var(--s2); }
+    details.ledger > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); }
+    details.ledger[open] > summary { margin-bottom: var(--s2); }
+    .sentences { margin: var(--s2) 0 0; padding-left: 18px; font-size: 13px; }
+
+    /* --- forms ------------------------------------------------------------------------- */
+    form.stack { display: grid; gap: var(--s3); }
+    fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 var(--s3); padding: var(--s3); min-width: 0; }
+    legend { color: var(--ink); font-size: 16px; font-weight: 600; padding: 0 6px; }
+    /* Two columns of boxes on a desktop, one on a phone (the forms and the panel). */
+    .grid2 { display: grid; gap: 12px var(--s4); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid3 { display: grid; gap: 12px var(--s4); grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
     /* Every box says which it is (api/templates/_fields.html), in the label's own type:
        plain text, no weight and no colour of its own. */
     .mark { font: inherit; color: inherit; white-space: nowrap; }
-    /* A box pre-filled with its config default says so, and stops saying so the moment
-       somebody types over it (SPEC 8.1). */
-    .dflt {
-      font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-      color: var(--info); background: var(--info-bg); border: 1px solid var(--info);
-      border-radius: 9px; padding: 0 6px; white-space: nowrap;
-    }
-    /* The complaint the last post made about one box, under that box (_fields.html). The
-       page's top keeps only what is about more than one box. */
-    span.err {
-      display: block; margin-top: 3px; font-size: 12px; font-weight: 600; color: var(--hard);
-    }
-    [aria-invalid="true"] { border-color: var(--hard); }
-    button.linky {
-      background: none; border: none; color: var(--accent); padding: 2px 0; font-size: 12px;
-      font-weight: 600; text-decoration: underline; cursor: pointer; width: auto;
-    }
-    span.cap { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
-    /* A definition behind a hover, where the page used to print it (deal.html). */
-    .help {
-      display: inline-block; width: 15px; height: 15px; line-height: 14px; text-align: center;
-      border: 1px solid var(--line); border-radius: 50%; font-size: 10px; font-weight: 700;
-      color: var(--muted); cursor: help; vertical-align: middle; margin-left: 3px;
-    }
-    a.btn.off, span.btn.off { opacity: .5; cursor: not-allowed; }
-    .toggle { display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
-              border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px;
-              background: var(--bg); }
-    .toggle label { display: inline-flex; align-items: center; gap: 4px; margin: 0;
-                    font-size: 13px; color: var(--ink); white-space: nowrap; }
-    .toggle input[type="radio"] { width: auto; margin: 0; }
+    span.cap { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+    /* The complaint the last post made about one box, under that box (_fields.html). */
+    span.err { display: block; margin-top: 4px; font-size: 12px; font-weight: 600; color: var(--red); }
+    [aria-invalid="true"] { border-color: var(--red); }
     input, select, textarea {
-      width: 100%; padding: 7px 8px; font: inherit; color: var(--ink);
-      background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
+      width: 100%; padding: 7px 10px; font: inherit; color: var(--ink);
+      background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius);
+      min-height: 36px;
     }
-    textarea { min-height: 70px; resize: vertical; }
-    button {
-      font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 5px; cursor: pointer;
-      border: 1px solid var(--accent); background: var(--accent); color: #fff;
+    input:focus, select:focus, textarea:focus, button:focus-visible, a.btn:focus-visible {
+      outline: 2px solid var(--accent-soft); outline-offset: 0; border-color: var(--accent);
     }
-    button.quiet { background: transparent; color: var(--accent); }
-    button.danger { background: transparent; color: var(--hard); border-color: var(--hard); }
-    .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
-    .reply { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line);
-             border-radius: 6px; padding: 10px 12px; margin: 0 0 8px; }
-    /* The sensitivity table's one marked cell: the deal's own loan amount at its own rate. */
-    .grid-cell.hit { background: var(--go-bg); color: var(--go); font-weight: 600; }
-    .muted { color: var(--muted); }
-    .small { font-size: 13px; }
+    input[readonly] { background: var(--well); }
+    textarea { min-height: 72px; resize: vertical; }
+    .toggle { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; min-height: 36px;
+              border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 0 10px; }
+    .toggle label { display: inline-flex; align-items: center; gap: 5px; margin: 0; font-size: 14px;
+                    color: var(--ink); white-space: nowrap; }
+    .toggle input[type="radio"] { width: auto; min-height: 0; margin: 0; }
+    input[type="radio"], input[type="checkbox"] { width: auto; min-height: 0; }
+    .reply { white-space: pre-wrap; background: var(--well); border: 1px solid var(--line);
+             border-radius: var(--radius); padding: 10px 12px; margin: 0 0 var(--s2); }
+
+    /* --- the borrower form: one column, bigger targets, nothing to learn ---------------- */
+    main.apply { max-width: 600px; }
+    main.apply h1 { font-size: 26px; margin: var(--s2) 0 var(--s2); }
+    main.apply p.lede { font-size: 16px; }
+    main.apply .field { margin-bottom: var(--s3); }
+    main.apply label { font-size: 15px; color: var(--ink); margin-bottom: 6px; }
+    main.apply .mark { font-size: 13px; color: var(--muted); }
+    main.apply input, main.apply select, main.apply textarea { font-size: 16px; min-height: 48px; padding: 10px 12px; }
+    main.apply textarea { min-height: 72px; }
+    main.apply .hint { display: block; font-size: 13px; color: var(--muted); margin-top: 4px; }
+    /* A set of choices as tappable rows rather than a dropdown, which is what a thumb wants. */
+    main.apply .choices { display: grid; gap: var(--s2); }
+    main.apply .choice { display: flex; align-items: center; gap: 12px; min-height: 48px;
+                         padding: 0 14px; border: 1px solid var(--line-strong); border-radius: var(--radius);
+                         background: var(--panel); font-size: 16px; color: var(--ink); margin: 0; cursor: pointer; }
+    main.apply .choice input { width: 20px; height: 20px; min-height: 0; margin: 0; flex: none; }
+    main.apply .consent { font-size: 15px; color: var(--ink); margin: 0 0 var(--s3); }
+    main.apply .fine { font-size: 13px; color: var(--muted); margin: 0 0 var(--s2); }
+    main.apply button[type="submit"] { width: 100%; min-height: 52px; font-size: 17px; }
+    main.apply button[type="submit"]:disabled { opacity: .45; cursor: not-allowed; }
+    main.apply section.panel { padding: var(--s4); }
+    /* The honeypot: off the page for a person, in the page for a bot. Not display:none,
+       which the better bots skip. */
+    .hp { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
+
+    /* --- a phone: one column, every section in the same order ------------------------ */
+    @media (max-width: 900px) {
+      .deal-head { grid-template-columns: 1fr; }
+      .pair, .trio { grid-template-columns: 1fr; }
+      .facts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
     @media (max-width: 640px) {
-      main { padding: 12px; }
-      dl.facts { grid-template-columns: 1fr; gap: 0 0; }
-      dl.facts dt { margin-top: 8px; }
-      .grid2 { grid-template-columns: 1fr; }
+      main { padding: var(--s3) var(--s3) 48px; }
+      h1 { font-size: 22px; }
+      header.bar { gap: 2px var(--s2); }
+      header.bar .who { margin-left: 0; width: 100%; }
+      section.panel, details.panel { padding: 12px; }
+      .grid2, .grid3, .facts-grid { grid-template-columns: 1fr; }
+      dl.facts { grid-template-columns: 1fr; gap: 0; }
+      dl.facts dt { margin-top: var(--s2); }
+      dl.facts dd { margin-bottom: 2px; }
+      .trio dl.facts.small { grid-template-columns: minmax(0, 1fr) max-content; gap: 2px var(--s3); }
+      .trio dl.facts.small dt { margin-top: 0; }
+      .deal-tools .switcher select { flex-basis: 100%; }
+      .summary { gap: var(--s2) var(--s4); }
+      .summary .v { font-size: 18px; }
+      .headline { font-size: 26px; }
+      td.controls { text-align: left; }
     }
   </style>

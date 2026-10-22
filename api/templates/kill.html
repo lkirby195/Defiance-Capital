@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% import "_csrf.html" as csrf %}
 {% import "_fields.html" as fields with context %}
-{% block title %}Kill deal — GLENWOOD{% endblock %}
+{% block title %}Kill deal — Defiance Capital{% endblock %}
 
 {# The confirmation in front of Kill (SPEC §4.6). A dead deal is not re-opened, so the
    one-click control on a Home row leads here rather than acting, and the form below is the
    only thing that posts the confirmation. A reason is welcome and not required. #}
 
 {% block content %}
-<section class="panel" style="max-width: 560px; margin: 40px auto;">
+<section class="panel narrow wide">
   <h1>Kill this deal?</h1>
   <p class="lede">
     {% if deal.property and deal.property.address_raw %}{{ deal.property.address_raw }}

@@ -1,5 +1,5 @@
 {% extends "public.html" %}
-{% block title %}{{ t.page_title }} — GLENWOOD{% endblock %}
+{% block title %}{{ t.page_title }} — Defiance Capital{% endblock %}
 
 {# The public borrower form (SPEC §4.2). Five groups in the order a person would tell the
    story: who they are, the property, the numbers, the timing, how they found us - then the
@@ -14,8 +14,8 @@
    under the box. #}
 
 {% macro badge(name) -%}
-  {%- if name in required %}<span class="req">{{ t.required }}</span>
-  {%- else %}<span class="opt">{{ t.optional }}</span>{% endif -%}
+  {%- if name in required %}<span class="mark">{{ t.required }}</span>
+  {%- else %}<span class="mark">{{ t.optional }}</span>{% endif -%}
 {%- endmacro %}
 
 {% macro error(name) -%}
