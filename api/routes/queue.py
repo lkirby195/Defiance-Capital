@@ -137,6 +137,7 @@ from services import (
     save_court_search,
     screen_is_stale,
     screen_result,
+    shown_terms,
     snapshot_complete,
     underwrite_readiness,
     underwrite_result,
@@ -479,6 +480,9 @@ def render_deal(
             "deal": deal,
             # Where the deal came in and in which language (SPEC §4.2), for a web deal.
             "submitted_language": _submitted_language(session, deal),
+            # What the thank-you page showed this borrower, if anything (SPEC §4.2); a
+            # fact about the past, under Pricing, whichever version the page shows.
+            "shown_terms": shown_terms(deal),
             # Derived, not stored (SPEC §8.1): the last day of the month the term lands on,
             # shown read-only beside the term it comes from.
             "payoff_date": deal_payoff_date(deal),

@@ -144,7 +144,7 @@
 
 {# --- 2. Pricing (SPEC §8.10) --------------------------------------------------------------- #}
 <section class="panel" id="pricing">
-  <h2>Pricing{{ help("For each loan amount step (config pricing.loan_amount_steps), the lowest rate at which the lender's IRR reaches the target (pricing.target_lender_irr), solved on the ledger to 0.01% and rounded up so it still clears, with the borrower's profit and cash-on-cash at that rate (SPEC §8.10). A rate above the max quoted rate (pricing.max_quoted_rate) is not quoted; the row says what it needs.") }}</h2>
+  <h2>Pricing{{ help("For each loan amount step (config pricing.loan_amount_pct_steps: the request, then each share off it, rounded to the nearest pricing.loan_amount_rounding), the lowest rate at which the lender's IRR reaches the target (pricing.target_lender_irr), solved on the ledger to 0.01% and rounded up so it still clears, with the borrower's profit and cash-on-cash at that rate (SPEC §8.10). A rate above the max quoted rate (pricing.max_quoted_rate) is not quoted; the row says what it needs.") }}</h2>
   {% if result and result.pricing %}
     {% set matrix = result.pricing %}
     <dl class="facts small" style="margin-bottom:12px">
@@ -157,6 +157,7 @@
       <table>
         <thead>
           <tr>
+            <th>Step</th>
             <th class="num">Loan amount</th>
             <th class="num">Rate</th>
             <th class="num">Lender IRR</th>
@@ -167,6 +168,7 @@
         <tbody>
           {% for row in matrix.rows %}
             <tr>
+              <th scope="row">{{ row.label }}</th>
               <td class="num">{{ row.loan_amount | money }}</td>
               {% if row.cleared %}
                 <td class="num">{{ row.interest_rate | quoted }}</td>
@@ -190,6 +192,49 @@
     <p class="small muted">Not on this ledger; run the analysis again for the table.</p>
   {% else %}
     <p class="small muted">No analysis yet.</p>
+  {% endif %}
+  {% if deal.channel | plain == "WEB" %}
+    {# What the borrower saw on the thank-you page (SPEC §4.2): the Indicative terms table
+       as it was rendered the first time, or nothing. Independent of the version shown. #}
+    <div id="shown-to-borrower">
+      <h3>Shown to borrower{{ help("The Indicative terms table the thank-you page showed this borrower (SPEC §4.2), as rendered the first time: the quoted pricing rows of the arrival run, with profit and yield only when they gave a sale price. Shown only on a Go or Conditional arrival screen, within web_intake.thanks_token_hours of the submission. Nothing else of the analysis is ever shown.") }}</h3>
+      {% if shown_terms %}
+        <dl class="facts small" style="margin-bottom:12px">
+          <dt>Shown</dt><dd>{{ deal.indicative_terms_shown_at | when }}</dd>
+          <dt>Language</dt><dd>{% if shown_terms.language == "es" %}Spanish{% else %}English{% endif %}</dd>
+        </dl>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Step</th>
+                <th class="num">Loan amount</th>
+                <th class="num">Rate</th>
+                {% if shown_terms.with_profit %}
+                  <th class="num">Estimated profit</th>
+                  <th class="num">Yield (cash-on-cash)</th>
+                {% endif %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in shown_terms.rows %}
+                <tr>
+                  <th scope="row">{{ row.label }}</th>
+                  <td class="num">{{ row.loan_amount | dollars }}</td>
+                  <td class="num">{{ row.interest_rate | quoted }}</td>
+                  {% if shown_terms.with_profit %}
+                    <td class="num">{{ row.profit | dollars }}</td>
+                    <td class="num">{{ row.cash_on_cash | pct }}</td>
+                  {% endif %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="small muted">Nothing shown to the borrower.</p>
+      {% endif %}
+    </div>
   {% endif %}
 </section>
 

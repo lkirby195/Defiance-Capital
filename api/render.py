@@ -22,7 +22,7 @@ by box name for ``_fields.html`` to print under the box each is about.
 from __future__ import annotations
 
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -52,6 +52,15 @@ TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 def money(value: Decimal | None) -> str:
     """``$1,234.56``; an em dash when there is no number."""
     return "—" if value is None else f"${value:,.2f}"
+
+
+def dollars(value: Decimal | None) -> str:
+    """``$160,000`` - whole dollars, the way a loan amount is quoted to a borrower."""
+    if value is None:
+        return "—"
+    whole_amount = value.quantize(Decimal(1), rounding=ROUND_HALF_UP)
+    sign = "-" if whole_amount < 0 else ""
+    return f"{sign}${abs(whole_amount):,.0f}"
 
 
 def pct(value: Decimal | None) -> str:
@@ -175,6 +184,7 @@ def bucket(value: TermBucket | str | None) -> str:
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.filters.update(
     money=money,
+    dollars=dollars,
     months=months,
     pct=pct,
     rate=rate,

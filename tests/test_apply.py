@@ -6,13 +6,15 @@ in one; that the browser-side courtesies (the ``required`` attributes, the butto
 off) are wired and that the server refuses the same things again by name; that a bot's post
 is dropped and a flood is turned away; and that one honest submission lands in the queue as
 a WEB deal, with its source and its note, screened and priced on the way in on the config
-defaults and the borrower's own numbers (SPEC §4.6), with the borrower told nothing but "we
-will be in touch".
+defaults and the borrower's own numbers (SPEC §4.6), with the borrower sent to a thank-you
+page of their own that shows them their indicative terms - and nothing else of the analysis
+- when the arrival run allows it (``services/indicative.py``).
 """
 
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -21,14 +23,16 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from api.apply_form import APPLY_FIELDS, HONEYPOT, REQUIRED_FIELDS
-from api.i18n import from_accept_language
+from api.i18n import STRINGS, from_accept_language
 from api.ratelimit import LIMITER, RateLimiter
-from config.config import get_config
+from api.render import dollars, pct, quoted
+from config.config import DEFAULT_PATH, Config, get_config, load_yaml
 from db.models import AuditLog, Borrower, Deal, IntakeSubmission, Screen, Underwrite
 from schema.models import (
     AuditAction,
     Channel,
     ExperienceBucket,
+    PricingMatrix,
     Product,
     ProductSource,
     State,
@@ -36,16 +40,19 @@ from schema.models import (
     Status,
     TermBucket,
     Tranche,
+    Verdict,
 )
 from services import (
     ASSUMPTIONS,
     InputSource,
     Section,
     TeamOverrides,
+    get_version,
     home_view,
     run_screen,
     save_overrides,
     underwrite_readiness,
+    version_results,
 )
 from tests.conftest import ACTOR, QueueClient, requires_db
 from tests.test_form_errors import field_error, flagged, top_problems
@@ -314,7 +321,9 @@ def test_the_honeypot_drops_the_post_silently(
     """A bot that filled the invisible box is thanked and nothing is stored."""
     response = post(anon_client, **{HONEYPOT: "https://spam.example"})
     assert response.status_code == 303
-    assert response.headers["location"] == "/apply/thanks?lang=en"
+    # ...to a thank-you link like anyone else's, on a token nobody was issued
+    assert THANKS_LINK.fullmatch(response.headers["location"])
+    assert anon_client.get(response.headers["location"]).status_code == 200
     assert deals(db_session) == []
     assert count(db_session, IntakeSubmission) == 0
     assert count(db_session, AuditLog) == 0
@@ -362,10 +371,17 @@ def test_a_full_submission_lands_in_the_queue_as_a_web_deal(
 ) -> None:
     response = post(anon_client)
     assert response.status_code == 303, response.text
-    assert response.headers["location"] == "/apply/thanks?lang=en"
+    assert THANKS_LINK.fullmatch(response.headers["location"])
 
     (deal,) = deals(db_session)
     assert deal.channel is Channel.WEB
+    # sent to its own thank-you page, on a token live for web_intake.thanks_token_hours
+    assert response.headers["location"] == f"/apply/thanks/{deal.thanks_token}?lang=en"
+    assert deal.thanks_token is not None and deal.thanks_token_expires_at is not None
+    hours = get_config().web_intake.thanks_token_hours
+    assert abs(deal.thanks_token_expires_at - deal.created_at - timedelta(hours=hours)) < (
+        timedelta(minutes=1)
+    )
     # complete on arrival, so screened and priced on the way in (SPEC §4.6)
     assert deal.status is Status.UNDERWRITING
     assert deal.missing_fields == []
@@ -433,12 +449,17 @@ def test_a_full_submission_lands_in_the_queue_as_a_web_deal(
     rows = list(db_session.scalars(select(AuditLog).order_by(AuditLog.created_at)))
     assert [row.action for row in rows] == [
         AuditAction.INTAKE_CREATED.value,
+        AuditAction.THANKS_TOKEN_ISSUED.value,
         AuditAction.SCREEN_RUN.value,
         AuditAction.UNDERWRITE_RUN.value,
         AuditAction.VERSION_RECORDED.value,
     ]
-    created, screened, priced, versioned = rows
+    created, tokened, screened, priced, versioned = rows
     assert created.actor == "web:maria@ortizbuilds.example"
+    # the link's expiry is on the record; the token never is
+    assert tokened.actor == created.actor and tokened.after is not None
+    assert tokened.after == {"expires_at": deal.thanks_token_expires_at.isoformat()}
+    assert deal.thanks_token not in str(tokened.after)
     assert created.after is not None and created.after["channel"] == "WEB"
     assert created.after["intake_source"] == "tulsa-reia"
     assert created.after["defaults"]["interest_rate"] == "0.12"
@@ -507,9 +528,10 @@ def test_a_repeat_borrower_reuses_their_row(anon_client: QueueClient, db_session
     assert count(db_session, Deal) == 2
 
 
-def test_the_thanks_page_says_only_that_the_team_will_be_in_touch(
+def test_the_plain_thanks_page_says_only_that_the_team_will_be_in_touch(
     anon_client: QueueClient,
 ) -> None:
+    """The page with no token - a bookmark, an old link - says the team will be in touch."""
     english = anon_client.get("/apply/thanks").text
     assert "A member of our team will be in touch soon" in english
     spanish = anon_client.get("/apply/thanks?lang=es").text
@@ -649,15 +671,20 @@ def test_a_team_entry_replaces_the_borrower_value_and_keeps_it_for_the_record(
 
 def test_no_borrower_page_names_glenwood(anon_client: QueueClient) -> None:
     """GLENWOOD is the project's name, not the lender's on the page: the borrower reads
-    Defiance Capital on the form in both languages, on the complaint re-render in both, and
-    on the thank-you page in both."""
+    Defiance Capital on the form in both languages, on the complaint re-render in both, on
+    the plain thank-you page in both and on the thank-you page with their indicative terms
+    in both."""
+    link = thanks_link(post(anon_client))
     shown = [
         anon_client.get("/apply"),
         anon_client.get("/apply?lang=es"),
         anon_client.get("/apply/thanks"),
         anon_client.get("/apply/thanks?lang=es"),
+        anon_client.get(link),
+        anon_client.get(f"{link.split('?')[0]}?lang=es"),
     ]
-    assert [page.status_code for page in shown] == [200, 200, 200, 200]
+    assert [page.status_code for page in shown] == [200] * 6
+    assert terms_table(shown[4].text) is not None and terms_table(shown[5].text) is not None
     complained = [
         post(anon_client, borrower_name=""),
         post(anon_client, lang="es", borrower_name=""),
@@ -669,3 +696,287 @@ def test_no_borrower_page_names_glenwood(anon_client: QueueClient) -> None:
     # the business-purpose line itself, in each language
     assert "Defiance Capital makes business-purpose loans" in shown[0].text
     assert "Defiance Capital otorga préstamos" in shown[1].text
+
+
+# --- the indicative terms on the thank-you page (SPEC §4.2) --------------------------------------
+
+THANKS_LINK = re.compile(r"/apply/thanks/[A-Za-z0-9_-]{43}\?lang=(en|es)")
+DISCLAIMER_EN, DISCLAIMER_ES = STRINGS["terms_disclaimer"]
+# A sale price the $160,000 request is 88.9% of: past the 75% cap by more than the 5-point
+# band, so the arrival screen declines (SPEC §7.4, §7.5).
+DECLINING_SALE_PRICE = "$180,000"
+
+
+def thanks_link(response: Any) -> str:
+    assert response.status_code == 303, response.text
+    location: str = response.headers["location"]
+    assert THANKS_LINK.fullmatch(location), location
+    return location
+
+
+def between(body: str, start: str, end: str) -> str | None:
+    at = body.find(start)
+    if at < 0:
+        return None
+    return body[at : body.index(end, at)]
+
+
+def terms_table(body: str) -> str | None:
+    """The Indicative terms block, or None when the page is the plain thank-you."""
+    return between(body, '<div id="indicative-terms">', '<p><a href="/apply?lang=')
+
+
+def shown_main(body: str) -> str:
+    found = re.search(r"<main[^>]*>(.*?)</main>", body, re.S)
+    assert found is not None
+    return found.group(1)
+
+
+def arrival(session: Session, deal: Deal) -> tuple[Verdict, PricingMatrix | None]:
+    """The arrival run's verdict and pricing matrix: version 1, the system's."""
+    results = version_results(session, get_version(session, deal.id, 1))
+    assert results.version.actor == "system" and results.screen is not None
+    pricing = results.underwrite.pricing if results.underwrite is not None else None
+    return results.screen.verdict, pricing
+
+
+def capped(monkeypatch: pytest.MonkeyPatch, max_quoted_rate: str) -> None:
+    """Run the arrival analysis under a lower maximum quoted rate."""
+    import services.autorun
+
+    data = load_yaml(DEFAULT_PATH.read_text(encoding="utf-8"))
+    data["pricing"]["max_quoted_rate"] = max_quoted_rate
+    monkeypatch.setattr(services.autorun, "get_config", lambda: Config.from_dict(data))
+
+
+def test_a_go_deal_sees_its_indicative_terms_and_nothing_else(
+    anon_client: QueueClient, db_session: Session
+) -> None:
+    link = thanks_link(post(anon_client))
+    (deal,) = deals(db_session)
+    verdict, pricing = arrival(db_session, deal)
+    assert verdict is Verdict.GO and pricing is not None
+    assert all(row.cleared for row in pricing.rows), "every placeholder row quotes"
+
+    body = anon_client.get(link).text
+    main = shown_main(body)
+    assert "A member of our team will be in touch soon" in main
+    table = terms_table(body)
+    assert table is not None
+    assert "<h2>Indicative terms</h2>" in table
+    # the required language, whole, above and below the table
+    assert table.index(DISCLAIMER_EN) < table.index("<table>")
+    assert table.index("</table>") < table.index("For business-purpose loans only.")
+    # one row per pricing step, labelled, with the amount, the rate, the profit and the yield
+    assert ["Requested", "-5%", "-10%"] == re.findall(r'<th scope="row">([^<]+)</th>', table)
+    for cell in ("Loan amount", "Rate", "Estimated profit", "Yield (cash-on-cash)"):
+        assert f">{cell}</th>" in table
+    for row in pricing.rows:
+        assert row.interest_rate is not None and row.borrower_profit is not None
+        assert dollars(row.loan_amount) in table
+        assert quoted(row.interest_rate) in table
+        assert dollars(row.borrower_profit) in table
+        assert pct(row.borrower_cash_on_cash) in table
+    assert "Add an estimated sale price" not in table
+    # nothing else of the analysis: no verdict, no IRR, no flags, no sensitivity
+    for forbidden in ("GO", "CONDITIONAL", "DECLINE", "IRR", "Verdict", "flag", "Sensitivity"):
+        assert forbidden not in main, forbidden
+    for row in pricing.rows:
+        assert row.lender_irr is not None and f"{row.lender_irr * 100:.4f}%" not in main
+    # the language toggle keeps the token
+    token = link.split("?")[0]
+    assert f'href="{token}?lang=es"' in body
+
+
+def test_a_conditional_deal_without_a_sale_price_sees_amounts_and_rates_only(
+    anon_client: QueueClient, db_session: Session
+) -> None:
+    """No sale price: the screen is Conditional, the flip is not evaluated, and the table
+    has the two columns and the line asking for a price."""
+    link = thanks_link(post(anon_client, estimated_sale_price=""))
+    (deal,) = deals(db_session)
+    verdict, pricing = arrival(db_session, deal)
+    assert verdict is Verdict.CONDITIONAL and pricing is not None
+    assert all(row.cleared and row.borrower_profit is None for row in pricing.rows)
+
+    table = terms_table(anon_client.get(link).text)
+    assert table is not None
+    assert ">Loan amount</th>" in table and ">Rate</th>" in table
+    assert "Estimated profit" not in table and "Yield" not in table
+    assert "Add an estimated sale price for a profit estimate." in table
+    for row in pricing.rows:
+        assert dollars(row.loan_amount) in table and quoted(row.interest_rate) in table
+    assert DISCLAIMER_EN in table and "For business-purpose loans only." in table
+
+
+def test_a_declined_deal_gets_the_plain_thank_you(
+    anon_client: QueueClient, client: QueueClient, db_session: Session
+) -> None:
+    link = thanks_link(post(anon_client, estimated_sale_price=DECLINING_SALE_PRICE))
+    (deal,) = deals(db_session)
+    verdict, _ = arrival(db_session, deal)
+    assert verdict is Verdict.DECLINE
+
+    body = anon_client.get(link).text
+    assert terms_table(body) is None
+    main = shown_main(body)
+    assert "A member of our team will be in touch soon" in main
+    for forbidden in ("GO", "CONDITIONAL", "DECLINE", "$", "%", "Indicative"):
+        assert forbidden not in main, forbidden
+    db_session.expire_all()
+    assert deal.indicative_terms_shown_at is None and deal.indicative_terms_shown is None
+    # ...and the deal page says nothing was shown
+    pricing = between(client.get(f"/queue/deals/{deal.id}").text, 'id="pricing"', "</section>")
+    assert pricing is not None
+    assert "Shown to borrower" in pricing and "Nothing shown to the borrower." in pricing
+
+
+def test_rows_above_the_max_quoted_rate_are_left_out(
+    anon_client: QueueClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A draw deal prices each row at its own rate, the request's the highest; a maximum set
+    at the middle row's rate drops the request row from the table, and a maximum below every
+    row leaves the plain thank-you."""
+    thanks_link(post(anon_client))
+    (first,) = deals(db_session)
+    _, pricing = arrival(db_session, first)
+    assert pricing is not None
+    rates = [row.interest_rate for row in pricing.rows]
+    assert len(set(rates)) == 3 and rates[0] == max(rate for rate in rates if rate is not None)
+
+    middle = sorted(rate for rate in rates if rate is not None)[1]
+    capped(monkeypatch, str(middle))
+    link = thanks_link(post(anon_client))
+    second = [deal for deal in deals(db_session) if deal.id != first.id][0]
+    _, second_pricing = arrival(db_session, second)
+    assert second_pricing is not None
+    left_out = [row for row in second_pricing.rows if row.over_max_quote]
+    kept = [row for row in second_pricing.rows if row.cleared]
+    assert [row.label for row in left_out] == ["Requested"] and len(kept) == 2
+    table = terms_table(anon_client.get(link).text)
+    assert table is not None
+    assert "Requested" not in table and dollars(left_out[0].loan_amount) not in table
+    assert re.findall(r'<th scope="row">([^<]+)</th>', table) == ["-5%", "-10%"]
+    for row in kept:
+        assert dollars(row.loan_amount) in table and quoted(row.interest_rate) in table
+
+    capped(monkeypatch, "0.01")
+    link = thanks_link(post(anon_client))
+    third = [deal for deal in deals(db_session) if deal.id not in {first.id, second.id}][0]
+    _, third_pricing = arrival(db_session, third)
+    assert third_pricing is not None and not any(row.cleared for row in third_pricing.rows)
+    assert terms_table(anon_client.get(link).text) is None
+
+
+def test_an_expired_or_unknown_token_gets_the_plain_thank_you(
+    anon_client: QueueClient, db_session: Session
+) -> None:
+    link = thanks_link(post(anon_client))
+    (deal,) = deals(db_session)
+    deal.thanks_token_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    db_session.commit()
+
+    expired = anon_client.get(link)
+    assert expired.status_code == 200 and terms_table(expired.text) is None
+    assert "A member of our team will be in touch soon" in expired.text
+    for path in ("/apply/thanks/no-such-token", "/apply/thanks/" + "x" * 80):
+        unknown = anon_client.get(path)
+        assert unknown.status_code == 200 and terms_table(unknown.text) is None
+        assert "A member of our team will be in touch soon" in unknown.text
+    db_session.expire_all()
+    assert deal.indicative_terms_shown_at is None
+    trail = list(db_session.scalars(select(AuditLog).where(AuditLog.row_id == str(deal.id))))
+    assert len(trail) == 5  # nothing recorded for a page that showed nothing
+
+
+def test_what_was_shown_is_recorded_on_the_deal_once_and_the_team_sees_it(
+    anon_client: QueueClient, client: QueueClient, db_session: Session
+) -> None:
+    link = thanks_link(post(anon_client, lang="es"))
+    (deal,) = deals(db_session)
+    _, pricing = arrival(db_session, deal)
+    assert pricing is not None
+    assert deal.indicative_terms_shown_at is None
+
+    before = datetime.now(UTC)
+    body = anon_client.get(link).text
+    db_session.expire_all()
+    assert deal.indicative_terms_shown_at is not None
+    assert before - timedelta(seconds=5) <= deal.indicative_terms_shown_at
+    record = deal.indicative_terms_shown
+    assert record is not None
+    assert record["language"] == "es" and record["with_profit"] is True
+    assert [row["label"] for row in record["rows"]] == ["Requested", "-5%", "-10%"]
+    for shown, row in zip(record["rows"], pricing.rows, strict=True):
+        assert Decimal(shown["loan_amount"]) == row.loan_amount
+        assert Decimal(shown["interest_rate"]) == row.interest_rate
+        assert Decimal(shown["profit"]) == row.borrower_profit
+        assert Decimal(shown["cash_on_cash"]) == row.borrower_cash_on_cash
+        assert shown["is_request"] is (row.step == 0)
+    # ...in the audit trail, as the borrower
+    rows = list(
+        db_session.scalars(
+            select(AuditLog).where(AuditLog.action == AuditAction.INDICATIVE_TERMS_SHOWN.value)
+        )
+    )
+    assert len(rows) == 1
+    assert rows[0].actor == "web:maria@ortizbuilds.example" and rows[0].after == record
+
+    # a refresh, in the other language even, records nothing new
+    first_shown = deal.indicative_terms_shown_at
+    again = anon_client.get(f"{link.split('?')[0]}?lang=en").text
+    assert terms_table(again) is not None
+    db_session.expire_all()
+    assert deal.indicative_terms_shown_at == first_shown
+    assert deal.indicative_terms_shown == record
+    trail = list(db_session.scalars(select(AuditLog).where(AuditLog.row_id == str(deal.id))))
+    assert [row.action for row in trail].count(AuditAction.INDICATIVE_TERMS_SHOWN.value) == 1
+    assert len(trail) == 6
+
+    # the deal page shows it under Pricing, as rendered
+    page = client.get(f"/queue/deals/{deal.id}").text
+    pricing_section = between(page, 'id="pricing"', "</section>")
+    assert pricing_section is not None
+    shown_block = pricing_section[pricing_section.index('<div id="shown-to-borrower">') :]
+    assert "Shown to borrower" in shown_block
+    assert "<dt>Language</dt><dd>Spanish</dd>" in shown_block
+    assert "Nothing shown to the borrower." not in shown_block
+    assert re.findall(r'<th scope="row">([^<]+)</th>', shown_block) == ["Requested", "-5%", "-10%"]
+    for row in pricing.rows:
+        assert dollars(row.loan_amount) in shown_block
+        assert quoted(row.interest_rate) in shown_block
+        assert dollars(row.borrower_profit) in shown_block
+        assert pct(row.borrower_cash_on_cash) in shown_block
+    # and the Spanish page the borrower saw read the same numbers
+    table = terms_table(body)
+    assert table is not None
+    for row in pricing.rows:
+        assert dollars(row.loan_amount) in table and quoted(row.interest_rate) in table
+
+
+def test_the_table_reads_in_spanish(anon_client: QueueClient, db_session: Session) -> None:
+    link = thanks_link(post(anon_client, lang="es"))
+    assert link.endswith("?lang=es")
+    body = anon_client.get(link).text
+    table = terms_table(body)
+    assert table is not None
+    assert "<h2>Términos indicativos</h2>" in table
+    assert table.index(DISCLAIMER_ES) < table.index("<table>")
+    assert table.index("</table>") < table.index("Solo para préstamos con fines comerciales.")
+    for cell in (
+        "Monto del préstamo",
+        "Tasa",
+        "Ganancia estimada",
+        "Rendimiento (efectivo sobre efectivo)",
+    ):
+        assert f">{cell}</th>" in table
+    assert re.findall(r'<th scope="row">([^<]+)</th>', table) == ["Solicitado", "-5%", "-10%"]
+    assert "Requested" not in table and DISCLAIMER_EN not in table
+    assert f'href="{link.split("?")[0]}?lang=en"' in body
+
+    # the no-sale-price line, in Spanish
+    second = thanks_link(post(anon_client, lang="es", estimated_sale_price=""))
+    table = terms_table(anon_client.get(second).text)
+    assert table is not None
+    assert "Agregue un precio de venta estimado" in table
+    assert "Ganancia estimada" not in table

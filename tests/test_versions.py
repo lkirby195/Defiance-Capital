@@ -338,6 +338,11 @@ def test_the_snapshot_covers_every_deal_column_but_the_rows_identity() -> None:
         "status",
         "intake_source",
         "referral_note",
+        # the thank-you link and what it showed the borrower (SPEC 4.2): facts, not inputs
+        "thanks_token",
+        "thanks_token_expires_at",
+        "indicative_terms_shown_at",
+        "indicative_terms_shown",
         "created_at",
         "updated_at",
     }
@@ -590,7 +595,7 @@ def test_the_cli_prints_and_exports_the_working_version_unless_told(
     for path, result in ((working_book, base.underwrite), (draft_book, rate_up.underwrite)):
         sheet = load_workbook(path)["Pricing"]
         assert result.pricing is not None
-        assert sheet.cell(row=5, column=8).value == result.pricing.rows[0].sentence
+        assert sheet.cell(row=5, column=9).value == result.pricing.rows[0].sentence
 
     assert main(["deals", "run", str(deal.id), "--version", "9"]) == 2
     assert "no version 9" in capsys.readouterr().err
@@ -783,7 +788,7 @@ def test_download_excel_exports_the_version_in_view(
         )
         book = load_workbook(BytesIO(response.content))
         assert found.underwrite is not None and found.underwrite.pricing is not None
-        assert book["Pricing"].cell(row=5, column=8).value == (
+        assert book["Pricing"].cell(row=5, column=9).value == (
             found.underwrite.pricing.rows[0].sentence
         )
         overview = book["Return Overview"]

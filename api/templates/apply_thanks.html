@@ -1,14 +1,52 @@
 {% extends "public.html" %}
 {% block title %}{{ t.thanks_title }} — Defiance Capital{% endblock %}
 
-{# The one thing a borrower is told (SPEC §4.2): the team will be in touch. Never a verdict,
-   a rate or an amount — nothing has been decided, and a web page that said otherwise would
-   be saying something nobody at GLENWOOD has said. #}
+{# The thank-you page (SPEC §4.2). The team will be in touch; and, when the arrival run said
+   Go or Conditional and at least one pricing row is quotable, one table of indicative terms
+   under the required disclaimer (``services/indicative.py`` decides; this page only prints).
+   Nothing else of the analysis is here - no verdict, no IRR, no flags, no sensitivity - and
+   the profit and yield columns appear only when the borrower gave a sale price. #}
 
 {% block content %}
 <section class="panel">
   <h1>{{ t.thanks_title }}</h1>
   <p class="lede">{{ t.thanks_body }}</p>
+  {% if terms %}
+  <div id="indicative-terms">
+    <h2>{{ t.terms_title }}</h2>
+    <p class="small" id="terms-disclaimer">{{ t.terms_disclaimer }}</p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th class="num">{{ t.terms_loan_amount }}</th>
+            <th class="num">{{ t.terms_rate }}</th>
+            {% if terms.with_profit %}
+              <th class="num">{{ t.terms_profit }}</th>
+              <th class="num">{{ t.terms_yield }}</th>
+            {% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in terms.rows %}
+            <tr>
+              <th scope="row">{{ t.terms_requested if row.is_request else row.label }}</th>
+              <td class="num">{{ row.loan_amount | dollars }}</td>
+              <td class="num">{{ row.interest_rate | quoted }}</td>
+              {% if terms.with_profit %}
+                <td class="num">{{ row.profit | dollars }}</td>
+                <td class="num">{{ row.cash_on_cash | pct }}</td>
+              {% endif %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if not terms.with_profit %}<p class="small" id="terms-add-sale-price">{{ t.terms_add_sale_price }}</p>{% endif %}
+    <p class="small" id="terms-business-purpose">{{ t.terms_business_purpose }}</p>
+  </div>
+  {% endif %}
   <p><a href="{{ again_href }}">{{ t.thanks_again }}</a></p>
 </section>
 {% endblock %}
