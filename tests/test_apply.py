@@ -642,3 +642,30 @@ def test_a_team_entry_replaces_the_borrower_value_and_keeps_it_for_the_record(
     body = client.get(f"/queue/deals/{deal.id}").text
     assert ">Team<" in body and ">Borrower<" in body
     assert "$290,000.00" in body  # the borrower's figure, shown as theirs
+
+
+# --- the lender's name ----------------------------------------------------------------------------
+
+
+def test_no_borrower_page_names_glenwood(anon_client: QueueClient) -> None:
+    """GLENWOOD is the project's name, not the lender's on the page: the borrower reads
+    Defiance Capital on the form in both languages, on the complaint re-render in both, and
+    on the thank-you page in both."""
+    shown = [
+        anon_client.get("/apply"),
+        anon_client.get("/apply?lang=es"),
+        anon_client.get("/apply/thanks"),
+        anon_client.get("/apply/thanks?lang=es"),
+    ]
+    assert [page.status_code for page in shown] == [200, 200, 200, 200]
+    complained = [
+        post(anon_client, borrower_name=""),
+        post(anon_client, lang="es", borrower_name=""),
+    ]
+    assert [page.status_code for page in complained] == [422, 422]
+    for page in (*shown, *complained):
+        assert "GLENWOOD" not in page.text
+        assert "Defiance Capital" in page.text
+    # the business-purpose line itself, in each language
+    assert "Defiance Capital makes business-purpose loans" in shown[0].text
+    assert "Defiance Capital otorga préstamos" in shown[1].text

@@ -133,10 +133,10 @@ STRINGS: Mapping[str, tuple[str, str]] = {
         "Al enviar, usted acepta que podamos comunicarnos con usted sobre esta solicitud.",
     ),
     "business_purpose": (
-        "GLENWOOD makes business-purpose loans to real estate investors, secured by property "
-        "the borrower does not live in.",
-        "GLENWOOD otorga préstamos con fines comerciales a inversionistas inmobiliarios, "
-        "garantizados con propiedades en las que el prestatario no vive.",
+        "Defiance Capital makes business-purpose loans to real estate investors, secured by "
+        "property the borrower does not live in.",
+        "Defiance Capital otorga préstamos con fines comerciales a inversionistas "
+        "inmobiliarios, garantizados con propiedades en las que el prestatario no vive.",
     ),
     "not_commitment": (
         "Sending this form is not a loan commitment. A person reviews every request.",
