@@ -3,6 +3,19 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**1.10.0 (Phase 8e, 2026-10-22) steps the pricing matrix by percent.** A row is a share of
+the request rather than a dollar change: ``pricing.loan_amount_pct_steps`` (placeholder 0,
+-5%, -10%) replaces ``pricing.loan_amount_steps``, and each stepped row's amount is the
+request times ``1 + step`` rounded half-up to the nearest ``pricing.loan_amount_rounding``
+(placeholder $1,000), never above the request; the request row is never rounded
+(``engine/calc/pricing.row_amount``). ``PricingRow`` gains ``pct_step`` and a ``label``
+("Requested", "-5%", "-10%"); ``step`` is now the dollar change the share came to. A stored
+1.9.0 row loads with ``pct_step`` None and is labelled by its dollar step. The solve is
+unchanged. Wichita's rows are $150,000, $143,000 and $135,000, all at 16.34% (its IRR does
+not depend on the amount); Denver's are $195,000, $185,000 and $176,000 at 13.82%, 13.72% and
+13.63%, each checked against an independent solve (``tests/test_pricing.py``). The loader
+refuses the old key by name.
+
 **1.9.0 (Phase 8c prep, 2026-10-20) caps what the pricing matrix quotes.** A row whose solved
 rate is above ``pricing.max_quoted_rate`` (placeholder 18%) is no longer a quote: its rate,
 IRR and borrower figures are None, ``PricingRow.rate_needed`` carries the solved rate, and the
@@ -161,4 +174,4 @@ REHAB_PORTION_EXCEEDS_BUDGET.
 
 from __future__ import annotations
 
-ENGINE_VERSION = "1.9.0"
+ENGINE_VERSION = "1.10.0"

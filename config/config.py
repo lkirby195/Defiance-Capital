@@ -238,28 +238,45 @@ class SensitivityConfig(_Section):
 class PricingConfig(_Section):
     """The pricing matrix: the lowest rate that earns the lender its target.  # SPEC §8.10
 
-    One row per ``loan_amount_steps`` entry, each a signed change to the request (0 is the
-    request itself, -10,000 is ten thousand less); for each, the lowest rate, solved on the
-    ledger to 0.01%, at which the lender's XIRR reaches ``target_lender_irr``
-    (``engine/calc/pricing.py``). A step only lends less: a reduction comes off the advance at
-    closing the way the sensitivity rows' does, and nothing defines what a larger loan would
-    advance, so a positive step is refused here rather than guessed at.
+    One row per ``loan_amount_pct_steps`` entry, each a signed share of the request (0 is the
+    request itself, -0.05 is five percent less): the row's loan amount is the request times
+    ``1 + step``, rounded half-up to the nearest ``loan_amount_rounding`` (placeholder
+    $1,000) and never above the request; the request row itself is never rounded. For each,
+    the lowest rate, solved on the ledger to 0.01%, at which the lender's XIRR reaches
+    ``target_lender_irr`` (``engine/calc/pricing.py``). A step only lends less: a reduction
+    comes off the advance at closing the way the sensitivity rows' does, and nothing defines
+    what a larger loan would advance, so a positive step is refused here rather than guessed
+    at. A step of -1 leaves no loan, and the row says so.
 
     ``max_quoted_rate`` is the highest rate a row may quote: a row whose solved rate is above
     it is not a quote, and says what it would have needed instead.
+
+    The dollar steps this replaced (``loan_amount_steps``, phase 8a to 8c) are refused by
+    name rather than as an unknown key, so a yaml that still carries them says what to change.
     """
 
     target_lender_irr: Pct
     max_quoted_rate: Annotated[Decimal, Field(gt=0, le=1)]
-    loan_amount_steps: Annotated[
-        list[Annotated[Decimal, Field(le=0, max_digits=14, decimal_places=2)]],
+    loan_amount_pct_steps: Annotated[
+        list[Annotated[Decimal, Field(ge=-1, le=0, max_digits=6, decimal_places=4)]],
         Field(min_length=1, max_length=20),
     ]
+    loan_amount_rounding: Annotated[Decimal, Field(gt=0, max_digits=14, decimal_places=2)]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_the_dollar_steps(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "loan_amount_steps" in data:
+            raise ValueError(
+                "pricing.loan_amount_steps (dollar steps) was replaced by "
+                "pricing.loan_amount_pct_steps and pricing.loan_amount_rounding"
+            )
+        return data
 
     @model_validator(mode="after")
     def _steps_are_distinct(self) -> PricingConfig:
-        if len(set(self.loan_amount_steps)) != len(self.loan_amount_steps):
-            raise ValueError("pricing.loan_amount_steps has duplicates")
+        if len(set(self.loan_amount_pct_steps)) != len(self.loan_amount_pct_steps):
+            raise ValueError("pricing.loan_amount_pct_steps has duplicates")
         return self
 
 
@@ -295,15 +312,20 @@ class TakeBackConfig(_Section):
 
 
 class WebIntakeConfig(_Section):
-    """The public borrower form's one tunable.  # SPEC §4.2
+    """The public borrower form's two tunables.  # SPEC §4.2
 
     Posts to ``/apply`` from one address are counted over a sliding hour, and the post that
-    takes the count past this number is turned away with a polite "try again later" rather
-    than stored. A honeypot field handles the dumbest bots for free; this is for the rest,
-    and for a person who keeps pressing the button. No CAPTCHA.
+    takes the count past ``submissions_per_hour_per_ip`` is turned away with a polite "try
+    again later" rather than stored. A honeypot field handles the dumbest bots for free; this
+    is for the rest, and for a person who keeps pressing the button. No CAPTCHA.
+
+    ``thanks_token_hours`` is how long the link a submission is sent to - the thank-you page
+    with the borrower's indicative terms on it - stays live (placeholder 24). After that, or
+    on a token nobody was issued, the page is the plain thank-you.
     """
 
     submissions_per_hour_per_ip: Annotated[int, Field(ge=1, le=1000)]
+    thanks_token_hours: Annotated[int, Field(ge=1, le=24 * 30)]
 
 
 class StatesConfig(_Section):

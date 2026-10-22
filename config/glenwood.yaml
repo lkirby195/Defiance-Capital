@@ -75,7 +75,9 @@ sensitivity:                              # SPEC §8.9 - the IRR grid on the dea
 pricing:                                  # SPEC §8.10 - the Pricing section and its workbook sheet
   target_lender_irr: 0.20                 # PLACEHOLDER: the lender XIRR a row's rate must reach
   max_quoted_rate: 0.18                   # PLACEHOLDER: above this a row is not a quote; it says the rate it needs
-  loan_amount_steps: [0, -10000, -20000]  # PLACEHOLDER: each row's change to the request; 0 or less
+  loan_amount_pct_steps: [0, -0.05, -0.10] # PLACEHOLDER: each row's share off the request; 0 or less
+  loan_amount_rounding: 1000              # PLACEHOLDER: a stepped row's amount is rounded to the nearest
+                                          #   multiple of this; the request row is never rounded
 
 rental:                                   # SPEC §8.5 rental analysis
   expenses_pct_of_rent: 0.35              # operating expenses as a share of the monthly rent
@@ -98,6 +100,8 @@ states:                                   # SPEC §10
 web_intake:                               # SPEC §4.2 — the public borrower form at /apply
   submissions_per_hour_per_ip: 5          # posts from one address in a sliding hour; the
                                           #   next one gets "try again later" and stores nothing
+  thanks_token_hours: 24                  # PLACEHOLDER: how long the thank-you link with the
+                                          #   borrower's indicative terms stays live
 
 leverage_caps:                            # SPEC §7.4 — product x credit tranche x experience tier
   # PLACEHOLDER GRID: every cell carries the same dummy caps so it is obvious nothing is tuned.

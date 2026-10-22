@@ -556,6 +556,7 @@ def _sheet_pricing(book: Workbook, result: UnderwriteResult) -> None:
         sheet,
         4,
         [
+            "Step",
             "Loan amount",
             "Change",
             "Rate",
@@ -569,6 +570,7 @@ def _sheet_pricing(book: Workbook, result: UnderwriteResult) -> None:
     )
     for row in matrix.rows:
         values = (
+            (row.label, None),
             (row.loan_amount, MONEY),
             (row.step, MONEY),
             (row.interest_rate, PCT2),
@@ -584,7 +586,7 @@ def _sheet_pricing(book: Workbook, result: UnderwriteResult) -> None:
             if fmt is not None:
                 cell.number_format = fmt
         at += 1
-    _widths(sheet, 16, 12, 9, 12, 16, 17, 13, 90, 12)
+    _widths(sheet, 11, 16, 12, 9, 12, 16, 17, 13, 90, 12)
 
 
 def _sheet_flip(book: Workbook, result: UnderwriteResult) -> None:

@@ -80,6 +80,8 @@ def test_run_underwrite_prints_every_section(
         assert "NOT EVALUATED" in borrower
     assert "lender IRR reaches 20.0%" in pricing
     assert pricing.count(" loan ") >= 3
+    # each row is named by its step (SPEC 8.10)
+    assert "Requested" in pricing and "-5%" in pricing and "-10%" in pricing
     # the numbers on the page are the numbers the fixture pins
     plain = out.replace("$", "").replace(",", "")
     assert expected["ledger"]["total_interest"] in plain

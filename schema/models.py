@@ -268,6 +268,10 @@ class AuditAction(StrEnum):
     naming the version the mark left and the one it went to; ``VERSION_RESTORED`` is Restore
     inputs, naming the version and the columns that moved, beside the ``INTAKE_RESTORED`` row
     for the submission it re-applied (SPEC §5, §9).
+
+    ``THANKS_TOKEN_ISSUED`` is the thank-you link a web submission was sent to (its expiry,
+    never the token), and ``INDICATIVE_TERMS_SHOWN`` is the one time that page showed the
+    borrower their indicative terms, the rows it showed in ``after`` (SPEC §4.2).
     """
 
     # Deals
@@ -291,6 +295,8 @@ class AuditAction(StrEnum):
     VERSION_RECORDED = "VERSION_RECORDED"  # SPEC §5: one analysis run, named, Working or not
     VERSION_MARKED_WORKING = "VERSION_MARKED_WORKING"  # the deal's Working version moved
     VERSION_RESTORED = "VERSION_RESTORED"  # a version's inputs loaded back onto the deal
+    THANKS_TOKEN_ISSUED = "THANKS_TOKEN_ISSUED"  # SPEC §4.2: the web thank-you link, its expiry
+    INDICATIVE_TERMS_SHOWN = "INDICATIVE_TERMS_SHOWN"  # SPEC §4.2: what the borrower was shown
     DEALS_PURGED = "DEALS_PURGED"  # the one-time cleanup (README); row_id is "*"
     LOI_SENT = "LOI_SENT"  # SPEC §9.3, Phase 5
     HANDED_OFF = "HANDED_OFF"  # SPEC §9.4, Phase 6
@@ -1402,11 +1408,17 @@ class PricingRow(BaseModel):
     figures are None then too, and whenever the borrower side was not evaluated. ``sentence``
     is the row in plain English, written once by the engine so the page, the workbook and
     the CLI say the same thing.
+
+    From engine 1.10.0 a row is a share of the request (``pct_step``: 0, -0.05, -0.10) and
+    ``step`` is the dollar change that share came to after rounding; before it, ``step`` was
+    the configured dollar step itself and ``pct_step`` is None. ``label`` names the row either
+    way: "Requested", "-5%", or, on an older row, "-$10,000".
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    step: Decimal  # the signed change to the request: 0, -10,000, ...
+    step: Decimal  # the signed dollar change to the request: 0, -10,000, ...
+    pct_step: Decimal | None = None  # 1.10.0 on: the share of the request the row is
     loan_amount: Decimal
     interest_rate: Decimal | None
     lender_irr: Decimal | None
@@ -1428,9 +1440,29 @@ class PricingRow(BaseModel):
         """True when the target needs a rate above the maximum quote."""
         return self.rate_needed is not None
 
+    @property
+    def is_request(self) -> bool:
+        """True on the row that is the request itself."""
+        return self.step == 0
+
+    @property
+    def label(self) -> str:
+        """The row's name: ``Requested``, ``-5%``; ``-$10,000`` on a row from before 1.10.0."""
+        if self.is_request:
+            return REQUESTED_LABEL
+        if self.pct_step is None:
+            sign = "-" if self.step < 0 else "+"
+            return f"{sign}${abs(self.step):,.0f}"
+        text = f"{self.pct_step * 100:.3f}".rstrip("0").rstrip(".")
+        return f"{'+' if self.pct_step > 0 else ''}{text}%"
+
+
+# The pricing row that is the request itself, as every output names it (SPEC §8.10).
+REQUESTED_LABEL = "Requested"
+
 
 class PricingMatrix(BaseModel):
-    """One row per ``pricing.loan_amount_steps`` entry.  # SPEC §8.10
+    """One row per ``pricing.loan_amount_pct_steps`` entry.  # SPEC §8.10
 
     From engine 1.8.0 each row's rate is solved: ``rate_precision`` is the step it is solved
     to (0.0001, two decimals of a percent) and ``rate_ceiling`` the highest rate the search
