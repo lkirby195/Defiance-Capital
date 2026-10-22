@@ -144,9 +144,9 @@ edits or restores a deal calls it. A paused deal is left out until Progress brin
 The one button is **Run Analysis**, which runs both stages as the person who pressed it; the
 page never names a stage - it shows the verdict and the ledger - and the Flags, the Reasons
 and the Suggested Reply are on the stored rows, the CLI and the workbook, not on it. The
-hand-entered numbers are the **Underwriting Assumptions** panel, open, directly under Deal
-Economics: two columns of boxes - the §8.1 economics with their config defaults, the loan
-split, the valuation, the rent, the five §8.4-§8.6 analysis assumptions (which carry their
+hand-entered numbers are the **Underwriting Assumptions** panel, open, under the outputs and
+above the read-only intake summary: two columns of boxes - the §8.1 economics with their
+config defaults, the loan split, the valuation, the rent, the five §8.4-§8.6 analysis assumptions (which carry their
 own `deals` columns since migration `0017`, config value as default, engine reads the deal's
 when present) and the two toggles - each tagged "default" while it holds its default and
 resettable one at a time, with one **Save & Run** at the bottom and a **Reset all to
@@ -169,7 +169,7 @@ run - the actor, the two rows it wrote and a snapshot of every input it read, ta
 a deal is Working; after that an automatic run takes the mark unless the Working version is
 `human_selected` (named by the person who ran it, or set with Mark as Working), a person's
 own run is a draft, and Mark as Working moves the mark and records the choice. The deal page
-and Home show the Working version, a switcher at the top of the outputs shows any other
+and Home show the Working version, a switcher in the page header shows any other
 read-only under a Draft badge with Download Excel beside it, and Restore inputs puts a
 version's snapshot back on the deal and runs a new version. A restore must reproduce the version exactly, which
 `tests/test_versions.py` holds it to after changing every input; a new input that is not a
@@ -235,6 +235,11 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
 ## Style
 
 - Small modules, explicit names, type hints everywhere. Prefer functions over classes in `engine/`.
+- The queue is one inline stylesheet, `api/templates/_style.html`: a system font stack, 15px on
+  a 1.5 line, one accent for actions and neutral grays for the rest on white, cards with a 1px
+  border and a title row, verdicts and severities as chips. The deal page puts the outputs
+  first - the header chips, Pricing, the two sensitivities, the three analyses, the Return
+  Overview - and the inputs below; the CLI report and the workbook keep the SPEC §9 order.
 - Docstrings state the formula or the source of a rule and reference the SPEC section (e.g., `# SPEC §8.4`).
 - Every flag has a stable `code`, a `severity`, and a human message that names the threshold tested.
 - Commit messages: `area: what changed` (`engine: add S-curve avg outstanding`, `adapters: forecasa lien parser`).

@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.12
+# GLENWOOD Underwriting Platform — SPEC v0.13
 
-Status: **v0.12**, 2026-10-21, engine `1.9.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.13**, 2026-10-22, engine `1.9.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.13** is the deal page turned over: outputs on top, inputs below, on one visual system (one inline stylesheet, a system font stack, one accent, neutral grays, chips for the verdicts and severities, cards with a 1px border). The header is the address, one row of chips (borrower, loan type, loan amount, term, verdict, IRR) and the controls on the right - the version switcher with Download Excel, Run Analysis with its optional name, Edit Intake. Then Pricing; the two sensitivities side by side; Flip, Rental and Take-Back as three cards led by their headline figure; the Return Overview as one line with the ledger collapsed under it. Under the outputs the Underwriting Assumptions panel, then the intake as a read-only summary with the sizing table and the score components, then the collapsed sections. The CLI report and the workbook keep the §9 order. No engine, service or schema change (§9).
 
 **v0.12** answers three of the v0.11 questions. A **maximum quoted rate** (`pricing.max_quoted_rate`, placeholder 18%): a pricing row whose solved rate is above it is not a quote and reads "exceeds max quoted rate (X% needed)" (§8.10, engine `1.9.0`). **Who holds the Working mark**: an automatic run - on arrival, after Edit Intake, after a court search save - becomes the Working version unless the Working version is one a person chose, by naming it as they ran it or with Mark as Working; then it is a draft. Each version records whether it was chosen by a person (`versions.human_selected`, migration `0019`) (§5). And a **Download Excel** button beside the version switcher exports the version in view as `<address>-<version>.xlsx` (§9).
 
@@ -996,16 +998,22 @@ sheet of the workbook.
 
 ## 9. Outputs
 
-One order, everywhere a run is shown — the deal page, the CLI report, and the workbook:
+One order wherever a run is printed — the CLI report and the workbook:
 
 **Overview · Property Overview · Deal Economics · Return Overview · Lender Sensitivity · Borrower Sensitivity · Pricing · Flip Analysis · Rental Analysis · Take-Back Analysis · Flags**
 
 The first three are the §8.1 input groups, shown back as the run read them; the rest are the
-result. The CLI report and the workbook show all of it. The deal page opens on the one
-**Run Analysis** button and the verdict line - the verdict, the IRR, when it ran and on which
-engine - with the score components under it, and shows every section but the Flags: the
-flags, the screen's reasons and the suggested reply stay on the stored rows, the CLI and the
-workbook. Directly under Deal Economics, open, sits the **Underwriting Assumptions** panel:
+result. The CLI report and the workbook show all of it. The deal page shows every section but
+the Flags - the flags, the screen's reasons and the suggested reply stay on the stored rows,
+the CLI and the workbook - and puts the outputs first. Its header is the address, one row of
+chips (borrower, loan type, loan amount, term, verdict, IRR) and the verdict line - the
+version, who ran it, when, on which engine - with the controls on the right: the version
+switcher, the one **Run Analysis** button with its optional name, Download Excel and Edit
+Intake. Then Pricing, full width; the Lender and Borrower Sensitivity side by side; Flip,
+Rental and Take-Back as three cards, each led by its headline figure (net profit, DSCR, DSCR
+at loan cost; "Not evaluated" is a state, not an error); and the Return Overview as one line
+(IRR, total interest, total fees, total profit, payoff date) with the ledger collapsed under
+it. Under the outputs, open, sits the **Underwriting Assumptions** panel:
 two columns of editable boxes - Interest Rate, Origination Fee, Contingency, Closing Costs,
 Holding Costs %, Advance at Closing, Rehab Portion (the last two on a split product),
 Estimated Sale Price, Monthly Rent, Broker Selling Costs %, Rental Expense %, Rental Takeout
@@ -1014,19 +1022,21 @@ each showing what the deal carries, masked as everywhere else, tagged "default" 
 holds its default and with a reset of its own; one **Save & Run** at the bottom that saves
 the panel and runs the analysis as the person who pressed it, and **Reset all to defaults**
 beside it, which confirms on a page of its own, puts every box with a default back to it and
-runs again. Its other furniture sits below the sections: the **court and filing search**
-(collapsed; the outcome, the date and the typed matters, its own Save), **What the ledger
-runs on** (collapsed; the readiness checklist), **Actions**, and **History** (collapsed;
+runs again. Under the panel the intake is a read-only summary - **Deal Economics and
+Property**: Overview, Property Overview and Deal Economics side by side with an Edit Intake
+link, the sizing table against the caps and the score components - and below it the rest:
+**What the ledger runs on** (collapsed; the readiness checklist), **Actions**, the **court and
+filing search** (collapsed; the outcome, the date and the typed matters, its own Save), and
+**History** (collapsed;
 every version with its name, timestamp, actor, Working or Draft and engine version, a View on
 each; every intake edit no version has run on as an "edit" row with a Restore; and the audit
 trail under it). The page names no engine stage; the two it runs are an implementation.
 
 **Versions on the page** (§5). Every result on the page - the verdict line, the score
-components, and every section from the Return Overview down - is one version's: the
+components, and every output section - is one version's: the
 **Working** one unless `?version=<number>` asks for another. The header names the Working
 version ("Working: v3") and carries a **Draft** badge whenever the page is showing a
-different one. At the top of the outputs, between the Underwriting Assumptions panel and the
-Return Overview, sits the **version switcher**: a dropdown of every version (name, Working or
+different one. In the header, on the right, sits the **version switcher**: a dropdown of every version (name, Working or
 Draft, when, who) with a Show button - a plain GET form, no script - and, for the version
 shown, **Mark as Working** (when it is not already; audited `VERSION_MARKED_WORKING`) and
 **Restore inputs**. Restore inputs loads the version's snapshot back into the deal - its
