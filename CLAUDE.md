@@ -73,6 +73,7 @@ glenwood-uw/
     passwords.py           # PBKDF2 hash / verify; pure
     persistence.py         # append screens / underwrites rows; rebuild results from them
     home.py                # the Home page: the four sections, their membership, the ordering
+    indicative.py          # the thank-you link's token and the indicative terms it shows a web borrower
     purge.py               # the one-time `glenwood deals purge`; every deal table, users kept
     readiness.py           # the SPEC 8.1 checklist: every input, its value, where it came from
     requests.py            # UnderwriteRequest / TeamOverrides: what the team supplies by hand
@@ -226,11 +227,18 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
   listing link holds a value. Dependency-free, and the server checks every rule again
   (`api/apply_form.py`), so a browser without it posts a form that is answered the same way.
 - **Every form post carries a CSRF token.** The guard is a router-level dependency (`api/security.py`), so a new route is covered by where it lives rather than by somebody remembering; every `<form method="post">` renders `{{ csrf.field(csrf_token) }}`. `tests/test_csrf.py` posts to every guarded route without one and asserts the refusal — do not add a route that needs an exemption without saying why there. The one exemption is the public borrower form: a token is bound to a signed-in user and a borrower has no account; the honeypot and the rate limit stand in front of it instead, and `tests/test_csrf.py` says so.
-- **The borrower is told nothing.** `/apply/thanks` says the team will be in touch. Never a
-  verdict, a rate, an amount or a status: the screen and the underwrite run on arrival
-  (SPEC §4.6), and what they say stays on the team's side. The page's strings live in
-  `api/i18n.py` in English and Spanish; the Spanish column is marked pending native-speaker
-  review there and stays marked until one has read it.
+- **The borrower is told their indicative terms and nothing else.** A submission is sent to
+  `/apply/thanks/<token>` (SPEC §4.2), which says the team will be in touch and, only when the
+  arrival run said Go or Conditional, shows one table under the required disclaimer: the
+  quoted pricing rows' loan amount and rate, with the estimated profit and cash-on-cash
+  beside them when the borrower gave a sale price (`services/indicative.py` decides; rows
+  above `pricing.max_quoted_rate` are left out; nothing qualifying means the plain page).
+  Never a verdict, an IRR, a flag, a sensitivity or a status: the screen and the underwrite
+  run on arrival (SPEC §4.6), and the rest of what they say stays on the team's side. The
+  token is random, expires after `web_intake.thanks_token_hours`, and what the page showed
+  is recorded on the deal and printed on the deal page under Pricing as "Shown to borrower".
+  The page's strings live in `api/i18n.py` in English and Spanish; the Spanish column is
+  marked pending native-speaker review there and stays marked until one has read it.
 
 ## Style
 
