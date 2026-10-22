@@ -105,10 +105,10 @@ def test_run_analysis_runs_both_as_the_person_and_reloads_on_the_result(
     assert "Verdict <strong>GO</strong>" in body
     assert "· IRR <strong>" in body
     assert "Scored as" in body and "Leverage against caps" in body
-    assert body.index("<h2>Return Overview") < body.index("<h2>Lender Sensitivity")
+    assert body.index("<h2>Pricing") < body.index("<h2>Lender Sensitivity")
     assert body.index("<h2>Lender Sensitivity") < body.index("<h2>Borrower Sensitivity")
-    assert body.index("<h2>Borrower Sensitivity") < body.index("<h2>Pricing")
-    assert body.index("<h2>Pricing") < body.index("<h2>Flip Analysis")
+    assert body.index("<h2>Borrower Sensitivity") < body.index("<h2>Flip Analysis")
+    assert body.index("<h2>Take-Back Analysis") < body.index("<h2>Return Overview")
     assert "Not analyzed yet." not in body
 
 

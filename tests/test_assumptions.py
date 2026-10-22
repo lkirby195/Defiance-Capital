@@ -116,7 +116,7 @@ def panel(client: QueueClient, deal: Deal) -> str:
     """The Underwriting Assumptions section of the deal page, and nothing after it."""
     body = client.get(f"/queue/deals/{deal.id}").text
     start = body.index('<section class="panel" id="assumptions">')
-    end = body.index("<h2>Return Overview</h2>")
+    end = body.index("</section>", start)
     return body[start:end]
 
 
@@ -140,15 +140,16 @@ def post(client: QueueClient, deal: Deal, **changes: str) -> Any:
 # --- the panel ------------------------------------------------------------------------------------
 
 
-def test_the_panel_is_open_under_deal_economics_with_every_box_and_the_right_tag(
+def test_the_panel_is_open_under_the_outputs_with_every_box_and_the_right_tag(
     client: QueueClient, db_session: Session, team_entry: dict[str, Any]
 ) -> None:
     """A SPLIT_DRAW with a typed closing cost and holding cost and a split equal to the
     formula, so the tags say the different things they have to say."""
     deal = store_deal(db_session, team_entry)
     body = client.get(f"/queue/deals/{deal.id}").text
-    assert body.index("<h2>Deal Economics</h2>") < body.index('id="assumptions"')
-    assert body.index('id="assumptions"') < body.index("<h2>Return Overview</h2>")
+    # the panel sits under the outputs and above the read-only intake summary
+    assert body.index("<h2>Return Overview</h2>") < body.index('id="assumptions"')
+    assert body.index('id="assumptions"') < body.index("<h2>Deal Economics and Property</h2>")
     assert 'id="inputs"' not in body
     section = panel(client, deal)
     assert "<h2>Underwriting Assumptions" in section

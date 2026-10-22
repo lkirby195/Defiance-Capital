@@ -246,9 +246,9 @@ def test_the_page_shows_working_by_default_and_a_switcher_over_every_version(
     assert '<option value="2">Rate up · Draft' in section
     assert ">Mark as Working</button>" not in section  # the one shown is already Working
     assert f'action="/queue/deals/{deal_id}/versions/1/restore"' in section
-    # the switcher sits at the top of the outputs: after the panel, before the ledger
-    assert body.index('id="assumptions"') < body.index('id="versions"')
-    assert body.index('id="versions"') < body.index("<h2>Return Overview")
+    # the switcher sits in the header, above every output and the panel
+    assert body.index('id="versions"') < body.index('id="pricing"')
+    assert body.index('id="pricing"') < body.index('id="assumptions"')
 
     draft = client.get(f"/queue/deals/{deal_id}?version=2").text
     assert 'id="draft-badge"' in draft and "Working: Base" in draft
