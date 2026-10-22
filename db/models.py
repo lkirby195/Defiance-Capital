@@ -346,6 +346,16 @@ class Deal(Base):
     # channel. Neither is part of the intake's content, so an edited intake leaves them be.
     intake_source: Mapped[str | None] = mapped_column(String(64))
     referral_note: Mapped[str | None] = mapped_column(String(200))
+    # The thank-you link a web submission is sent to (SPEC §4.2): a random token, unique,
+    # live until ``thanks_token_expires_at``; the page it opens shows the borrower their
+    # indicative terms. NULL on every other channel, and no input to anything.
+    thanks_token: Mapped[str | None] = mapped_column(String(64), unique=True)
+    thanks_token_expires_at: Mapped[datetime | None] = mapped_column()
+    # What that page showed the borrower, the first time it did (SPEC §4.2): the rows of the
+    # Indicative terms table as rendered and the language, so the team can see exactly what
+    # the borrower saw. NULL until it is shown; never shown on a Decline or without a quote.
+    indicative_terms_shown_at: Mapped[datetime | None] = mapped_column()
+    indicative_terms_shown: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 

@@ -80,9 +80,23 @@ NAME_MAX = 100
 
 # The ``deals`` columns a snapshot leaves out: the row's identity, the channel it came in on
 # and its public-form provenance (none of which an edit changes), its place on the lifecycle
-# (which a restore must not rewind), and its timestamps. Everything else is an input.
+# (which a restore must not rewind), its timestamps, and the thank-you link and the record
+# of what it showed the borrower (SPEC §4.2) - what the borrower was told is a fact about
+# the past, not an input a restore puts back. Everything else is an input.
 NOT_SNAPSHOTTED: frozenset[str] = frozenset(
-    {"id", "channel", "status", "intake_source", "referral_note", "created_at", "updated_at"}
+    {
+        "id",
+        "channel",
+        "status",
+        "intake_source",
+        "referral_note",
+        "thanks_token",
+        "thanks_token_expires_at",
+        "indicative_terms_shown_at",
+        "indicative_terms_shown",
+        "created_at",
+        "updated_at",
+    }
 )
 SNAPSHOT_COLUMNS: tuple[str, ...] = tuple(
     column.name for column in Deal.__table__.columns if column.name not in NOT_SNAPSHOTTED

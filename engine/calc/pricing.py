@@ -1,7 +1,14 @@
 """The pricing matrix: the lowest rate that earns the lender its target, solved.  # SPEC §8.10
 
-One row per ``pricing.loan_amount_steps`` entry, each a signed change to the request (0 is
-the request, -10,000 is ten thousand less). For each:
+One row per ``pricing.loan_amount_pct_steps`` entry, each a signed share of the request (0
+is the request, -0.05 is five percent less). The row's loan amount is
+
+    loan_amount = request x (1 + step), rounded half-up to the nearest
+                  pricing.loan_amount_rounding, never above the request;
+                  the request row (step 0) is never rounded
+
+so a $195,000 request at -10% is $175,500 and prices as $176,000. Each row is labelled by its
+step - "Requested", "-5%", "-10%" - and carries the dollar change it came to. For each:
 
     interest_rate  = the lowest rate, in steps of RATE_PRECISION (0.01%), at which the
                      lender's XIRR >= pricing.target_lender_irr
@@ -127,14 +134,34 @@ def over_max_sentence(loan_amount: Decimal, rate: Decimal) -> str:
     return f"A {dollars(loan_amount)} loan exceeds max quoted rate ({rate_text(rate)} needed)."
 
 
+def row_amount(request: Decimal, pct_step: Decimal, rounding: Decimal) -> Decimal:
+    """The loan amount a percent step comes to.  # SPEC §8.10
+
+    ``request x (1 + pct_step)``, rounded half-up to the nearest multiple of ``rounding`` and
+    never above the request - a reduction too small to survive the rounding is the request
+    again rather than a larger loan, which nothing defines. The request row is the request
+    exactly: a $150,250 request is priced as $150,250, not $150,000.
+    """
+    if pct_step == ZERO:
+        return request
+    scaled = request * (1 + pct_step)
+    rounded = (scaled / rounding).quantize(Decimal(1), rounding=ROUND_HALF_UP) * rounding
+    return min(rounded, request)
+
+
 def unpriced_row(
-    step: Decimal, amount: Decimal, sentence: str, rate_needed: Decimal | None = None
+    pct_step: Decimal,
+    step: Decimal,
+    amount: Decimal,
+    sentence: str,
+    rate_needed: Decimal | None = None,
 ) -> PricingRow:
     """A row no rate is quoted on: every figure None, the sentence saying why.
 
     ``rate_needed`` is the solved rate when the reason is that it is above the maximum quote.
     """
     return PricingRow(
+        pct_step=pct_step,
         step=step,
         loan_amount=amount,
         interest_rate=None,
@@ -225,24 +252,28 @@ def pricing_matrix(
     target = config.pricing.target_lender_irr
     status = borrower_status(inputs, flip_on)
     rows: list[PricingRow] = []
-    for step in config.pricing.loan_amount_steps:
-        amount = inputs.deal.loan_requested + step
+    request = inputs.deal.loan_requested
+    for pct_step in config.pricing.loan_amount_pct_steps:
+        amount = row_amount(request, pct_step, config.pricing.loan_amount_rounding)
+        step = amount - request
         if grid.row(-step) is None:
             sentence = pricing_sentence(amount, None, None, target, priced=False)
-            rows.append(unpriced_row(step, amount, sentence))
+            rows.append(unpriced_row(pct_step, step, amount, sentence))
             continue
         solved = solve_rate(grid, -step, target, seeds, ceiling)
         if solved is None:
             sentence = pricing_sentence(amount, None, None, target, ceiling)
-            rows.append(unpriced_row(step, amount, sentence))
+            rows.append(unpriced_row(pct_step, step, amount, sentence))
             continue
         rate, point = solved
         if rate > config.pricing.max_quoted_rate:
-            rows.append(unpriced_row(step, amount, over_max_sentence(amount, rate), rate))
+            sentence = over_max_sentence(amount, rate)
+            rows.append(unpriced_row(pct_step, step, amount, sentence, rate))
             continue
         returns = borrower_returns(point, config) if status is AnalysisStatus.EVALUATED else None
         rows.append(
             PricingRow(
+                pct_step=pct_step,
                 step=step,
                 loan_amount=amount,
                 interest_rate=rate,

@@ -175,6 +175,31 @@ STRINGS: Mapping[str, tuple[str, str]] = {
         "Recibimos su solicitud. Un miembro de nuestro equipo se comunicará con usted pronto.",
     ),
     "thanks_again": ("Send another request", "Enviar otra solicitud"),
+    # the indicative terms on the thank-you page (SPEC §4.2): the disclaimer above the table
+    # and the business-purpose line below it are required language and are shown whole
+    "terms_title": ("Indicative terms", "Términos indicativos"),
+    "terms_disclaimer": (
+        "These figures are indicative only, based on the information you provided and our "
+        "standard assumptions. They are not an offer, commitment, or guarantee of terms. A "
+        "member of our team will review your request and contact you.",
+        "Estas cifras son solo indicativas y se basan en la información que usted "
+        "proporcionó y en nuestros supuestos estándar. No constituyen una oferta, un "
+        "compromiso ni una garantía de condiciones. Un miembro de nuestro equipo revisará "
+        "su solicitud y se comunicará con usted.",
+    ),
+    "terms_business_purpose": (
+        "For business-purpose loans only.",
+        "Solo para préstamos con fines comerciales.",
+    ),
+    "terms_requested": ("Requested", "Solicitado"),
+    "terms_loan_amount": ("Loan amount", "Monto del préstamo"),
+    "terms_rate": ("Rate", "Tasa"),
+    "terms_profit": ("Estimated profit", "Ganancia estimada"),
+    "terms_yield": ("Yield (cash-on-cash)", "Rendimiento (efectivo sobre efectivo)"),
+    "terms_add_sale_price": (
+        "Add an estimated sale price for a profit estimate.",
+        "Agregue un precio de venta estimado para recibir una estimación de ganancia.",
+    ),
 }
 
 _COLUMN: dict[Language, int] = {ENGLISH: 0, SPANISH: 1}

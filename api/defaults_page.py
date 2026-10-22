@@ -54,6 +54,7 @@ OTHER = "Other"
 # What a leaf holds, by the end of its key, for formatting. Anything else prints as is.
 _PERCENT_ENDINGS = (
     "_pct",
+    "_pct_steps",
     "_pct_of_cost",
     "_pct_of_rent",
     "rate",
@@ -65,7 +66,7 @@ _PERCENT_ENDINGS = (
     ".ltc",
     ".ltv",
 )
-_MONEY_ENDINGS = ("_usd", "loan_amount_steps")
+_MONEY_ENDINGS = ("_usd", "loan_amount_rounding")
 _RATIO_ENDINGS = ("dscr_floor",)
 
 

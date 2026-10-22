@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.13
+# GLENWOOD Underwriting Platform — SPEC v0.14
 
-Status: **v0.13**, 2026-10-22, engine `1.9.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.14**, 2026-10-22, engine `1.10.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.14** steps the pricing matrix by percent and shows the borrower their indicative terms. The pricing rows are shares of the request - `pricing.loan_amount_pct_steps`, placeholder 0, -5%, -10% - each stepped row's amount rounded to the nearest `pricing.loan_amount_rounding` (placeholder $1,000), the request row never rounded, and each row labelled "Requested", "-5%", "-10%" (§8.10, engine `1.10.0`); the loader refuses the old dollar steps by name. A web submission is sent to `/apply/thanks/<token>`, a random link live for `web_intake.thanks_token_hours` (placeholder 24), and that page shows one table, **Indicative terms** - the quoted pricing rows' loan amount and rate, with the estimated profit and the cash-on-cash yield beside them when the borrower gave a sale price - under the required disclaimer, only when the arrival run said Go or Conditional, with rows above the maximum quoted rate left out and the plain thank-you when nothing qualifies. Nothing else of the analysis is shown. What was shown is recorded on the deal (`indicative_terms_shown`, migration `0020`) and printed on the deal page under Pricing as "Shown to borrower" (§4.2, §5).
 
 **v0.13** is the deal page turned over: outputs on top, inputs below, on one visual system (one inline stylesheet, a system font stack, one accent, neutral grays, chips for the verdicts and severities, cards with a 1px border). The header is the address, one row of chips (borrower, loan type, loan amount, term, verdict, IRR) and the controls on the right - the version switcher with Download Excel, Run Analysis with its optional name, Edit Intake. Then Pricing; the two sensitivities side by side; Flip, Rental and Take-Back as three cards led by their headline figure; the Return Overview as one line with the ledger collapsed under it. Under the outputs the Underwriting Assumptions panel, then the intake as a read-only summary with the sizing table and the score components, then the collapsed sections. The CLI report and the workbook keep the §9 order. No engine, service or schema change (§9).
 
@@ -160,10 +162,38 @@ Three things are recorded about where a web deal came from: the channel `WEB`; t
 `referral_note`, their answer to "how did you hear about us?". The deal lands in the queue
 as the normalizer decides: `NEEDS_INFO` while something is missing, else **screened and
 priced on the way in** (§4.6) on the config defaults (§8.1) and the borrower's own numbers,
-with no court record. The borrower is shown one page saying the team will be in touch -
-never a verdict, a rate or an amount. The 12+ term bucket seeds `term_months` at 12, as on
+with no court record. The 12+ term bucket seeds `term_months` at 12, as on
 every channel (§4.1). Sending the form is the borrower's consent to being contacted: the
 line above the button says so, in both languages, and the stored submission records it.
+
+**The thank-you page** (v0.14). The submission is sent to `/apply/thanks/<token>`: a random,
+unguessable token stored on the deal (`deals.thanks_token`) and live for
+`web_intake.thanks_token_hours` (§10, placeholder 24); an expired or unknown token, and the
+bare `/apply/thanks`, render the plain thank-you. The page says the team will be in touch
+and, when the arrival run allows it, shows one table titled **Indicative terms**, one row per
+pricing step (§8.10) that quotes a rate: Loan amount, Rate, Estimated profit, Yield
+(cash-on-cash). The rules:
+
+- shown only when the automatic screen on arrival (`Auto v1`) said Go or Conditional, and the
+  ledger ran; a Decline, an incomplete intake and a run that stood down show the plain page
+- a row whose solved rate is above `pricing.max_quoted_rate` is left out, as is one nothing
+  prices; when no row qualifies, the plain page
+- when the borrower gave no sale price, the table has Loan amount and Rate only and a line
+  under it: "Add an estimated sale price for a profit estimate."
+- the results are the arrival run's, not the Working version's: what the team enters
+  afterwards stays on the team's side until a person calls
+- nothing else of the analysis is shown - no verdict, no IRR, no flags, no sensitivity
+
+Above the table, in both languages: *"These figures are indicative only, based on the
+information you provided and our standard assumptions. They are not an offer, commitment,
+or guarantee of terms. A member of our team will review your request and contact you."*
+Below it: *"For business-purpose loans only."* The first time the table is shown it is
+recorded on the deal - the rows as rendered and the language (`indicative_terms_shown`,
+JSONB) and when (`indicative_terms_shown_at`) - and in the audit trail
+(`INDICATIVE_TERMS_SHOWN`, actor `web:<email>`); a refresh shows the same rows and records
+nothing new. The deal page prints the record under Pricing as **Shown to borrower**, or
+"Nothing shown to the borrower." on a web deal whose page never showed the table. The link's
+issue is audited too (`THANKS_TOKEN_ISSUED`, the expiry and never the token).
 
 What stands between the page and the queue is a honeypot field, which drops a post that
 fills it without a word, and a per-address rate limit
@@ -334,6 +364,14 @@ value, rather than deleting a deal a borrower typed in.
 §6.1) and moves each untouched `WEB` deal's two numbers out of the team columns into them.
 No run is deleted: engine `1.3.0` adds to two enums and gives `UnderwriteInputs` one optional
 field, and every stored row still rebuilds.
+
+`0020` adds the thank-you link and its record (§4.2): `deals.thanks_token` (unique) and
+`thanks_token_expires_at`, and `indicative_terms_shown` (JSONB: the language, whether the
+profit columns were on it, and the rows as rendered) with `indicative_terms_shown_at`. All
+four are nullable and no row is backfilled: a deal stored before it was sent to the plain
+page. None of the four is an input, so a version snapshot leaves them out and a restore
+leaves them be. Engine `1.10.0` adds `pct_step` to a pricing row and no run is deleted: a
+`1.9.0` row loads with it None and is labelled by its dollar step.
 
 **Versions** (`0018`). A version is one analysis run - the screen and the underwrite Run
 Analysis, Save & Run, Reset all, Restore inputs and every automatic run produce together
@@ -954,9 +992,16 @@ each cell; the workbook adds the cash so a reader can divide one by the other.
 
 ### 8.10 Pricing matrix
 
-One row per `pricing.loan_amount_steps` entry (placeholder `[0, -10000, -20000]`), each a
-change to the request that only ever lends less, taken off the advance at closing as a
-sensitivity row's reduction is. For each, the row is priced at the **lowest rate, to 0.01%,
+One row per `pricing.loan_amount_pct_steps` entry (placeholder `[0, -0.05, -0.10]`, engine
+`1.10.0`), each a share of the request that only ever lends less. The row's loan amount is
+the request times `1 + step`, **rounded half-up to the nearest `pricing.loan_amount_rounding`**
+(placeholder $1,000) and never above the request; the request row (step 0) is never rounded,
+so a $195,000 request prices as $195,000, $185,000 (185,250 rounded down) and $176,000
+(175,500 rounded up). Each row is labelled by its step - "Requested", "-5%", "-10%" - and
+carries the dollar change the share came to; the reduction is taken off the advance at
+closing as a sensitivity row's is. A step of -1 leaves no loan and the row says so. Before
+`1.10.0` the steps were dollar changes (`pricing.loan_amount_steps`, `[0, -10000, -20000]`);
+the loader refuses that key by name. For each, the row is priced at the **lowest rate, to 0.01%,
 whose lender XIRR reaches `pricing.target_lender_irr`** (placeholder 20%), **solved on the
 ledger** (engine `1.8.0`): every candidate rate is a full ledger re-run at that loan amount,
 exactly as a Lender Sensitivity cell is, and the search bisects on whole 0.01% steps, which is
@@ -989,7 +1034,9 @@ A $150,000 loan exceeds max quoted rate (20.15% needed).
 
 The solve is checked against an independent one on two fixtures - Wichita's NO_DRAW note
 and Denver's SPLIT_DRAW draws - each a float secant root-find on the continuous rate,
-rounded up to the next 0.01% and confirmed a step either side (`tests/test_pricing.py`).
+rounded up to the next 0.01% and confirmed a step either side (`tests/test_pricing.py`):
+Wichita $150,000 / $143,000 / $135,000 all at 16.34%, Denver $195,000 / $185,000 / $176,000
+at 13.82% / 13.72% / 13.63%.
 
 The Pricing section sits under the Borrower Sensitivity on the deal page and is the `Pricing`
 sheet of the workbook.
@@ -1151,12 +1198,13 @@ workbook to export.
 - `interest.day_count_basis` (30): the days a whole monthly period counts as, for the final stub period's prorated interest (§8.3)
 - `closing.default_lead_days` (14): the **default for `closing_date`** (§8.1) is the last day of the month this many days after the deal came in
 - sensitivity (§8.9): `loan_step_usd` (5,000), `loan_steps` (4), `rate_min` (12.5%), `rate_max` (17.5%), `rate_step` (1%) - the shape of the IRR grid; every cell is a ledger re-run
-- pricing (§8.10): `target_lender_irr` (20%, placeholder), `max_quoted_rate` (18%, placeholder; above 0, at most 100%) and `loan_amount_steps` (`[0, -10000, -20000]`, placeholder; each 0 or less, no duplicates, at least one)
+- pricing (§8.10): `target_lender_irr` (20%, placeholder), `max_quoted_rate` (18%, placeholder; above 0, at most 100%), `loan_amount_pct_steps` (`[0, -0.05, -0.10]`, placeholder; each between -1 and 0, no duplicates, at least one) and `loan_amount_rounding` ($1,000, placeholder; above 0). The old `loan_amount_steps` is refused by name
 - rental takeout: `expenses_pct_of_rent` (35%), `takeout_rate` (6.5%), `amortization_years` (30), `dscr_floor` (1.20)
 - take-back: `lost_interest_months` (3), `legal_costs_usd` (5,000), `amortization_years` (30), `dscr_floor` (1.00)
 - underwrite flag severities: `DSCR_BELOW_FLOOR`, `TAKE_BACK_DSCR_BELOW_FLOOR`. The informational codes (§8.8) are fixed `Info` in code and the loader refuses to grade them
 - states served and court-record adapter per state
 - `web_intake.submissions_per_hour_per_ip` (placeholder 5): posts to the public form from one address in a sliding hour before the next is turned away (§4.2)
+- `web_intake.thanks_token_hours` (placeholder 24): how long a submission's thank-you link, with the borrower's indicative terms on it, stays live (§4.2)
 
 Gone with the v0.2 §8, and rejected by the loader if a stale yaml still carries them:
 `returns` (target IRR, rate grid, month window), `takeout` (DSCR takeout LTV, rate,
@@ -1185,7 +1233,8 @@ page does not show, so a new key has to be placed in a group (`api/defaults_page
 - **Listing sites:** address extraction from URLs only; no page scraping.
 - **Business-purpose lending:** intake and LOI language reflect business-purpose loans; no consumer-purpose features.
 - **Court/lien data:** used for underwriting decisions on business-purpose loans; retained with source and timestamp.
-- **Access:** the review queue is behind a session cookie and nothing it serves is public but the borrower's own form at `/apply` (§4.2), which writes one new deal and reads nothing back. No
+- **Indicative terms (§4.2):** the one thing a borrower reads back is the thank-you page's Indicative terms table, on an unguessable link that expires, under the disclaimer that the figures are indicative only and not an offer, commitment or guarantee, and above the line that the loans are business-purpose only. No verdict, IRR or flag reaches it, and what was shown is on the deal and in the audit trail.
+- **Access:** the review queue is behind a session cookie and nothing it serves is public but the borrower's own form at `/apply` (§4.2), which writes one new deal, and its thank-you page, which reads back the borrower's own indicative terms and nothing else. No
   self-signup and no reset-by-email — a user is created and deactivated from the command
   line, so the list of people who can read credit and court findings is maintained on purpose.
   A signed-in user changes their own password at `/account/password` (the current password
@@ -1275,6 +1324,14 @@ lost-interest months - become per-deal columns with the config value as their de
 (§8.4-§8.6), and the engine reads the deal's when present. Three audit codes are new:
 `ASSUMPTIONS_SAVED`, `ASSUMPTIONS_RESET`, `COURT_SEARCH_SAVED`.
 
+Phase 8e (engine `1.10.0`, migration `0020`) steps the pricing matrix by percent -
+`pricing.loan_amount_pct_steps` and `pricing.loan_amount_rounding` replace the dollar steps,
+each row labelled "Requested", "-5%", "-10%" (§8.10) - and sends a web submission to a
+thank-you page of its own, `/apply/thanks/<token>`, that shows the borrower their indicative
+terms under the required disclaimer when the arrival run said Go or Conditional, records what
+it showed on the deal, and prints it on the deal page under Pricing (§4.2, §5). Two audit
+codes are new: `THANKS_TOKEN_ISSUED`, `INDICATIVE_TERMS_SHOWN`.
+
 Phase 8c prep (engine `1.9.0`, migration `0019`) adds `pricing.max_quoted_rate` and the row
 that exceeds it (§8.10), the rule that lets an automatic run take the Working mark from a
 version nobody chose and `versions.human_selected` (§5), and Download Excel on the deal page
@@ -1335,12 +1392,20 @@ the deal's own phoneless row rather than minting another.
 - The sensitivity grid's placeholders (§8.9): $5,000 steps, four rows above the request,
   12.5% to 17.5% by 1%; the deal's own rate joins the columns, so the default 12% shows as a
   first column beside them until the range is tuned
-- The pricing placeholders (§8.10): a 20% target lender IRR and steps of 0, -$10,000 and
-  -$20,000. Steps only lend less; a larger loan has no defined advance and is refused by the
-  loader. The solved rate (v0.11) is rounded **up** to the next 0.01% so it still clears the
-  target. `pricing.max_quoted_rate` (v0.12) is an 18% placeholder for whatever cap GLENWOOD
-  quotes under (a usury limit, say); the search itself still runs to 100%, so a row above
-  the cap can say what it needs
+- The pricing placeholders (§8.10): a 20% target lender IRR and steps of 0, -5% and -10% of
+  the request (v0.14), each stepped row rounded to the nearest $1,000. Steps only lend less;
+  a larger loan has no defined advance and is refused by the loader. The solved rate (v0.11)
+  is rounded **up** to the next 0.01% so it still clears the target.
+  `pricing.max_quoted_rate` (v0.12) is an 18% placeholder for whatever cap GLENWOOD quotes
+  under (a usury limit, say); the search itself still runs to 100%, so a row above the cap
+  can say what it needs. Rounding is half-up and capped at the request, so a share too small
+  to survive the unit prices as the request again; confirm half-up is the rounding wanted
+- The thank-you page's indicative terms (v0.14, §4.2): `web_intake.thanks_token_hours` is a
+  24-hour placeholder; the results shown are the arrival run's (`Auto v1`), never a later
+  version's, so a team edit inside the window does not reach the borrower; a Conditional
+  screen shows the table exactly as a Go does; the yield shown is the borrower's cash-on-cash
+  as §8.9 defines it; the Spanish strings are pending the same native-speaker review as the
+  rest of `api/i18n.py`; and a GET records the one write (what was shown) and commits it
 - Versions (v0.11, v0.12): a person's own run is always a draft beside an existing Working
   version, even unnamed, while the automatic run after an edit can take the mark - confirm
   that asymmetry is wanted. Version names need not be unique (the CLI refuses an ambiguous

@@ -324,10 +324,14 @@ def test_the_pricing_sheet_carries_every_row_and_its_sentence() -> None:
     assert result is not None and result.pricing is not None
     sheet = book_for(FIXTURE_DIR / "go_no_draw_wichita.json")["Pricing"]
     assert D(str(sheet.cell(row=2, column=2).value)) == D("0.20")
+    assert sheet.cell(row=4, column=1).value == "Step"
     for offset, row in enumerate(result.pricing.rows, start=5):
-        assert D(str(sheet.cell(row=offset, column=1).value)) == row.loan_amount
-        assert D(str(sheet.cell(row=offset, column=3).value)) == row.interest_rate
-        assert sheet.cell(row=offset, column=8).value == row.sentence
+        assert sheet.cell(row=offset, column=1).value == row.label
+        assert D(str(sheet.cell(row=offset, column=2).value)) == row.loan_amount
+        assert D(str(sheet.cell(row=offset, column=3).value)) == row.step
+        assert D(str(sheet.cell(row=offset, column=4).value)) == row.interest_rate
+        assert sheet.cell(row=offset, column=9).value == row.sentence
+    assert [sheet.cell(row=r, column=1).value for r in (5, 6, 7)] == ["Requested", "-5%", "-10%"]
 
 
 def test_the_pricing_sheet_carries_the_max_quote_and_the_rate_a_row_needs() -> None:
@@ -346,11 +350,11 @@ def test_the_pricing_sheet_carries_the_max_quote_and_the_rate_a_row_needs() -> N
     ]
     assert sheet.cell(row=2, column=3).value == "Max quoted rate"
     assert D(str(sheet.cell(row=2, column=4).value)) == D("0.16")
-    assert sheet.cell(row=4, column=9).value == "Rate needed"
-    assert sheet.cell(row=5, column=3).value is None
-    needed = sheet.cell(row=5, column=9)
+    assert sheet.cell(row=4, column=10).value == "Rate needed"
+    assert sheet.cell(row=5, column=4).value is None
+    needed = sheet.cell(row=5, column=10)
     assert D(str(needed.value)) == D("0.1634") and needed.number_format == "0.00%"
-    assert sheet.cell(row=5, column=8).value == (
+    assert sheet.cell(row=5, column=9).value == (
         "A $150,000 loan exceeds max quoted rate (16.34% needed)."
     )
 

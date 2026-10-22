@@ -43,7 +43,9 @@ def test_the_page_shows_the_groups_in_order_and_some_values(client: QueueClient)
     assert 'data-key="interest.default_annual_rate">12%<' in body
     assert 'data-key="fees.closing_costs_default_usd">$1,000.00<' in body
     assert 'data-key="pricing.target_lender_irr">20%<' in body
-    assert 'data-key="pricing.loan_amount_steps">$0.00, -$10,000.00, -$20,000.00<' in body
+    assert 'data-key="pricing.loan_amount_pct_steps">0%, -5%, -10%<' in body
+    assert 'data-key="pricing.loan_amount_rounding">$1,000.00<' in body
+    assert 'data-key="web_intake.thanks_token_hours">24<' in body
     assert 'data-key="rental.dscr_floor">1.20x<' in body
     assert 'data-key="states.served">OK, CO<' in body
     assert 'data-key="leverage_caps.SPLIT_DRAW.T3.E2.ltv">75%<' in body

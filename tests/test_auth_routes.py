@@ -69,6 +69,7 @@ PUBLIC_ROUTES = [
     ("GET", "/apply", 200),
     ("POST", "/apply", 422),
     ("GET", "/apply/thanks", 200),
+    ("GET", "/apply/thanks/no-such-token", 200),
 ]
 
 
@@ -127,6 +128,7 @@ def test_every_route_is_accounted_for() -> None:
             ("GET", "/apply"),
             ("POST", "/apply"),
             ("GET", "/apply/thanks"),
+            ("GET", "/apply/thanks/{token}"),
         }
         | {
             ("POST", f"/queue/deals/{{deal_id}}/{action}")

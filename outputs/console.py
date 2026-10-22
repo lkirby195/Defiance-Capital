@@ -342,7 +342,7 @@ def render_pricing(matrix: PricingMatrix | None) -> list[str]:
     )
     for row in matrix.rows:
         irr = "" if row.lender_irr is None else f"  (lender IRR {pct4(row.lender_irr)})"
-        lines.append(f"  {row.sentence}{irr}")
+        lines.append(f"  {row.label:<10} {row.sentence}{irr}")
     return lines
 
 
