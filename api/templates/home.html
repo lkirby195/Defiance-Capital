@@ -1,15 +1,16 @@
 {% extends "base.html" %}
 {% import "_csrf.html" as csrf %}
-{% block title %}Home — GLENWOOD{% endblock %}
+{% block title %}Home — Defiance Capital{% endblock %}
 
 {# Four sections, always in this order and always present (services/home.py): the
-   borrower's own submissions, the deals the team entered, the ones on pause, the dead. A
-   row is who, where, how much, which product, the Working version's verdict and IRR (and
-   its name), where it came from and when it last moved, then Open and the three controls.
-   Each control is a plain form post
-   carrying ``return_to=home`` so the action lands back here; Kill is a link to its
-   confirmation page rather than a one-click post. A control the deal's status rules out is
-   off, with the reason on its hover. #}
+   borrower's own submissions, the deals the team entered, the ones on pause, the dead. Each
+   is a card with its count in the title row. A row is who, where, how much, which product,
+   the Working version's verdict and IRR as chips (and its name), where it came from and when
+   it last moved, then Open - the primary button - and the three controls as secondary ones.
+   Each control is a plain form post carrying ``return_to=home`` so the action lands back
+   here; Kill is a link to its confirmation page rather than a one-click post. A control the
+   deal's status rules out is off, with the reason on its hover. An empty section says so in
+   one line. #}
 
 {% macro control_button(entry, action, label, live, why) %}
   <form method="post" action="/queue/deals/{{ entry.deal.id }}/{{ action }}">
@@ -38,7 +39,7 @@
       {% else %}<span class="muted">—</span>{% endif %}
       {% if entry.working %}<span class="small muted" title="The Working version">{{ entry.working.name }}</span>{% endif %}
     </td>
-    <td class="num">{{ entry.irr | rate }}</td>
+    <td class="num">{% if entry.irr is not none %}<span class="tag fact">{{ entry.irr | rate }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
     <td>{{ deal.channel | label }}{% if deal.intake_source %} · {{ deal.intake_source }}{% endif %}</td>
     <td class="small muted">{{ entry.last_activity | when }}</td>
     <td class="controls">
@@ -61,7 +62,9 @@
 
 {% for section in view.sections %}
   <section class="panel">
-    <h2>{{ section.title }} <span class="muted small">{{ section.entries | length }}</span></h2>
+    <div class="row">
+      <h2>{{ section.title }} <span class="count">{{ section.entries | length }}</span></h2>
+    </div>
     {% if section.entries %}
       <div class="scroll">
         <table>
@@ -84,7 +87,7 @@
         </table>
       </div>
     {% else %}
-      <p class="small muted">None.</p>
+      <p class="small muted" style="margin:0">None.</p>
     {% endif %}
   </section>
 {% endfor %}

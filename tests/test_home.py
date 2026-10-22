@@ -657,12 +657,13 @@ def test_the_deal_page_renders_a_screen_and_an_underwrite(
     assert "Scored as" in body
     assert "Leverage against caps" in body
     assert ">LTV<" in body and ">LTC<" in body
-    assert body.index("<h2>Return Overview") < body.index("<h2>Lender Sensitivity")
+    # outputs on top: the pricing, the two sensitivities, the three analyses, the ledger
+    assert body.index("<h2>Pricing") < body.index("<h2>Lender Sensitivity")
     assert body.index("<h2>Lender Sensitivity") < body.index("<h2>Borrower Sensitivity")
-    assert body.index("<h2>Borrower Sensitivity") < body.index("<h2>Pricing")
-    assert body.index("<h2>Pricing") < body.index("<h2>Flip Analysis")
+    assert body.index("<h2>Borrower Sensitivity") < body.index("<h2>Flip Analysis")
     assert body.index("<h2>Flip Analysis") < body.index("<h2>Rental Analysis")
     assert body.index("<h2>Rental Analysis") < body.index("<h2>Take-Back Analysis")
+    assert body.index("<h2>Take-Back Analysis") < body.index("<h2>Return Overview")
     assert "Future Draws" in body
     assert "Yield (Profit / Costs)" in body
     assert "DSCR at loan cost" in body

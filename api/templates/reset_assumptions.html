@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "_csrf.html" as csrf %}
-{% block title %}Reset assumptions — GLENWOOD{% endblock %}
+{% block title %}Reset assumptions — Defiance Capital{% endblock %}
 
 {# The confirmation in front of Reset all to defaults (SPEC §8.1). One click on the deal page
    would wipe every number the team typed over on the Underwriting Assumptions panel, so the
@@ -9,7 +9,7 @@
    script that decides something (CLAUDE.md). #}
 
 {% block content %}
-<section class="panel" style="max-width: 720px; margin: 40px auto;">
+<section class="panel narrow wide">
   <h1>Reset every assumption to its default?</h1>
   <p class="lede">
     {% if deal.property and deal.property.address_raw %}{{ deal.property.address_raw }}

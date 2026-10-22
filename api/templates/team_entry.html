@@ -3,13 +3,14 @@
 {# ``with context`` so the macros can read ``errors`` and print each complaint under
    the box it is about, rather than every call site passing it (``api/problems.py``). #}
 {% import "_fields.html" as fields with context %}
-{% block title %}{{ heading }} — GLENWOOD{% endblock %}
+{% block title %}{{ heading }} — Defiance Capital{% endblock %}
 
-{# Labels and boxes, three groups (SPEC §8.1): Overview, Property Overview, Deal Economics.
-   No helper text: every box says Required or Optional and nothing else. The §8.1 economics
-   with a default, the loan split, the valuation, the rent, the analysis toggles and the
-   court search are not here - they populate from the defaults when the deal is stored and
-   are edited on the deal page (api/intake_form.py). #}
+{# Labels and boxes, three groups (SPEC §8.1): Overview, Property Overview, Deal Economics,
+   two columns on a desktop and one on a phone. No helper text: every box says Required or
+   Optional and nothing else, and a complaint sits in red under the box it is about. The
+   §8.1 economics with a default, the loan split, the valuation, the rent, the analysis
+   toggles and the court search are not here - they populate from the defaults when the deal
+   is stored and are edited on the deal page (api/intake_form.py). #}
 
 {% block content %}
 <h1>{{ heading }}</h1>
@@ -18,7 +19,7 @@
   {{ csrf.field(csrf_token) }}
   <section class="panel">
     <h2>Overview</h2>
-    <div class="grid3">
+    <div class="grid2">
       {{ fields.text_box("entity_name", "Entity Name", form.entity_name) }}
       {{ fields.text_box("borrower_name", "Guarantor Name", form.borrower_name, required=true) }}
       {{ fields.phone_box("borrower_phone", "Phone", form.borrower_phone) }}
@@ -34,7 +35,7 @@
 
   <section class="panel">
     <h2>Property Overview</h2>
-    <div class="grid3">
+    <div class="grid2">
       {{ fields.text_box("address", "Address", form.address, required=true) }}
       {{ fields.text_box("listing_url", "Listing or auction link", form.listing_url) }}
       {{ fields.text_box("city", "City", form.city) }}
@@ -53,7 +54,7 @@
 
   <section class="panel">
     <h2>Deal Economics</h2>
-    <div class="grid3">
+    <div class="grid2">
       {{ fields.money_box("purchase_price", "Purchase Price", form.purchase_price,
                           required=true) }}
       {{ fields.money_box("rehab_costs", "Rehab Costs", form.rehab_costs, required=true) }}
