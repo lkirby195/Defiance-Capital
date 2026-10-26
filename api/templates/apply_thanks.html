@@ -12,7 +12,7 @@
   <h1>{{ t.thanks_title }}</h1>
   <p class="lede">{{ t.thanks_body }}</p>
   {% if terms %}
-  <div id="indicative-terms">
+  <div id="indicative-terms"><div class="chart">
     <h2>{{ t.terms_title }}</h2>
     <p class="small" id="terms-disclaimer">{{ t.terms_disclaimer }}</p>
     <div class="scroll">
@@ -45,7 +45,7 @@
     </div>
     {% if not terms.with_profit %}<p class="small" id="terms-add-sale-price">{{ t.terms_add_sale_price }}</p>{% endif %}
     <p class="small" id="terms-business-purpose">{{ t.terms_business_purpose }}</p>
-  </div>
+  </div></div>
   {% endif %}
   <p><a href="{{ again_href }}">{{ t.thanks_again }}</a></p>
 </section>

@@ -10,7 +10,7 @@
 <p class="lede small">config/glenwood.yaml · config hash <code>{{ config_hash[:12] }}</code></p>
 
 {% for group in groups %}
-<section class="panel">
+<section class="panel chart">
   <h2>{{ group.heading }}</h2>
   <div class="scroll">
     <table>
@@ -27,8 +27,10 @@
     </table>
   </div>
   {% if group.heading == "Screen caps and thresholds" %}
+    <div class="pad">
     <h3>Leverage caps <span class="unit"><code>leverage_caps.&lt;loan type&gt;.&lt;tranche&gt;.&lt;tier&gt;</code></span></h3>
     {% for table in caps %}
+      <div class="chart">
       <h4>{{ table.product }}</h4>
       <div class="scroll">
         <table>
@@ -47,7 +49,9 @@
           </tbody>
         </table>
       </div>
+      </div>
     {% endfor %}
+    </div>
   {% endif %}
 </section>
 {% endfor %}

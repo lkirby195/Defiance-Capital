@@ -121,6 +121,13 @@ def when(value: datetime | date | None) -> str:
     return value.isoformat()
 
 
+def day(value: datetime | date | None) -> str:
+    """A date a person scans a list by: ``Oct-26-2026`` (Home's Last activity column)."""
+    if value is None:
+        return "—"
+    return value.strftime("%b-%d-%Y")
+
+
 def plain(value: Any) -> str:
     """Anything with no filter of its own: enums by value, None as an em dash.
 
@@ -194,6 +201,7 @@ templates.env.filters.update(
     whole=whole,
     yes_no=yes_no,
     when=when,
+    day=day,
     plain=plain,
     label=label,
     definition=definition,

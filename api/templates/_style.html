@@ -19,6 +19,9 @@
       --accent: #1d4ed8;
       --accent-ink: #ffffff;
       --accent-soft: #dbe4ff;
+      --accent-deep: #1e3a8a;   /* the column labels on a table's tinted subheader row */
+      --accent-tint: #e9eefb;   /* that subheader row */
+      --stripe: #f7f8fa;        /* every other table row */
       --green: #15803d;  --green-bg: #dcfce7;
       --amber: #b45309;  --amber-bg: #fef3c7;
       --red: #b91c1c;    --red-bg: #fee2e2;
@@ -123,17 +126,17 @@
     }
     button:hover, a.btn:hover { border-color: #9aa3b2; }
     /* The primary: the one accent, for the thing a page is for. A bare <button> is it. */
-    button:not(.quiet):not(.danger):not(.linky), a.btn.primary, td.controls > a.btn {
+    button:not(.quiet):not(.danger):not(.linky), a.btn.primary {
       background: var(--accent); border-color: var(--accent); color: var(--accent-ink);
     }
-    button:not(.quiet):not(.danger):not(.linky):hover, a.btn.primary:hover, td.controls > a.btn:hover {
+    button:not(.quiet):not(.danger):not(.linky):hover, a.btn.primary:hover {
       background: #1a44c2; border-color: #1a44c2;
     }
-    button.quiet, a.btn.quiet { background: var(--panel); color: var(--ink); border-color: var(--line-strong); }
-    button.danger, a.btn.danger, span.btn.danger, td.controls > a.btn.danger {
+    button.quiet, a.btn.quiet, span.btn.quiet { background: var(--panel); color: var(--ink); border-color: var(--line-strong); }
+    button.danger, a.btn.danger, span.btn.danger {
       background: var(--panel); color: var(--red); border-color: #fca5a5;
     }
-    button.danger:hover, a.btn.danger:hover, td.controls > a.btn.danger:hover { background: var(--red-bg); border-color: #f87171; }
+    button.danger:hover, a.btn.danger:hover { background: var(--red-bg); border-color: #f87171; }
     .btn.small, button.small { font-size: 12px; line-height: 18px; padding: 3px 10px; }
     button:disabled, .btn.off { opacity: .5; cursor: not-allowed; }
     button:disabled:hover { border-color: var(--line-strong); }
@@ -176,19 +179,27 @@
       color: var(--muted); cursor: help; vertical-align: middle; margin-left: 3px;
     }
 
-    /* --- tables ------------------------------------------------------------------------ */
+    /* --- tables ------------------------------------------------------------------------
+       Every table on the site reads the same way: the column labels on a tinted subheader
+       row, rules across only - no vertical lines - and every other row on a very light
+       tint. The title bar above one is its card's (.chart, below). */
     .scroll { overflow-x: auto; }
     table { border-collapse: collapse; width: 100%; font-size: 14px; }
     th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
     th { color: var(--muted); font-weight: 600; font-size: 12px; white-space: nowrap; }
-    thead th { border-bottom: 1px solid var(--line-strong); }
+    thead th { background: var(--accent-tint); color: var(--accent-deep); border-bottom: 1px solid var(--accent-soft); }
+    tbody tr:nth-child(even) > td, tbody tr:nth-child(even) > th { background: var(--stripe); }
     tfoot th { color: var(--ink); font-size: 14px; border-bottom: 0; border-top: 1px solid var(--line-strong); }
-    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr:last-child td, tbody tr:last-child th { border-bottom: 0; }
     tbody + tfoot tr:first-child th { border-top: 1px solid var(--line-strong); }
     td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    td.controls { white-space: nowrap; text-align: right; }
-    td.controls form { display: inline; margin-left: var(--s1); }
-    td.controls > a.btn { margin-right: var(--s1); }
+    /* Home: the address is the link to the deal, and the Action column holds the three
+       controls as small secondary buttons in a row. */
+    td.deal a { font-weight: 500; text-decoration: none; }
+    td.deal a:hover { text-decoration: underline; }
+    td.action { white-space: nowrap; }
+    td.action form { display: inline; }
+    td.action > * + * { margin-left: var(--s1); }
     /* The sensitivity tables' one marked cell: the deal's own loan amount at its own rate. */
     .grid-cell.hit { background: var(--green-bg); color: var(--green); font-weight: 600;
                      box-shadow: inset 0 0 0 1px #86efac; }
@@ -248,10 +259,36 @@
     .summary li { margin: 0; }
     .summary .k { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
     .summary .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
-    details.ledger { border-top: 1px solid var(--line); padding-top: var(--s2); }
-    details.ledger > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); }
-    details.ledger[open] > summary { margin-bottom: var(--s2); }
+    details.ledger { margin-top: var(--s2); }
+    details.ledger > summary { cursor: pointer; font-size: 13px; font-weight: 600; }
     .sentences { margin: var(--s2) 0 0; padding-left: 18px; font-size: 13px; }
+
+    /* --- charts: a table under a title bar --------------------------------------------
+       The card's title row is a bar in the accent with the title in white on it, the
+       table's tinted subheader sits under that, and the rows are ruled across. A
+       section.panel or details.panel with the class is the whole card (Home's sections,
+       Pricing, the two sensitivities, the readiness checklist, the Defaults groups); a
+       div.chart is one table inside a card, with its own h3 or h4 as the bar (the sizing
+       table, the ledger, History's two, what the borrower was shown). */
+    .chart { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+    section.panel.chart, details.panel.chart { padding: 0; }
+    .chart > .row, .panel.chart > h2, .chart > h2, .chart > h3, .chart > h4, .chart > summary {
+      margin: 0; padding: 9px var(--s3); background: var(--accent); color: var(--accent-ink);
+    }
+    .chart > .row > h2, .panel.chart > summary h2 { margin: 0; color: inherit; }
+    .chart > h3, .chart > h4 { font-size: 12px; font-weight: 600; text-transform: uppercase;
+                               letter-spacing: .06em; padding: 7px var(--s3); }
+    details.chart > summary { color: var(--accent-ink); font-size: 14px; }
+    details.panel.chart > summary::before { border-color: var(--accent-ink); }
+    details.panel.chart[open] > summary { margin-bottom: 0; }
+    .chart .count { color: inherit; opacity: .75; }
+    .chart > :is(.row, h2, h3, h4, summary) .help { color: inherit; border-color: rgba(255,255,255,.6); }
+    .chart > :is(.row, h2, h3, h4, summary) .tag { background: rgba(255,255,255,.18); color: inherit; }
+    /* Whatever sits in a chart beside its table keeps the card's own 16px inset. */
+    .chart > p { margin: 0; padding: 10px var(--s3); }
+    .chart > p + p { padding-top: 0; }
+    .chart > :is(dl, ul, .pad, .chart, div:not(.scroll):not(.row)) { margin: 12px var(--s3); }
+    .chart + .chart, .pad > .chart + .chart { margin-top: 12px; }
 
     /* --- forms ------------------------------------------------------------------------- */
     form.stack { display: grid; gap: var(--s3); }
@@ -325,6 +362,8 @@
       header.bar { gap: 2px var(--s2); }
       header.bar .who { margin-left: 0; width: 100%; }
       section.panel, details.panel { padding: 12px; }
+      .chart > :is(.row, h2, h3, h4, summary), .chart > p { padding-left: 12px; padding-right: 12px; }
+      .chart > :is(dl, ul, .pad, .chart, div:not(.scroll):not(.row)) { margin-left: 12px; margin-right: 12px; }
       .grid2, .grid3, .facts-grid { grid-template-columns: 1fr; }
       dl.facts { grid-template-columns: 1fr; gap: 0; }
       dl.facts dt { margin-top: var(--s2); }
@@ -335,6 +374,5 @@
       .summary { gap: var(--s2) var(--s4); }
       .summary .v { font-size: 18px; }
       .headline { font-size: 26px; }
-      td.controls { text-align: left; }
     }
   </style>

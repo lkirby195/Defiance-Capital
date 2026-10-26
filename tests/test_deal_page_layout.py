@@ -25,10 +25,10 @@ ORDER = (
     '<div class="chips" id="deal-chips">',
     '<section class="panel" id="versions">',
     '<form class="run" method="post"',
-    '<section class="panel" id="pricing">',
+    '<section class="panel chart" id="pricing">',
     '<div class="pair">',
-    '<section class="panel" id="lender-sensitivity">',
-    '<section class="panel" id="borrower-sensitivity">',
+    '<section class="panel chart" id="lender-sensitivity">',
+    '<section class="panel chart" id="borrower-sensitivity">',
     '<div class="trio">',
     "<h2>Flip Analysis</h2>",
     "<h2>Rental Analysis</h2>",
@@ -37,7 +37,7 @@ ORDER = (
     '<section class="panel" id="assumptions">',
     '<section class="panel" id="economics">',
     "<h2>Deal Economics and Property</h2>",
-    '<details class="panel" id="readiness">',
+    '<details class="panel chart" id="readiness">',
     '<section class="panel" id="actions">',
     '<details class="panel" id="court">',
     '<details class="panel" id="history">',
@@ -96,7 +96,7 @@ def test_the_sensitivities_share_a_row_and_the_analyses_another(
     run(client, deal_with_overrides)
     body = page(client, deal_with_overrides)
     pair = between(body, '<div class="pair">', '<div class="trio">')
-    assert pair.count('<section class="panel"') == 2
+    assert pair.count('<section class="panel chart"') == 2
     assert 'id="lender-sensitivity"' in pair and 'id="borrower-sensitivity"' in pair
     assert pair.count('class="num grid-cell hit"') == 2  # the deal's own cell, on each
     trio = between(body, '<div class="trio">', "<h2>Return Overview</h2>")
@@ -142,10 +142,10 @@ def test_the_ledger_is_folded_under_one_line_of_figures(
     overview = between(body, "<h2>Return Overview</h2>", "</section>")
     keys = [key.strip() for key in re.findall(r'<span class="k">([^<]*)', overview)]
     assert keys == ["IRR", "Total interest", "Total fees", "Total profit", "Payoff date"]
-    assert overview.index('<ul class="summary">') < overview.index('<details class="ledger">')
-    ledger = overview[overview.index('<details class="ledger">') :]
+    assert overview.index('<ul class="summary">') < overview.index('<details class="ledger chart">')
+    ledger = overview[overview.index('<details class="ledger chart">') :]
     assert "Future Draws" in ledger and "<tfoot>" in ledger
-    assert '<details class="ledger" open>' not in overview
+    assert '<details class="ledger chart" open>' not in overview
 
 
 # --- the header -----------------------------------------------------------------------------------
@@ -255,9 +255,14 @@ def test_home_rows_carry_chips_and_an_empty_section_says_so_in_one_line(
     row = body[body.index(str(deal_with_overrides.id)) :]
     row = row[: row.index("</tr>")]
     assert '<span class="tag GO">GO</span>' in row
-    assert re.search(r'<td class="num"><span class="tag fact">\d+\.\d{4}%</span></td>', row)
-    # Open first, then the three controls
-    assert row.index('<a class="btn small" href="/queue/deals/') < row.index(">Progress</button>")
+    # the verdict chip and nothing else: no version name beside it, no status chip
+    assert "Auto v" not in row and 'title="The Working version"' not in row
+    assert 'class="tag status"' not in row
+    # the IRR to two decimals
+    assert re.search(r'<td class="num"><span class="tag fact">\d+\.\d{2}%</span></td>', row)
+    # no Open button: the address is the link, then the three controls in order
+    assert ">Open<" not in row
+    assert row.index(">Progress</button>") < row.index(">Pause</button>") < row.index(">Kill<")
     # three of the four sections are empty on this database
     assert body.count('<p class="small muted" style="margin:0">None.</p>') == 3
     assert body.count('<span class="count">') == 4

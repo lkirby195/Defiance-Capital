@@ -25,6 +25,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from api.ratelimit import LIMITER
+from api.render import day
 from config.config import Config
 from db.models import AuditLog, Deal, IntakeSubmission, Screen, Underwrite
 from schema.models import AuditAction, Channel, Status
@@ -600,10 +601,21 @@ def test_a_web_deal_shows_its_source_and_a_paused_deal_its_section(
     anon_client: QueueClient, client: QueueClient, db_session: Session
 ) -> None:
     web = a_web_deal(anon_client, db_session)
-    at(db_session, a_deal(db_session), Status.PAUSED)
+    paused = at(db_session, a_deal(db_session), Status.PAUSED)
     body = client.get("/queue").text
     assert "Web" in body and str(web.id) in body
-    assert "PAUSED" in body
+    # the paused deal is under On Pause; a row carries no status chip of its own
+    assert body.index("On Pause") < body.index(str(paused.id)) < body.index("<h2>Dead")
+    assert 'class="tag status"' not in body and "PAUSED" not in body
+
+
+def test_last_activity_reads_as_month_day_year(
+    client: TestClient, deal_with_overrides: Deal
+) -> None:
+    assert day(datetime(2026, 10, 26, 14, 24)) == "Oct-26-2026"
+    assert day(None) == "—"
+    body = client.get("/queue").text
+    assert re.search(r'<td class="small muted">[A-Z][a-z]{2}-\d{2}-\d{4}</td>', body)
 
 
 def test_an_empty_home_page_points_at_the_entry_form(client: TestClient) -> None:
