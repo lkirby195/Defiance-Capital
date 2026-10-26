@@ -315,7 +315,7 @@ def test_home_shows_the_working_numbers_after_a_draft_run(
     assert entry.working is not None and entry.working.name == "v1"
     assert entry.irr == first_irr.return_overview.irr.quantize(D("0.00001"))  # type: ignore[union-attr]
     page = client.get("/queue").text
-    assert f"{entry.irr * 100:.4f}%" in page  # type: ignore[operator]
+    assert f"{entry.irr * 100:.2f}%" in page  # type: ignore[operator]
 
     mark_working(db_session, deal_id, 2, actor=ACTOR)
     db_session.commit()

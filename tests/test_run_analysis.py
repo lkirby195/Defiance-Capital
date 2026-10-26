@@ -81,7 +81,7 @@ def test_the_page_has_one_button_and_names_no_stage(
     # until clicked
     assert '<section class="panel" id="assumptions">' in body
     assert '<details class="panel" id="court">' in body
-    assert '<details class="panel" id="readiness">' in body
+    assert '<details class="panel chart" id="readiness">' in body
     assert '<details class="panel" id="history">' in body
     assert 'id="inputs"' not in body
     assert "<script" not in body.split("</header>", 1)[1].split("<!-- masks", 1)[0] or True
@@ -134,7 +134,7 @@ def test_a_row_above_the_max_quote_says_what_it_needs_on_the_page(
     assert all(rate is not None and rate > Decimal("0.12") for rate in needed)
 
     body = client.get(f"/queue/deals/{deal_with_overrides.id}").text
-    pricing = body[body.index('<section class="panel" id="pricing">') :]
+    pricing = body[body.index('<section class="panel chart" id="pricing">') :]
     pricing = pricing[: pricing.index("</section>")]
     assert "<dt>Max quoted rate</dt><dd>12.00%</dd>" in pricing
     for rate in needed:
@@ -153,12 +153,12 @@ def test_the_page_shows_the_borrower_sensitivity_and_the_pricing_rows(
     assert stored is not None
     result = UnderwriteResult.model_validate(stored.outputs)
     assert result.borrower_sensitivity is not None and result.pricing is not None
-    borrower = body[body.index('<section class="panel" id="borrower-sensitivity">') :]
+    borrower = body[body.index('<section class="panel chart" id="borrower-sensitivity">') :]
     borrower = borrower[: borrower.index("</section>")]
     assert borrower.count("grid-cell hit") == 1
     deal_cell = result.borrower_sensitivity.deal_cell
     assert deal_cell is not None and money(deal_cell.net_profit) in borrower
-    pricing = body[body.index('<section class="panel" id="pricing">') :]
+    pricing = body[body.index('<section class="panel chart" id="pricing">') :]
     pricing = pricing[: pricing.index("</section>")]
     assert "Target lender IRR" in pricing
     for row in result.pricing.rows:
@@ -266,13 +266,16 @@ def test_the_notice_after_a_save_reads_as_one_analysis(
 # --- Home -----------------------------------------------------------------------------------------
 
 
-def test_home_rows_open_the_deal_before_the_three_controls(
+def test_home_rows_link_the_address_to_the_deal_before_the_three_controls(
     client: QueueClient, deal_with_overrides: Deal
 ) -> None:
     body = client.get("/queue").text
-    row = body[body.index(str(deal_with_overrides.id)) :]
-    open_at = row.index(f'<a class="btn small" href="/queue/deals/{deal_with_overrides.id}"')
-    assert ">Open</a>" in row[open_at : open_at + 200]
-    assert open_at < row.index(">Progress</button>")
+    start = body.rindex("<tr>", 0, body.index(str(deal_with_overrides.id)))
+    row = body[start : body.index("</tr>", start)]
+    link_at = row.index(f'<a href="/queue/deals/{deal_with_overrides.id}"')
+    assert deal_with_overrides.property is not None
+    assert deal_with_overrides.property.address_raw in row[link_at : link_at + 300]
+    assert ">Open<" not in row
+    assert link_at < row.index(">Progress</button>")
     assert row.index(">Progress</button>") < row.index(">Pause</button>")
     assert row.index(">Pause</button>") < row.index(">Kill<")
