@@ -1482,9 +1482,10 @@ class PricingRow(BaseModel):
     # not a quote and says what it would have needed; None on every other row.
     rate_needed: Decimal | None = None
     # 2.0.0 on: the borrower's equity at the row's solved rate - the flip's total deal cost
-    # less the loan amount, sale price or none - and how much more that is than the
-    # requested row's; ``derisk`` is the one line that says it (SPEC §8.10). None where the
-    # row or the requested row has no solved rate, and the line is None on the requested row.
+    # less the loan amount, sale price or none. ``equity_added`` is the loan reduction against
+    # the requested row (2.0.1 on; 2.0.0 recorded the difference in equity) and ``derisk`` the
+    # one line that says it (SPEC §8.10). None on the requested row and on a row with no
+    # solved rate.
     borrower_equity: Decimal | None = None
     equity_added: Decimal | None = None
     derisk: str | None = None

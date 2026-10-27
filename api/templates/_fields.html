@@ -188,14 +188,16 @@
   </div>
 {% endmacro %}
 
-{% macro holdback_box(name, text, value) %}
+{% macro holdback_box(name, text, value, default="", pin=true) %}
   {#- The box the Holdback radio reveals (SPEC §3, §8.2): the rehab portion held back; the
       advance at closing is the rest of the loan. Hidden by the stylesheet unless Holdback is
-      checked (``.structure`` in _style.html) - and shown regardless while it holds a value or
-      a complaint, so nothing the form carries is ever out of sight. Optional: blank is the
-      §8.2 default. -#}
-  <div class="holdback-only{% if value or errors.get(name) %} shown{% endif %}">
-    {{ money_box(name, text, value) }}
+      checked (``.structure`` in _style.html) - and shown regardless while it carries a
+      complaint, or (``pin``, the team form) while it holds a value, so nothing the form
+      carries is out of sight under a radio nobody picked. Optional: blank is the §8.2
+      default. The deal page's panel passes the default for the tag and the reset link, and
+      no ``pin``: its radio always shows the deal's structure (v0.18). -#}
+  <div class="holdback-only{% if (pin and value) or errors.get(name) %} shown{% endif %}">
+    {{ money_box(name, text, value, default=default) }}
   </div>
 {% endmacro %}
 

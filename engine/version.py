@@ -3,6 +3,14 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**2.0.1 (10a-fix, 2026-10-27) makes the de-risk line's X the plain loan reduction.**
+``PricingRow.equity_added`` is the request less the row's loan amount (``-step``), not the
+difference in borrower equity, which netted off the interest and fee the smaller loan saves:
+Wichita's rows add $15,000 and $7,000, Denver's $19,000 and $10,000, and the line reads
+"Adding $19,000 of equity brings the rate to 13.63%." A row with no solved rate has no line,
+as before. Nothing else moves: the rates, the borrower's equity column, the row order and
+every other figure stand.
+
 **2.0.0 (10a-structures, 2026-10-27) collapses the products to two loan structures and
 shows the borrower's side in full.** ``Product`` is ``ACQUISITION`` ("100% at close", the
 old ``NO_DRAW``) and ``ACQUISITION_REHAB`` ("Holdback", the old ``SPLIT_DRAW``); both lend
@@ -210,4 +218,4 @@ REHAB_PORTION_EXCEEDS_BUDGET.
 
 from __future__ import annotations
 
-ENGINE_VERSION = "2.0.0"
+ENGINE_VERSION = "2.0.1"

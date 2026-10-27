@@ -29,7 +29,7 @@ from api.routes.queue import ASSUMPTION_NAMES, assumptions_form
 from config.config import Config
 from db.models import AuditLog, Deal, Underwrite
 from engine.underwrite import underwrite
-from schema.models import AuditAction, UnderwriteResult
+from schema.models import AuditAction, Product, ProductSource, UnderwriteResult
 from services import (
     ASSUMPTIONS,
     DEALS,
@@ -159,9 +159,11 @@ def test_the_panel_is_open_under_the_outputs_with_every_box_and_the_right_tag(
     # the ten config defaults and the formula split carry the tag, shown while untouched;
     # the fixture's 12% is its own since the default became 12.5% (engine 1.11.0)
     typed = ("closing_costs_usd", "holding_costs_pct_of_cost", "interest_rate")
-    for name in (*FLAT, "loan_purchase_portion", "loan_rehab_portion"):
+    for name in (*FLAT, "loan_rehab_portion"):
         assert tag(section, name) == ("hidden" if name in typed else "shown"), name
         assert f'data-reset="{name}"' in section, name
+    # the advance at closing is worked out from the rehab portion, not typed (v0.18)
+    assert 'name="loan_purchase_portion"' not in section
     # ...hidden on the two the team typed over, which show the team's number
     assert re.search(r'id="closing_costs_usd"[^>]*value="\$1,500"', section)
     assert re.search(r'id="holding_costs_pct_of_cost"[^>]*value="3%"', section)
@@ -390,7 +392,7 @@ def test_reset_all_restores_the_config_values_and_runs_again(
     assert priced.analyses is None  # there are no toggles to report (engine 2.0.0)
     # the page says every one is the default again
     section = panel(client, deal)
-    for name in (*FLAT, "loan_purchase_portion", "loan_rehab_portion"):
+    for name in (*FLAT, "loan_rehab_portion"):
         assert tag(section, name) == "shown", name
 
 
@@ -523,3 +525,91 @@ def test_the_underwrite_count_is_one_per_save_and_run(
         D("0.07"),
         D("0.075"),
     ]
+
+
+# --- the loan structure on the panel (SPEC §3, §8.1, v0.18) ---------------------------------------
+
+
+def test_the_panel_carries_the_team_form_s_structure_radio_and_rehab_portion(
+    client: QueueClient, db_session: Session, team_entry: dict[str, Any]
+) -> None:
+    """No Advance at Closing box: the radio, checked at the deal's structure, and the Rehab
+    portion pre-filled with its default, tagged and resettable."""
+    deal = store_deal(db_session, team_entry)  # an inferred holdback, 147,000 / 48,000
+    section = panel(client, deal)
+    assert '<div class="grid2 structure">' in section
+    assert 'role="radiogroup" aria-label="Loan Structure"' in section
+    assert re.search(r'name="product" value="ACQUISITION_REHAB"\s+checked', section)
+    assert not re.search(r'name="product" value="ACQUISITION"\s+checked', section)
+    assert 'name="loan_purchase_portion"' not in section and "Advance at Closing" not in section
+    box = re.search(r'<div class="holdback-only">(.*?)</div>\s*</div>', section, re.S)
+    assert box is not None and "Rehab portion" in box.group(1)
+    assert re.search(r'id="loan_rehab_portion"[^>]*value="\$48,000"', box.group(1))
+    assert tag(section, "loan_rehab_portion") == "shown"
+    assert 'data-reset="loan_rehab_portion"' in box.group(1)
+
+
+def save_panel(client: QueueClient, deal: Deal, **changes: str) -> Any:
+    form = {name: value for name, value in assumptions_form(deal).items() if value}
+    form.update(changes)
+    form = {name: value for name, value in form.items() if value != ""}
+    return client.post(f"/queue/deals/{deal.id}/assumptions", data=form, follow_redirects=False)
+
+
+def test_a_typed_rehab_portion_on_the_panel_advances_the_rest(
+    client: QueueClient, db_session: Session, team_entry: dict[str, Any]
+) -> None:
+    deal = store_deal(db_session, team_entry)
+    response = save_panel(client, deal, loan_rehab_portion="$40,000")
+    assert response.status_code == 303, response.text
+    db_session.expire_all()
+    assert (deal.loan_purchase_portion, deal.loan_rehab_portion) == (
+        D("155000.00"),
+        D("40000.00"),
+    )
+    assert "loan_rehab_portion" not in deal.defaulted_fields
+    # the radio was posted as it stood: an inferred structure stays inferred
+    assert deal.product is Product.ACQUISITION_REHAB
+    assert deal.product_source is ProductSource.INFERRED
+    (saved,) = audit(db_session, deal, AuditAction.ASSUMPTIONS_SAVED)
+    assert saved.after is not None and "product" not in saved.after
+
+
+def test_100_pct_at_close_on_the_panel_drops_the_split_and_holdback_brings_the_default(
+    client: QueueClient, db_session: Session, team_entry: dict[str, Any]
+) -> None:
+    deal = store_deal(db_session, team_entry)
+    response = save_panel(client, deal, product="ACQUISITION")
+    assert response.status_code == 303, response.text
+    db_session.expire_all()
+    assert deal.product is Product.ACQUISITION and deal.product_source is ProductSource.ENTERED
+    assert (deal.loan_purchase_portion, deal.loan_rehab_portion) == (None, None)
+    section = panel(client, deal)
+    assert re.search(r'name="product" value="ACQUISITION"\s+checked', section)
+    assert re.search(r'id="loan_rehab_portion"[^>]*value=""', section)
+
+    response = save_panel(client, deal, product="ACQUISITION_REHAB")
+    assert response.status_code == 303, response.text
+    db_session.expire_all()
+    assert deal.product is Product.ACQUISITION_REHAB
+    assert (deal.loan_purchase_portion, deal.loan_rehab_portion) == (
+        D("147000.00"),
+        D("48000.00"),
+    )
+    assert {"loan_purchase_portion", "loan_rehab_portion"} <= set(deal.defaulted_fields)
+
+
+def test_a_rehab_portion_above_the_loan_is_refused_under_its_box_on_the_panel(
+    client: QueueClient, db_session: Session, team_entry: dict[str, Any]
+) -> None:
+    deal = store_deal(db_session, team_entry)
+    response = save_panel(client, deal, loan_rehab_portion="$250,000")
+    assert response.status_code == 422
+    assert re.search(
+        r'name="loan_rehab_portion".*?<span class="err" id="loan_rehab_portion-error">'
+        r"Rehab portion cannot be more than the Loan Amount\.</span>",
+        response.text,
+        re.S,
+    )
+    db_session.expire_all()
+    assert deal.loan_rehab_portion == D("48000.00")

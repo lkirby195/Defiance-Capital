@@ -378,8 +378,9 @@ def test_the_deal_page_tags_each_default_and_offers_a_reset(
         assert 'class="dflt">default</span>' in row.group(1), f"{label} is not tagged"
     closing = re.search(r"<dt>Closing Costs.*?</dt>\s*<dd>\$1,500\.00(.*?)</dd>", body, re.S)
     assert closing is not None and "default" not in closing.group(1)
-    # the override block: pre-filled, tagged, and resettable, the split boxes included
-    for name in ("interest_rate", "loan_purchase_portion", "loan_rehab_portion"):
+    # the override block: pre-filled, tagged, and resettable, the rehab portion included
+    # (the advance at closing has no box on the panel: it is the rest of the loan, v0.18)
+    for name in ("interest_rate", "loan_rehab_portion"):
         assert re.search(rf'id="{name}"[^>]*data-default="[^"]+"', body), name
         assert f'data-default-tag="{name}"' in body, name
         assert f'data-reset="{name}"' in body, name
@@ -404,4 +405,7 @@ def test_a_single_note_deal_shows_the_whole_loan_at_closing(
     body = client.get(f"/queue/deals/{deal.id}").text
     assert re.search(r"<dt>Advance at closing.*?</dt>\s*<dd>\$195,000\.00", body, re.S)
     assert re.search(r"<dt>Rehab portion.*?</dt>\s*<dd>\$0\.00", body, re.S)
-    assert 'name="loan_purchase_portion"' not in body, "no split box on a single-note loan"
+    assert 'name="loan_purchase_portion"' not in body, "no advance box on the panel at all"
+    # the Rehab portion box is there behind the radio, empty: 100% at close has no split
+    assert re.search(r'name="product" value="ACQUISITION"\s+checked', body)
+    assert re.search(r'id="loan_rehab_portion"[^>]*value=""', body)

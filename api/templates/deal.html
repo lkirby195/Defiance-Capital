@@ -520,7 +520,7 @@
   <h2>Underwriting Assumptions</h2>
   <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/assumptions">
     {{ csrf.field(csrf_token) }}
-    <div class="grid2">
+    <div class="grid2 structure">
       {{ fields.pct_box("interest_rate", "Interest Rate", form.interest_rate,
                         default=defaults.interest_rate) }}
       {{ fields.pct_box("origination_fee_pct", "Origination Fee", form.origination_fee_pct,
@@ -533,14 +533,12 @@
                         form.holding_costs_pct_of_cost,
                         default=defaults.holding_costs_pct_of_cost,
                         note=holding_costs_hint) }}
-      {% if economics.split_product %}
-        {{ fields.money_box("loan_purchase_portion", "Advance at Closing",
-                            form.loan_purchase_portion,
-                            default=defaults.get("loan_purchase_portion", "")) }}
-        {{ fields.money_box("loan_rehab_portion", "Rehab Portion",
-                            form.loan_rehab_portion,
-                            default=defaults.get("loan_rehab_portion", "")) }}
-      {% endif %}
+      {# The team form's own two controls (v0.18): the structure, and on a holdback the rehab
+         portion held back - the advance at closing is the rest of the loan, worked out on
+         the server (api/intake_form.with_advance). #}
+      {{ fields.product_radio("product", "Loan Structure", enums.product, form.product) }}
+      {{ fields.holdback_box("loan_rehab_portion", "Rehab portion", form.loan_rehab_portion,
+                             default=defaults.get("loan_rehab_portion", ""), pin=false) }}
       {{ fields.money_box("estimated_sale_price_team", "Estimated Sale Price",
                           form.estimated_sale_price_team) }}
       {{ fields.money_box("monthly_rent", "Monthly Rent", form.monthly_rent) }}

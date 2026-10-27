@@ -44,19 +44,20 @@ workbook and the CLI cannot word the same row three ways:
     A $140,000 loan at 14.37% returns $21,400 profit (28.2% cash-on-cash).
     A $150,000 loan exceeds max quoted rate (20.15% needed).
 
-**The de-risk line** (engine 2.0.0). Each row also carries the borrower's equity at its
-solved rate - the Flip Analysis's total deal cost less the loan amount, which needs no sale
-price - and every row but the request says what bringing that much more than the request
-does:
+**The de-risk line** (engine 2.0.0; X redefined in 2.0.1). Each row also carries the
+borrower's equity at its solved rate - the Flip Analysis's total deal cost less the loan
+amount, which needs no sale price - and every row but the request says what lending less
+does to the rate:
 
-    Adding $9,812 of equity brings the rate to 15.21%.
-    Adding $9,812 of equity brings the rate to 19.30%, above the 18% max quoted rate.
+    Adding $19,000 of equity brings the rate to 13.63%.
+    Adding $10,000 of equity brings the rate to 19.30%, above the 18% max quoted rate.
 
-The equity added is the row's equity less the requested row's, each at its own solved rate:
-lending $X less saves the borrower some interest and fee, so the equity rises by a little
-less than $X. A row without a solved rate - no loan, or no rate up to the ceiling - has no
-equity and no line, and neither does any row when the request itself has none. **The rows
-run most equity first**: the smallest loan at the top and the request at the bottom.
+X - ``equity_added`` - is the plain loan reduction against the requested row: the cash the
+borrower brings at closing in place of the loan, $19,000 on a row $19,000 below the request.
+(2.0.0 used the difference in borrower equity, which nets off the financing the smaller loan
+saves.) A row without a solved rate - no loan, or no rate up to the ceiling - has no line.
+**The rows run most equity first**: the smallest loan at the top and the request at the
+bottom. The borrower's thank-you page reads them the other way round (``services/indicative``).
 
 Pure: ``UnderwriteInputs``, the caps cell and a ``Config`` in, a ``PricingMatrix`` out.
 """
@@ -163,26 +164,22 @@ def derisk_sentence(equity_added: Decimal, rate: Decimal, max_quoted: Decimal) -
     return f"{line}."
 
 
-def with_equity(
-    rows: list[PricingRow], request_equity: Decimal | None, max_quoted: Decimal
-) -> list[PricingRow]:
-    """Each row's equity added over the request and its line, most equity first.
+def with_equity(rows: list[PricingRow], max_quoted: Decimal) -> list[PricingRow]:
+    """Each row's loan reduction against the request and its line, most equity first.
 
-    # SPEC §8.10. The requested row (step 0) gets no line - it adds nothing - and a row or a
-    request with no equity gets none either. The order is the smallest loan first: lending
-    less always means more equity, because the financing it saves is a fraction of the
-    reduction.
+    # SPEC §8.10. ``equity_added`` is the plain reduction - the request less the row's loan
+    amount, which is ``-step`` - so a row $19,000 below the request adds $19,000. The
+    requested row (step 0) gets no line - it adds nothing - and neither does a row with no
+    solved rate. The order is the smallest loan first: lending less always means more equity.
     """
     out: list[PricingRow] = []
     for row in rows:
         solved = row.interest_rate if row.interest_rate is not None else row.rate_needed
-        if row.is_request or row.borrower_equity is None or request_equity is None:
+        added = -row.step
+        if row.is_request or solved is None or added <= ZERO:
             out.append(row)
             continue
-        added = row.borrower_equity - request_equity
-        line = None
-        if solved is not None and added > ZERO:
-            line = derisk_sentence(added, solved, max_quoted)
+        line = derisk_sentence(added, solved, max_quoted)
         out.append(row.model_copy(update={"equity_added": added, "derisk": line}))
     return sorted(out, key=lambda row: row.loan_amount)
 
@@ -345,12 +342,10 @@ def pricing_matrix(
                 borrower_equity=equity,
             )
         )
-    requested = next((row for row in rows if row.is_request), None)
-    request_equity = requested.borrower_equity if requested is not None else None
     return PricingMatrix(
         target_lender_irr=target,
         borrower_status=status,
-        rows=with_equity(rows, request_equity, max_quoted),
+        rows=with_equity(rows, max_quoted),
         rate_precision=RATE_PRECISION,
         rate_ceiling=ceiling,
         max_quoted_rate=max_quoted,

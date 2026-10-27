@@ -10,6 +10,7 @@ sensitivity. The rules, all here so the route and the page cannot word them diff
                      ``system``) said Go or Conditional, and the ledger ran
     one row per      pricing step (SPEC §8.10) that quotes a rate: a row whose solved rate is
                      above ``pricing.max_quoted_rate``, or that nothing prices, is left out
+    the order        the request first, then each smaller loan, largest to smallest
     the columns      Loan amount and Rate always; Estimated profit and Yield (cash-on-cash)
                      only when the borrower gave a sale price, which is what the arrival
                      run's borrower side was evaluated on - otherwise a line asks for one
@@ -178,7 +179,12 @@ def deal_by_thanks_token(session: Session, token: str, now: datetime | None = No
 
 
 def indicative_terms(session: Session, deal: Deal) -> IndicativeTerms | None:
-    """What the thank-you page may show this borrower; None when nothing qualifies."""
+    """What the thank-you page may show this borrower; None when nothing qualifies.
+
+    The rows read the request first and then each smaller loan, largest to smallest (SPEC
+    §4.2) - the other way round from the team's Pricing section, which runs most equity
+    first (SPEC §8.10): a borrower is shown what they asked for before what less would cost.
+    """
     try:
         version = get_version(session, deal.id, ARRIVAL_VERSION)
     except VersionNotFound:
@@ -192,7 +198,9 @@ def indicative_terms(session: Session, deal: Deal) -> IndicativeTerms | None:
         return None
     matrix = results.underwrite.pricing
     with_profit = matrix.borrower_status is AnalysisStatus.EVALUATED
-    rows = [IndicativeRow.of(row, with_profit) for row in matrix.rows if row.cleared]
+    quoted = [row for row in matrix.rows if row.cleared]
+    quoted.sort(key=lambda row: (not row.is_request, -row.loan_amount))
+    rows = [IndicativeRow.of(row, with_profit) for row in quoted]
     if not rows:
         return None
     return IndicativeTerms(rows=rows, with_profit=with_profit)
