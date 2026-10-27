@@ -68,18 +68,14 @@
   {%- if note %}<span class="small muted">{{ note }}</span>{% endif -%}
 {% endmacro %}
 
-{# ``help`` is a definition behind a hover on the label - the one place the deal page keeps
-   a definition - rendered as a small (?) carrying a title, nothing visible until hovered. #}
-{% macro help_mark(text) %}{%- if text %} <span class="help" title="{{ text }}">?</span>{% endif -%}{% endmacro %}
+{% macro caption(name, text, required, mark="", default="", tagged=true) %}<label for="{{ name }}">{{ text }} {{ badge(required, mark) }}{{ default_tag(name, default, tagged) }}</label>{% endmacro %}
 
-{% macro caption(name, text, required, mark="", default="", help="", tagged=true) %}<label for="{{ name }}">{{ text }}{{ help_mark(help) }} {{ badge(required, mark) }}{{ default_tag(name, default, tagged) }}</label>{% endmacro %}
-
-{% macro text_box(name, text, value, required=false, kind="", mode="", maxlength=0, disabled=false, id="", mark="", readonly=false, mask="", default="", note="", help="") %}
+{% macro text_box(name, text, value, required=false, kind="", mode="", maxlength=0, disabled=false, id="", mark="", readonly=false, mask="", default="", note="") %}
   {#- ``id`` only where one page carries the same name twice: the three reason boxes in the
       action block all post ``reason`` and each needs a label of its own. -#}
   {% set box = id or name %}
   <div>
-    {{ caption(box, text, required, mark, default, help, tagged=(value == default)) }}
+    {{ caption(box, text, required, mark, default, tagged=(value == default)) }}
     <input id="{{ box }}" name="{{ name }}"
            {%- if kind %} type="{{ kind }}"{% endif %}
            {%- if mode %} inputmode="{{ mode }}"{% endif %}
@@ -98,27 +94,27 @@
   </div>
 {% endmacro %}
 
-{% macro money_box(name, text, value, required=false, mark="", default="", note="", help="") %}
+{% macro money_box(name, text, value, required=false, mark="", default="", note="") %}
   {{ text_box(name, text, value, required=required, mode="decimal", mark=mark, mask="money",
-              default=default, note=note, help=help) }}
+              default=default, note=note) }}
 {% endmacro %}
 
-{% macro pct_box(name, text, value, required=false, mark="", default="", note="", help="") %}
+{% macro pct_box(name, text, value, required=false, mark="", default="", note="") %}
   {#- The box holds a percent and the deal holds the fraction: a person types 12, the deal
       carries 0.12 (``schema/masks.py``). -#}
   {{ text_box(name, text, value, required=required, mode="decimal", mark=mark, mask="pct",
-              default=default, note=note, help=help) }}
+              default=default, note=note) }}
 {% endmacro %}
 
 {% macro phone_box(name, text, value, required=false) %}
   {{ text_box(name, text, value, required=required, mode="tel", mask="phone") }}
 {% endmacro %}
 
-{% macro months_box(name, text, value, required=false, mark="", default="", note="", help="") %}
+{% macro months_box(name, text, value, required=false, mark="", default="", note="") %}
   {#- A whole number of months, typed and shown bare: no mask, and the default tag still
       follows the box (the take-back's lost-interest months, SPEC §8.6). -#}
   {{ text_box(name, text, value, required=required, mode="numeric", mark=mark,
-              default=default, note=note, help=help) }}
+              default=default, note=note) }}
 {% endmacro %}
 
 {% macro text_area(name, text, required=false, maxlength=0) %}
@@ -153,15 +149,15 @@
   </select>
 {% endmacro %}
 
-{% macro enum_box(name, text, choices, chosen, required=false, help="") %}
+{% macro enum_box(name, text, choices, chosen, required=false) %}
   {#- The enums a person reads as words rather than as codes: the loan type, the loan
       purpose, and the court search's own outcome and matter codes (SPEC §3, §7.2, §8.1). -#}
-  {{ select_box(name, text, choices, chosen, required, "label", help=help) }}
+  {{ select_box(name, text, choices, chosen, required, "label") }}
 {% endmacro %}
 
-{% macro select_box(name, text, choices, chosen, required=false, labelled="", help="") %}
+{% macro select_box(name, text, choices, chosen, required=false, labelled="") %}
   <div>
-    {{ caption(name, text, required, help=help) }}
+    {{ caption(name, text, required) }}
     {{ bare_select(name, choices, chosen, required, labelled) }}
     {{ field_error(name) }}
   </div>
@@ -176,11 +172,10 @@
   {{ select_box(name, text, choices, chosen, required, "experience") }}
 {% endmacro %}
 
-{% macro product_box(name, text, choices, chosen, required=false, help="") %}
-  {#- The Loan Type box: the SPEC §3 products by their labels. The deal page keeps each
-      product's definition behind the (?) on the label; the team form prints none. -#}
+{% macro product_box(name, text, choices, chosen, required=false) %}
+  {#- The Loan Type box: the SPEC §3 products by their labels, and no definitions. -#}
   <div>
-    {{ caption(name, text, required, default="", help=help) }}
+    {{ caption(name, text, required, default="") }}
     {{ bare_select(name, choices, chosen, required, "label") }}
     {{ field_error(name) }}
   </div>
@@ -206,7 +201,7 @@
 
 {# --- the analysis toggles (SPEC §8.1) ----------------------------------------------------- #}
 
-{% macro toggle_box(name, text, chosen, note="", help="", default=false) %}
+{% macro toggle_box(name, text, chosen, note="", default=false) %}
   {#- An on/off toggle with the third state a select hid: Default is on when the sale price,
       or the rent, is on the deal and is what a deal nobody has touched carries; On and Off
       are a person overriding it in either direction. Radios rather than a select because the
@@ -218,7 +213,7 @@
   {% set on_default = chosen != "true" and chosen != "false" %}
   <div>
     {#- The caption points at the first radio, so the group reads as one labelled control. -#}
-    {{ caption(name, text, false, default=("default" if default else ""), help=help, tagged=on_default) }}
+    {{ caption(name, text, false, default=("default" if default else ""), tagged=on_default) }}
     <div class="toggle" role="group" aria-label="{{ text }}"{% if default %} data-toggle="{{ name }}"{% endif %}>
       <label><input id="{{ name }}" type="radio" name="{{ name }}" value=""
                     {% if on_default %}checked{% endif %}> Default</label>

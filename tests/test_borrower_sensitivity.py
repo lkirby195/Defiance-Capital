@@ -13,7 +13,10 @@ whole financing cost, and the rest of the flip's cost stack does not move with t
 
 The recorded values below were computed first by a standalone Decimal script (the same
 formulas, its own month-end dates and a bisection XIRR) and agree with the engine to the
-last digit; the in-test recomputation keeps them honest if the fixture moves.
+last digit; the in-test recomputation keeps them honest if the fixture moves. Engine 1.11.0
+took Wichita's own 12% off the columns, so the first column is 12.5%: its two cells were
+recomputed by the same standalone formulas (bottom 22,850 on 76,750; top 25,750 on 93,850),
+and the 17.5% cells, which did not move, still read as recorded.
 """
 
 from __future__ import annotations
@@ -66,9 +69,8 @@ def test_every_cell_agrees_with_the_arithmetic_written_out_by_hand() -> None:
         D(145000),
         D(150000),
     ]
-    assert table.rates == [
-        D(x) for x in ("0.12", "0.125", "0.135", "0.145", "0.155", "0.165", "0.175")
-    ]
+    # the config grid alone: Wichita's own 12% is not a column (engine 1.11.0)
+    assert table.rates == [D(x) for x in ("0.125", "0.135", "0.145", "0.155", "0.165", "0.175")]
     for row in table.rows:
         for cell in row.cells:
             profit, cash, coc = by_hand(row.loan_amount, cell.interest_rate)
@@ -81,23 +83,27 @@ def test_every_cell_agrees_with_the_arithmetic_written_out_by_hand() -> None:
 def test_the_recorded_values_from_the_independent_script() -> None:
     table = table_for(wichita_inputs())
     bottom, top = table.rows[-1], table.rows[0]
-    # the deal as it stands: the flip's own $23,600 on $76,000 of the borrower's cash
-    deal = table.deal_cell
-    assert deal is not None and deal is bottom.cells[0]
-    assert (deal.net_profit, deal.cash_invested) == (D("23600.00"), D("76000.00"))
-    assert round(deal.cash_on_cash or 0, 6) == D("0.310526")
+    # Wichita is priced at 12%, off the grid: no cell is the deal's
+    assert table.deal_cell is None
+    assert (bottom.cells[0].net_profit, bottom.cells[0].cash_invested) == (D(22850), D(76750))
+    assert round(bottom.cells[0].cash_on_cash or 0, 6) == D("0.297720")
     assert (bottom.cells[-1].net_profit, bottom.cells[-1].cash_invested) == (
         D(15350),
         D(84250),
     )
     assert round(bottom.cells[-1].cash_on_cash or 0, 6) == D("0.182196")
-    assert (top.cells[0].net_profit, top.cells[0].cash_invested) == (D(26400), D(93200))
-    assert round(top.cells[0].cash_on_cash or 0, 6) == D("0.283262")
+    assert (top.cells[0].net_profit, top.cells[0].cash_invested) == (D(25750), D(93850))
+    assert round(top.cells[0].cash_on_cash or 0, 6) == D("0.274374")
     assert round(top.cells[-1].cash_on_cash or 0, 6) == D("0.191829")
+    # at 12.5%, on the grid, the deal as it stands is that first bottom cell
+    on_grid = table_for(wichita_inputs(interest_rate="0.125"))
+    deal = on_grid.deal_cell
+    assert deal is not None and deal is on_grid.rows[-1].cells[0]
+    assert (deal.net_profit, deal.cash_invested) == (D(22850), D(76750))
 
 
 def test_the_deal_cell_is_the_flip_analysis_itself() -> None:
-    result = underwrite(wichita_inputs(), CONFIG)
+    result = underwrite(wichita_inputs(interest_rate="0.125"), CONFIG)
     assert result.borrower_sensitivity is not None
     cell = result.borrower_sensitivity.deal_cell
     assert cell is not None and cell.net_profit == result.flip.net_profit

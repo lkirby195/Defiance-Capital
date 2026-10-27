@@ -178,12 +178,6 @@
       color: var(--muted); background: var(--gray-bg); border-radius: 4px; padding: 0 5px;
       line-height: 16px; vertical-align: middle; white-space: nowrap;
     }
-    /* A definition behind a hover, where the page used to print it (deal.html). */
-    .help {
-      display: inline-block; width: 15px; height: 15px; line-height: 13px; text-align: center;
-      border: 1px solid var(--line-strong); border-radius: 50%; font-size: 10px; font-weight: 700;
-      color: var(--muted); cursor: help; vertical-align: middle; margin-left: 3px;
-    }
 
     /* --- tables ------------------------------------------------------------------------
        Every table on the site reads the same way: the column labels on a tinted subheader
@@ -248,10 +242,9 @@
     .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); margin-bottom: var(--s3); }
     .trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s3); margin-bottom: var(--s3); }
     .pair > section.panel, .trio > section.panel { margin: 0; min-width: 0; }
-    /* Two tables in one row: a notch smaller, and the reduction under its loan amount. */
+    /* Two tables in one row: a notch smaller. */
     .pair table { font-size: 12px; }
     .pair th, .pair td { padding: 6px; }
-    .sub { display: block; }
     .trio dl.facts.small { grid-template-columns: minmax(0, 1fr) max-content; }
     .trio dl.facts.small dd { text-align: right; }
     /* The headline figure on a stat card, and the quiet one when there is nothing to show. */
@@ -288,7 +281,6 @@
     details.panel.chart > summary::before { border-color: var(--primary-ink); }
     details.panel.chart[open] > summary { margin-bottom: 0; }
     .chart .count { color: inherit; opacity: .75; }
-    .chart > :is(.row, h2, h3, h4, summary) .help { color: inherit; border-color: rgba(255,255,255,.6); }
     .chart > :is(.row, h2, h3, h4, summary) .tag { background: rgba(255,255,255,.18); color: inherit; }
     /* Whatever sits in a chart beside its table keeps the card's own 16px inset. */
     .chart > p { margin: 0; padding: 10px var(--s3); }

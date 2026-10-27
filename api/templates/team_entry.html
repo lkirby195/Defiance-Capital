@@ -10,7 +10,9 @@
    Optional and nothing else, and a complaint sits in red under the box it is about. The
    §8.1 economics with a default, the loan split, the valuation, the rent, the analysis
    toggles and the court search are not here - they populate from the defaults when the deal
-   is stored and are edited on the deal page (api/intake_form.py). #}
+   is stored and are edited on the deal page (api/intake_form.py). The New Deal form adds one
+   box above the button, not part of the intake: what to call the version the deal arrives
+   with (SPEC §5); left blank, it is named for the deal. #}
 
 {% block content %}
 <h1>{{ heading }}</h1>
@@ -68,6 +70,12 @@
                          mode="numeric") }}
     </div>
   </section>
+
+  {% if new_deal %}
+    <div class="grid2">
+      {{ fields.text_box("version_name", "Version name", form.version_name, maxlength=100) }}
+    </div>
+  {% endif %}
 
   <div class="actions">
     <button type="submit">{{ submit_label }}</button>

@@ -13,7 +13,10 @@ in it and one line per problem, rather than Pydantic's own error document.
 The write takes an actor and records an ``audit_log`` row like every other service write, so
 a deal on the Home page can be traced to whoever typed it in. A deal stored complete is then
 screened and priced on the way in (``services/autorun.py``, SPEC §4.6), recorded as the
-system's own runs, so the page it redirects to opens on a verdict.
+system's own runs, so the page it redirects to opens on a verdict. That first version is named
+for the deal - ``Whitlock; 1412 S Trenton Ave, OK - Team`` - unless the New Deal form's
+optional Version name box says otherwise (SPEC §5); the box is not part of the intake, so it
+is read off the post before the form is and never reaches the stored payload.
 """
 
 from __future__ import annotations
@@ -28,8 +31,8 @@ from starlette.datastructures import FormData
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from api.forms import fields, is_form_post
-from api.intake_form import intake_record, read_form, redisplay_values
-from api.problems import FormProblems, at_top
+from api.intake_form import VERSION_NAME, intake_record, read_form, redisplay_values
+from api.problems import FormProblems, at_top, by_field
 from api.render import redirect
 from api.routes.queue import team_entry_page
 from api.security import PostedUser, require_csrf
@@ -37,7 +40,7 @@ from db.models import User
 from db.session import get_session
 from intake.parsers.team_form import TeamEntryForm
 from schema.models import IntakeRecord
-from services import AutoRun, auto_run, create_deal
+from services import AutoRun, arrival_name, auto_run, clean_name, create_deal
 
 # The form half of this route is a browser post like any other, so it is guarded like
 # one. A JSON caller signs in the same way and carries the same token.
@@ -46,16 +49,19 @@ router = APIRouter(prefix="/intake", tags=["intake"], dependencies=[Depends(requ
 SessionDep = Annotated[Session, Depends(get_session)]
 
 
-def store(session: Session, form: TeamEntryForm, actor: str) -> tuple[IntakeRecord, AutoRun]:
+def store(
+    session: Session, form: TeamEntryForm, actor: str, version_name: str | None = None
+) -> tuple[IntakeRecord, AutoRun]:
     """Normalize, persist, audit, run, commit. The same path for both content types.
 
     The record comes back carrying the status the deal ended in: a complete intake has been
     screened by the time this returns, and a JSON client that read ``NEW`` would be reading
-    the status the deal had for a moment nobody saw.
+    the status the deal had for a moment nobody saw. The arrival run is ``version_name``, else
+    named for the deal (``services/versions.arrival_name``).
     """
     record = intake_record(form)
     deal = create_deal(session, record, actor=actor)
-    run = auto_run(session, deal)
+    run = auto_run(session, deal, name=version_name or arrival_name(deal))
     session.commit()
     return record.model_copy(update={"status": deal.status}), run
 
@@ -97,7 +103,12 @@ def _from_form(
     typed ``$425,000`` gets ``$425,000`` back rather than the number it parsed to.
     """
     submitted = fields(posted)
+    typed = submitted.pop(VERSION_NAME, "")
     form, complaints = read_form(submitted)
+    try:
+        version_name = clean_name(typed)
+    except ValueError as exc:
+        form, complaints = None, complaints.merge(by_field({VERSION_NAME: [str(exc)]}))
 
     def back(problems: FormProblems) -> HTMLResponse:
         return team_entry_page(
@@ -107,15 +118,16 @@ def _from_form(
             heading="New Deal",
             submit_label="Create deal",
             back_url="",
-            form=redisplay_values(submitted),
+            form={**redisplay_values(submitted), VERSION_NAME: typed},
             complaints=problems,
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            new_deal=True,
         )
 
     if form is None:
         return back(complaints)
     try:
-        record, run = store(session, form, user.email)
+        record, run = store(session, form, user.email, version_name)
     except ValueError as exc:
         # The form validated and the stored shape did not: the normalizer infers a product
         # and the split is re-checked against that, and the database has rules of its own.

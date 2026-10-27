@@ -62,6 +62,7 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 from api.forms import FormDep, fields, rows
 from api.intake_form import (
     TEAM_ENTRY_NAMES,
+    VERSION_NAME,
     blank_form_values,
     deal_defaults,
     deal_holding_costs_hint,
@@ -156,8 +157,6 @@ router = APIRouter(tags=["queue"], dependencies=[Depends(require_csrf)])
 SessionDep = Annotated[Session, Depends(get_session)]
 
 HOME_PATH = "/queue"
-# The optional box beside Run Analysis and Save & Run: what to call the version it records.
-VERSION_NAME = "version_name"
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 # The hidden field a Home row's controls carry, so the action goes back to the list.
 RETURN_TO = "return_to"
@@ -577,12 +576,14 @@ def team_entry_page(
     form: dict[str, str],
     complaints: FormProblems,
     status_code: int = status.HTTP_200_OK,
+    new_deal: bool = False,
 ) -> HTMLResponse:
     """The team-entry form, blank or filled in, for whichever route is showing it.
 
     One renderer for four cases - the new deal, the edit, and each of them re-rendered with
     what a rejected submission was carrying - so the two forms cannot drift into asking for
-    different things.
+    different things. ``new_deal`` adds the one box an edit has no use for: the arrival
+    version's name (``api/intake_form.VERSION_NAME``).
     """
     return page(
         request,
@@ -594,8 +595,9 @@ def team_entry_page(
             "submit_label": submit_label,
             "back_url": back_url,
             # Every name the template renders, so a dropped blank is still a blank box.
-            "form": {**blank_form_values(), **form},
+            "form": {**blank_form_values(), VERSION_NAME: "", **form},
             "problems": complaints,
+            "new_deal": new_deal,
         },
         user=user,
         status_code=status_code,
@@ -614,6 +616,7 @@ def new_deal_page(request: Request, user: PageUser) -> HTMLResponse:
         back_url="",
         form={},
         complaints=NO_PROBLEMS,
+        new_deal=True,
     )
 
 

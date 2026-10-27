@@ -420,8 +420,8 @@ def _sheet_sensitivity(book: Workbook, result: UnderwriteResult) -> None:
 
     The rates across the top are numbers under a percent format and the loan amounts down
     the side are numbers under a currency format, like every other figure in the workbook,
-    so a reader can sort, chart or recompute from them. The shaded cell is the deal's own;
-    its rate is always one of the columns (SPEC §8.9).
+    so a reader can sort, chart or recompute from them. The columns are the config grid; the
+    shaded cell is the deal's own, when its rate is one of them (SPEC §8.9).
     """
     sheet = book.create_sheet("Lender Sensitivity")
     _title(sheet, "Lender Sensitivity — IRR by loan amount and annual rate")
@@ -441,8 +441,13 @@ def _sheet_sensitivity(book: Workbook, result: UnderwriteResult) -> None:
             "Every cell is the whole ledger laid out again at that loan amount and that annual "
             "rate, in the same caps cell (SPEC §8.9). Lending less comes off the advance at "
             "closing first; the rehab portion gives only once the advance is gone. The request "
-            f"is the bottom row; the deal's own rate ({grid.interest_rate:.1%}) is always a "
-            "column, and the shaded cell is the deal as it stands."
+            "is the bottom row; the shaded cell is the deal as it stands "
+            f"({grid.interest_rate:.1%})"
+            + (
+                "."
+                if grid.deal_cell is not None
+                else ", which is not a column; its IRR is the Return Overview's."
+            )
         ),
     )
     at = 4
@@ -477,8 +482,8 @@ def _sheet_borrower_sensitivity(book: Workbook, result: UnderwriteResult) -> Non
     """The borrower's profit, cash and cash-on-cash on the lender's grid.  # SPEC §8.9
 
     Three columns under each rate - Profit, Cash in, Cash-on-cash - so a reader can divide
-    the first by the second and get the third. The rows are the Lender Sensitivity's; the
-    shaded cells are the deal as it stands.
+    the first by the second and get the third. The rows and columns are the Lender
+    Sensitivity's; the shaded cells are the deal as it stands, when its rate is a column.
     """
     sheet = book.create_sheet("Borrower Sensitivity")
     _title(sheet, "Borrower Sensitivity — profit and cash-on-cash by loan amount and rate")

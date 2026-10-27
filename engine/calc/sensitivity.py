@@ -19,10 +19,11 @@ rehab portion give, dollar for dollar. A single-note product has no split and si
 lends less. A row whose reduced amount would be nothing at all - or whose commitment sizes
 to nothing - is left out rather than priced.
 
-The deal's own rate is always a column, inserted in rate order when it falls between two
-grid rates and not duplicated when it lands on one, so the deal's own cell - the request, at
-its actual rate - is always on the grid and marked: a reader finds the number they already
-know and reads outward from it.
+The columns are the config grid and nothing else, the same on every deal, so two deals'
+tables read side by side. The deal's own cell - the request, at its actual rate - is marked
+when that rate is one of the columns; a deal priced off the grid has no marked cell, and its
+own IRR is the Return Overview's. The default rate (``interest.default_annual_rate``) sits
+on the grid, so a deal nobody has re-priced is marked.
 
 Pure: ``UnderwriteInputs``, the caps cell and a ``Config`` in, a ``SensitivityTable`` out.
 """
@@ -51,13 +52,11 @@ from schema.models import (
 ZERO = Decimal(0)
 
 
-def rate_columns(config: Config, deal_rate: Decimal | None = None) -> list[Decimal]:
-    """The grid's rates, lowest first, with the deal's own rate among them.  # SPEC §8.9
+def rate_columns(config: Config) -> list[Decimal]:
+    """The grid's rates, lowest first.  # SPEC §8.9
 
-    Each grid column is ``rate_min + n x rate_step`` rather than a running sum, so the last
-    column is exactly the number the yaml names and not that number plus a rounding remainder.
-    ``deal_rate`` is inserted in rate order when it is not already a column; a rate that lands
-    on a grid rate is not written twice.
+    Each column is ``rate_min + n x rate_step`` rather than a running sum, so the last column
+    is exactly the number the yaml names and not that number plus a rounding remainder.
     """
     settings = config.sensitivity
     columns: list[Decimal] = []
@@ -65,9 +64,6 @@ def rate_columns(config: Config, deal_rate: Decimal | None = None) -> list[Decim
     while (rate := settings.rate_min + settings.rate_step * step) <= settings.rate_max:
         columns.append(rate)
         step += 1
-    if deal_rate is not None and deal_rate not in columns:
-        columns.append(deal_rate)
-        columns.sort()
     return columns
 
 
@@ -201,7 +197,7 @@ def sensitivity_table(
     does not depend on the rate, and the ledger once per cell, because it does.
     """
     grid = grid or Grid(inputs, tranche, tier, config)
-    rates = rate_columns(config, inputs.interest_rate)
+    rates = rate_columns(config)
     rows: list[SensitivityRow] = []
     for reduction in reductions(config):
         row = grid.row(reduction)

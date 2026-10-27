@@ -3,6 +3,17 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**1.11.0 (ui-deal, 2026-10-27) puts the default rate on the grid and takes the deal's rate
+off it.** ``interest.default_annual_rate`` is 12.5% where it was 12%, the sensitivity grid's
+first column, and the two sensitivity tables' columns are the config grid alone
+(``engine/calc/sensitivity.rate_columns``, 12.5% to 17.5% by 1%): the deal's own rate is no
+longer inserted, so a deal priced off the grid has no marked cell and its IRR is the Return
+Overview's. Every grid cell is unchanged; a deal on the default rate now prices its ledger at
+12.5%, and its own cell is the first column's bottom row. The pricing solve still starts its
+bracket from the grid and the deal's rate, and finds the same rates. Every fixture carries
+its own rate, so no fixture's ledger moves; Denver at 12% loses its inserted column and its
+marked cell (``tests/test_sensitivity.py``).
+
 **1.10.0 (Phase 8e, 2026-10-22) steps the pricing matrix by percent.** A row is a share of
 the request rather than a dollar change: ``pricing.loan_amount_pct_steps`` (placeholder 0,
 -5%, -10%) replaces ``pricing.loan_amount_steps``, and each stepped row's amount is the
@@ -174,4 +185,4 @@ REHAB_PORTION_EXCEEDS_BUDGET.
 
 from __future__ import annotations
 
-ENGINE_VERSION = "1.10.0"
+ENGINE_VERSION = "1.11.0"

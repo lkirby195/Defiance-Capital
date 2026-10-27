@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.14
+# GLENWOOD Underwriting Platform — SPEC v0.15
 
-Status: **v0.14**, 2026-10-22, engine `1.10.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.15**, 2026-10-27, engine `1.11.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.15** is the deal page cleared down and the default rate put on the grid. The header is the address, four chips - the borrower, the entity, "Loan Request: $X" and the IRR to two decimals (a Draft chip beside them only while the page shows a version that is not Working) - and the phone on the line under them; the loan type, the term, the verdict, the status, the Working chip, the entered/via line and the verdict line are gone from it, and so are the version facts beside the switcher (when, who, engine, chosen by a person), which the History keeps. Every (?) definition is gone from the page, every IRR on it is two decimals, the sensitivity rows show the dollar amount without the step under it, the line of run facts above the ledger is gone and the ledger is **Cash Flows**, and **What the ledger runs on** is gone: the Underwriting Assumptions panel is the one list of what the ledger runs on (§9, §9.2). The two sensitivity tables' columns are the config grid alone - the deal's own rate is no longer inserted - and `interest.default_annual_rate` is **12.5%**, the grid's first column, so a deal on the default has its cell marked and one priced off the grid has none (§8.1, §8.9, engine `1.11.0`; the workbook and the CLI follow). The version a deal **arrives with** is named for it: `{last name}; {street number} {street name}, {state} - Request` on a web deal, `... - Team` on a team one unless the New Deal form's new optional **Version name** box says otherwise; every later run keeps `v<n>` / `Auto v<n>` / a typed name (§5).
 
 **v0.14** steps the pricing matrix by percent and shows the borrower their indicative terms. The pricing rows are shares of the request - `pricing.loan_amount_pct_steps`, placeholder 0, -5%, -10% - each stepped row's amount rounded to the nearest `pricing.loan_amount_rounding` (placeholder $1,000), the request row never rounded, and each row labelled "Requested", "-5%", "-10%" (§8.10, engine `1.10.0`); the loader refuses the old dollar steps by name. A web submission is sent to `/apply/thanks/<token>`, a random link live for `web_intake.thanks_token_hours` (placeholder 24), and that page shows one table, **Indicative terms** - the quoted pricing rows' loan amount and rate, with the estimated profit and the cash-on-cash yield beside them when the borrower gave a sale price - under the required disclaimer, only when the arrival run said Go or Conditional, with rows above the maximum quoted rate left out and the plain thank-you when nothing qualifies. Nothing else of the analysis is shown. What was shown is recorded on the deal (`indicative_terms_shown`, migration `0020`) and printed on the deal page under Pricing as "Shown to borrower" (§4.2, §5).
 
@@ -98,8 +100,8 @@ is on the deal: the Flip analysis is on when there is an estimated sale price to
 Rental analysis is on when there is a monthly rent to carry a loan with, and the Take-Back
 analysis runs on every deal. A toggle set by hand wins over its default either way.
 
-Each product's row above is shown behind the (?) on the Loan Type label on the deal page, so a
-person reading one is told what it is; the team form prints the labels and nothing else.
+Each product's row above is its definition in `schema/labels.py`; neither the deal page nor
+the team form prints it (v0.15 took the deal page's (?) off), only the label.
 Every enum a person reads — the loan type and the loan purpose — is rendered in title case
 with spaces (`SPLIT_DRAW` is "Split Draw") wherever it appears (`schema/labels.py`); the
 stored value does not change.
@@ -174,7 +176,7 @@ and, when the arrival run allows it, shows one table titled **Indicative terms**
 pricing step (§8.10) that quotes a rate: Loan amount, Rate, Estimated profit, Yield
 (cash-on-cash). The rules:
 
-- shown only when the automatic screen on arrival (`Auto v1`) said Go or Conditional, and the
+- shown only when the automatic screen on arrival (version 1) said Go or Conditional, and the
   ledger ran; a Decline, an incomplete intake and a run that stood down show the plain page
 - a row whose solved rate is above `pricing.max_quoted_rate` is left out, as is one nothing
   prices; when no row qualifies, the plain page
@@ -392,6 +394,19 @@ Working**, and a partial unique index refuses a second Working row. Who holds th
 | a person's run (Run Analysis, Save & Run, Reset all, Restore inputs) | a draft |
 | Mark as Working | Working, and human-selected |
 
+**Names** (v0.15). A person's run is the name they typed beside Run Analysis or Save & Run,
+else `v<number>`; an automatic run is `Auto v<number>`. The one exception is the run a deal
+**arrives with** on the web or the team channel, which is named for the deal:
+`{last name}; {street number} {street name}, {state} - Request` on a `WEB` deal and
+`... - Team` on a `TEAM` one (`Whitlock; 1412 S Trenton Ave, OK - Team`). The last name is
+the last word of the borrower's full name, the street is the address line up to its first
+comma, and the state is the two-letter code; a piece the deal does not have is left out (a
+state outside OK and CO has no code stored), the street is shortened to keep the name
+within 100 characters, and a deal with neither a name nor an address is `Auto v1`. The New
+Deal form has an optional **Version name** box above its button; what is typed there names
+the arrival version instead. Either way the arrival version is the system's run and is not
+human-selected. The other channels keep `Auto v1`.
+
 A version is **human-selected** (`versions.human_selected`, migration `0019`) when the person
 who ran it typed its name, or a person marked it Working - marking the version already
 Working records the choice too. A choice somebody made is not overwritten by the run after
@@ -604,7 +619,7 @@ Descriptive: captured, stored on `properties`, and reported. None of them feeds 
 | `rehab_costs` | — | 0 allowed |
 | `loan_requested` | — | Labelled **Loan Amount** wherever it is shown |
 | `loan_purchase_portion`, `loan_rehab_portion` | the §8.2 formula, on a split product | §8.2; `commitment` is their sum. The first is labelled **Advance at Closing**, the second **Rehab Portion**. Nothing on `NO_DRAW` and `WHOLETAIL`: one advance, the whole loan |
-| `interest_rate` | `interest.default_annual_rate` (12%, placeholder) | Annual. **Required to underwrite**; the default stands until the team enters the deal's own rate |
+| `interest_rate` | `interest.default_annual_rate` (12.5%, placeholder; the sensitivity grid's first column) | Annual. **Required to underwrite**; the default stands until the team enters the deal's own rate |
 | `contingency_pct` | `fees.contingency_default_pct` (0.00) | `rehab_adj = rehab_costs × (1 + contingency_pct)` |
 | `closing_costs_usd` | `fees.closing_costs_default_usd` (1,000) | The lender's closing costs. It replaces the 3%-of-price borrower closing assumption, which is gone |
 | `holding_costs_pct_of_cost` | `fees.holding_costs_default_pct_of_cost` (2%) | A **percentage of `purchase_price` + `rehab_costs`**, over the whole hold. The dollar figure is that percentage of that cost and is computed, never entered: `holding_costs_total = (purchase_price + rehab_costs) × holding_costs_pct_of_cost`, shown beside the box and everywhere holding costs appear. The monthly figure is `holding_costs_total / term_months` as a decimal (below) |
@@ -964,16 +979,18 @@ that rate, and the cell is its XIRR. Nothing is interpolated.
 rows     the request on the bottom row, then sensitivity.loan_steps rows above it,
          each sensitivity.loan_step_usd less (placeholders: 4 x $5,000, so -$20,000 .. request)
 columns  sensitivity.rate_min .. rate_max in rate_step steps (placeholders: 12.5% .. 17.5% by 1%),
-         plus the deal's own rate, inserted in rate order when it falls between two grid rates
+         and nothing else
 ```
 
 **A reduction comes off the advance at closing**; the rehab portion is what the work costs
 and is unchanged until the advance reaches zero, after which it gives dollar for dollar.
 A single-note product simply lends less. A row whose reduced amount is nothing at all, or
-whose commitment sizes to nothing, is left out. The deal's own rate is always a column - not
-written twice when it lands on a grid rate - so the deal's own cell, the request at its
-actual rate, is always on the grid and marked, and reproduces the Return Overview's IRR
-exactly.
+whose commitment sizes to nothing, is left out. The columns are the grid on every deal
+(v0.15; v0.8 to v0.14 inserted the deal's own rate): when the deal's rate is one of them,
+the deal's own cell - the request at its actual rate - is marked and reproduces the Return
+Overview's IRR exactly; when it is not, no cell is marked. The default rate is the grid's
+first column. The page shows each row's loan amount alone; the workbook keeps a "Less than
+request" column beside it.
 
 **Borrower Sensitivity** sits directly under it on the deal page and is the `Borrower
 Sensitivity` sheet: the same rows, the same columns, the same rows left out, and in each cell
@@ -1053,14 +1070,15 @@ The first three are the §8.1 input groups, shown back as the run read them; the
 result. The CLI report and the workbook show all of it. The deal page shows every section but
 the Flags - the flags, the screen's reasons and the suggested reply stay on the stored rows,
 the CLI and the workbook - and puts the outputs first. Its header is the address, one row of
-chips (borrower, loan type, loan amount, term, verdict, IRR) and the verdict line - the
-version, who ran it, when, on which engine - with the controls on the right: the version
-switcher, the one **Run Analysis** button with its optional name, Download Excel and Edit
-Intake. Then Pricing, full width; the Lender and Borrower Sensitivity side by side; Flip,
+chips - the borrower, the entity (when there is one), "Loan Request: $X" and the IRR to two
+decimals - and the phone under them, with the controls on the right: the version switcher,
+the one **Run Analysis** button with its optional name, Download Excel and Edit Intake. The
+loan type and the term are in the intake summary below and the verdict in the History;
+when a version ran, who ran it and on which engine are in the History too. Then Pricing, full width; the Lender and Borrower Sensitivity side by side; Flip,
 Rental and Take-Back as three cards, each led by its headline figure (net profit, DSCR, DSCR
 at loan cost; "Not evaluated" is a state, not an error); and the Return Overview as one line
 (IRR, total interest, total fees, total profit, payoff date) with the ledger collapsed under
-it. Under the outputs, open, sits the **Underwriting Assumptions** panel:
+it as **Cash Flows**. Under the outputs, open, sits the **Underwriting Assumptions** panel:
 two columns of editable boxes - Interest Rate, Origination Fee, Contingency, Closing Costs,
 Holding Costs %, Advance at Closing, Rehab Portion (the last two on a split product),
 Estimated Sale Price, Monthly Rent, Broker Selling Costs %, Rental Expense %, Rental Takeout
@@ -1072,8 +1090,7 @@ beside it, which confirms on a page of its own, puts every box with a default ba
 runs again. Under the panel the intake is a read-only summary - **Deal Economics and
 Property**: Overview, Property Overview and Deal Economics side by side with an Edit Intake
 link, the sizing table against the caps and the score components - and below it the rest:
-**What the ledger runs on** (collapsed; the readiness checklist), **Actions**, the **court and
-filing search** (collapsed; the outcome, the date and the typed matters, its own Save), and
+**Actions**, the **court and filing search** (collapsed; the outcome, the date and the typed matters, its own Save), and
 **History** (collapsed;
 every version with its name, timestamp, actor, Working or Draft and engine version, a View on
 each; every intake edit no version has run on as an "edit" row with a Restore; and the audit
@@ -1081,9 +1098,9 @@ trail under it). The page names no engine stage; the two it runs are an implemen
 
 **Versions on the page** (§5). Every result on the page - the verdict line, the score
 components, and every output section - is one version's: the
-**Working** one unless `?version=<number>` asks for another. The header names the Working
-version ("Working: v3") and carries a **Draft** badge whenever the page is showing a
-different one. In the header, on the right, sits the **version switcher**: a dropdown of every version (name, Working or
+**Working** one unless `?version=<number>` asks for another. The switcher names the
+Working version ("v3 · Working") and the header carries a **Draft** chip whenever the page
+is showing a different one. In the header, on the right, sits the **version switcher**: a dropdown of every version (name, Working or
 Draft, when, who) with a Show button - a plain GET form, no script - and, for the version
 shown, **Mark as Working** (when it is not already; audited `VERSION_MARKED_WORKING`) and
 **Restore inputs**. Restore inputs loads the version's snapshot back into the deal - its
@@ -1092,10 +1109,10 @@ put back and the deal re-pointed at the borrower and property it had (`VERSION_R
 and runs a new version on it as the person who pressed it; it is refused where an edit is
 refused (§4.6) and on a backfilled version, which kept no inputs. Run Analysis and Save &
 Run each take an optional **Version name** (at most 100 characters); a person's unnamed run
-is `v<number>` and an automatic run `Auto v<number>`. A run lands on the version it recorded,
+is `v<number>` and an automatic run `Auto v<number>`, but for the arrival version, which is
+named for the deal (§5). A run lands on the version it recorded,
 so the person sees what they ran - Working or a draft by the §5 rule - and the notice ends
-"Saved as v4 (draft)." The version facts say whether it was **chosen by a person**. A shown
-version is read-only: the panel above it is the deal's current inputs, which the next run
+"Saved as v4 (draft)." A shown version is read-only: the panel above it is the deal's current inputs, which the next run
 reads.
 
 **Download Excel** sits in the switcher's row, after Show, and exports the version in view -
@@ -1106,10 +1123,10 @@ and the version's name each reduced to letters, digits and dashes
 version whose ledger did not run has no workbook: the button is off, and the route goes back
 to the version saying so.
 
-**The deal page is labels and values only.** No explanatory sub-line, parenthetical or inline
-definition beside a value; where a definition is still useful it sits behind a small (?) on
-the label, as a hover title, and nothing is visible until hovered. A value that is a default
-carries the "default" tag (§8.1). A web deal's provenance reads "Source: <slug>" and "How
+**The deal page is labels and values only.** No explanatory sub-line, parenthetical, inline
+definition or (?) hover beside a value or a label (v0.15 took the last (?) off). Every IRR
+on it is two decimals of a percent. A value that is a default carries the "default" tag
+(§8.1). A web deal's provenance reads "Source: <slug>" and "How
 they heard of us: <text>" (§4.2).
 
 ### 9.1 Screen summary
@@ -1140,7 +1157,7 @@ flag's severity. The stored value is untouched — an `<option>` still posts `BA
 and a flag tag is still styled by its code — only the words change.
 
 ### 9.2 Readiness checklist
-In the collapsed **What the ledger runs on** section, one row per §8.1 input - the five analysis assumptions included - with the value in force, where it came from (`ADAPTER` / `TEAM` / `BORROWER` / `DEFAULT` / `MISSING`, shown as words), and whether the run needs it; what the run does with or without it sits behind the (?) on the row's label. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months`, shown as months and, where there is one, the stub days after them), and the loan split on a split product. **A `DEFAULT` counts as present**: the rate, the closing date and the split always have one (§8.1, §8.2), so the one that can turn the ledger off is the term; readiness never blocks on the closing date. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
+One row per §8.1 input - the five analysis assumptions included - with the value in force, where it came from (`ADAPTER` / `TEAM` / `BORROWER` / `DEFAULT` / `MISSING`), whether the run needs it and what the run does with or without it (`services/readiness.py`). The deal page no longer prints it as a section (v0.15): the Underwriting Assumptions panel is the one list of what the ledger runs on, and the banner over the outputs names what is missing while the ledger is off. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months`, shown as months and, where there is one, the stub days after them), and the loan split on a split product. **A `DEFAULT` counts as present**: the rate, the closing date and the split always have one (§8.1, §8.2), so the one that can turn the ledger off is the term; readiness never blocks on the closing date. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
 
 ### 9.3 Credit memo
 Generated from `UnderwriteResult` into GLENWOOD's template (to be supplied; docx). Sections: borrower, property, deal structure, sizing vs caps, the return overview (ledger and IRR), flip, rental, take-back, flags with pass/fail, recommendation. Every flag shows the threshold it was tested against.
@@ -1194,7 +1211,7 @@ workbook to export.
   - `holding_costs_default_pct_of_cost` (2%) — the default for `holding_costs_pct_of_cost`, itself a percentage of `purchase_price + rehab_costs` over the whole hold (§8.1)
   - `broker_selling_pct` (4%) — the flip's cost of selling; not an input
 - `draws.listing_months` (3): `rehab_months = term_months − listing_months`, whole periods only
-- `interest.default_annual_rate` (12%, placeholder): the **default for `interest_rate`** (§8.1), populated on every deal until the team enters its own
+- `interest.default_annual_rate` (12.5%, placeholder; the sensitivity grid's first column): the **default for `interest_rate`** (§8.1), populated on every deal until the team enters its own
 - `interest.day_count_basis` (30): the days a whole monthly period counts as, for the final stub period's prorated interest (§8.3)
 - `closing.default_lead_days` (14): the **default for `closing_date`** (§8.1) is the last day of the month this many days after the deal came in
 - sensitivity (§8.9): `loan_step_usd` (5,000), `loan_steps` (4), `rate_min` (12.5%), `rate_max` (17.5%), `rate_step` (1%) - the shape of the IRR grid; every cell is a ledger re-run
@@ -1369,7 +1386,7 @@ the deal's own phoneless row rather than minting another.
   `usted` register and pending native-speaker review
 - The public form's rate limit (`web_intake.submissions_per_hour_per_ip`, placeholder 5) and
   whether the count should survive a restart
-- `interest.default_annual_rate`, placeholder 12%: the rate every deal is priced at until the
+- `interest.default_annual_rate`, placeholder 12.5% (12% until v0.15): the rate every deal is priced at until the
   team enters one. Two edges of the default rule to confirm: a typed value equal to the
   default reads as the default, and a stored default keeps its number if the config default
   later changes (the deal says `DEFAULT` with the old number; the reset link offers the new)
@@ -1401,7 +1418,7 @@ the deal's own phoneless row rather than minting another.
   can say what it needs. Rounding is half-up and capped at the request, so a share too small
   to survive the unit prices as the request again; confirm half-up is the rounding wanted
 - The thank-you page's indicative terms (v0.14, §4.2): `web_intake.thanks_token_hours` is a
-  24-hour placeholder; the results shown are the arrival run's (`Auto v1`), never a later
+  24-hour placeholder; the results shown are the arrival run's (version 1), never a later
   version's, so a team edit inside the window does not reach the borrower; a Conditional
   screen shows the table exactly as a Go does; the yield shown is the borrower's cash-on-cash
   as §8.9 defines it; the Spanish strings are pending the same native-speaker review as the

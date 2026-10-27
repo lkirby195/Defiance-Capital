@@ -76,12 +76,12 @@ def test_the_page_has_one_button_and_names_no_stage(
         "Not underwritten yet",
     ):
         assert gone not in body, gone
-    assert "Not analyzed yet." in body
+    assert "No versions yet" in body and "No analysis yet." in body
     # the assumptions panel is open; the collapsed sections are plain <details>, closed
-    # until clicked
+    # until clicked; the readiness checklist is not one of them any more (the panel is)
     assert '<section class="panel" id="assumptions">' in body
     assert '<details class="panel" id="court">' in body
-    assert '<details class="panel chart" id="readiness">' in body
+    assert 'id="readiness"' not in body
     assert '<details class="panel" id="history">' in body
     assert 'id="inputs"' not in body
     assert "<script" not in body.split("</header>", 1)[1].split("<!-- masks", 1)[0] or True
@@ -102,14 +102,14 @@ def test_run_analysis_runs_both_as_the_person_and_reloads_on_the_result(
     assert deal is not None and deal.status is Status.UNDERWRITING
 
     body = client.get(f"/queue/deals/{deal.id}").text
-    assert "Verdict <strong>Go</strong>" in body
-    assert "· IRR <strong>" in body
+    assert 'data-chip="irr">IRR <strong>' in body and "IRR <strong>—</strong>" not in body
+    assert '<span class="tag GO">Go</span>' in body[body.index('id="history"') :]
     assert "Scored as" in body and "Leverage against caps" in body
     assert body.index("<h2>Pricing") < body.index("<h2>Lender Sensitivity")
     assert body.index("<h2>Lender Sensitivity") < body.index("<h2>Borrower Sensitivity")
     assert body.index("<h2>Borrower Sensitivity") < body.index("<h2>Flip Analysis")
     assert body.index("<h2>Take-Back Analysis") < body.index("<h2>Return Overview")
-    assert "Not analyzed yet." not in body
+    assert "IRR <strong>—</strong>" not in body
 
 
 def test_a_row_above_the_max_quote_says_what_it_needs_on_the_page(
@@ -155,9 +155,11 @@ def test_the_page_shows_the_borrower_sensitivity_and_the_pricing_rows(
     assert result.borrower_sensitivity is not None and result.pricing is not None
     borrower = body[body.index('<section class="panel chart" id="borrower-sensitivity">') :]
     borrower = borrower[: borrower.index("</section>")]
-    assert borrower.count("grid-cell hit") == 1
-    deal_cell = result.borrower_sensitivity.deal_cell
-    assert deal_cell is not None and money(deal_cell.net_profit) in borrower
+    # the deal is priced at 13%, off the grid: no cell is marked, every cell is on the page
+    assert "grid-cell hit" not in borrower and result.borrower_sensitivity.deal_cell is None
+    for row in result.borrower_sensitivity.rows:
+        for cell in row.cells:
+            assert money(cell.net_profit) in borrower
     pricing = body[body.index('<section class="panel chart" id="pricing">') :]
     pricing = pricing[: pricing.index("</section>")]
     assert "Target lender IRR" in pricing
@@ -196,7 +198,8 @@ def test_run_analysis_says_what_stood_down_and_keeps_what_ran(
     response = run(client, deal_with_overrides)
     assert response.status_code == 422
     assert "The ledger did not run: it still needs deal.term_months" in response.text
-    assert "Verdict <strong>Go</strong>" in response.text, "the verdict was kept"
+    history = response.text[response.text.index('id="history"') :]
+    assert '<span class="tag GO">Go</span>' in history, "the verdict was kept"
     assert count(db_session, Screen) == 1 and count(db_session, Underwrite) == 0
     db_session.expire_all()
     deal = db_session.get(Deal, deal_with_overrides.id)

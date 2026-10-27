@@ -248,7 +248,9 @@ def pricing_matrix(
     underwrite and lower only where a test wants a row nothing prices.
     """
     grid = grid or Grid(inputs, tranche, tier, config)
-    seeds = rate_columns(config, inputs.interest_rate)
+    # The grid's columns and the deal's own rate, the bracket the solve has always started
+    # from; the rate it finds does not depend on the seeds, only how many ledgers it lays out.
+    seeds = [*rate_columns(config), inputs.interest_rate]
     target = config.pricing.target_lender_irr
     status = borrower_status(inputs, flip_on)
     rows: list[PricingRow] = []

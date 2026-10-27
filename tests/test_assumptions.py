@@ -156,8 +156,9 @@ def test_the_panel_is_open_under_the_outputs_with_every_box_and_the_right_tag(
     assert '<div class="grid2">' in section
     for name in ASSUMPTION_NAMES:
         assert f'name="{name}"' in section, name
-    # the ten config defaults and the formula split carry the tag, shown while untouched
-    typed = ("closing_costs_usd", "holding_costs_pct_of_cost")
+    # the ten config defaults and the formula split carry the tag, shown while untouched;
+    # the fixture's 12% is its own since the default became 12.5% (engine 1.11.0)
+    typed = ("closing_costs_usd", "holding_costs_pct_of_cost", "interest_rate")
     for name in (*FLAT, "loan_purchase_portion", "loan_rehab_portion"):
         assert tag(section, name) == ("hidden" if name in typed else "shown"), name
         assert f'data-reset="{name}"' in section, name
@@ -349,7 +350,7 @@ def test_reset_all_restores_the_config_values_and_runs_again(
     assert 'name="confirm" value="yes"' in page.text
     for label in ("Interest Rate", "Rental Takeout Rate", "Take-Back Lost Interest Months"):
         assert label in page.text, label
-    assert "14%" in page.text and "12%" in page.text  # now, and the default
+    assert "14%" in page.text and "12.5%" in page.text  # now, and the default
 
     # a post without the confirmation is the page again, and nothing moves
     refused = client.post(f"/queue/deals/{deal.id}/assumptions/reset", data={})

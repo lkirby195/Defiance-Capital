@@ -38,6 +38,11 @@ follows the next edit, and an unchosen Working version is, so the page and Home 
 the inputs until somebody picks one to hold. The deal page and Home show the Working version
 unless a person asks for another.
 
+**The arrival version is named for the deal**: the automatic run a web or team deal arrives
+with is ``Whitlock; 1412 S Trenton Ave, OK - Request`` on the web and ``... - Team`` from the
+New Deal form, unless the person filling that form in typed a version name (``arrival_name``).
+Every later run keeps the ``v<n>`` / ``Auto v<n>`` / typed-name rule.
+
 Every write here takes an actor and writes an ``audit_log`` row - ``VERSION_RECORDED``,
 ``VERSION_MARKED_WORKING``, ``VERSION_RESTORED`` - and nothing commits.
 """
@@ -60,6 +65,7 @@ from schema.models import (
     Channel,
     ScreenInputs,
     ScreenResult,
+    State,
     UnderwriteInputs,
     UnderwriteResult,
 )
@@ -280,6 +286,41 @@ def default_name(number: int, auto: bool) -> str:
     return f"Auto v{number}" if auto else f"v{number}"
 
 
+# What the arrival version's name ends in, by the channel the deal came in on (SPEC §5).
+ARRIVAL_SUFFIX: dict[Channel, str] = {Channel.WEB: "Request", Channel.TEAM: "Team"}
+
+
+def arrival_name(deal: Deal) -> str | None:
+    """``Whitlock; 1412 S Trenton Ave, OK - Request``: the run a deal arrives with.  # SPEC §5
+
+    The borrower's last name (the last word of the full name), the address line (the street
+    number and name: everything before the first comma), the state's two-letter code, and
+    ``Request`` on a web deal or ``Team`` on a team one. A piece the deal does not have is
+    left out - a state outside OK and CO has no code stored - and the street is shortened
+    when the whole would be longer than a name may be. None on any other channel, or when
+    there is neither a name nor an address to go on; the run is then ``Auto v1``.
+    """
+    suffix = ARRIVAL_SUFFIX.get(deal.channel)
+    if suffix is None:
+        return None
+    words = ((deal.borrower.name if deal.borrower else None) or "").split()
+    last = words[-1] if words else ""
+    prop = deal.property
+    street = " ".join(((prop.address_raw if prop else None) or "").split(",")[0].split())
+    state = prop.state.value if prop and prop.state in (State.OK, State.CO) else ""
+    if not (last or street):
+        return None
+
+    def compose(street: str) -> str:
+        place = ", ".join(part for part in (street, state) if part)
+        return "; ".join(part for part in (last, place) if part) + f" - {suffix}"
+
+    excess = len(compose(street)) - NAME_MAX
+    if excess > 0:
+        street = street[: max(len(street) - excess, 0)].rstrip()
+    return compose(street)[:NAME_MAX]
+
+
 def record_version(
     session: Session,
     deal: Deal,
@@ -295,15 +336,18 @@ def record_version(
 
     Working when the deal has no Working version yet, or when ``auto`` and the Working
     version is not human-selected - the mark then moves, flushed off the old one before it
-    goes on the new. A person's typed name makes the version human-selected. The deal row is
-    locked for the numbering, so two runs on one deal at once take numbers one after the
-    other rather than the same one. Flushes; no commit.
+    goes on the new. A person's typed name makes the version human-selected. An automatic run
+    takes ``name`` too - the arrival version's (``arrival_name``, or the one typed on the New
+    Deal form) - and stays unchosen: nobody pressed a button for it. The deal row is locked
+    for the numbering, so two runs on one deal at once take numbers one after the other
+    rather than the same one. Flushes; no commit.
     """
     session.execute(select(Deal.id).where(Deal.id == deal.id).with_for_update())
     number = (
         session.scalar(select(func.max(Version.number)).where(Version.deal_id == deal.id)) or 0
     ) + 1
-    typed = None if auto else clean_name(name)
+    given = clean_name(name)
+    typed = None if auto else given
     current = working_version(session, deal.id)
     working = current is None or (auto and not current.human_selected)
     replaced = current if working and current is not None else None
@@ -313,7 +357,7 @@ def record_version(
     version = Version(
         deal_id=deal.id,
         number=number,
-        name=typed or default_name(number, auto),
+        name=given or default_name(number, auto),
         actor=actor,
         engine_version=screen.engine_version,
         config_hash=screen.config_hash,

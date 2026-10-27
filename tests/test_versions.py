@@ -16,7 +16,6 @@ latest run, the History list, and the CLI's ``--version``.
 from __future__ import annotations
 
 import json
-import re
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
@@ -35,6 +34,7 @@ from api.intake_form import intake_form_values
 from api.routes.queue import workbook_filename
 from cli.main import main
 from db.models import AuditLog, Deal, Property, Version
+from engine.version import ENGINE_VERSION
 from schema.models import AuditAction, State, Status
 from services import (
     DEALS,
@@ -58,6 +58,9 @@ pytestmark = requires_db
 
 D = Decimal
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures/synthetic/deals"
+# The version the team-entry fixture arrives with off the New Deal form (SPEC §5): the
+# borrower's last name, the street, the state and "Team" (``tests/test_version_names.py``).
+ARRIVAL = "Ortiz; 3320 Meade St, CO - Team"
 
 
 def notice(response: Any) -> str:
@@ -109,11 +112,11 @@ def audit(session: Session, deal_id: UUID, action: AuditAction) -> list[AuditLog
 def test_naming_defaults_auto_and_typed(
     client: QueueClient, db_session: Session, team_entry: dict[str, Any]
 ) -> None:
-    """``Auto v1`` on arrival, ``v2`` unnamed, a typed name trimmed, ``v4`` unnamed again."""
+    """The deal's name on arrival, ``v2`` unnamed, a typed name trimmed, ``v4`` unnamed again."""
     created = client.post("/intake/team", data=form_body(team_entry), follow_redirects=False)
     assert created.status_code == 303
     (deal,) = list(db_session.scalars(select(Deal)))
-    assert notice(created).endswith("Saved as Auto v1 (Working).")
+    assert notice(created).endswith(f"Saved as {ARRIVAL} (Working).")
 
     assert run(client, deal.id).status_code == 303
     named = run(client, deal.id, "  Base   case  ")
@@ -121,7 +124,7 @@ def test_naming_defaults_auto_and_typed(
     assert named.headers["location"].startswith(f"/queue/deals/{deal.id}?version=3&")
     assert notice(named).endswith("Saved as Base case (draft).")
     assert run(client, deal.id).status_code == 303
-    assert names(db_session, deal.id) == ["Auto v1", "v2", "Base case", "v4"]
+    assert names(db_session, deal.id) == [ARRIVAL, "v2", "Base case", "v4"]
     actors = [version.actor for version in reversed(deal_versions(db_session, deal.id))]
     assert actors == ["system", USER_EMAIL, USER_EMAIL, USER_EMAIL]
 
@@ -235,7 +238,8 @@ def test_the_page_shows_working_by_default_and_a_switcher_over_every_version(
     )
 
     body = client.get(f"/queue/deals/{deal_id}").text
-    assert 'id="working-version"' in body and "Working: Base" in body
+    # the switcher names the Working version; the header has no chip for it
+    assert 'id="working-version"' not in body and "Working: Base" not in body
     assert 'id="draft-badge"' not in body
     section = body[body.index('<section class="panel" id="versions">') :]
     section = section[: section.index("</section>")]
@@ -251,7 +255,7 @@ def test_the_page_shows_working_by_default_and_a_switcher_over_every_version(
     assert body.index('id="pricing"') < body.index('id="assumptions"')
 
     draft = client.get(f"/queue/deals/{deal_id}?version=2").text
-    assert 'id="draft-badge"' in draft and "Working: Base" in draft
+    assert 'id="draft-badge"' in draft and '<option value="1">Base · Working' in draft
     assert '<option value="2" selected>Rate up · Draft' in draft
     assert f'action="/queue/deals/{deal_id}/versions/2/working"' in draft
     assert ">Mark as Working</button>" in draft
@@ -259,9 +263,9 @@ def test_the_page_shows_working_by_default_and_a_switcher_over_every_version(
     assert v1.underwrite is not None and v2.underwrite is not None
     irr1, irr2 = v1.underwrite.return_overview.irr, v2.underwrite.return_overview.irr
     assert irr1 is not None and irr2 is not None and irr1 != irr2
-    rate = f"{irr2 * 100:.4f}%"
+    rate = f"{irr2 * 100:.2f}%"
     assert f"IRR <strong>{rate}</strong>" in draft
-    assert f"{irr1 * 100:.4f}%" not in draft.split('id="history"')[0]
+    assert f"{irr1 * 100:.2f}%" not in draft.split('id="history"')[0]
 
 
 def test_an_unknown_version_goes_back_to_the_deal(
@@ -663,18 +667,18 @@ def marks(session: Session, deal_id: UUID) -> list[tuple[str, bool, bool]]:
 def test_an_automatic_run_takes_the_mark_from_a_version_nobody_chose(
     client: QueueClient, db_session: Session, team_entry: dict[str, Any]
 ) -> None:
-    """Auto v1 on arrival, a person's unnamed run (a draft), then each automatic run moves it."""
+    """The arrival run, a person's unnamed run (a draft), then each automatic run moves it."""
     created = client.post("/intake/team", data=form_body(team_entry), follow_redirects=False)
     assert created.status_code == 303
     (deal,) = list(db_session.scalars(select(Deal)))
     assert run(client, deal.id).status_code == 303
-    assert marks(db_session, deal.id) == [("Auto v1", True, False), ("v2", False, False)]
+    assert marks(db_session, deal.id) == [(ARRIVAL, True, False), ("v2", False, False)]
 
     edited = edit_intake(client, db_session, deal.id, purchase_price="$201,000")
     assert edited.status_code == 303, edited.text
     assert notice(edited).endswith("Saved as Auto v3 (Working).")
     assert marks(db_session, deal.id) == [
-        ("Auto v1", False, False),
+        (ARRIVAL, False, False),
         ("v2", False, False),
         ("Auto v3", True, False),
     ]
@@ -715,7 +719,7 @@ def test_an_automatic_run_is_a_draft_beside_a_version_marked_working(
     assert run(client, deal.id).status_code == 303
     marked = client.post(f"/queue/deals/{deal.id}/versions/2/working", follow_redirects=False)
     assert marked.status_code == 303
-    assert marks(db_session, deal.id) == [("Auto v1", False, False), ("v2", True, True)]
+    assert marks(db_session, deal.id) == [(ARRIVAL, False, False), ("v2", True, True)]
 
     assert edit_intake(client, db_session, deal.id, rehab_costs="$50,000").status_code == 303
     assert marks(db_session, deal.id)[-1] == ("Auto v3", False, False)
@@ -743,17 +747,24 @@ def test_marking_the_working_version_records_the_choice(
     assert marks(db_session, deal.id) == [("Auto v1", True, True), ("Auto v2", False, False)]
 
 
-def test_the_page_says_whether_a_person_chose_the_version(
+def test_the_version_facts_are_in_the_history_not_the_header(
     client: QueueClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
+    """When, who and which engine are the History's; the header names none of them."""
     deal_id = deal_with_overrides.id
     run(client, deal_id, "Base")
     run(client, deal_id)
-    chosen = client.get(f"/queue/deals/{deal_id}").text
-    unchosen = client.get(f"/queue/deals/{deal_id}?version=2").text
-    for body, word in ((chosen, "Yes"), (unchosen, "No")):
-        section = body[body.index('id="versions"') :]
-        assert re.search(r"<dt>Chosen by a person.*?</dt>\s*<dd>" + word + "</dd>", section, re.S)
+    for path in (f"/queue/deals/{deal_id}", f"/queue/deals/{deal_id}?version=2"):
+        body = client.get(path).text
+        head = body[: body.index("</header>", body.index('<header class="deal-head">'))]
+        head = head[head.index('<header class="deal-head">') :]
+        for gone in ("Chosen by a person", "<dt>Run</dt>", "<dt>Engine</dt>", ENGINE_VERSION):
+            assert gone not in head, gone
+        history = body[body.index('id="history"') :]
+        for version in deal_versions(db_session, deal_id):
+            row = history[history.index(f'data-version="{version.number}"') :]
+            row = row[: row.index("</tr>")]
+            assert version.actor in row and version.engine_version in row
 
 
 # --- Download Excel (SPEC §9) ---------------------------------------------------------------------

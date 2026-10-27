@@ -648,9 +648,10 @@ def test_the_deal_page_shows_intake_missing_fields_and_the_overrides(
 
     response = client.get(f"/queue/deals/{deal.id}")
     assert response.status_code == 200
-    assert "NEEDS_INFO" in response.text
-    assert "borrower.credit_range" in response.text
-    assert "Not analyzed yet." in response.text
+    # the header no longer prints the status (SPEC §9, v0.15); the missing field is listed
+    still = response.text[response.text.index("<h3>Still needed from the borrower</h3>") :]
+    assert "borrower.credit_range" in still[: still.index("</ul>")]
+    assert "IRR <strong>—</strong>" in response.text
     assert "No analysis yet." in response.text
     assert 'name="estimated_sale_price_team"' in response.text
     assert 'name="asset_type"' not in response.text and 'name="stated_exit"' not in response.text

@@ -29,10 +29,11 @@ person who priced the deal would be wrong about who decided (SPEC §11).
 **Every run that records anything is a version** (``services/versions.py``): the inputs it
 read, snapshotted before the screen ran, the two rows it wrote - the underwrite's empty when
 the ledger stood down - and a name. A person's run takes the name they typed, else
-``v<number>``; an automatic one is ``Auto v<number>``. The first version on a deal is its
-Working one; after that an automatic run takes the mark unless a person chose the Working
-version, and a person's run is a draft (``services/versions.record_version``); the summary
-says which. A run the screen refused
+``v<number>``; an automatic one is ``Auto v<number>``, but for the run a web or team deal
+arrives with, which is named for the deal (``services/versions.arrival_name``). The first
+version on a deal is its Working one; after that an automatic run takes the mark unless a
+person chose the Working version, and a person's run is a draft
+(``services/versions.record_version``); the summary says which. A run the screen refused
 wrote nothing and is no version.
 
 Nothing here commits; the caller owns the transaction, as every service does.
@@ -188,11 +189,14 @@ def run_analysis(
     return recorded(priced.row, underwrite=priced.result)
 
 
-def auto_run(session: Session, deal: Deal, config: Config | None = None) -> AutoRun:
+def auto_run(
+    session: Session, deal: Deal, config: Config | None = None, *, name: str | None = None
+) -> AutoRun:
     """The automatic analysis, as ``system``, on a deal that is live and complete.  # SPEC §4.6
 
-    Its version is named ``Auto v<number>``.
+    Its version is named ``name`` - the arrival run's (``services/versions.arrival_name``) -
+    else ``Auto v<number>``; either way it is not a person's choice.
     """
     if deal.status in NOT_RUN_FROM:
         return NOTHING_RAN
-    return run_analysis(session, deal, actor=SYSTEM_ACTOR, config=config, auto=True)
+    return run_analysis(session, deal, actor=SYSTEM_ACTOR, config=config, name=name, auto=True)

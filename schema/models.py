@@ -1281,8 +1281,8 @@ class SensitivityCell(BaseModel):
 
     ``irr`` is None where the ledger at that point has no rate (``engine/calc/irr.py``).
     ``is_deal`` marks the one cell whose loan amount and rate are the deal's own - the request
-    at its actual rate - so the page and the workbook can highlight it. The deal's rate is
-    always a column, so one cell always carries it.
+    at its actual rate - so the page and the workbook can highlight it. The columns are the
+    config grid alone, so no cell carries it when the deal's rate is not one of them.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1322,7 +1322,7 @@ class SensitivityTable(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     loan_requested: Decimal  # the deal's own loan amount: the bottom row
-    interest_rate: Decimal  # the deal's own rate; always one of ``rates``
+    interest_rate: Decimal  # the deal's own rate; one of ``rates`` only when on the grid
     rates: list[Decimal]
     rows: list[SensitivityRow]
 
