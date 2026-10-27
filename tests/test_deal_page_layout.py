@@ -205,9 +205,8 @@ def test_the_header_carries_the_chips(client: QueueClient, deal_with_overrides: 
     chips = between(body, CHIPS, "</div>")
     assert '<span class="tag fact" data-chip="borrower">Dana Whitlock</span>' in chips
     assert '<span class="tag fact" data-chip="entity">Whitlock Homes LLC</span>' in chips
-    assert (
-        '<span class="tag fact" data-chip="loan-amount">Loan Request: $120,000.00</span>' in chips
-    )
+    # the request in whole dollars
+    assert '<span class="tag fact" data-chip="loan-amount">Loan Request: $120,000</span>' in chips
     irr = re.search(r'data-chip="irr">IRR <strong>(\d+\.\d{2}%)</strong>', chips)
     assert irr is not None
     # those four, in the brief's order, and nothing else: no loan type, term, verdict, status
@@ -249,6 +248,25 @@ def test_the_chips_say_what_is_not_known_yet(client: QueueClient, stored_deal: D
     assert 'data-chip="irr">IRR <strong>—</strong>' in chips
     assert not re.search(r'<span class="tag (GO|CONDITIONAL|DECLINE)">', chips)
     assert "No versions yet" in body and "No analysis yet." in body
+    # the Actions card says where the deal stands, with no verdict yet
+    actions = between(body, '<section class="panel" id="actions">', "</section>")
+    assert '<p class="small muted" id="deal-standing">Status: New · Verdict: —</p>' in actions
+
+
+def test_the_actions_card_opens_on_the_status_and_the_verdict(
+    client: QueueClient, deal_with_overrides: Deal
+) -> None:
+    """Small text atop the card, above Progress / Pause / Kill; the header is unchanged."""
+    run(client, deal_with_overrides)
+    body = page(client, deal_with_overrides)
+    actions = between(body, '<section class="panel" id="actions">', "</section>")
+    line = '<p class="small muted" id="deal-standing">Status: Underwriting · Verdict: Go</p>'
+    assert line in actions
+    assert actions.index("<h2>Actions</h2>") < actions.index(line) < actions.index(">Progress<")
+    assert actions.index(">Progress<") < actions.index(">Pause<") < actions.index(">Kill<")
+    # the line is the card's alone: the header carries neither
+    head = between(body, '<header class="deal-head">', "</header>")
+    assert "Underwriting" not in head and "Status:" not in head and "Verdict" not in head
 
 
 def test_the_header_holds_the_controls(client: QueueClient, deal_with_overrides: Deal) -> None:

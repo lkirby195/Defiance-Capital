@@ -648,7 +648,8 @@ def test_the_deal_page_shows_intake_missing_fields_and_the_overrides(
 
     response = client.get(f"/queue/deals/{deal.id}")
     assert response.status_code == 200
-    # the header no longer prints the status (SPEC §9, v0.15); the missing field is listed
+    # the status is the Actions card's small line (SPEC §9, v0.16); the missing field is listed
+    assert "Status: Needs Info · Verdict: —" in response.text
     still = response.text[response.text.index("<h3>Still needed from the borrower</h3>") :]
     assert "borrower.credit_range" in still[: still.index("</ul>")]
     assert "IRR <strong>—</strong>" in response.text

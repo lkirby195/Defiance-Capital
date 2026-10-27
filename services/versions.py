@@ -40,8 +40,9 @@ unless a person asks for another.
 
 **The arrival version is named for the deal**: the automatic run a web or team deal arrives
 with is ``Whitlock; 1412 S Trenton Ave, OK - Request`` on the web and ``... - Team`` from the
-New Deal form, unless the person filling that form in typed a version name (``arrival_name``).
-Every later run keeps the ``v<n>`` / ``Auto v<n>`` / typed-name rule.
+New Deal form (``arrival_name``), unless the person filling that form in typed a version
+name - which, being a person's choice, makes it human-selected. Every later run keeps the
+``v<n>`` / ``Auto v<n>`` / typed-name rule.
 
 Every write here takes an actor and writes an ``audit_log`` row - ``VERSION_RECORDED``,
 ``VERSION_MARKED_WORKING``, ``VERSION_RESTORED`` - and nothing commits.
@@ -49,6 +50,7 @@ Every write here takes an actor and writes an ``audit_log`` row - ``VERSION_RECO
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from decimal import Decimal
 from typing import Any, NamedTuple
@@ -288,26 +290,68 @@ def default_name(number: int, auto: bool) -> str:
 
 # What the arrival version's name ends in, by the channel the deal came in on (SPEC §5).
 ARRIVAL_SUFFIX: dict[Channel, str] = {Channel.WEB: "Request", Channel.TEAM: "Team"}
+# The generational suffixes a full name can end in; never the last name (SPEC §5).
+NAME_SUFFIXES: frozenset[str] = frozenset({"jr", "sr", "ii", "iii", "iv"})
+# A two-letter state at the end of an address, before an optional ZIP: "TX", "tx 79101".
+_TYPED_CODE = re.compile(r"(?:^|[\s,])([A-Za-z]{2})\s*,?\s*(?:\d{5}(?:-\d{4})?)?\s*$")
+_ZIP = re.compile(r"\s*\d{5}(?:-\d{4})?\s*$")
+
+
+def last_name(full_name: str | None) -> str:
+    """The last word of a full name once a Jr., Sr., II, III or IV is taken off the end.
+
+    ``Robert Smith Jr.`` and ``Robert Smith, III`` are both Smith. A name that is nothing but
+    a suffix keeps it rather than coming back empty.
+    """
+    words = (full_name or "").split()
+    while len(words) > 1 and words[-1].strip(".,").lower() in NAME_SUFFIXES:
+        words.pop()
+    return words[-1].strip(",") if words else ""
+
+
+def typed_state(address: str | None) -> str:
+    """The state as the person typed it in the address, after the street; "" when none.
+
+    A trailing two-letter code (``Amarillo, TX 79101``, ``Amarillo tx``) comes back in
+    capitals; otherwise the last comma-separated part is the state when a city stands
+    between it and the street (``77 Main St, Amarillo, Texas``). Nothing in the street
+    itself is read, so ``77 Main St`` has no state "St", and a street and a city alone
+    (the web form's line outside OK and CO) have none.
+    """
+    if not address or "," not in address:
+        return ""
+    after_street = address.split(",", 1)[1]
+    code = _TYPED_CODE.search(after_street)
+    if code is not None:
+        return code.group(1).upper()
+    parts = [part.strip() for part in after_street.split(",") if part.strip()]
+    if len(parts) < 2:
+        return ""
+    return " ".join(_ZIP.sub("", parts[-1]).split())
 
 
 def arrival_name(deal: Deal) -> str | None:
     """``Whitlock; 1412 S Trenton Ave, OK - Request``: the run a deal arrives with.  # SPEC §5
 
-    The borrower's last name (the last word of the full name), the address line (the street
-    number and name: everything before the first comma), the state's two-letter code, and
-    ``Request`` on a web deal or ``Team`` on a team one. A piece the deal does not have is
-    left out - a state outside OK and CO has no code stored - and the street is shortened
-    when the whole would be longer than a name may be. None on any other channel, or when
-    there is neither a name nor an address to go on; the run is then ``Auto v1``.
+    The borrower's last name (the last word of the full name, a Jr. / Sr. / II / III / IV
+    taken off first), the address line (the street number and name: everything before the
+    first comma), the state - its two-letter code on an OK or CO deal, otherwise the state as
+    typed in the address (``typed_state``) - and ``Request`` on a web deal or ``Team`` on a
+    team one. A piece the deal does not have is left out, and the street is shortened when
+    the whole would be longer than a name may be. None on any other channel, or when there
+    is neither a name nor an address to go on; the run is then ``Auto v1``.
     """
     suffix = ARRIVAL_SUFFIX.get(deal.channel)
     if suffix is None:
         return None
-    words = ((deal.borrower.name if deal.borrower else None) or "").split()
-    last = words[-1] if words else ""
+    last = last_name(deal.borrower.name if deal.borrower else None)
     prop = deal.property
-    street = " ".join(((prop.address_raw if prop else None) or "").split(",")[0].split())
-    state = prop.state.value if prop and prop.state in (State.OK, State.CO) else ""
+    address = prop.address_raw if prop else None
+    street = " ".join((address or "").split(",")[0].split())
+    if prop is not None and prop.state in (State.OK, State.CO):
+        state = prop.state.value
+    else:
+        state = typed_state(address)
     if not (last or street):
         return None
 
@@ -331,23 +375,25 @@ def record_version(
     underwrite: Underwrite | None,
     name: str | None = None,
     auto: bool = False,
+    typed: bool = False,
 ) -> Version:
     """Append the version one analysis wrote, Working or a draft by the rule above.  # SPEC §5
 
     Working when the deal has no Working version yet, or when ``auto`` and the Working
     version is not human-selected - the mark then moves, flushed off the old one before it
     goes on the new. A person's typed name makes the version human-selected. An automatic run
-    takes ``name`` too - the arrival version's (``arrival_name``, or the one typed on the New
-    Deal form) - and stays unchosen: nobody pressed a button for it. The deal row is locked
-    for the numbering, so two runs on one deal at once take numbers one after the other
-    rather than the same one. Flushes; no commit.
+    takes ``name`` too: the arrival version's, which is unchosen when it is the deal's own
+    (``arrival_name``) and human-selected when a person typed it on the New Deal form
+    (``typed``), so it holds the Working mark against the automatic runs after it. The deal
+    row is locked for the numbering, so two runs on one deal at once take numbers one after
+    the other rather than the same one. Flushes; no commit.
     """
     session.execute(select(Deal.id).where(Deal.id == deal.id).with_for_update())
     number = (
         session.scalar(select(func.max(Version.number)).where(Version.deal_id == deal.id)) or 0
     ) + 1
     given = clean_name(name)
-    typed = None if auto else given
+    chosen = given if typed or not auto else None
     current = working_version(session, deal.id)
     working = current is None or (auto and not current.human_selected)
     replaced = current if working and current is not None else None
@@ -365,7 +411,7 @@ def record_version(
         screen_id=screen.id,
         underwrite_id=underwrite.id if underwrite is not None else None,
         is_working=working,
-        human_selected=typed is not None,
+        human_selected=chosen is not None,
     )
     session.add(version)
     session.flush()
