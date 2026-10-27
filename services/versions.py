@@ -8,7 +8,7 @@ off the deal:
     intake    the intake submission in force when it ran: its id, channel and payload
     deal      every ``deals`` column but the row's identity and lifecycle (NOT_SNAPSHOTTED):
               the intake's columns, the §8.1 economics, the loan split, the valuation, the
-              rent, the five analysis assumptions, the toggles, the court search, the
+              rent, the five analysis assumptions, the court search, the
               ``defaulted_fields`` tags, and the borrower and property the deal pointed at
     borrower  the borrower row's id, name, phone, email and entities, as they were
     property  the property row as it was, the state the screen reads included

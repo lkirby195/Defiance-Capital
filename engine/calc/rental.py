@@ -19,10 +19,10 @@ The expense ratio, the takeout rate, the legal bill and the lost-interest months
 the deal's own number when it carries one and the config value otherwise
 (``engine/calc/terms.py``); the amortization years and the two DSCR floors are config alone.
 
-Take-Back is not gated by the Rental toggle: a flip deal with a rent on it still gets one.
-Neither can be computed without a rent - nothing stands in for what a property lets for - so
-without one both report NOT_EVALUATED and the underwrite raises MONTHLY_RENT_MISSING rather
-than reporting a DSCR of zero, which would be a shortfall the deal has not been shown to have.
+Both run on every deal; there are no toggles (engine 2.0.0). Neither can be computed without
+a rent - nothing stands in for what a property lets for - so without one both report
+NOT_EVALUATED and the underwrite raises MONTHLY_RENT_MISSING rather than reporting a DSCR of
+zero, which would be a shortfall the deal has not been shown to have.
 """
 
 from __future__ import annotations
@@ -77,9 +77,7 @@ def _dscr(income: Decimal, debt_service: Decimal) -> Decimal:
     return income / debt_service
 
 
-def rental_analysis(
-    inputs: UnderwriteInputs, loan: LoanTerms, on: bool, config: Config
-) -> RentalAnalysis:
+def rental_analysis(inputs: UnderwriteInputs, loan: LoanTerms, config: Config) -> RentalAnalysis:
     """Whether the rent carries a takeout loan on the commitment.  # SPEC §8.5"""
     rental = config.rental
     expenses_pct = rental_expenses_pct(inputs, config)
@@ -95,9 +93,9 @@ def rental_analysis(
         "dscr_floor": rental.dscr_floor,
     }
     rent = inputs.monthly_rent
-    if not on or rent is None:
+    if rent is None:
         return RentalAnalysis(
-            status=AnalysisStatus.OFF if not on else AnalysisStatus.NOT_EVALUATED,
+            status=AnalysisStatus.NOT_EVALUATED,
             monthly_rent=None,
             expenses=None,
             net_monthly_income=None,

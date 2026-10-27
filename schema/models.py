@@ -20,18 +20,41 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from schema.dates import Term, payoff_date_for
 
 
 class Product(StrEnum):
-    """Loan products.  # SPEC §3"""
+    """The two loan structures.  # SPEC §3
 
-    NO_DRAW = "NO_DRAW"
-    SPLIT_DRAW = "SPLIT_DRAW"
-    SPLIT_PRINCIPAL = "SPLIT_PRINCIPAL"
-    WHOLETAIL = "WHOLETAIL"
+    ``ACQUISITION`` is the whole loan advanced at close ("100% at close"); ``ACQUISITION_REHAB``
+    advances the purchase side at close and holds the rehab portion back, drawn over the rehab
+    period ("Holdback"). Interest is on the full commitment from close on both.
+
+    Before engine 2.0.0 there were four (``NO_DRAW``, ``SPLIT_DRAW``, ``SPLIT_PRINCIPAL``,
+    ``WHOLETAIL``). A stored row, an intake payload or a version snapshot written then still
+    names one, so reading a retired code gives the structure it became (``LEGACY_PRODUCTS``,
+    the same mapping migration ``0021`` applied to ``deals.product``). Nothing writes one.
+    """
+
+    ACQUISITION = "ACQUISITION"
+    ACQUISITION_REHAB = "ACQUISITION_REHAB"
+
+    @classmethod
+    def _missing_(cls, value: object) -> Product | None:
+        return LEGACY_PRODUCTS.get(str(value))
+
+
+# The four pre-2.0.0 products, by the structure each became (SPEC §3, migration 0021): the two
+# single advances are 100% at close, and both split products are a holdback - a Tranche A is
+# the rehab portion held back.
+LEGACY_PRODUCTS: dict[str, Product] = {
+    "NO_DRAW": Product.ACQUISITION,
+    "WHOLETAIL": Product.ACQUISITION,
+    "SPLIT_DRAW": Product.ACQUISITION_REHAB,
+    "SPLIT_PRINCIPAL": Product.ACQUISITION_REHAB,
+}
 
 
 class LoanPurpose(StrEnum):
@@ -399,9 +422,9 @@ def validate_court_records(
         raise ValueError("court_records_status FLAGS needs at least one matter")
 
 
-# The products whose loan is advanced in two parts (SPEC §3, §8.2). Both carry an explicit
-# purchase / rehab split; the other two products are one advance and carry none.
-SPLIT_PRODUCTS: frozenset[Product] = frozenset({Product.SPLIT_DRAW, Product.SPLIT_PRINCIPAL})
+# The structure whose loan is advanced in two parts (SPEC §3, §8.2): the holdback carries an
+# explicit purchase / rehab split; 100% at close is one advance and carries none.
+SPLIT_PRODUCTS: frozenset[Product] = frozenset({Product.ACQUISITION_REHAB})
 
 
 def validate_loan_split(
@@ -539,15 +562,10 @@ class DealInfo(BaseModel):
     # dollar figure is that share of that cost and is computed wherever it is shown.
     holding_costs_pct_of_cost: Decimal | None = Field(default=None, ge=0, le=1)
     origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
-    # Product: entered by the team, or inferred by the normalizer (NO_DRAW when rehab_costs
-    # is 0, else SPLIT_DRAW). WHOLETAIL and SPLIT_PRINCIPAL are never inferred.  # SPEC §3
+    # Product: the team's "100% at close" / "Holdback", or inferred by the normalizer
+    # (ACQUISITION when rehab_costs is 0, else ACQUISITION_REHAB).  # SPEC §3
     product: Product | None = None
     product_source: ProductSource | None = None
-    # The two analysis toggles (SPEC §8.1). None leaves the default in force - the flip is on
-    # when there is a sale price, the rental when there is a rent - and a team member turning
-    # one on or off by hand wins over it, in either direction.
-    flip_analysis: bool | None = None
-    rental_analysis: bool | None = None
     # The monthly rent the Rental and Take-Back analyses are computed on (SPEC §8.5, §8.6).
     # No config default and no adapter behind it: nothing stands in for what a property
     # lets for, so without one both analyses are NOT_EVALUATED rather than run on a zero.
@@ -664,19 +682,25 @@ class ScreenFlag(StrEnum):
     COURT_RECORDS_NOT_CHECKED = "COURT_RECORDS_NOT_CHECKED"  # INFO
     TEAM_SOURCED_VALUES = "TEAM_SOURCED_VALUES"  # INFO, SPEC §6.1: entered by hand, not pulled
     BORROWER_SOURCED_VALUES = "BORROWER_SOURCED_VALUES"  # INFO, SPEC §4.2: the borrower's claim
-    COMMITMENT_BELOW_REQUEST = "COMMITMENT_BELOW_REQUEST"  # INFO, SPLIT_PRINCIPAL cap, §8.2
-    REHAB_PORTION_EXCEEDS_BUDGET = "REHAB_PORTION_EXCEEDS_BUDGET"  # INFO, split products, §8.2
+    # INFO, raised before engine 2.0.0 only, when a SPLIT_PRINCIPAL Tranche A was capped below
+    # the request. Both structures now lend the request in full; the code stays so a stored
+    # row that carries it still loads.
+    COMMITMENT_BELOW_REQUEST = "COMMITMENT_BELOW_REQUEST"
+    REHAB_PORTION_EXCEEDS_BUDGET = "REHAB_PORTION_EXCEEDS_BUDGET"  # INFO, the holdback, §8.2
 
 
 class UnderwriteFlag(StrEnum):
     """Stable codes for flags the underwrite raises.  # SPEC §8.6, §8.7
 
-    The two DSCR codes take their severity from ``flags.underwrite_severities``; the three
-    informational codes are fixed INFO in code and config must not grade them.
+    The two DSCR codes and the borrower's cash-on-cash code take their severity from
+    ``flags.underwrite_severities``; the three informational codes are fixed INFO in code and
+    config must not grade them.
     """
 
     DSCR_BELOW_FLOOR = "DSCR_BELOW_FLOOR"  # SPEC §8.5: rental DSCR under rental.dscr_floor
     TAKE_BACK_DSCR_BELOW_FLOOR = "TAKE_BACK_DSCR_BELOW_FLOOR"  # SPEC §8.6: under take_back floor
+    # SPEC §8.4: the flip's cash-on-cash under pricing.borrower_coc_target
+    BORROWER_COC_BELOW_TARGET = "BORROWER_COC_BELOW_TARGET"
     MONTHLY_RENT_MISSING = "MONTHLY_RENT_MISSING"  # INFO, SPEC §8.5, §8.6: no rent to run either on
     SALE_PRICE_MISSING = "SALE_PRICE_MISSING"  # INFO, SPEC §8.4: no price, so no flip to evaluate
     NO_REHAB_PERIOD = "NO_REHAB_PERIOD"  # INFO, SPEC §8.3: no rehab period, so no draw schedule
@@ -685,7 +709,11 @@ class UnderwriteFlag(StrEnum):
 # Underwrite codes whose severity is a config decision; every other code is fixed INFO
 # in code (SPEC §8.7) and ``flags.underwrite_severities`` rejects it.
 GRADED_UNDERWRITE_FLAGS: frozenset[UnderwriteFlag] = frozenset(
-    {UnderwriteFlag.DSCR_BELOW_FLOOR, UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR}
+    {
+        UnderwriteFlag.DSCR_BELOW_FLOOR,
+        UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR,
+        UnderwriteFlag.BORROWER_COC_BELOW_TARGET,
+    }
 )
 
 
@@ -779,7 +807,7 @@ class SizingInputs(BaseModel):
     same two numbers: ``rehab_adj`` and the LTC denominator. None means the config default.
 
     ``loan_purchase_portion`` / ``loan_rehab_portion`` are the team's own division of the
-    loan requested, for the split products only (SPEC §8.2). Both None means the split has
+    loan requested, on a holdback only (SPEC §8.2). Both None means the split has
     not been entered yet, which is the state a borrower-channel intake is in: the screen
     sizes on the loan requested and reports no split, and the underwrite refuses (SPEC §8.1).
     """
@@ -876,10 +904,10 @@ class MetricCheck(BaseModel):
 
 
 class CommitmentSplit(BaseModel):
-    """Purchase / rehab split of a split product, as the team entered it.  # SPEC §8.2
+    """Advance-at-closing / rehab split of a holdback loan, as the team entered it.  # SPEC §8.2
 
-    SPLIT_DRAW: ``rehab_portion`` is the holdback on the single note.
-    SPLIT_PRINCIPAL: ``purchase_portion`` is the Principal Note, ``rehab_portion`` Tranche A.
+    ``purchase_portion`` is the advance at closing and ``rehab_portion`` the holdback, drawn
+    over the rehab period; one note, interest on the full commitment from close (SPEC §3).
 
     ``rehab_portion`` is what the lender actually funds, which is the entered portion capped
     at the contingency-adjusted rehab cost (``engine.sizing.commitment_split``);
@@ -977,10 +1005,6 @@ class UnderwriteInputs(BaseModel):
     ``None`` leaves the Rental and Take-Back analyses NOT_EVALUATED (SPEC §8.5, §8.6) rather
     than computed on a zero.
 
-    ``flip_analysis`` and ``rental_analysis`` are the SPEC §8.1 toggles. ``None`` leaves the
-    default - on when the sale price, or the rent, is present; a bool is the team overriding
-    it either way.
-
     ``court_records`` is the latest source in force at underwrite time, adapter over team,
     exactly as at the screen (SPEC §6.1, §8.1). The underwrite re-runs the SPEC §7.2 tests on
     it rather than trusting the screen's: weeks can pass between the two, the pull an adapter
@@ -1013,8 +1037,6 @@ class UnderwriteInputs(BaseModel):
     # claim on the public form. None when nobody said, which a fixture handed straight to
     # the engine also leaves unstated; only BORROWER is flagged.
     monthly_rent_source: ValueSource | None = None
-    flip_analysis: bool | None = None
-    rental_analysis: bool | None = None
     loan_purpose: LoanPurpose | None = None
     court_records: CourtRecordInputs | None = None
 
@@ -1067,7 +1089,9 @@ class UnderwriteInputs(BaseModel):
 class AnalysisStatus(StrEnum):
     """Whether one of the three §8 analyses produced numbers, and why not.  # SPEC §8.4-§8.6
 
-    ``OFF`` is a team decision: the toggle is off, so the analysis was not asked for.
+    All three run on every deal from engine 2.0.0, so a run is ``EVALUATED`` or
+    ``NOT_EVALUATED``. ``OFF`` is a run before it, when the Flip and Rental analyses had
+    toggles and one was off; it stays so that stored row still loads, and nothing writes it.
     ``NOT_EVALUATED`` is a missing input: the Rental and Take-Back analyses are computed on a
     monthly rent, and nothing stands in for what a property lets for, so a deal without one
     gets no DSCR rather than a DSCR of zero - which would report a shortfall the deal has not
@@ -1081,7 +1105,11 @@ class AnalysisStatus(StrEnum):
 
 
 class AnalysisToggles(BaseModel):
-    """The two analysis toggles as the run used them, and what each defaulted to.  # SPEC §8.1"""
+    """The two analysis toggles a run before engine 2.0.0 used, and what each defaulted to.
+
+    The toggles are gone (SPEC §8.1): all three analyses run on every deal. A stored result
+    written before then carries this block, and ``UnderwriteResult.analyses`` reads it back.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1170,11 +1198,21 @@ class ReturnOverview(BaseModel):
 
 
 class FlipAnalysis(BaseModel):
-    """The project's margin if the property is sold.  # SPEC §8.4
+    """The project's margin if the property is sold, and the borrower's return on it.
 
-    The cost stack does not depend on the sale price, so it is reported whatever the status.
-    ``profit_yield`` is profit over costs - a project margin, not an annualized return - and
-    is labelled "Yield (Profit / Costs)" wherever it is shown.
+    # SPEC §8.4. The cost stack does not depend on the sale price, so it is reported whatever
+    the status, line by line in the order every output prints it - purchase, closing, rehab,
+    contingency, holding, then the financing as its interest and its origination - to
+    ``total_costs``, the total deal cost. So is what the borrower puts in:
+    ``borrower_equity`` is the total deal cost less the loan amount.
+
+    ``project_yield`` is profit over the total deal cost - a project margin, not an
+    annualized return - and is labelled "Project yield" wherever it is shown.
+    ``cash_on_cash`` is profit over the borrower's equity, None when the loan covers every
+    cost, and is tested against ``cash_on_cash_target`` (``pricing.borrower_coc_target``).
+
+    The fields engine 2.0.0 added default to None so a stored result from before it loads,
+    and ``project_yield`` was ``profit_yield`` then: a stored one is read under either name.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1191,13 +1229,23 @@ class FlipAnalysis(BaseModel):
     estimated_sale_price: Decimal | None
     broker_costs: Decimal | None
     net_profit: Decimal | None
-    profit_yield: Decimal | None
+    project_yield: Decimal | None = Field(
+        validation_alias=AliasChoices("project_yield", "profit_yield")
+    )
+    # 2.0.0 on: the financing costs as their two parts, the loan, and the borrower's side.
+    interest: Decimal | None = None  # total interest over the term (SPEC §8.3)
+    origination: Decimal | None = None  # both origination halves
+    loan_amount: Decimal | None = None  # the commitment
+    borrower_equity: Decimal | None = None  # total_costs - loan_amount
+    cash_on_cash: Decimal | None = None  # net_profit / borrower_equity; None when equity <= 0
+    cash_on_cash_target: Decimal | None = None  # pricing.borrower_coc_target as it ran
+    cash_on_cash_passed: bool | None = None  # None when there was no cash-on-cash to test
 
     @model_validator(mode="after")
     def _evaluated_means_every_sale_figure_is_there(self) -> FlipAnalysis:
         return _status_agrees_with_figures(
             self.status,
-            (self.estimated_sale_price, self.broker_costs, self.net_profit, self.profit_yield),
+            (self.estimated_sale_price, self.broker_costs, self.net_profit, self.project_yield),
             "the estimated sale price feeds",
             self,
         )
@@ -1340,10 +1388,12 @@ class BorrowerSensitivityCell(BaseModel):
     """The borrower's side of one loan amount and rate.  # SPEC §8.9
 
     ``net_profit`` is the Flip Analysis's net profit with the deal re-sized and re-ledgered at
-    this amount and rate (``engine/calc/borrower.py``); ``cash_invested`` is the flip's total
-    project costs less the loan, which is what the borrower funds themselves.
-    ``cash_on_cash`` is profit over that cash, and None when the loan covers every cost - a
-    return on no cash at all is not a number.
+    this amount and rate (``engine/calc/borrower.py``); ``total_costs`` is the flip's total
+    deal cost there and ``project_yield`` the one over the other, which is what the cell
+    shows from engine 2.0.0. ``cash_invested`` is the borrower's equity - the total deal cost
+    less the loan - and ``cash_on_cash`` profit over it, None when the loan covers every
+    cost; both are still recorded. ``total_costs`` and ``project_yield`` are None on a cell
+    stored before 2.0.0.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1353,6 +1403,8 @@ class BorrowerSensitivityCell(BaseModel):
     cash_invested: Decimal
     cash_on_cash: Decimal | None
     is_deal: bool = False
+    total_costs: Decimal | None = None  # 2.0.0 on: the flip's total deal cost
+    project_yield: Decimal | None = None  # 2.0.0 on: net_profit / total_costs
 
 
 class BorrowerSensitivityRow(BaseModel):
@@ -1429,6 +1481,13 @@ class PricingRow(BaseModel):
     # 1.9.0 on: the solved rate when it is above ``pricing.max_quoted_rate``, so the row is
     # not a quote and says what it would have needed; None on every other row.
     rate_needed: Decimal | None = None
+    # 2.0.0 on: the borrower's equity at the row's solved rate - the flip's total deal cost
+    # less the loan amount, sale price or none - and how much more that is than the
+    # requested row's; ``derisk`` is the one line that says it (SPEC §8.10). None where the
+    # row or the requested row has no solved rate, and the line is None on the requested row.
+    borrower_equity: Decimal | None = None
+    equity_added: Decimal | None = None
+    derisk: str | None = None
 
     @property
     def cleared(self) -> bool:
@@ -1487,12 +1546,44 @@ class PricingMatrix(BaseModel):
         return self.rate_precision is not None
 
 
+class SourcesAndUses(BaseModel):
+    """Where the money for the deal comes from and where it goes.  # SPEC §8.11
+
+    Sources are the lender's two advances - what goes out at closing and the rehab holdback
+    drawn after it, the two adding up to the loan amount - and the borrower's equity, the
+    total deal cost less the loan. Uses are the Flip Analysis's cost stack line by line, the
+    financing as its interest and its origination. Neither reads the sale price, so the
+    table is there on every run, and the two totals are the same number: the equity is
+    defined as the difference.
+
+    The holdback is what the ledger draws (SPEC §8.3): zero on 100% at close, and zero on a
+    holdback whose term leaves no rehab period, where the rehab money goes out at closing.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    advance_at_closing: Decimal
+    rehab_holdback: Decimal
+    borrower_equity: Decimal
+    total_sources: Decimal
+    purchase_price: Decimal
+    closing_costs: Decimal
+    rehab_costs: Decimal
+    contingency: Decimal
+    holding_costs: Decimal
+    interest: Decimal
+    origination: Decimal
+    total_uses: Decimal
+
+
 class UnderwriteResult(BaseModel):
     """Full underwrite output; stored whole on ``underwrites.outputs``.  # SPEC §8.7
 
     ``sensitivity`` is None only on a row written before engine 1.5.0 added it, and
     ``borrower_sensitivity`` and ``pricing`` only on one written before 1.7.0: every run since
-    carries them, and a stored result from before loads rather than failing.
+    carries them, and a stored result from before loads rather than failing. The same goes
+    for ``sources_and_uses`` before 2.0.0. ``analyses`` is the other way round: the two
+    toggles a run before 2.0.0 ran under, None on every run since (SPEC §8.1).
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1506,13 +1597,14 @@ class UnderwriteResult(BaseModel):
     term_stub_days: int  # days past the last anchor; 0 on a whole-month term
     term_months_decimal: Decimal  # the two as one number; what the monthly carry divides by
     rehab_months: int
-    analyses: AnalysisToggles
+    analyses: AnalysisToggles | None = None  # before 2.0.0 only
     sizing: SizingResult
     economics: DealEconomics
     return_overview: ReturnOverview
     sensitivity: SensitivityTable | None = None  # SPEC §8.9
     borrower_sensitivity: BorrowerSensitivityTable | None = None  # SPEC §8.9
     pricing: PricingMatrix | None = None  # SPEC §8.10
+    sources_and_uses: SourcesAndUses | None = None  # SPEC §8.11
     flip: FlipAnalysis
     rental: RentalAnalysis
     take_back: TakeBackAnalysis

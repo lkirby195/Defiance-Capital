@@ -25,7 +25,8 @@ def test_placeholder_yaml_loads() -> None:
     assert cfg.fees.contingency_default_pct == Decimal("0.00")
     assert cfg.fees.closing_costs_default_usd == Decimal("1000.00")
     assert cfg.fees.holding_costs_default_pct_of_cost == Decimal("0.02")
-    assert cfg.fees.broker_selling_pct == Decimal("0.04")
+    assert cfg.fees.broker_selling_pct == Decimal("0.06")
+    assert cfg.pricing.borrower_coc_target == Decimal("0.20")
     assert cfg.draws.listing_months == 3
     assert cfg.rental.expenses_pct_of_rent == Decimal("0.35")
     assert cfg.rental.takeout_rate == Decimal("0.065")
@@ -35,7 +36,8 @@ def test_placeholder_yaml_loads() -> None:
     assert cfg.take_back.legal_costs_usd == Decimal("5000.00")
     assert cfg.take_back.dscr_floor == Decimal("1.00")
     assert cfg.states.served == [State.OK, State.CO]
-    cell = cfg.leverage_caps[Product.SPLIT_PRINCIPAL][Tranche.T5][ExperienceTier.E3]
+    assert list(cfg.leverage_caps) == [Product.ACQUISITION, Product.ACQUISITION_REHAB]
+    cell = cfg.leverage_caps[Product.ACQUISITION_REHAB][Tranche.T5][ExperienceTier.E3]
     # SPEC §7.4: two caps and no more, and the LTC placeholder is no cap at all yet.
     assert cell.ltc == Decimal("1.00") and cell.ltv <= 1
     assert not hasattr(cell, "ltarv") and not hasattr(cell, "ltv_as_is")
@@ -109,14 +111,25 @@ def test_out_of_range_fails(data: dict[str, Any], path: tuple[str, ...], value: 
 
 
 def test_incomplete_caps_grid_fails(data: dict[str, Any]) -> None:
-    del data["leverage_caps"]["WHOLETAIL"]["T3"]["E1"]
-    with pytest.raises(ConfigError, match="WHOLETAIL.T3.E1"):
+    del data["leverage_caps"]["ACQUISITION_REHAB"]["T3"]["E1"]
+    with pytest.raises(ConfigError, match="ACQUISITION_REHAB.T3.E1"):
         Config.from_dict(data)
 
 
 def test_missing_product_in_caps_grid_fails(data: dict[str, Any]) -> None:
-    del data["leverage_caps"]["NO_DRAW"]
+    del data["leverage_caps"]["ACQUISITION"]
     with pytest.raises(ConfigError, match="20 cell"):
+        Config.from_dict(data)
+
+
+@pytest.mark.parametrize("retired", ["NO_DRAW", "SPLIT_DRAW", "SPLIT_PRINCIPAL", "WHOLETAIL"])
+def test_a_caps_grid_keyed_by_a_retired_product_is_refused_by_name(
+    data: dict[str, Any], retired: str
+) -> None:
+    """``Product`` reads a retired code as the structure it became, so without the refusal
+    a stale four-product grid would load with two keys landing on each structure."""
+    data["leverage_caps"][retired] = copy.deepcopy(data["leverage_caps"]["ACQUISITION"])
+    with pytest.raises(ConfigError, match=f"retired products \\({retired}\\)"):
         Config.from_dict(data)
 
 
@@ -280,11 +293,11 @@ def test_the_caps_grid_carries_two_caps_and_refuses_the_retired_pair(
     data: dict[str, Any],
 ) -> None:
     """LTARV is gone and the as-is LTV went with it (SPEC §7.4); a stale yaml is refused."""
-    cell = data["leverage_caps"]["NO_DRAW"]["T1"]["E0"]
+    cell = data["leverage_caps"]["ACQUISITION"]["T1"]["E0"]
     assert set(cell) == {"ltc", "ltv"}
     for key in ("ltarv", "ltv_as_is"):
         stale = copy.deepcopy(data)
-        stale["leverage_caps"]["NO_DRAW"]["T1"]["E0"][key] = Decimal("0.70")
+        stale["leverage_caps"]["ACQUISITION"]["T1"]["E0"][key] = Decimal("0.70")
         with pytest.raises(ConfigError, match=key):
             Config.from_dict(stale)
 
@@ -307,8 +320,15 @@ def test_one_holding_cost_replaced_the_three_itemized_opex_lines(data: dict[str,
 
 
 def test_underwrite_severities_cover_the_graded_codes_only(data: dict[str, Any]) -> None:
-    graded = {UnderwriteFlag.DSCR_BELOW_FLOOR, UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR}
-    assert set(Config.from_dict(data).flags.underwrite_severities) == graded
+    graded = {
+        UnderwriteFlag.DSCR_BELOW_FLOOR,
+        UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR,
+        UnderwriteFlag.BORROWER_COC_BELOW_TARGET,
+    }
+    severities = Config.from_dict(data).flags.underwrite_severities
+    assert set(severities) == graded
+    # the borrower's cash-on-cash short of its target is Soft, as placeholder (SPEC §8.8)
+    assert severities[UnderwriteFlag.BORROWER_COC_BELOW_TARGET] is Severity.SOFT
 
 
 def test_config_cannot_grade_an_informational_underwrite_flag(data: dict[str, Any]) -> None:

@@ -1,9 +1,9 @@
 {
-  "name": "go_split_draw_denver",
-  "description": "SPLIT_DRAW flip in Denver, CO; T1 / 6+ deals; both metrics under cap. Go. Underwrite: 9 months at 12% on a $195,000 commitment, closing 15 October 2026 - month 0 of the ledger is 31 October and the payoff is 31 July 2027, the last day of the ninth month after - $147,000 at close and six $8,000 draws over the rehab period, interest on the full commitment throughout; IRR 17.620%. Holding costs are 3% of the $248,000 price-plus-rehab; the flip nets $38,410 on $278,390 of costs. Both DSCRs fall short.",
+  "name": "go_holdback_denver",
+  "description": "Holdback flip in Denver, CO; T1 / 6+ deals; both metrics under cap. Go. Underwrite: 9 months at 12% on a $195,000 commitment, closing 15 October 2026 - month 0 of the ledger is 31 October and the payoff is 31 July 2027, the last day of the ninth month after - $147,000 at close and six $8,000 draws over the rehab period, interest on the full commitment throughout; IRR 17.620%. Holding costs are 3% of the $248,000 price-plus-rehab; the flip nets $31,810 on $278,390 of total deal cost after a 6% broker, and the borrower's $83,390 of equity earns 38.1% cash-on-cash. Sources & Uses: $147,000 advanced, $48,000 held back, $83,390 of equity against the $278,390. Both DSCRs fall short.",
   "inputs": {
     "deal": {
-      "product": "SPLIT_DRAW",
+      "product": "ACQUISITION_REHAB",
       "purchase_price": "200000.00",
       "rehab_costs": "48000.00",
       "loan_requested": "195000.00",
@@ -49,7 +49,7 @@
   "underwrite": {
     "inputs": {
       "deal": {
-        "product": "SPLIT_DRAW",
+        "product": "ACQUISITION_REHAB",
         "purchase_price": "200000.00",
         "rehab_costs": "48000.00",
         "loan_requested": "195000.00",
@@ -106,10 +106,15 @@
       },
       "flip": {
         "status": "EVALUATED",
-        "broker_costs": "13200.00",
         "total_costs": "278390.00",
-        "net_profit": "38410.00",
-        "profit_yield": "0.137972"
+        "interest": "17550.00",
+        "origination": "3900.00",
+        "borrower_equity": "83390.00",
+        "broker_costs": "19800.00",
+        "net_profit": "31810.00",
+        "project_yield": "0.114264",
+        "cash_on_cash": "0.381461",
+        "cash_on_cash_passed": true
       },
       "rental": {
         "status": "EVALUATED",
@@ -140,7 +145,21 @@
       ],
       "term_months": 9,
       "term_stub_days": 0,
-      "term_months_decimal": "9.000000"
+      "term_months_decimal": "9.000000",
+      "sources_and_uses": {
+        "advance_at_closing": "147000.00",
+        "rehab_holdback": "48000.00",
+        "borrower_equity": "83390.00",
+        "total_sources": "278390.00",
+        "purchase_price": "200000.00",
+        "closing_costs": "1500.00",
+        "rehab_costs": "48000.00",
+        "contingency": "0.00",
+        "holding_costs": "7440.00",
+        "interest": "17550.00",
+        "origination": "3900.00",
+        "total_uses": "278390.00"
+      }
     }
   }
 }

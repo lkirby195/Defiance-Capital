@@ -21,7 +21,7 @@ that a re-screen cannot yank a deal out from under the person working it. A pers
 a deal by hand *is* that person, so the manual decline runs from every status still live.
 
 The deal page's two editable blocks are here too (SPEC §8.1, §7.2). The **Underwriting
-Assumptions** panel saves its sixteen boxes as one replacement (``save_assumptions``) or puts
+Assumptions** panel saves its fourteen boxes as one replacement (``save_assumptions``) or puts
 every one with a default back to it (``reset_assumptions``); the **court search** section
 saves its three columns (``save_court_search``). Each touches exactly the columns it renders,
 so saving one cannot clear a value the other owns, and each audit row names only what moved.
@@ -91,8 +91,6 @@ OVERRIDE_FIELDS: tuple[str, ...] = (
     "rental_takeout_rate",
     "take_back_legal_costs_usd",
     "take_back_lost_interest_months",
-    "flip_analysis",
-    "rental_analysis",
     "court_records_status",
     "court_records_as_of",
     "court_records_team",
@@ -114,8 +112,6 @@ ASSUMPTION_FIELDS: tuple[str, ...] = (
     "rental_takeout_rate",
     "take_back_legal_costs_usd",
     "take_back_lost_interest_months",
-    "flip_analysis",
-    "rental_analysis",
 )
 # The columns the deal page's court search section owns (SPEC §7.2).
 COURT_FIELDS: tuple[str, ...] = (
@@ -123,12 +119,10 @@ COURT_FIELDS: tuple[str, ...] = (
     "court_records_as_of",
     "court_records_team",
 )
-# The two analysis toggles (SPEC §8.1), whose default is "nobody said".
-TOGGLE_FIELDS: tuple[str, str] = ("flip_analysis", "rental_analysis")
 # What Reset all to defaults puts back: every panel column with a default - the ten flat
-# config values, the loan split on a split product - and the two toggles. The estimated
-# sale price and the monthly rent have no default and are left exactly as they are.
-RESETTABLE: tuple[str, ...] = (*FLAT, *SPLIT_COLUMNS, *TOGGLE_FIELDS)
+# config values and the loan split on a holdback. The estimated sale price and the monthly
+# rent have no default and are left exactly as they are.
+RESETTABLE: tuple[str, ...] = (*FLAT, *SPLIT_COLUMNS)
 
 
 def _check(deal: Deal, action: str, allowed_from: frozenset[Status]) -> None:
@@ -518,8 +512,8 @@ def reset_assumptions(
 ) -> Deal:
     """Reset all to defaults: every panel column with a default back to it.  # SPEC §8.1
 
-    The ten config values, the formula split on a split product, and the two toggles back
-    to Default; the sale price and the rent have no default and are not touched. One
+    The ten config values and the formula split on a holdback; the sale price and the rent
+    have no default and are not touched. One
     ``ASSUMPTIONS_RESET`` row names what moved, with the default each landed on in
     ``after``; a deal already on its defaults writes no row. The route runs the analysis
     afterwards.
@@ -541,7 +535,7 @@ def apply_reset(deal: Deal, config: Config | None = None) -> tuple[dict[str, Any
     """Clear every resettable column and let ``populate`` write the default back. Pure.
 
     Clearing both halves of the split together is what lets the §8.2 formula stand in on a
-    split product; on a single-note product there is no split to clear.
+    holdback; at 100% at close there is no split to clear.
     """
     before: dict[str, Any] = {}
     after: dict[str, Any] = {}
@@ -648,11 +642,11 @@ def _apply_product(
     leaves ``product_source`` alone: re-saving the block must not relabel a product the
     normalizer inferred as one a person entered.
 
-    Moving off a split product takes the loan split with it (SPEC §8.2). A NO_DRAW or
-    WHOLETAIL loan is one advance and has no purchase / rehab division, so leaving the old
-    one behind would be a deal describing a shape it no longer has - and the database says
-    so too (``ck_deals_loan_split_only_on_split_products``). Moving *onto* a split product
-    leaves the split empty, which the underwrite then names (SPEC §8.1).
+    Moving off a holdback takes the loan split with it (SPEC §8.2). A 100% at close loan is
+    one advance and has no purchase / rehab division, so leaving the old one behind would be
+    a deal describing a shape it no longer has - and the database says so too
+    (``ck_deals_loan_split_only_on_split_products``). Moving *onto* a holdback leaves the
+    split empty, which ``populate`` fills with the §8.2 formula split (SPEC §8.1).
     """
     chosen = overrides.product
     if chosen is None or chosen is deal.product:

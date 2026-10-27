@@ -251,6 +251,10 @@ class PricingConfig(_Section):
     ``max_quoted_rate`` is the highest rate a row may quote: a row whose solved rate is above
     it is not a quote, and says what it would have needed instead.
 
+    ``borrower_coc_target`` is the borrower's side of the same question (SPEC §8.4, engine
+    2.0.0): the cash-on-cash the Flip Analysis is held to, printed beside it as its target
+    and flagged ``BORROWER_COC_BELOW_TARGET`` when the deal falls short.
+
     The dollar steps this replaced (``loan_amount_steps``, phase 8a to 8c) are refused by
     name rather than as an unknown key, so a yaml that still carries them says what to change.
     """
@@ -262,6 +266,7 @@ class PricingConfig(_Section):
         Field(min_length=1, max_length=20),
     ]
     loan_amount_rounding: Annotated[Decimal, Field(gt=0, max_digits=14, decimal_places=2)]
+    borrower_coc_target: Pct
 
     @model_validator(mode="before")
     @classmethod
@@ -348,6 +353,13 @@ class StatesConfig(_Section):
         return self
 
 
+# The pre-2.0.0 products a stale ``leverage_caps`` may still be keyed by. ``Product`` reads
+# each as the structure it became (``schema.models.LEGACY_PRODUCTS``), so without this a grid
+# that still carried all four would load, two keys landing on each structure and the last one
+# silently winning.
+RETIRED_PRODUCT_KEYS: tuple[str, ...] = ("NO_DRAW", "SPLIT_DRAW", "SPLIT_PRINCIPAL", "WHOLETAIL")
+
+
 class Config(_Section):
     """Every GLENWOOD tunable, validated.  # SPEC §10"""
 
@@ -366,6 +378,20 @@ class Config(_Section):
     take_back: TakeBackConfig
     states: StatesConfig
     web_intake: WebIntakeConfig
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_the_retired_products(cls, data: Any) -> Any:
+        """A caps grid keyed by the four old products is named, not mapped.  # SPEC §3, §10"""
+        caps = data.get("leverage_caps") if isinstance(data, dict) else None
+        stale = [key for key in RETIRED_PRODUCT_KEYS if isinstance(caps, dict) and key in caps]
+        if stale:
+            raise ValueError(
+                f"leverage_caps is keyed by retired products ({', '.join(stale)}): the two "
+                "loan structures are ACQUISITION (100% at close) and ACQUISITION_REHAB "
+                "(Holdback)"
+            )
+        return data
 
     @model_validator(mode="after")
     def _caps_grid_is_complete(self) -> Config:

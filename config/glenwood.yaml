@@ -30,6 +30,7 @@ flags:                                    # SPEC §7.2, §8.8
   underwrite_severities:                  # SPEC §8.8 underwrite flags
     DSCR_BELOW_FLOOR: SOFT                       # rental DSCR below rental.dscr_floor (SPEC §8.5)
     TAKE_BACK_DSCR_BELOW_FLOOR: HARD             # take-back DSCR below take_back.dscr_floor (§8.6)
+    BORROWER_COC_BELOW_TARGET: SOFT              # flip cash-on-cash below pricing.borrower_coc_target (§8.4)
   lookbacks:
     bankruptcy_years: 4
     satisfied_judgment_years: 3
@@ -47,7 +48,7 @@ fees:                                     # SPEC §3, §8.1, §8.4
   contingency_default_pct: 0.00           # of rehab_costs; rehab_adj = rehab_costs x (1 + this)
   closing_costs_default_usd: 1000.00      # the lender's closing costs; inside the LTC denominator
   holding_costs_default_pct_of_cost: 0.02 # of purchase_price + rehab_costs, TOTAL over the hold
-  broker_selling_pct: 0.04                # the flip's cost of selling (SPEC §8.4); not an input
+  broker_selling_pct: 0.06                # the flip's cost of selling (SPEC §8.4); the deal may carry its own
 
 draws:                                    # SPEC §8.3
   listing_months: 3                       # rehab_months = term_months - this, floored at 0;
@@ -79,6 +80,8 @@ pricing:                                  # SPEC §8.10 - the Pricing section an
   loan_amount_pct_steps: [0, -0.05, -0.10] # PLACEHOLDER: each row's share off the request; 0 or less
   loan_amount_rounding: 1000              # PLACEHOLDER: a stepped row's amount is rounded to the nearest
                                           #   multiple of this; the request row is never rounded
+  borrower_coc_target: 0.20               # PLACEHOLDER: the flip's cash-on-cash target (SPEC §8.4); below
+                                          #   it, BORROWER_COC_BELOW_TARGET
 
 rental:                                   # SPEC §8.5 rental analysis
   expenses_pct_of_rent: 0.35              # operating expenses as a share of the monthly rent
@@ -104,11 +107,11 @@ web_intake:                               # SPEC §4.2 — the public borrower f
   thanks_token_hours: 24                  # PLACEHOLDER: how long the thank-you link with the
                                           #   borrower's indicative terms stays live
 
-leverage_caps:                            # SPEC §7.4 — product x credit tranche x experience tier
+leverage_caps:                            # SPEC §7.4 — loan structure x credit tranche x experience tier
   # PLACEHOLDER GRID: every cell carries the same dummy caps so it is obvious nothing is tuned.
   # GLENWOOD fills this. Each cell: ltc, ltv (fractions of 1). LTV is the commitment over
   # the estimated sale price (SPEC §7.4); the LTC placeholder is 100%, i.e. no cap yet.
-  NO_DRAW:
+  ACQUISITION:                            # 100% at close (SPEC §3)
     T1:
       E0: {ltc: 1.00, ltv: 0.75}
       E1: {ltc: 1.00, ltv: 0.75}
@@ -134,59 +137,7 @@ leverage_caps:                            # SPEC §7.4 — product x credit tran
       E1: {ltc: 1.00, ltv: 0.75}
       E2: {ltc: 1.00, ltv: 0.75}
       E3: {ltc: 1.00, ltv: 0.75}
-  SPLIT_DRAW:
-    T1:
-      E0: {ltc: 1.00, ltv: 0.75}
-      E1: {ltc: 1.00, ltv: 0.75}
-      E2: {ltc: 1.00, ltv: 0.75}
-      E3: {ltc: 1.00, ltv: 0.75}
-    T2:
-      E0: {ltc: 1.00, ltv: 0.75}
-      E1: {ltc: 1.00, ltv: 0.75}
-      E2: {ltc: 1.00, ltv: 0.75}
-      E3: {ltc: 1.00, ltv: 0.75}
-    T3:
-      E0: {ltc: 1.00, ltv: 0.75}
-      E1: {ltc: 1.00, ltv: 0.75}
-      E2: {ltc: 1.00, ltv: 0.75}
-      E3: {ltc: 1.00, ltv: 0.75}
-    T4:
-      E0: {ltc: 1.00, ltv: 0.75}
-      E1: {ltc: 1.00, ltv: 0.75}
-      E2: {ltc: 1.00, ltv: 0.75}
-      E3: {ltc: 1.00, ltv: 0.75}
-    T5:
-      E0: {ltc: 1.00, ltv: 0.75}
-      E1: {ltc: 1.00, ltv: 0.75}
-      E2: {ltc: 1.00, ltv: 0.75}
-      E3: {ltc: 1.00, ltv: 0.75}
-  SPLIT_PRINCIPAL:
-    T1:
-      E0: {ltc: 1.00, ltv: 0.75}
-      E1: {ltc: 1.00, ltv: 0.75}
-      E2: {ltc: 1.00, ltv: 0.75}
-      E3: {ltc: 1.00, ltv: 0.75}
-    T2:
-      E0: {ltc: 1.00, ltv: 0.75}
-      E1: {ltc: 1.00, ltv: 0.75}
-      E2: {ltc: 1.00, ltv: 0.75}
-      E3: {ltc: 1.00, ltv: 0.75}
-    T3:
-      E0: {ltc: 1.00, ltv: 0.75}
-      E1: {ltc: 1.00, ltv: 0.75}
-      E2: {ltc: 1.00, ltv: 0.75}
-      E3: {ltc: 1.00, ltv: 0.75}
-    T4:
-      E0: {ltc: 1.00, ltv: 0.75}
-      E1: {ltc: 1.00, ltv: 0.75}
-      E2: {ltc: 1.00, ltv: 0.75}
-      E3: {ltc: 1.00, ltv: 0.75}
-    T5:
-      E0: {ltc: 1.00, ltv: 0.75}
-      E1: {ltc: 1.00, ltv: 0.75}
-      E2: {ltc: 1.00, ltv: 0.75}
-      E3: {ltc: 1.00, ltv: 0.75}
-  WHOLETAIL:
+  ACQUISITION_REHAB:                      # Holdback (SPEC §3)
     T1:
       E0: {ltc: 1.00, ltv: 0.75}
       E1: {ltc: 1.00, ltv: 0.75}

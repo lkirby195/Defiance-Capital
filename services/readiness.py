@@ -45,14 +45,12 @@ from schema.models import (
     SPLIT_PRODUCTS,
     TWELVE_PLUS_SEED_MONTHS,
     CourtRecordsStatus,
-    Product,
     TermBucket,
     months_for_bucket,
 )
-from services.assemble import flip_is_on, intake_gaps, rental_is_on
+from services.assemble import intake_gaps
 from services.defaults import defaults_for, is_defaulted
 from services.enrichment import NO_ADAPTER_VALUES, AdapterValues
-from services.requests import UnderwriteRequest
 
 ZERO = Decimal(0)
 
@@ -284,18 +282,14 @@ def _defaulted_row(
 
 
 def _split_rows(deal: Deal, defaults: Mapping[str, object]) -> list[InputRow]:
-    """The two halves of a split loan; nothing at all on a product that has no split.
+    """The two halves of a holdback; nothing at all on 100% at close, which has no split.
 
-    Required, and present on every split product whose loan amount and rehab are known: a
-    deal nobody has divided carries the SPEC §8.2 formula split as its DEFAULT.
+    Required, and present on every holdback whose loan amount and rehab are known: a deal
+    nobody has divided carries the SPEC §8.2 formula split as its DEFAULT.
     """
     if deal.product not in SPLIT_PRODUCTS:
         return []
-    names = (
-        ("Principal Note", "Tranche A")
-        if deal.product is Product.SPLIT_PRINCIPAL
-        else ("Advance at closing", "Rehab holdback")
-    )
+    names = ("Advance at closing", "Rehab holdback")
     note = (
         f"a {enum_label(deal.product)} loan is advanced in two parts (SPEC §8.2); the default "
         "rehab portion is the contingency-adjusted rehab budget capped at the loan amount, and "
@@ -349,17 +343,6 @@ def holding_costs_note(deal: Deal, default_pct: Decimal) -> str:
     return f"{amount}; config default {default_pct:.2%} of price plus rehab"
 
 
-def _toggle_row(key: str, label: str, on: bool, chosen: bool | None, default_note: str) -> InputRow:
-    """One analysis toggle: the state it is in, and whether a person or the default set it."""
-    return _row(
-        key,
-        label,
-        "on" if on else "off",
-        source=InputSource.TEAM if chosen is not None else InputSource.DEFAULT,
-        note="set by hand" if chosen is not None else default_note,
-    )
-
-
 def underwrite_readiness(
     deal: Deal,
     adapters: AdapterValues = NO_ADAPTER_VALUES,
@@ -369,9 +352,6 @@ def underwrite_readiness(
     settings = config if config is not None else get_config()
     fees = settings.fees
     defaults = defaults_for(deal, settings)
-    empty = UnderwriteRequest()
-    flip_on = flip_is_on(deal, empty, adapters)
-    rental_on = rental_is_on(deal, empty, adapters)
     rows = [
         _defaulted_row(
             deal,
@@ -412,8 +392,6 @@ def underwrite_readiness(
             note=(
                 "the Flip analysis sells at it and LTV is computed on it; without one the "
                 "flip is not evaluated and LTV is not available (SPEC §7.4, §8.4)"
-                if flip_on
-                else "LTV is computed on it; without one LTV is not available (SPEC §7.4)"
             ),
         ),
         _resolved_row(
@@ -521,20 +499,6 @@ def underwrite_readiness(
                 "months of interest GLENWOOD stops collecting while it takes the property "
                 f"back (SPEC §8.6); config {settings.take_back.lost_interest_months}"
             ),
-        ),
-        _toggle_row(
-            "flip_analysis",
-            "Flip analysis",
-            flip_on,
-            deal.flip_analysis,
-            "on by default when there is a sale price to sell at (SPEC §8.1)",
-        ),
-        _toggle_row(
-            "rental_analysis",
-            "Rental analysis",
-            rental_on,
-            deal.rental_analysis,
-            "on by default when there is a rent to carry a loan with (SPEC §8.1)",
         ),
         _row(
             "verified_credit_score",

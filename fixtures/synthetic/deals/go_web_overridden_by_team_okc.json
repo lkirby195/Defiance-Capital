@@ -23,7 +23,7 @@
     "consent": true
   },
   "team_overrides": {
-    "product": "WHOLETAIL",
+    "product": "ACQUISITION",
     "closing_date": "2027-02-01",
     "term_months": 6,
     "interest_rate": "0.13",
@@ -102,10 +102,15 @@
       },
       "flip": {
         "status": "EVALUATED",
-        "broker_costs": "8000.00",
         "total_costs": "169300.00",
-        "net_profit": "22700.00",
-        "profit_yield": "0.134082"
+        "interest": "7800.00",
+        "origination": "2400.00",
+        "borrower_equity": "49300.00",
+        "broker_costs": "12000.00",
+        "net_profit": "18700.00",
+        "project_yield": "0.110455",
+        "cash_on_cash": "0.379310",
+        "cash_on_cash_passed": true
       },
       "rental": {
         "status": "EVALUATED",
@@ -144,7 +149,21 @@
       ],
       "term_months": 6,
       "term_stub_days": 0,
-      "term_months_decimal": "6.000000"
+      "term_months_decimal": "6.000000",
+      "sources_and_uses": {
+        "advance_at_closing": "120000.00",
+        "rehab_holdback": "0.00",
+        "borrower_equity": "49300.00",
+        "total_sources": "169300.00",
+        "purchase_price": "150000.00",
+        "closing_costs": "1000.00",
+        "rehab_costs": "5000.00",
+        "contingency": "0.00",
+        "holding_costs": "3100.00",
+        "interest": "7800.00",
+        "origination": "2400.00",
+        "total_uses": "169300.00"
+      }
     }
   }
 }

@@ -172,12 +172,30 @@
   {{ select_box(name, text, choices, chosen, required, "experience") }}
 {% endmacro %}
 
-{% macro product_box(name, text, choices, chosen, required=false) %}
-  {#- The Loan Type box: the SPEC §3 products by their labels, and no definitions. -#}
+{% macro product_radio(name, text, choices, chosen, required=false) %}
+  {#- The loan structure (SPEC §3): two radios by their labels - "100% at close" and
+      "Holdback" - and no definitions. Neither checked is a choice too: nobody picked, and the
+      normalizer infers the structure from the rehab costs. -#}
   <div>
-    {{ caption(name, text, required, default="") }}
-    {{ bare_select(name, choices, chosen, required, "label") }}
+    {{ caption(name, text, required) }}
+    <div class="toggle" role="radiogroup" aria-label="{{ text }}">
+      {%- for choice in choices %}
+      <label><input {% if loop.first %}id="{{ name }}" {% endif %}type="radio" name="{{ name }}" value="{{ choice }}"
+                    {%- if chosen == choice %} checked{% endif %}{% if required %} required{% endif %}> {{ choice | label }}</label>
+      {%- endfor %}
+    </div>
     {{ field_error(name) }}
+  </div>
+{% endmacro %}
+
+{% macro holdback_box(name, text, value) %}
+  {#- The box the Holdback radio reveals (SPEC §3, §8.2): the rehab portion held back; the
+      advance at closing is the rest of the loan. Hidden by the stylesheet unless Holdback is
+      checked (``.structure`` in _style.html) - and shown regardless while it holds a value or
+      a complaint, so nothing the form carries is ever out of sight. Optional: blank is the
+      §8.2 default. -#}
+  <div class="holdback-only{% if value or errors.get(name) %} shown{% endif %}">
+    {{ money_box(name, text, value) }}
   </div>
 {% endmacro %}
 
@@ -199,43 +217,12 @@
   </div>
 {% endmacro %}
 
-{# --- the analysis toggles (SPEC §8.1) ----------------------------------------------------- #}
-
-{% macro toggle_box(name, text, chosen, note="", default=false) %}
-  {#- An on/off toggle with the third state a select hid: Default is on when the sale price,
-      or the rent, is on the deal and is what a deal nobody has touched carries; On and Off
-      are a person overriding it in either direction. Radios rather than a select because the
-      state is the point of the control and a person should see it without opening anything.
-      Take-Back has no toggle at all - it runs on every deal (SPEC §8.6).
-
-      ``default`` true gives the toggle the same furniture a defaulted box has: the tag while
-      Default is the chosen state, and a reset link that chooses it. -#}
-  {% set on_default = chosen != "true" and chosen != "false" %}
-  <div>
-    {#- The caption points at the first radio, so the group reads as one labelled control. -#}
-    {{ caption(name, text, false, default=("default" if default else ""), tagged=on_default) }}
-    <div class="toggle" role="group" aria-label="{{ text }}"{% if default %} data-toggle="{{ name }}"{% endif %}>
-      <label><input id="{{ name }}" type="radio" name="{{ name }}" value=""
-                    {% if on_default %}checked{% endif %}> Default</label>
-      <label><input type="radio" name="{{ name }}" value="true"
-                    {% if chosen == "true" %}checked{% endif %}> On</label>
-      <label><input type="radio" name="{{ name }}" value="false"
-                    {% if chosen == "false" %}checked{% endif %}> Off</label>
-    </div>
-    {%- if default %}
-      <button class="linky" type="button" data-reset-toggle="{{ name }}">reset to default</button>
-    {%- endif %}
-    {{ note_line(note) }}
-    {{ field_error(name) }}
-  </div>
-{% endmacro %}
-
 {# --- the repeated court-matter rows (SPEC §7.2), the same table on both forms ------------- #}
 
 {% macro matter_table(enums, matters) %}
   {#- Every code, lien kind and outcome in this table is shown as the words a person reads —
-      "Bankruptcy In Lookback", not BANKRUPTCY_IN_LOOKBACK — on the same rule the Loan Type
-      box follows (``schema/labels.py``). The stored value does not change; nothing a person
+      "Bankruptcy In Lookback", not BANKRUPTCY_IN_LOOKBACK — on the same rule the loan
+      structure follows (``schema/labels.py``). The stored value does not change; nothing a person
       reads says the code. -#}
   <div class="chart">
   <div class="scroll">

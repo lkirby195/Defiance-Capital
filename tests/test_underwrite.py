@@ -54,7 +54,7 @@ BORROWER = BorrowerInputs(
 
 def deal(
     *,
-    product: Product = Product.NO_DRAW,
+    product: Product = Product.ACQUISITION,
     purchase_price: str = "200000",
     rehab_costs: str = "0",
     loan_requested: str = "150000",
@@ -157,18 +157,28 @@ def test_the_economics_are_the_resolved_inputs_not_the_raw_ones() -> None:
     assert economics.holding_costs_total == D("12000.00")
     assert economics.holding_costs_monthly == D("1000")
     assert economics.commitment == D("150000")
-    assert economics.loan_purchase_portion is None  # NO_DRAW has no split
+    assert economics.loan_purchase_portion is None  # 100% at close has no split
 
 
-def test_both_toggles_and_their_defaults_are_reported() -> None:
+def test_all_three_analyses_run_on_every_deal() -> None:
+    """There are no toggles (engine 2.0.0): a missing input is NOT_EVALUATED, never OFF."""
     result = underwrite(inputs(term_months=6), CONFIG)
-    assert result.analyses.flip_analysis is True  # a sale price is on the deal
-    assert result.analyses.rental_analysis is True  # and a rent
-    assert result.analyses.flip_analysis_default is True
+    assert result.analyses is None
     assert result.flip.status is AnalysisStatus.EVALUATED
+    assert result.rental.status is AnalysisStatus.EVALUATED
     quiet = underwrite(inputs(deal(estimated_sale_price=None), monthly_rent=None), CONFIG)
-    assert (quiet.analyses.flip_analysis, quiet.analyses.rental_analysis) == (False, False)
-    assert quiet.flip.status is AnalysisStatus.OFF and quiet.rental.status is AnalysisStatus.OFF
+    assert quiet.flip.status is AnalysisStatus.NOT_EVALUATED
+    assert quiet.rental.status is AnalysisStatus.NOT_EVALUATED
+    assert quiet.take_back.status is AnalysisStatus.NOT_EVALUATED
+
+
+def test_the_run_lays_out_sources_and_uses() -> None:
+    result = underwrite(inputs(), CONFIG)
+    table = result.sources_and_uses
+    assert table is not None
+    assert table.advance_at_closing == D("150000") and table.rehab_holdback == 0
+    assert table.borrower_equity == result.flip.borrower_equity
+    assert table.total_sources.quantize(D("0.01")) == table.total_uses.quantize(D("0.01"))
 
 
 def test_a_result_round_trips_through_json_exactly() -> None:
@@ -179,19 +189,18 @@ def test_a_result_round_trips_through_json_exactly() -> None:
 # --- the split products a run cannot price (SPEC §8.2) -------------------------------------------
 
 
-@pytest.mark.parametrize("product", [Product.SPLIT_DRAW, Product.SPLIT_PRINCIPAL])
-def test_a_split_product_without_its_split_is_refused_at_the_door(product: Product) -> None:
+def test_a_holdback_without_its_split_is_refused_at_the_door() -> None:
     with pytest.raises(ValueError, match="requires the loan split"):
-        inputs(deal(product=product, rehab_costs="50000"))
+        inputs(deal(product=Product.ACQUISITION_REHAB, rehab_costs="50000"))
 
 
 # --- NO_REHAB_PERIOD (SPEC §8.3, §8.8) -----------------------------------------------------------
 
 
-def split_principal(term: int, rehab_portion: str = "25000") -> UnderwriteInputs:
+def holdback(term: int, rehab_portion: str = "25000") -> UnderwriteInputs:
     return inputs(
         deal(
-            product=Product.SPLIT_PRINCIPAL,
+            product=Product.ACQUISITION_REHAB,
             purchase_price="120000",
             rehab_costs="30000",
             loan_requested="110000",
@@ -204,7 +213,7 @@ def split_principal(term: int, rehab_portion: str = "25000") -> UnderwriteInputs
 
 
 def test_no_rehab_period_is_raised_when_the_term_leaves_none() -> None:
-    result = underwrite(split_principal(3), CONFIG)
+    result = underwrite(holdback(3), CONFIG)
     flag = find(result.flags, UnderwriteFlag.NO_REHAB_PERIOD)
     assert flag.severity is Severity.INFO
     assert "3 month(s)" in flag.message
@@ -217,12 +226,12 @@ def test_no_rehab_period_is_raised_when_the_term_leaves_none() -> None:
 
 
 def test_no_rehab_period_is_not_raised_when_there_is_one() -> None:
-    result = underwrite(split_principal(9), CONFIG)
+    result = underwrite(holdback(9), CONFIG)
     assert UnderwriteFlag.NO_REHAB_PERIOD.value not in codes(result.flags)
 
 
 def test_no_rehab_period_is_not_raised_on_a_product_with_no_rehab_portion() -> None:
-    """A NO_DRAW on a 3-month term has no rehab period either, and nothing to draw."""
+    """100% at close on a 3-month term has no rehab period either, and nothing to draw."""
     result = underwrite(inputs(term_months=3), CONFIG)
     assert result.rehab_months == 0
     assert UnderwriteFlag.NO_REHAB_PERIOD.value not in codes(result.flags)
@@ -266,12 +275,12 @@ def test_a_take_back_over_the_floor_is_not_flagged() -> None:
 
 
 def test_no_rent_replaces_both_dscr_tests_with_one_informational_flag() -> None:
-    # the rental is off by default without a rent (SPEC §8.1); turned on by hand it has
-    # nothing to run on either, and the one flag says so for both analyses
-    result = underwrite(inputs(monthly_rent=None, rental_analysis=True), CONFIG)
+    # with no rent neither analysis has anything to run on, and the one flag says so for both
+    result = underwrite(inputs(monthly_rent=None), CONFIG)
     flag = find(result.flags, UnderwriteFlag.MONTHLY_RENT_MISSING)
     assert flag.severity is Severity.INFO
     assert "nothing stands in for what a property lets for" in flag.message
+    assert "neither the Rental nor the Take-Back analysis was evaluated" in flag.message
     # the take-back's own cost does not depend on the rent, so it is still reported
     assert "$159,500.00 take-back cost" in flag.message
     assert result.rental.status is AnalysisStatus.NOT_EVALUATED
@@ -286,10 +295,31 @@ def test_a_rent_on_the_deal_leaves_the_flag_unraised() -> None:
     assert UnderwriteFlag.MONTHLY_RENT_MISSING.value not in codes(result.flags)
 
 
-def test_the_flag_says_when_the_rental_was_off_anyway() -> None:
-    result = underwrite(inputs(monthly_rent=None, rental_analysis=False), CONFIG)
-    flag = find(result.flags, UnderwriteFlag.MONTHLY_RENT_MISSING)
-    assert "the Rental analysis is off in any case" in flag.message
+# --- BORROWER_COC_BELOW_TARGET (SPEC §8.4, §8.8) -------------------------------------------------
+
+
+def test_a_cash_on_cash_under_the_target_is_flagged_with_the_target_it_missed() -> None:
+    """A 230,000 sale on 226,000 of deal cost nets a loss on 76,000 of equity."""
+    result = underwrite(inputs(deal(estimated_sale_price="230000")), CONFIG)
+    flag = find(result.flags, UnderwriteFlag.BORROWER_COC_BELOW_TARGET)
+    severity = CONFIG.flags.underwrite_severities[UnderwriteFlag.BORROWER_COC_BELOW_TARGET]
+    assert flag.severity is severity is Severity.SOFT
+    assert "20.0% target" in flag.message
+    assert "$76,000.00 of equity" in flag.message
+    assert result.flip.cash_on_cash_passed is False
+
+
+def test_a_cash_on_cash_over_the_target_is_not_flagged() -> None:
+    """260,000 nets 18,400 on 76,000: 24.2%, over the 20% placeholder."""
+    result = underwrite(inputs(), CONFIG)
+    assert result.flip.cash_on_cash_passed is True
+    assert UnderwriteFlag.BORROWER_COC_BELOW_TARGET.value not in codes(result.flags)
+
+
+def test_no_sale_price_tests_no_cash_on_cash() -> None:
+    result = underwrite(inputs(deal(estimated_sale_price=None)), CONFIG)
+    assert result.flip.cash_on_cash_passed is None
+    assert UnderwriteFlag.BORROWER_COC_BELOW_TARGET.value not in codes(result.flags)
 
 
 # --- the screen's flags carry through (SPEC §8) --------------------------------------------------
@@ -306,9 +336,9 @@ def test_the_leverage_flags_the_screen_raises_are_raised_here_too() -> None:
 
 def test_a_run_with_no_sale_price_prices_the_deal_and_says_what_it_lost() -> None:
     """SPEC §8.4: the flip is what goes missing, not the run."""
-    result = underwrite(inputs(deal(estimated_sale_price=None), flip_analysis=True), CONFIG)
+    result = underwrite(inputs(deal(estimated_sale_price=None)), CONFIG)
     assert result.flip.status is AnalysisStatus.NOT_EVALUATED
-    assert result.flip.net_profit is None and result.flip.profit_yield is None
+    assert result.flip.net_profit is None and result.flip.project_yield is None
     # ...and everything that does not read a sale price is there in full
     assert result.flip.total_costs > 0
     assert result.return_overview.irr is not None
@@ -320,13 +350,6 @@ def test_a_run_with_no_sale_price_prices_the_deal_and_says_what_it_lost() -> Non
     assert "LTV is not computed" in flag.message
     # the leverage side of the same absence keeps its own Soft flag (SPEC §7.4)
     assert ScreenFlag.ESTIMATED_SALE_PRICE_MISSING.value in codes(result.flags)
-
-
-def test_a_flip_toggled_off_is_a_decision_not_a_gap() -> None:
-    """OFF is somebody's choice, so there is nothing for SALE_PRICE_MISSING to report."""
-    result = underwrite(inputs(deal(estimated_sale_price=None), flip_analysis=False), CONFIG)
-    assert result.flip.status is AnalysisStatus.OFF
-    assert UnderwriteFlag.SALE_PRICE_MISSING.value not in codes(result.flags)
 
 
 def test_the_court_tests_are_re_run_here_on_the_record_in_force() -> None:
@@ -358,7 +381,7 @@ def test_no_court_record_at_all_is_reported_rather_than_read_as_clean() -> None:
 
 def test_hand_entered_values_are_named() -> None:
     by_hand = SizingInputs(
-        product=Product.NO_DRAW,
+        product=Product.ACQUISITION,
         purchase_price=D("200000"),
         rehab_costs=D("0"),
         loan_requested=D("150000"),
@@ -399,7 +422,7 @@ def test_flags_come_back_hard_first_and_every_one_says_what_it_tested() -> None:
 def test_a_borrower_rent_is_named_and_a_team_sale_price_beside_it_is_named_too() -> None:
     """SPEC §4.2, §6.1: both provenance flags, each naming its own inputs."""
     by_hand = SizingInputs(
-        product=Product.NO_DRAW,
+        product=Product.ACQUISITION,
         purchase_price=D("200000"),
         rehab_costs=D("0"),
         loan_requested=D("150000"),

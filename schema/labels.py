@@ -4,8 +4,8 @@ Several of the enums on an ``IntakeRecord`` are stored as codes nobody outside t
 repository speaks. ``Tranche`` is ``T1``..``T5`` and ``ExperienceBucket`` is ``0``/``1_2``/
 ``3_5``/``6_PLUS``; the thing a team member actually picked was a FICO range and a number of
 deals. ``Product`` and ``LoanPurpose`` are SCREAMING_SNAKE for the same reason - they are
-stored values and config grid keys - and a person reads "Split Draw", not ``SPLIT_DRAW``. The
-stored value does not change; nothing a person reads says the code any more.
+stored values and config grid keys - and a person reads "Holdback", not ``ACQUISITION_REHAB``.
+The stored value does not change; nothing a person reads says the code any more.
 
 The credit labels are derived from ``credit.tranche_cutoffs`` rather than written out, so a
 lender who moves a cutoff moves the label with it (CLAUDE.md, "No hardcoded thresholds"). The
@@ -13,12 +13,11 @@ cutoffs arrive as a mapping rather than a ``Config`` because ``schema/`` is impo
 ``config/`` and must not import it back.
 
 ``enum_label`` is the general rule - title case with spaces - and ``_ENUM_LABELS`` is the
-short list of codes title-casing gets wrong. It is empty today: the asset types that needed
-it (``SFR``, ``UNITS_2_4``) left with the exit inference, and the list stays so the next
-initialism has somewhere to go.
+short list of codes that rule does not fit. Today that is the two loan structures, which a
+person knows by the words the team form's radio puts on them - "100% at close" and
+"Holdback" (SPEC §3) - rather than by their codes title-cased.
 
-``PRODUCT_DEFINITIONS`` is the SPEC §3 product table in one line each, shown beside the Loan
-Type box so a person choosing one is told what they are choosing rather than expected to know.
+``PRODUCT_DEFINITIONS`` is the SPEC §3 table in one line each.
 """
 
 from __future__ import annotations
@@ -45,30 +44,23 @@ TERM_BUCKET_LABELS: Mapping[TermBucket, str] = {
     TermBucket.M12_PLUS: "12+ months",
 }
 
-# The codes ``str.title()`` gets wrong. Everything a person reads today - NO_DRAW, CASH_OUT,
-# WHOLETAIL - title-cases correctly and is deliberately not listed, so this stays a list of
-# exceptions rather than a second copy of every enum.
-_ENUM_LABELS: Mapping[str, str] = {}
+# The codes ``str.title()`` does not fit: the two loan structures, by the words on the team
+# form's radio (SPEC §3). Everything else - CASH_OUT, BANKRUPTCY_IN_LOOKBACK - title-cases
+# correctly and is deliberately not listed, so this stays a list of exceptions rather than a
+# second copy of every enum.
+_ENUM_LABELS: Mapping[str, str] = {
+    Product.ACQUISITION.value: "100% at close",
+    Product.ACQUISITION_REHAB.value: "Holdback",
+}
 
-# SPEC §3, one line each: structure, then how interest is charged. Shown under the Loan Type
-# select and beside the chosen product on the deal page.
+# SPEC §3, one line each: structure, then how interest is charged.
 PRODUCT_DEFINITIONS: Mapping[Product, str] = {
-    Product.NO_DRAW: (
-        "Single note, full principal at close; interest on the full principal from close. "
-        "Purchase only, no rehab funding."
+    Product.ACQUISITION: (
+        "One note, the whole loan advanced at close; interest on the full commitment from close."
     ),
-    Product.SPLIT_DRAW: (
-        "Single note: the purchase portion at close, the rehab holdback drawn over the "
-        "rehab period; interest on the full commitment from close. Fix-and-flip."
-    ),
-    Product.SPLIT_PRINCIPAL: (
-        "Two notes: the Principal Note at close and Tranche A drawn over the rehab period; "
-        "interest on the Principal Note from close and on Tranche A's drawn balance. "
-        "Fix-and-flip with a larger rehab."
-    ),
-    Product.WHOLETAIL: (
-        "Single note, full principal at close; interest on the full principal from close. "
-        "Buy below market, minimal work, retail resale; short term."
+    Product.ACQUISITION_REHAB: (
+        "One note: the advance at closing, then the rehab portion held back and drawn over "
+        "the rehab period; interest on the full commitment from close."
     ),
 }
 
@@ -78,7 +70,7 @@ DASH = "—"
 
 
 def enum_label(value: StrEnum | str | None) -> str:
-    """A stored code as the words a person reads: ``SPLIT_DRAW`` -> ``Split Draw``.
+    """A stored code as the words a person reads: ``CASH_OUT`` -> ``Cash Out``.
 
     Title case with the underscores as spaces, except for the handful of codes that rule
     mangles (``_ENUM_LABELS``). An em dash when nobody chose one.

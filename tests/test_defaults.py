@@ -82,22 +82,22 @@ def audit(session: Session, deal: Deal, action: AuditAction) -> list[AuditLog]:
     ("product", "loan", "rehab", "contingency", "expected"),
     [
         # rehab_adj = 48,000 x 1.00 = 48,000 <= 195,000: the rehab portion is the budget
-        (Product.SPLIT_DRAW, "195000.00", "48000.00", None, ("147000.00", "48000.00")),
+        (Product.ACQUISITION_REHAB, "195000.00", "48000.00", None, ("147000.00", "48000.00")),
         # ...with a 10% contingency the budget is 52,800
-        (Product.SPLIT_PRINCIPAL, "195000.00", "48000.00", "0.10", ("142200.00", "52800.00")),
+        (Product.ACQUISITION_REHAB, "195000.00", "48000.00", "0.10", ("142200.00", "52800.00")),
         # a budget past the loan is capped at the loan, and nothing is left for closing
-        (Product.SPLIT_DRAW, "40000.00", "48000.00", None, ("0.00", "40000.00")),
+        (Product.ACQUISITION_REHAB, "40000.00", "48000.00", None, ("0.00", "40000.00")),
         # no rehab: the whole loan at closing
-        (Product.SPLIT_DRAW, "100000.00", "0.00", None, ("100000.00", "0.00")),
+        (Product.ACQUISITION_REHAB, "100000.00", "0.00", None, ("100000.00", "0.00")),
         # a contingency that leaves a fraction of a cent is rounded to the cent, half up:
         # 10,001 x 1.055 = 10,551.055
-        (Product.SPLIT_DRAW, "50000.00", "10001.00", "0.055", ("39448.94", "10551.06")),
+        (Product.ACQUISITION_REHAB, "50000.00", "10001.00", "0.055", ("39448.94", "10551.06")),
         # single-note products carry no split (SPEC §8.2)
-        (Product.NO_DRAW, "100000.00", "0.00", None, None),
-        (Product.WHOLETAIL, "100000.00", "5000.00", None, None),
+        (Product.ACQUISITION, "100000.00", "0.00", None, None),
+        (Product.ACQUISITION, "100000.00", "5000.00", None, None),
         # and no formula on a blank
-        (Product.SPLIT_DRAW, None, "48000.00", None, None),
-        (Product.SPLIT_DRAW, "195000.00", None, None, None),
+        (Product.ACQUISITION_REHAB, None, "48000.00", None, None),
+        (Product.ACQUISITION_REHAB, "195000.00", None, None, None),
         (None, "195000.00", "48000.00", None, None),
     ],
 )
@@ -124,8 +124,8 @@ def test_the_default_split_is_the_spec_8_2_formula(
 
 def test_the_contingency_in_force_is_the_deals_own_else_the_configs() -> None:
     """The split's formula reads the contingency the deal will be sized on (SPEC §8.2)."""
-    own = default_loan_split(Product.SPLIT_DRAW, D("195000"), D("48000"), D("0.05"), CONFIG)
-    config = default_loan_split(Product.SPLIT_DRAW, D("195000"), D("48000"), None, CONFIG)
+    own = default_loan_split(Product.ACQUISITION_REHAB, D("195000"), D("48000"), D("0.05"), CONFIG)
+    config = default_loan_split(Product.ACQUISITION_REHAB, D("195000"), D("48000"), None, CONFIG)
     assert own is not None and own[1] == D("50400.00")
     assert config is not None and config[1] == D("48000.00")  # the placeholder is 0%
 
@@ -325,14 +325,14 @@ def test_moving_off_a_split_product_drops_the_posted_split(
         db_session,
         deal.id,
         TeamOverrides(
-            product=Product.WHOLETAIL,
+            product=Product.ACQUISITION,
             loan_purchase_portion=D("147000.00"),
             loan_rehab_portion=D("48000.00"),
         ),
         actor=ACTOR,
     )
     db_session.commit()
-    assert deal.product is Product.WHOLETAIL
+    assert deal.product is Product.ACQUISITION
     assert deal.loan_purchase_portion is None and deal.loan_rehab_portion is None
     assert "loan_purchase_portion" not in deal.defaulted_fields
 
@@ -349,7 +349,7 @@ def test_the_defaults_for_a_single_note_product_carry_no_split(
             "loan_rehab_portion": None,
         },
     )
-    assert deal.product is Product.NO_DRAW
+    assert deal.product is Product.ACQUISITION
     assert "loan_purchase_portion" not in defaults_for(deal, CONFIG)
     assert deal.loan_purchase_portion is None
 
@@ -396,7 +396,7 @@ def test_a_single_note_deal_shows_the_whole_loan_at_closing(
         db_session,
         {
             **team_entry,
-            "product": "WHOLETAIL",
+            "product": "ACQUISITION",
             "loan_purchase_portion": None,
             "loan_rehab_portion": None,
         },

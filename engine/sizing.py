@@ -63,31 +63,28 @@ def total_cost(purchase_price: Decimal, rehab_adj: Decimal, closing: Decimal) ->
 def commitment_split(
     inputs: SizingInputs, rehab_adj: Decimal
 ) -> tuple[Decimal, CommitmentSplit | None]:
-    """Commitment and advance-at-closing / rehab split per product.  # SPEC §8.2
+    """Commitment and advance-at-closing / rehab split per structure.  # SPEC §8.2
 
-    NO_DRAW, WHOLETAIL: commitment = loan amount; no split.
-    SPLIT_DRAW: the advance at closing and the holdback as the team entered them (they add
-        up to the loan amount), so commitment = loan amount and the holdback is the rehab
-        portion.
-    SPLIT_PRINCIPAL: Principal Note = the advance at closing, Tranche A = the rehab portion;
-        commitment = the two added back together.
+    The commitment is the loan amount on both structures. 100% at close (ACQUISITION) has no
+    split. A holdback (ACQUISITION_REHAB) carries the advance at closing and the rehab
+    portion as the team entered them, adding up to the loan amount, and holds the rehab
+    portion back.
 
-    The rehab side is capped at ``rehab_adj`` either way: the lender does not hold back more
-    than the contingency-adjusted rehab budget could ever draw. On SPLIT_PRINCIPAL the cap
-    lowers the commitment, which is what COMMITMENT_BELOW_REQUEST reports (SPEC §7.5); on
-    SPLIT_DRAW it does not, because there is one note - the money above the cap is advanced
-    at close instead of held back, so only the timing moves.
+    The holdback is capped at ``rehab_adj``: the lender does not hold back more than the
+    contingency-adjusted rehab budget could ever draw. The cap moves timing and nothing else -
+    there is one note, so the money above it is advanced at close instead of held back
+    (REHAB_PORTION_EXCEEDS_BUDGET says so).
 
-    A split product with no split entered is sized on the loan amount with no split at all.
-    That is a borrower-channel intake before anybody has divided it (SPEC §4.2): the screen
-    still runs, and the underwrite refuses until the team enters it (SPEC §8.1).
+    A holdback with no split entered is sized on the loan amount with no split at all. That
+    is a borrower-channel intake before anybody has divided it (SPEC §4.2): the screen still
+    runs, and the deal is populated with the §8.2 formula split before it is priced.
     """
     entered = inputs.loan_split
     if inputs.product not in SPLIT_PRODUCTS or entered is None:
         return inputs.loan_requested, None
     purchase, requested_rehab = entered
     rehab = min(rehab_adj, requested_rehab)
-    commitment = inputs.loan_requested if inputs.product is Product.SPLIT_DRAW else purchase + rehab
+    commitment = inputs.loan_requested
     split = CommitmentSplit(
         purchase_portion=purchase,
         rehab_portion=rehab,
@@ -97,15 +94,11 @@ def commitment_split(
     return commitment, split
 
 
-def funded_at_close(
-    product: Product, commitment: Decimal, split: CommitmentSplit | None
-) -> Decimal:
-    """Dollars advanced at close: the commitment less the holdback / Tranche A.  # SPEC §3, §8.2"""
+def funded_at_close(commitment: Decimal, split: CommitmentSplit | None) -> Decimal:
+    """Dollars advanced at close: the commitment less the holdback.  # SPEC §3, §8.2"""
     if split is None:
         return commitment
-    if product is Product.SPLIT_DRAW:
-        return commitment - split.rehab_portion
-    return split.purchase_portion  # SPLIT_PRINCIPAL: the Principal Note
+    return commitment - split.rehab_portion
 
 
 def ratio(numerator: Decimal, denominator: Decimal) -> Decimal:
@@ -168,9 +161,7 @@ def size_deal(
     result, so a stored screen says whether the number it sized on was pulled or entered by
     hand.
 
-    ``commitment`` equals the loan amount for every product unless a SPLIT_PRINCIPAL rehab
-    portion is capped at ``rehab_adj`` and leaves part of the request unallocated (see
-    ``commitment_split``).
+    ``commitment`` equals the loan amount on both structures (``commitment_split``).
     """
     pct = contingency_pct(inputs, config)
     rehab_adj = rehab_adjusted(inputs.rehab_costs, pct)
@@ -201,7 +192,7 @@ def size_deal(
         total_cost=cost,
         loan_requested=inputs.loan_requested,
         commitment=commitment,
-        funded_at_close=funded_at_close(inputs.product, commitment, split),
+        funded_at_close=funded_at_close(commitment, split),
         split=split,
         estimated_sale_price_source=inputs.estimated_sale_price_source,
         metrics=metrics,

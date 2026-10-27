@@ -38,7 +38,7 @@ def test_committed_intake_json_matches_model() -> None:
 
 
 def test_enum_values_match_spec() -> None:
-    assert [m.value for m in Product] == ["NO_DRAW", "SPLIT_DRAW", "SPLIT_PRINCIPAL", "WHOLETAIL"]
+    assert [m.value for m in Product] == ["ACQUISITION", "ACQUISITION_REHAB"]
     assert [m.value for m in Tranche] == ["T1", "T2", "T3", "T4", "T5"]
     assert [m.value for m in ExperienceBucket] == ["0", "1_2", "3_5", "6_PLUS"]
     assert [m.value for m in ExperienceTier] == ["E0", "E1", "E2", "E3"]
@@ -178,13 +178,33 @@ def test_committed_intake_json_carries_the_new_fields() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("retired", "became"),
+    [
+        ("NO_DRAW", Product.ACQUISITION),
+        ("WHOLETAIL", Product.ACQUISITION),
+        ("SPLIT_DRAW", Product.ACQUISITION_REHAB),
+        ("SPLIT_PRINCIPAL", Product.ACQUISITION_REHAB),
+    ],
+)
+def test_a_retired_product_reads_as_the_structure_it_became(retired: str, became: Product) -> None:
+    """A stored row or payload from before engine 2.0.0 still loads (SPEC §3, migration 0021),
+    and nothing writes the old code back: the value is the new one."""
+    assert Product(retired) is became
+    deal = DealInfo(product=retired, product_source="ENTERED")
+    assert deal.product is became
+    assert deal.model_dump(mode="json")["product"] == became.value
+    with pytest.raises(ValueError):
+        Product("BRIDGE")
+
+
 def test_product_source_enum_and_pairing() -> None:
     assert [m.value for m in ProductSource] == ["ENTERED", "INFERRED"]
     assert DealInfo().product is None and DealInfo().product_source is None
-    deal = DealInfo(product="WHOLETAIL", product_source="ENTERED")
-    assert deal.product is Product.WHOLETAIL and deal.product_source is ProductSource.ENTERED
+    deal = DealInfo(product="ACQUISITION", product_source="ENTERED")
+    assert deal.product is Product.ACQUISITION and deal.product_source is ProductSource.ENTERED
     with pytest.raises(ValidationError, match="set together"):
-        DealInfo(product="NO_DRAW")
+        DealInfo(product="ACQUISITION_REHAB")
     with pytest.raises(ValidationError, match="set together"):
         DealInfo(product_source="INFERRED")
     schema = json.loads(INTAKE_JSON.read_text(encoding="utf-8"))

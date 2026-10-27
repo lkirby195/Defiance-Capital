@@ -1,9 +1,9 @@
 {
-  "name": "go_hold_flip_off_denver",
-  "description": "A hold in Denver on an 18-month term: the team turned the Flip analysis off by hand (it would be on by default, since a sale price is on the deal), and the Rental analysis is on by default because a rent is. Closing 1 May 2027, so the ledger anchors to 31 May and pays off 30 November 2028. $210,000 at 10% for 18 months, IRR 11.917%. The rent carries both tests: rental DSCR 1.68 and take-back DSCR 1.15. No flags at all.",
+  "name": "go_hold_denver",
+  "description": "A hold in Denver on an 18-month term, 100% at close. Closing 1 May 2027, so the ledger anchors to 31 May and pays off 30 November 2028. $210,000 at 10% for 18 months, IRR 11.917%. The rent carries both tests: rental DSCR 1.68 and take-back DSCR 1.15. With the Flip running on every deal now, the $340,000 sale loses $26,100 after a 6% broker and $345,700 of total deal cost, so the borrower's -19.2% cash-on-cash on $135,700 of equity is under the 20% target (BORROWER_COC_BELOW_TARGET, the run's one flag).",
   "inputs": {
     "deal": {
-      "product": "NO_DRAW",
+      "product": "ACQUISITION",
       "purchase_price": "300000.00",
       "rehab_costs": "0.00",
       "loan_requested": "210000.00",
@@ -42,7 +42,7 @@
   "underwrite": {
     "inputs": {
       "deal": {
-        "product": "NO_DRAW",
+        "product": "ACQUISITION",
         "purchase_price": "300000.00",
         "rehab_costs": "0.00",
         "loan_requested": "210000.00",
@@ -62,8 +62,7 @@
       },
       "monthly_rent": "4200.00",
       "loan_purpose": "REFINANCE",
-      "holding_costs_pct_of_cost": "0.03",
-      "flip_analysis": false
+      "holding_costs_pct_of_cost": "0.03"
     },
     "expected": {
       "payoff_date": "2028-11-30",
@@ -94,11 +93,16 @@
         "irr": "0.11916685"
       },
       "flip": {
-        "status": "OFF",
-        "broker_costs": null,
+        "status": "EVALUATED",
         "total_costs": "345700.00",
-        "net_profit": null,
-        "profit_yield": null
+        "interest": "31500.00",
+        "origination": "4200.00",
+        "borrower_equity": "135700.00",
+        "broker_costs": "20400.00",
+        "net_profit": "-26100.00",
+        "project_yield": "-0.075499",
+        "cash_on_cash": "-0.192336",
+        "cash_on_cash_passed": false
       },
       "rental": {
         "status": "EVALUATED",
@@ -117,10 +121,29 @@
         "dscr": "1.153736",
         "passed": true
       },
-      "flags": [],
+      "flags": [
+        {
+          "code": "BORROWER_COC_BELOW_TARGET",
+          "severity": "SOFT"
+        }
+      ],
       "term_months": 18,
       "term_stub_days": 0,
-      "term_months_decimal": "18.000000"
+      "term_months_decimal": "18.000000",
+      "sources_and_uses": {
+        "advance_at_closing": "210000.00",
+        "rehab_holdback": "0.00",
+        "borrower_equity": "135700.00",
+        "total_sources": "345700.00",
+        "purchase_price": "300000.00",
+        "closing_costs": "1000.00",
+        "rehab_costs": "0.00",
+        "contingency": "0.00",
+        "holding_costs": "9000.00",
+        "interest": "31500.00",
+        "origination": "4200.00",
+        "total_uses": "345700.00"
+      }
     }
   }
 }

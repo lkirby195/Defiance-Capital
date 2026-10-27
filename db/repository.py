@@ -89,9 +89,12 @@ def find_or_create_property(session: Session, info: PropertyInfo) -> Property | 
 
 # The ``deals`` columns the team-entry form has a box for (``api/intake_form.py``), in the
 # order the form asks. Edit Intake re-applies these and only these
-# (``services/intake.update_intake``): the §8.1 economics, the valuation, the rent, the
-# toggles and the court search are edited on the deal page and have no box on the form, so
-# an edit that could not have known them must not clear them. ``term_stub_days`` is here
+# (``services/intake.update_intake``): the §8.1 economics, the valuation, the rent and the
+# court search are edited on the deal page and have no box on the form, so an edit that
+# could not have known them must not clear them. The loan split is here: the form's Holdback
+# radio carries its Rehab portion box (the advance at closing is the rest), and a blank box
+# or 100% at close clears the split, which ``populate`` then fills with the §8.2 formula on a
+# holdback. ``term_stub_days`` is here
 # because the form's term is whole months and a stub beside it would be stale.
 FORM_COLUMNS: tuple[str, ...] = (
     "credit_range_self_reported",
@@ -100,9 +103,11 @@ FORM_COLUMNS: tuple[str, ...] = (
     "purchase_price",
     "rehab_costs",
     "loan_requested",
-    "loan_purpose",
     "product",
     "product_source",
+    "loan_purchase_portion",
+    "loan_rehab_portion",
+    "loan_purpose",
     "closing_date",
     "term_bucket",
     "term_months",
@@ -141,8 +146,6 @@ def intake_columns(record: IntakeRecord) -> dict[str, Any]:
         "closing_costs_usd": record.deal.closing_costs_usd,
         "holding_costs_pct_of_cost": record.deal.holding_costs_pct_of_cost,
         "origination_fee_pct": record.deal.origination_fee_pct,
-        "flip_analysis": record.deal.flip_analysis,
-        "rental_analysis": record.deal.rental_analysis,
         "monthly_rent": record.deal.monthly_rent,
         "estimated_sale_price_team": record.deal.estimated_sale_price_team,
         "court_records_status": record.deal.court_records_status,

@@ -244,18 +244,6 @@
           "default": null,
           "title": "Estimated Sale Price Team"
         },
-        "flip_analysis": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Flip Analysis"
-        },
         "holding_costs_pct_of_cost": {
           "anyOf": [
             {
@@ -462,18 +450,6 @@
           "default": null,
           "title": "Rehab Costs"
         },
-        "rental_analysis": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Rental Analysis"
-        },
         "term_bucket": {
           "anyOf": [
             {
@@ -549,12 +525,10 @@
       "type": "string"
     },
     "Product": {
-      "description": "Loan products.  # SPEC \u00a73",
+      "description": "The two loan structures.  # SPEC \u00a73\n\n``ACQUISITION`` is the whole loan advanced at close (\"100% at close\"); ``ACQUISITION_REHAB``\nadvances the purchase side at close and holds the rehab portion back, drawn over the rehab\nperiod (\"Holdback\"). Interest is on the full commitment from close on both.\n\nBefore engine 2.0.0 there were four (``NO_DRAW``, ``SPLIT_DRAW``, ``SPLIT_PRINCIPAL``,\n``WHOLETAIL``). A stored row, an intake payload or a version snapshot written then still\nnames one, so reading a retired code gives the structure it became (``LEGACY_PRODUCTS``,\nthe same mapping migration ``0021`` applied to ``deals.product``). Nothing writes one.",
       "enum": [
-        "NO_DRAW",
-        "SPLIT_DRAW",
-        "SPLIT_PRINCIPAL",
-        "WHOLETAIL"
+        "ACQUISITION",
+        "ACQUISITION_REHAB"
       ],
       "title": "Product",
       "type": "string"

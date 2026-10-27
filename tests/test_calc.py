@@ -1,4 +1,4 @@
-"""The v0.3 calc layer: the ledger, the three analyses, and the two toggles.
+"""The calc layer: the ledger, the three analyses, and Sources & Uses.
 
 # SPEC §8.3-§8.6
 
@@ -15,8 +15,7 @@ from decimal import Decimal
 import pytest
 
 from config.config import Config
-from engine.calc.analyses import analysis_toggles, flip_default, rental_default
-from engine.calc.flip import financing_costs, flip_analysis
+from engine.calc.flip import cash_on_cash, financing_costs, flip_analysis
 from engine.calc.ledger import (
     build_ledger,
     draw_schedule,
@@ -30,6 +29,7 @@ from engine.calc.rental import (
     rental_analysis,
     take_back_analysis,
 )
+from engine.calc.sources_uses import sources_and_uses
 from engine.calc.terms import (
     LoanTerms,
     holding_costs_total,
@@ -43,8 +43,10 @@ from schema.models import (
     BorrowerInputs,
     ExperienceBucket,
     ExperienceTier,
+    FlipAnalysis,
     Product,
     SizingInputs,
+    SourcesAndUses,
     Tranche,
     UnderwriteInputs,
 )
@@ -62,7 +64,7 @@ BORROWER = BorrowerInputs(
 
 def inputs(
     *,
-    product: Product = Product.NO_DRAW,
+    product: Product = Product.ACQUISITION,
     purchase_price: str = "200000",
     rehab_costs: str = "0",
     loan_requested: str = "150000",
@@ -146,16 +148,12 @@ def test_the_holding_cost_is_a_percentage_of_price_plus_rehab() -> None:
 
 def test_a_deal_with_no_commitment_cannot_be_priced() -> None:
     """Every §8 figure divides by the commitment, so a zero is refused by name, not by
-    ZeroDivisionError three modules later."""
-    deal = inputs(
-        product=Product.SPLIT_PRINCIPAL,
-        rehab_costs="0",
-        loan_requested="100000",
-        purchase_portion="0",
-        rehab_portion="100000",
-    )
+    ZeroDivisionError three modules later. Both structures lend the request, which is never
+    zero, so the guard is reached here with a sizing made to say so."""
+    deal = inputs()
+    sizing = size_deal(deal.deal, Tranche.T1, ExperienceTier.E3, CONFIG)
     with pytest.raises(ValueError, match="no commitment cannot be priced"):
-        terms(deal)
+        loan_terms(sizing.model_copy(update={"commitment": D(0)}), deal, CONFIG)
 
 
 # --- the draw schedule (SPEC §8.3) ---------------------------------------------------------------
@@ -164,7 +162,7 @@ def test_a_deal_with_no_commitment_cannot_be_priced() -> None:
 def test_the_rehab_portion_is_drawn_straight_line_over_the_rehab_period() -> None:
     loan = terms(
         inputs(
-            product=Product.SPLIT_PRINCIPAL,
+            product=Product.ACQUISITION_REHAB,
             rehab_costs="54000",
             loan_requested="190000",
             purchase_portion="136000",
@@ -176,6 +174,8 @@ def test_the_rehab_portion_is_drawn_straight_line_over_the_rehab_period() -> Non
     assert list(schedule) == list(range(1, 10))
     assert set(schedule.values()) == {D("6000.00")}
     assert sum(schedule.values()) == D("54000.00")
+    assert drawn_by(schedule, 0) == 0
+    assert drawn_by(schedule, 9) == D("54000.00")
 
 
 def test_an_uneven_draw_puts_the_remainder_in_the_last_month() -> None:
@@ -186,7 +186,7 @@ def test_an_uneven_draw_puts_the_remainder_in_the_last_month() -> None:
     """
     loan = terms(
         inputs(
-            product=Product.SPLIT_DRAW,
+            product=Product.ACQUISITION_REHAB,
             rehab_costs="50000",
             loan_requested="200000",
             purchase_portion="150000",
@@ -202,7 +202,7 @@ def test_an_uneven_draw_puts_the_remainder_in_the_last_month() -> None:
 def test_no_rehab_period_means_no_draws_and_the_money_goes_out_at_close() -> None:
     loan = terms(
         inputs(
-            product=Product.SPLIT_PRINCIPAL,
+            product=Product.ACQUISITION_REHAB,
             rehab_costs="30000",
             loan_requested="110000",
             purchase_portion="85000",
@@ -214,12 +214,11 @@ def test_no_rehab_period_means_no_draws_and_the_money_goes_out_at_close() -> Non
     assert draw_schedule(loan) == {}
     assert loan.sizing.funded_at_close == D("85000")  # what the sizing says
     assert loan.funded_at_close == D("110000")  # what actually leaves on the day
-    # ...and interest runs on all of it from month 1, not on the Principal Note alone.
-    assert interest_balance(loan, {}, 1) == D("110000")
+    assert interest_balance(loan) == D("110000")
 
 
 def test_a_product_with_no_rehab_portion_draws_nothing() -> None:
-    loan = terms(inputs(product=Product.NO_DRAW))
+    loan = terms(inputs(product=Product.ACQUISITION))
     assert loan.rehab_portion == 0
     assert draw_schedule(loan) == {}
     assert loan.funded_at_close == loan.commitment
@@ -228,48 +227,31 @@ def test_a_product_with_no_rehab_portion_draws_nothing() -> None:
 # --- the interest balance (SPEC §3, §8.3) --------------------------------------------------------
 
 
-@pytest.mark.parametrize("product", [Product.NO_DRAW, Product.WHOLETAIL])
-def test_a_single_note_accrues_on_the_whole_commitment(product: Product) -> None:
-    loan = terms(inputs(product=product))
-    for month in range(1, loan.term_months + 1):
-        assert interest_balance(loan, {}, month) == D("150000")
+def test_100_pct_at_close_accrues_on_the_whole_commitment() -> None:
+    loan = terms(inputs(product=Product.ACQUISITION))
+    assert interest_balance(loan) == D("150000")
+    entries = build_ledger(loan)
+    assert {entry.interest for entry in entries[1:]} == {D("1500.00")}
 
 
-def test_split_draw_accrues_on_the_full_commitment_though_the_holdback_is_not_out() -> None:
-    """The product, not an approximation: SPLIT_DRAW pays on money it has not received."""
+def test_a_holdback_accrues_on_the_full_commitment_though_it_is_not_all_out() -> None:
+    """The structure, not an approximation: a holdback pays on money not yet drawn, from
+    month 1 to the payoff, the same as 100% at close (SPEC §3)."""
     loan = terms(
         inputs(
-            product=Product.SPLIT_DRAW,
-            rehab_costs="48000",
-            loan_requested="195000",
-            purchase_portion="147000",
-            rehab_portion="48000",
-            term_months=9,
-        )
-    )
-    schedule = draw_schedule(loan)
-    assert loan.funded_at_close == D("147000")
-    assert all(interest_balance(loan, schedule, m) == D("195000") for m in range(1, 10))
-
-
-def test_split_principal_accrues_on_the_balance_standing_at_the_start_of_the_month() -> None:
-    """A draw taken in month k first earns in month k + 1."""
-    loan = terms(
-        inputs(
-            product=Product.SPLIT_PRINCIPAL,
+            product=Product.ACQUISITION_REHAB,
             rehab_costs="54000",
             loan_requested="190000",
             purchase_portion="136000",
             rehab_portion="54000",
         )
     )
-    schedule = draw_schedule(loan)
-    assert interest_balance(loan, schedule, 1) == D("136000")  # nothing drawn yet
-    assert interest_balance(loan, schedule, 2) == D("142000")  # one draw in
-    assert interest_balance(loan, schedule, 10) == D("190000")  # fully drawn
-    assert interest_balance(loan, schedule, 12) == D("190000")
-    assert drawn_by(schedule, 0) == 0
-    assert drawn_by(schedule, 9) == D("54000.00")
+    entries = build_ledger(loan)
+    assert loan.funded_at_close == D("136000")
+    assert interest_balance(loan) == D("190000")
+    # 190,000 at 12% is 1,900 a month in every month, the first one included
+    assert {entry.interest for entry in entries[1:]} == {D("1900.00")}
+    assert return_overview(loan).total_interest == D("22800.00")
 
 
 # --- the ledger (SPEC §8.3) ----------------------------------------------------------------------
@@ -321,7 +303,7 @@ def test_every_dollar_funded_comes_back_in_the_payoff() -> None:
     """The identity that makes total_profit equal interest + fees.  # SPEC §8.3"""
     loan = terms(
         inputs(
-            product=Product.SPLIT_DRAW,
+            product=Product.ACQUISITION_REHAB,
             rehab_costs="50000",
             loan_requested="200000",
             purchase_portion="150000",
@@ -363,45 +345,97 @@ def test_an_earlier_payoff_at_the_same_rate_earns_a_higher_irr() -> None:
 # --- flip (SPEC §8.4) ----------------------------------------------------------------------------
 
 
-def flip_for(deal: UnderwriteInputs, on: bool = True) -> object:
+def flip_for(deal: UnderwriteInputs) -> FlipAnalysis:
     loan = terms(deal)
-    return flip_analysis(deal, loan, return_overview(loan), on, CONFIG)
+    return flip_analysis(deal, loan, return_overview(loan), CONFIG)
 
 
 def test_the_flip_nets_the_sale_price_of_the_broker_and_the_whole_cost_stack() -> None:
     deal = inputs()
     loan = terms(deal)
     overview = return_overview(loan)
-    flip = flip_analysis(deal, loan, overview, True, CONFIG)
+    flip = flip_analysis(deal, loan, overview, CONFIG)
     assert flip.status is AnalysisStatus.EVALUATED
-    # 200,000 price + 1,000 closing + 4,000 holding + 0 rehab + 0 contingency + 21,000 financing
+    # 200,000 price + 1,000 closing + 0 rehab + 0 contingency + 4,000 holding + 21,000 financing
     assert flip.total_costs == D("226000.00")
     assert flip.financing_costs == D("21000.00") == financing_costs(overview)
-    assert flip.broker_costs == D("10400.00")  # 4% of 260,000
-    assert flip.net_profit == D("23600.00")
-    assert flip.profit_yield == D("23600.00") / D("226000.00")
+    assert flip.broker_costs == D("15600.00")  # 6% of 260,000
+    assert flip.net_profit == D("18400.00")
+    assert flip.project_yield == D("18400.00") / D("226000.00")
+
+
+def test_the_financing_is_reported_as_its_interest_and_its_origination() -> None:
+    """The profit line by line: 18,000 of interest and 3,000 of fees, not one lump."""
+    flip = flip_for(inputs())
+    assert flip.interest == D("18000.00")
+    assert flip.origination == D("3000.00")
+    assert flip.interest + flip.origination == flip.financing_costs
+    lines = (
+        flip.purchase_price,
+        flip.closing_costs,
+        flip.rehab_costs,
+        flip.contingency,
+        flip.holding_costs_total,
+        flip.interest,
+        flip.origination,
+    )
+    assert sum(lines, D(0)) == flip.total_costs
+    assert flip.estimated_sale_price is not None and flip.broker_costs is not None
+    assert flip.estimated_sale_price - flip.broker_costs - sum(lines, D(0)) == flip.net_profit
+
+
+def test_the_borrower_equity_is_the_total_deal_cost_less_the_loan() -> None:
+    """226,000 of cost on a 150,000 loan: the borrower brings 76,000.  # SPEC §8.4"""
+    flip = flip_for(inputs())
+    assert flip.loan_amount == D("150000")
+    assert flip.borrower_equity == D("76000.00")
+    # 18,400 on 76,000 is 24.2%, over the 20% target
+    assert flip.cash_on_cash == D("18400.00") / D("76000.00")
+    assert flip.cash_on_cash_target == CONFIG.pricing.borrower_coc_target == D("0.20")
+    assert flip.cash_on_cash_passed is True
+
+
+def test_a_cash_on_cash_under_the_target_fails_it() -> None:
+    """A 230,000 sale nets -9,800 on the same 76,000 of equity: under target, not passed."""
+    flip = flip_for(inputs(estimated_sale_price="230000"))
+    assert flip.net_profit == D("230000") - D("13800.00") - D("226000.00")
+    assert flip.cash_on_cash is not None and flip.cash_on_cash < 0
+    assert flip.cash_on_cash_passed is False
+
+
+def test_a_loan_that_covers_every_cost_has_no_cash_on_cash() -> None:
+    assert cash_on_cash(D("1000"), D("0")) is None
+    assert cash_on_cash(D("1000"), D("-5")) is None
+    assert cash_on_cash(D("1000"), D("4000")) == D("0.25")
 
 
 def test_the_broker_cut_comes_off_the_price_and_is_not_a_project_cost() -> None:
     """Deliberate (SPEC §8.4): it is what selling costs, not what the project costs."""
     flip = flip_for(inputs())
     assert flip.broker_costs not in (None,)
-    assert flip.total_costs == D("226000.00")  # the broker's 10,400 is not in it
+    assert flip.total_costs == D("226000.00")  # the broker's 15,600 is not in it
 
 
-def test_a_flip_that_is_off_still_reports_the_cost_stack() -> None:
-    flip = flip_for(inputs(), on=False)
-    assert flip.status is AnalysisStatus.OFF
-    assert flip.total_costs == D("226000.00")
-    assert flip.estimated_sale_price is None
-    assert flip.net_profit is None and flip.profit_yield is None
-
-
-def test_a_flip_with_no_sale_price_is_not_evaluated() -> None:
+def test_a_flip_with_no_sale_price_is_not_evaluated_and_keeps_the_cost_stack() -> None:
     flip = flip_for(inputs(estimated_sale_price=None))
     assert flip.status is AnalysisStatus.NOT_EVALUATED
-    assert flip.net_profit is None
+    assert flip.net_profit is None and flip.project_yield is None
+    assert flip.cash_on_cash is None and flip.cash_on_cash_passed is None
     assert flip.total_costs == D("226000.00")
+    # the equity needs no sale price
+    assert flip.borrower_equity == D("76000.00")
+
+
+def test_a_stored_flip_reads_its_old_profit_yield_as_the_project_yield() -> None:
+    """A result stored before 2.0.0 named it ``profit_yield``; it still loads."""
+    flip = flip_for(inputs())
+    stored = flip.model_dump(mode="json", exclude={"project_yield"})
+    stored["profit_yield"] = str(flip.project_yield)
+    for name in ("interest", "origination", "loan_amount", "borrower_equity", "cash_on_cash"):
+        stored.pop(name)
+    old = FlipAnalysis.model_validate(stored)
+    assert old.project_yield == flip.project_yield
+    assert old.borrower_equity is None
 
 
 def test_the_contingency_is_a_flip_cost_of_its_own() -> None:
@@ -414,6 +448,79 @@ def test_the_contingency_is_a_flip_cost_of_its_own() -> None:
     flip = flip_for(padded)
     assert flip.rehab_costs == D("50000")
     assert flip.contingency == D("5000.00")
+
+
+# --- Sources & Uses (SPEC §8.11) -----------------------------------------------------------------
+
+
+def holdback_deal(term_months: int = 9) -> UnderwriteInputs:
+    return inputs(
+        product=Product.ACQUISITION_REHAB,
+        rehab_costs="48000",
+        loan_requested="195000",
+        purchase_portion="147000",
+        rehab_portion="48000",
+        term_months=term_months,
+    )
+
+
+def table_for(deal: UnderwriteInputs) -> SourcesAndUses:
+    loan = terms(deal)
+    overview = return_overview(loan)
+    return sources_and_uses(loan, flip_analysis(deal, loan, overview, CONFIG))
+
+
+def test_the_sources_are_the_two_advances_and_the_equity() -> None:
+    table = table_for(holdback_deal())
+    assert table.advance_at_closing == D("147000")
+    assert table.rehab_holdback == D("48000")
+    assert table.advance_at_closing + table.rehab_holdback == D("195000")  # the loan
+    assert table.total_sources == table.total_uses
+
+
+@pytest.mark.parametrize(
+    "deal",
+    [
+        inputs(),
+        inputs(estimated_sale_price=None, monthly_rent=None),
+        inputs(rehab_costs="50000", contingency_pct=D("0.10"), origination_fee_pct=D("0.03")),
+        inputs(closing_date=date(2027, 3, 15), term_months=9, term_stub_days=11),
+        inputs(interest_rate="0.1634", loan_requested="143000"),
+    ],
+    ids=["acquisition", "no-price-no-rent", "contingency-and-fee", "stub", "odd-cents"],
+)
+def test_sources_equal_uses_to_the_cent(deal: UnderwriteInputs) -> None:
+    table = table_for(deal)
+    sources = table.advance_at_closing + table.rehab_holdback + table.borrower_equity
+    uses = (
+        table.purchase_price
+        + table.closing_costs
+        + table.rehab_costs
+        + table.contingency
+        + table.holding_costs
+        + table.interest
+        + table.origination
+    )
+    cents = D("0.01")
+    assert sources.quantize(cents) == uses.quantize(cents)
+    assert table.total_sources.quantize(cents) == table.total_uses.quantize(cents)
+
+
+def test_a_holdback_with_no_rehab_period_holds_nothing_back() -> None:
+    """The rehab money goes out at closing (SPEC §8.3), so the advance is the whole loan."""
+    table = table_for(holdback_deal(term_months=3))
+    assert table.advance_at_closing == D("195000")
+    assert table.rehab_holdback == 0
+
+
+def test_100_pct_at_close_has_no_holdback_and_the_same_uses_as_the_flip() -> None:
+    deal = inputs()
+    table = table_for(deal)
+    flip = flip_for(deal)
+    assert table.rehab_holdback == 0
+    assert table.advance_at_closing == D("150000")
+    assert table.borrower_equity == flip.borrower_equity == D("76000.00")
+    assert table.total_uses == flip.total_costs
 
 
 # --- rental and take-back (SPEC §8.5, §8.6) ------------------------------------------------------
@@ -440,7 +547,7 @@ def test_net_monthly_income_is_rent_less_expenses_less_the_monthly_carry() -> No
 def test_the_rental_dscr_is_income_over_a_takeout_payment_on_the_commitment() -> None:
     deal = inputs(monthly_rent="2000", holding_costs_pct_of_cost=D("0.024"))
     loan = terms(deal)
-    rental = rental_analysis(deal, loan, True, CONFIG)
+    rental = rental_analysis(deal, loan, CONFIG)
     assert rental.status is AnalysisStatus.EVALUATED
     assert rental.loan_amount == D("150000")
     assert rental.takeout_rate == CONFIG.rental.takeout_rate
@@ -452,24 +559,17 @@ def test_the_rental_dscr_is_income_over_a_takeout_payment_on_the_commitment() ->
 
 def test_a_rental_that_clears_the_floor_passes() -> None:
     deal = inputs(monthly_rent="6000", holding_costs_pct_of_cost=D("0.024"))
-    rental = rental_analysis(deal, terms(deal), True, CONFIG)
+    rental = rental_analysis(deal, terms(deal), CONFIG)
     assert rental.dscr is not None and rental.dscr > CONFIG.rental.dscr_floor
     assert rental.passed is True
 
 
-def test_a_rental_that_is_off_still_reports_the_debt_service() -> None:
-    deal = inputs()
-    rental = rental_analysis(deal, terms(deal), False, CONFIG)
-    assert rental.status is AnalysisStatus.OFF
+def test_a_rental_with_no_rent_is_not_evaluated_and_still_reports_the_debt_service() -> None:
+    deal = inputs(monthly_rent=None)
+    rental = rental_analysis(deal, terms(deal), CONFIG)
+    assert rental.status is AnalysisStatus.NOT_EVALUATED
     assert rental.debt_service_monthly > 0
     assert rental.monthly_rent is None and rental.dscr is None and rental.passed is None
-
-
-def test_a_rental_with_no_rent_is_not_evaluated() -> None:
-    deal = inputs(monthly_rent=None)
-    rental = rental_analysis(deal, terms(deal), True, CONFIG)
-    assert rental.status is AnalysisStatus.NOT_EVALUATED
-    assert rental.dscr is None and rental.passed is None
 
 
 def test_the_take_back_costs_the_loan_plus_lost_interest_plus_the_legal_bill() -> None:
@@ -485,11 +585,12 @@ def test_the_take_back_costs_the_loan_plus_lost_interest_plus_the_legal_bill() -
     assert take_back.dscr == D("900.00") / take_back.debt_service_monthly
 
 
-def test_the_take_back_runs_whatever_the_rental_toggle_says() -> None:
-    """It is not a toggle: a flip deal with a rent on it still gets one.  # SPEC §8.6"""
-    deal = inputs(rental_analysis=False, monthly_rent="2000")
+def test_all_three_analyses_run_on_a_deal_with_a_price_and_a_rent() -> None:
+    """There are no toggles (engine 2.0.0): a price and a rent evaluate all three."""
+    deal = inputs(monthly_rent="2000")
     loan = terms(deal)
-    assert rental_analysis(deal, loan, False, CONFIG).status is AnalysisStatus.OFF
+    assert flip_for(deal).status is AnalysisStatus.EVALUATED
+    assert rental_analysis(deal, loan, CONFIG).status is AnalysisStatus.EVALUATED
     assert take_back_analysis(deal, loan, CONFIG).status is AnalysisStatus.EVALUATED
 
 
@@ -505,7 +606,7 @@ def test_a_take_back_with_no_rent_is_not_evaluated_but_still_costs_what_it_costs
 def test_both_analyses_share_one_net_monthly_income() -> None:
     deal = inputs(monthly_rent="2000", holding_costs_pct_of_cost=D("0.024"))
     loan = terms(deal)
-    rental = rental_analysis(deal, loan, True, CONFIG)
+    rental = rental_analysis(deal, loan, CONFIG)
     take_back = take_back_analysis(deal, loan, CONFIG)
     assert rental.net_monthly_income == take_back.net_monthly_income
 
@@ -563,7 +664,7 @@ def test_the_stub_does_not_lengthen_the_rehab_period_or_the_draw_schedule() -> N
     """Whole months only: a stub is days at the end of the term, after the listing period."""
     loan = terms(
         stub_deal(
-            product=Product.SPLIT_PRINCIPAL,
+            product=Product.ACQUISITION_REHAB,
             rehab_costs="60000",
             loan_requested="240000",
             purchase_portion="180000",
@@ -609,34 +710,3 @@ def test_the_stub_rows_interest_keeps_the_ledgers_two_identities() -> None:
     overview = return_overview(terms(stub_deal()))
     assert overview.total_profit == overview.total_interest + overview.total_fees
     assert -(overview.total_funding + overview.total_draws) == overview.total_payoff
-
-
-# --- the two toggles and what each defaults to (SPEC §8.1) ---------------------------------------
-
-
-def test_the_flip_defaults_on_with_a_sale_price_and_the_rental_with_a_rent() -> None:
-    assert flip_default(D("260000")) is True
-    assert flip_default(None) is False
-    assert rental_default(D("2000")) is True
-    assert rental_default(None) is False
-
-
-def test_the_defaults_read_what_is_on_the_deal() -> None:
-    both = analysis_toggles(inputs())
-    assert (both.flip_analysis, both.rental_analysis) == (True, True)
-    assert (both.flip_analysis_default, both.rental_analysis_default) == (True, True)
-    neither = analysis_toggles(inputs(estimated_sale_price=None, monthly_rent=None))
-    assert (neither.flip_analysis, neither.rental_analysis) == (False, False)
-    rent_only = analysis_toggles(inputs(estimated_sale_price=None))
-    assert (rent_only.flip_analysis, rent_only.rental_analysis) == (False, True)
-
-
-def test_a_toggle_set_by_hand_wins_over_the_default_in_either_direction() -> None:
-    forced = analysis_toggles(
-        inputs(estimated_sale_price=None, monthly_rent=None, flip_analysis=True)
-    )
-    assert forced.flip_analysis is True and forced.flip_analysis_default is False
-    turned_off = analysis_toggles(inputs(rental_analysis=False))
-    assert turned_off.rental_analysis is False and turned_off.rental_analysis_default is True
-    # the defaults are still reported, so a reader can see what was overridden
-    assert turned_off.flip_analysis is True

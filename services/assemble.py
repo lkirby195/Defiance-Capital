@@ -19,7 +19,6 @@ from typing import NamedTuple
 
 from config.config import Config, get_config
 from db.models import Deal
-from engine.calc.analyses import flip_default, rental_default
 from schema.dates import Term
 from schema.models import (
     AMOUNT_COURT_FLAGS,
@@ -387,35 +386,6 @@ def resolve_term(deal: Deal, request: UnderwriteRequest) -> Term | None:
     return Term(deal.term_months, deal.term_stub_days or 0)
 
 
-def flip_is_on(
-    deal: Deal, request: UnderwriteRequest, adapters: AdapterValues = NO_ADAPTER_VALUES
-) -> bool:
-    """Whether the Flip analysis would run.  # SPEC §8.1
-
-    A toggle set by hand wins; otherwise it is on exactly when there is a sale price in force
-    to sell at - the same rule the engine applies (``engine/calc/analyses.py``), read here so
-    the checklist says in advance what the run will do.
-    """
-    toggle = _first(request.flip_analysis, deal.flip_analysis)
-    if toggle is not None:
-        return toggle
-    return flip_default(resolve_valuation(deal, adapters, request).estimated_sale_price)
-
-
-def rental_is_on(
-    deal: Deal, request: UnderwriteRequest, adapters: AdapterValues = NO_ADAPTER_VALUES
-) -> bool:
-    """Whether the Rental analysis would run: by hand, else when a rent is in force.  # SPEC §8.1
-
-    Nothing is required by it either way - the Take-Back analysis needs the same rent and
-    runs regardless - so this is for the checklist to report rather than for the button.
-    """
-    toggle = _first(request.rental_analysis, deal.rental_analysis)
-    if toggle is not None:
-        return toggle
-    return rental_default(resolve_rent(deal, adapters, request).monthly_rent)
-
-
 def underwrite_inputs(
     deal: Deal,
     request: UnderwriteRequest,
@@ -489,8 +459,6 @@ def underwrite_inputs(
         ),
         monthly_rent=rent.monthly_rent,
         monthly_rent_source=rent.monthly_rent_source,
-        flip_analysis=_first(request.flip_analysis, deal.flip_analysis),
-        rental_analysis=_first(request.rental_analysis, deal.rental_analysis),
         loan_purpose=_first(request.loan_purpose, deal.loan_purpose),
         court_records=court_records(deal, adapters),
     )

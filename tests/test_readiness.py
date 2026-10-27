@@ -57,12 +57,12 @@ def test_every_spec_8_1_input_has_a_row(deal_with_overrides: Deal) -> None:
         "closing_costs_usd",
         "holding_costs_pct_of_cost",
         "origination_fee_pct",
-        "flip_analysis",
-        "rental_analysis",
         "verified_credit_score",
         "court_records",
     } <= keys
     assert "asset_type" not in keys and "stated_exit" not in keys
+    # the two analysis toggles are gone: all three analyses run on every deal (SPEC §8.1)
+    assert "flip_analysis" not in keys and "rental_analysis" not in keys
 
 
 def test_a_hand_entered_value_says_team(deal_with_overrides: Deal) -> None:
@@ -128,38 +128,27 @@ def test_the_payoff_date_is_derived_and_never_turns_the_button_off(
     assert "derived" in row.note
 
 
-def test_the_sale_price_is_optional_whatever_the_flip_toggle_says(
-    db_session: Session, deal_with_overrides: Deal
-) -> None:
-    """SPEC §8.4: the run goes ahead without one; the flip is what goes missing."""
-    deal_with_overrides.flip_analysis = True
-    db_session.commit()
+def test_the_sale_price_is_optional(deal_with_overrides: Deal) -> None:
+    """SPEC §8.4: the run goes ahead without one; the flip and the LTV are what go missing."""
     row = rows(deal_with_overrides)["estimated_sale_price"]
     assert row.required is False
     assert "the flip is not evaluated" in row.note
-
-    deal_with_overrides.flip_analysis = False
-    db_session.commit()
-    row = rows(deal_with_overrides)["estimated_sale_price"]
-    assert row.required is False
     assert "LTV is not available" in row.note
 
 
-def test_a_split_product_lists_its_two_portions_by_their_real_names(
+def test_a_holdback_lists_its_two_portions_by_their_names(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    deal_with_overrides.product = Product.SPLIT_PRINCIPAL
+    deal_with_overrides.product = Product.ACQUISITION_REHAB
     db_session.commit()
     by_key = rows(deal_with_overrides)
-    assert by_key["deal.loan_purchase_portion"].label == "Principal Note"
-    assert by_key["deal.loan_rehab_portion"].label == "Tranche A"
+    assert by_key["deal.loan_purchase_portion"].label == "Advance at closing"
+    assert by_key["deal.loan_rehab_portion"].label == "Rehab holdback"
     assert by_key["deal.loan_purchase_portion"].required is True
 
 
-def test_a_single_note_product_lists_no_portions(
-    db_session: Session, deal_with_overrides: Deal
-) -> None:
-    deal_with_overrides.product = Product.NO_DRAW
+def test_100_pct_at_close_lists_no_portions(db_session: Session, deal_with_overrides: Deal) -> None:
+    deal_with_overrides.product = Product.ACQUISITION
     deal_with_overrides.loan_purchase_portion = None
     deal_with_overrides.loan_rehab_portion = None
     db_session.commit()

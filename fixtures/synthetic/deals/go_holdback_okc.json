@@ -1,9 +1,9 @@
 {
-  "name": "go_split_principal_okc",
-  "description": "SPLIT_PRINCIPAL rehab in OKC; a 10% contingency and a 3% origination fee, both team-entered over the config defaults. Go. Underwrite: 12 months at 12%, a $136,000 Principal Note plus $54,000 of Tranche A drawn $6,000 a month over nine months, so the interest climbs $60 a month until the tranche is full; IRR 16.587%. The flip is on by default - a sale price is on the deal - and the team has set it on by hand as well. Closing 15 November 2026 anchors the ledger to 30 November, so the payoff is 30 November 2027.",
+  "name": "go_holdback_okc",
+  "description": "Holdback rehab in OKC (a SPLIT_PRINCIPAL before engine 2.0.0, its Tranche A now the rehab portion); a 10% contingency and a 3% origination fee, both team-entered over the config defaults. Go. Underwrite: 12 months at 12%, $136,000 at close and $54,000 held back, drawn $6,000 a month over nine months, interest on the full $190,000 from close - $1,900 a month, $22,800 in all; IRR 18.549%. The $300,000 sale less a 6% broker loses $5,500 against $287,500 of total deal cost, so the borrower's cash-on-cash on $97,500 of equity is under the 20% target. Closing 15 November 2026 anchors the ledger to 30 November, so the payoff is 30 November 2027.",
   "inputs": {
     "deal": {
-      "product": "SPLIT_PRINCIPAL",
+      "product": "ACQUISITION_REHAB",
       "purchase_price": "180000.00",
       "rehab_costs": "60000.00",
       "loan_requested": "190000.00",
@@ -49,7 +49,7 @@
   "underwrite": {
     "inputs": {
       "deal": {
-        "product": "SPLIT_PRINCIPAL",
+        "product": "ACQUISITION_REHAB",
         "purchase_price": "180000.00",
         "rehab_costs": "60000.00",
         "loan_requested": "190000.00",
@@ -74,7 +74,6 @@
       },
       "origination_fee_pct": "0.03",
       "monthly_rent": "2400.00",
-      "flip_analysis": true,
       "loan_purpose": "CONSTRUCTION",
       "holding_costs_pct_of_cost": "0.05"
     },
@@ -100,18 +99,23 @@
         "last_net": "194750.00",
         "total_funding": "-136000.00",
         "total_draws": "-54000.00",
-        "total_interest": "20100.00",
+        "total_interest": "22800.00",
         "total_fees": "5700.00",
         "total_payoff": "190000.00",
-        "total_profit": "25800.00",
-        "irr": "0.16586990"
+        "total_profit": "28500.00",
+        "irr": "0.18549032"
       },
       "flip": {
         "status": "EVALUATED",
-        "broker_costs": "12000.00",
-        "total_costs": "284800.00",
-        "net_profit": "3200.00",
-        "profit_yield": "0.011236"
+        "total_costs": "287500.00",
+        "interest": "22800.00",
+        "origination": "5700.00",
+        "borrower_equity": "97500.00",
+        "broker_costs": "18000.00",
+        "net_profit": "-5500.00",
+        "project_yield": "-0.019130",
+        "cash_on_cash": "-0.056410",
+        "cash_on_cash_passed": false
       },
       "rental": {
         "status": "EVALUATED",
@@ -138,11 +142,29 @@
         {
           "code": "TAKE_BACK_DSCR_BELOW_FLOOR",
           "severity": "HARD"
+        },
+        {
+          "code": "BORROWER_COC_BELOW_TARGET",
+          "severity": "SOFT"
         }
       ],
       "term_months": 12,
       "term_stub_days": 0,
-      "term_months_decimal": "12.000000"
+      "term_months_decimal": "12.000000",
+      "sources_and_uses": {
+        "advance_at_closing": "136000.00",
+        "rehab_holdback": "54000.00",
+        "borrower_equity": "97500.00",
+        "total_sources": "287500.00",
+        "purchase_price": "180000.00",
+        "closing_costs": "1000.00",
+        "rehab_costs": "60000.00",
+        "contingency": "6000.00",
+        "holding_costs": "12000.00",
+        "interest": "22800.00",
+        "origination": "5700.00",
+        "total_uses": "287500.00"
+      }
     }
   }
 }

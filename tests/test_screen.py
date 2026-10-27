@@ -85,7 +85,7 @@ def borrower(**overrides: Any) -> BorrowerInputs:
 
 def deal(**overrides: Any) -> SizingInputs:
     base: dict[str, Any] = {
-        "product": Product.NO_DRAW,
+        "product": Product.ACQUISITION,
         "purchase_price": D("150000.00"),
         "rehab_costs": D("0.00"),
         "loan_requested": D("105000.00"),
@@ -447,7 +447,7 @@ def test_state_outside_served_list_is_soft() -> None:
 def test_leverage_flags_name_cap_actual_band_and_cell() -> None:
     sizing = size_deal(
         deal(
-            product=Product.SPLIT_PRINCIPAL,
+            product=Product.ACQUISITION_REHAB,
             purchase_price=D("100000.00"),
             rehab_costs=D("40000.00"),
             loan_requested=D("135000.00"),
@@ -461,7 +461,7 @@ def test_leverage_flags_name_cap_actual_band_and_cell() -> None:
     by_code = {f.code: f for f in flags}
     ltv = by_code[ScreenFlag.LTV_OVER_CAP]
     assert ltv.severity is Severity.HARD
-    assert re.search(r"LTV 90\.0% exceeds the 75\.0% cap for SPLIT_PRINCIPAL/T3/E1", ltv.message)
+    assert re.search(r"LTV 90\.0% exceeds the 75\.0% cap for ACQUISITION_REHAB/T3/E1", ltv.message)
     assert "5.0 pt tolerance band (limit 80.0%)" in ltv.message
     # ...and the LTC, at 95.7% of cost, is inside the 100% placeholder cap.
     assert ScreenFlag.LTC_OVER_CAP not in by_code
@@ -482,7 +482,7 @@ def test_an_ltc_past_its_cap_is_named_the_same_way() -> None:
     by_code = {f.code: f for f in leverage_flags(sizing)}
     ltc = by_code[ScreenFlag.LTC_OVER_CAP]
     assert ltc.severity is Severity.SOFT  # 103.0% of cost is inside the 5-point band
-    assert "LTC 103.0% is over the 100.0% cap for NO_DRAW/T3/E1" in ltc.message
+    assert "LTC 103.0% is over the 100.0% cap for ACQUISITION/T3/E1" in ltc.message
 
 
 def test_a_missing_sale_price_is_a_soft_flag() -> None:
@@ -494,43 +494,31 @@ def test_a_missing_sale_price_is_a_soft_flag() -> None:
     assert "cap 75.0%" in flags[0].message
 
 
-def test_split_principal_capped_tranche_a_below_request_is_an_info_flag() -> None:
+def test_a_capped_holdback_lends_the_request_and_raises_one_info_flag() -> None:
+    """The rehab portion over the budget is named; the commitment does not fall (SPEC §8.2)."""
     sizing = size_deal(
         deal(
-            product=Product.SPLIT_PRINCIPAL,
+            product=Product.ACQUISITION_REHAB,
             purchase_price=D("150000.00"),
             rehab_costs=D("60000.00"),
             loan_requested=D("170000.00"),
             estimated_sale_price=D("290000.00"),
             loan_purchase_portion=D("80000.00"),
-            loan_rehab_portion=D("90000.00"),  # capped at rehab_adj = 66,000
+            loan_rehab_portion=D("90000.00"),  # capped at rehab_adj = 60,000
         ),
         Tranche.T2,
         ExperienceTier.E2,
         CONFIG,
     )
-    assert sizing.commitment == D("140000.00") and sizing.loan_requested == D("170000.00")
-    # two Info flags, and they say different things: one that the entered rehab portion is
-    # over the budget, one that the commitment fell as a result
-    flags = leverage_flags(sizing)
-    assert [f.code for f in flags] == [
-        ScreenFlag.REHAB_PORTION_EXCEEDS_BUDGET,
-        ScreenFlag.COMMITMENT_BELOW_REQUEST,
-    ]
-    flag = flags[1]
-    assert flag.code is ScreenFlag.COMMITMENT_BELOW_REQUEST and flag.severity is Severity.INFO
-    assert "commitment $140,000.00" in flag.message
-    assert "$170,000.00 loan amount" in flag.message
-    assert "Tranche A $60,000.00" in flag.message
-    assert "entered rehab portion is capped" in flag.message
-    assert "rehab cost $60,000.00" in flag.message
+    assert sizing.commitment == sizing.loan_requested == D("170000.00")
+    assert sizing.funded_at_close == D("110000.00")  # the 30,000 over the budget goes at close
+    assert [f.code for f in leverage_flags(sizing)] == [ScreenFlag.REHAB_PORTION_EXCEEDS_BUDGET]
 
 
-def test_a_rehab_portion_over_the_budget_is_an_info_flag_on_both_split_products() -> None:
+def test_a_rehab_portion_over_the_budget_is_an_info_flag() -> None:
     """Naming both amounts: what the team entered, and what the budget allows.  # SPEC §8.2"""
     for product, consequence in (
-        (Product.SPLIT_PRINCIPAL, "Tranche A is capped at the budget"),
-        (Product.SPLIT_DRAW, "the difference is advanced at close"),
+        (Product.ACQUISITION_REHAB, "the difference is advanced at close"),
     ):
         sizing = size_deal(
             deal(
@@ -558,7 +546,7 @@ def test_a_rehab_portion_over_the_budget_is_an_info_flag_on_both_split_products(
 def test_no_rehab_portion_flag_when_the_portion_is_within_the_budget() -> None:
     sizing = size_deal(
         deal(
-            product=Product.SPLIT_DRAW,
+            product=Product.ACQUISITION_REHAB,
             purchase_price=D("150000.00"),
             rehab_costs=D("60000.00"),
             loan_requested=D("170000.00"),
@@ -575,7 +563,7 @@ def test_no_rehab_portion_flag_when_the_portion_is_within_the_budget() -> None:
 
 
 def test_no_commitment_flag_when_the_request_is_fully_allocated() -> None:
-    for product in (Product.SPLIT_PRINCIPAL, Product.SPLIT_DRAW):
+    for product in (Product.ACQUISITION_REHAB,):
         sizing = size_deal(
             deal(
                 product=product,

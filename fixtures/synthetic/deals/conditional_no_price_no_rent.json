@@ -1,9 +1,9 @@
 {
   "name": "conditional_no_price_no_rent",
-  "description": "NO_DRAW with no estimated sale price and no monthly rent. LTV is the commitment over the sale price and there is no fallback denominator (SPEC §7.4), so it is NOT_AVAILABLE, ESTIMATED_SALE_PRICE_MISSING is raised and the screen goes Conditional on it. The underwrite still runs - the ledger, the economics and the take-back cost do not read a sale price - and, with the Flip analysis turned on by hand (it defaults off with no sale price), reports it NOT_EVALUATED with SALE_PRICE_MISSING beside it, and neither DSCR tested (MONTHLY_RENT_MISSING). Closing 31 March on a 6-month term pays off 30 September.",
+  "description": "100% at close with no estimated sale price and no monthly rent. LTV is the commitment over the sale price and there is no fallback denominator (SPEC 7.4), so it is NOT_AVAILABLE, ESTIMATED_SALE_PRICE_MISSING is raised and the screen goes Conditional on it. The underwrite still runs - the ledger, the economics, the take-back cost and Sources & Uses do not read a sale price - and, with all three analyses running on every deal, reports the Flip NOT_EVALUATED with SALE_PRICE_MISSING beside it and neither DSCR tested (MONTHLY_RENT_MISSING). The borrower's equity is still there: $109,400 of total deal cost on an $80,000 loan is $29,400. Closing 31 March on a 6-month term pays off 30 September.",
   "inputs": {
     "deal": {
-      "product": "NO_DRAW",
+      "product": "ACQUISITION",
       "purchase_price": "100000.00",
       "rehab_costs": "0.00",
       "loan_requested": "80000.00"
@@ -49,7 +49,7 @@
   "underwrite": {
     "inputs": {
       "deal": {
-        "product": "NO_DRAW",
+        "product": "ACQUISITION",
         "purchase_price": "100000.00",
         "rehab_costs": "0.00",
         "loan_requested": "80000.00"
@@ -66,8 +66,7 @@
       "court_records": {
         "as_of": "2026-09-09"
       },
-      "loan_purpose": "PURCHASE",
-      "flip_analysis": true
+      "loan_purpose": "PURCHASE"
     },
     "expected": {
       "payoff_date": "2027-09-30",
@@ -99,13 +98,18 @@
       },
       "flip": {
         "status": "NOT_EVALUATED",
-        "broker_costs": null,
         "total_costs": "109400.00",
+        "interest": "4800.00",
+        "origination": "1600.00",
+        "borrower_equity": "29400.00",
+        "broker_costs": null,
         "net_profit": null,
-        "profit_yield": null
+        "project_yield": null,
+        "cash_on_cash": null,
+        "cash_on_cash_passed": null
       },
       "rental": {
-        "status": "OFF",
+        "status": "NOT_EVALUATED",
         "expenses": null,
         "net_monthly_income": null,
         "debt_service_monthly": "505.65",
@@ -123,21 +127,35 @@
       },
       "flags": [
         {
-          "code": "ESTIMATED_SALE_PRICE_MISSING",
-          "severity": "SOFT"
+          "code": "MONTHLY_RENT_MISSING",
+          "severity": "INFO"
         },
         {
           "code": "SALE_PRICE_MISSING",
           "severity": "INFO"
         },
         {
-          "code": "MONTHLY_RENT_MISSING",
-          "severity": "INFO"
+          "code": "ESTIMATED_SALE_PRICE_MISSING",
+          "severity": "SOFT"
         }
       ],
       "term_months": 6,
       "term_stub_days": 0,
-      "term_months_decimal": "6.000000"
+      "term_months_decimal": "6.000000",
+      "sources_and_uses": {
+        "advance_at_closing": "80000.00",
+        "rehab_holdback": "0.00",
+        "borrower_equity": "29400.00",
+        "total_sources": "109400.00",
+        "purchase_price": "100000.00",
+        "closing_costs": "1000.00",
+        "rehab_costs": "0.00",
+        "contingency": "0.00",
+        "holding_costs": "2000.00",
+        "interest": "4800.00",
+        "origination": "1600.00",
+        "total_uses": "109400.00"
+      }
     }
   }
 }

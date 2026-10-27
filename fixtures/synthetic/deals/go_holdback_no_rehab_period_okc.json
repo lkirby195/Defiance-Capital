@@ -1,9 +1,9 @@
 {
-  "name": "go_split_principal_no_rehab_period_okc",
-  "description": "SPLIT_PRINCIPAL on a 3-month term in OKC, which is the listing period, so there is no rehab period at all: the $25,000 of Tranche A is advanced at close rather than drawn, and interest runs on the whole $110,000 from month 1 (NO_REHAB_PERIOD). Closing 31 March, so the payoff lands 30 June, the end of the third month after. IRR 22.088%.",
+  "name": "go_holdback_no_rehab_period_okc",
+  "description": "Holdback on a 3-month term in OKC, which is the listing period, so there is no rehab period at all: the $25,000 rehab portion is advanced at close rather than drawn, the whole $110,000 goes out on day one and Sources & Uses holds nothing back (NO_REHAB_PERIOD). Interest on the full commitment from month 1, as on every holdback. Closing 31 March, so the payoff lands 30 June, the end of the third month after. IRR 22.088% - the same ledger it had as a SPLIT_PRINCIPAL, since with nothing drawn the two structures agreed.",
   "inputs": {
     "deal": {
-      "product": "SPLIT_PRINCIPAL",
+      "product": "ACQUISITION_REHAB",
       "purchase_price": "120000.00",
       "rehab_costs": "30000.00",
       "loan_requested": "110000.00",
@@ -48,7 +48,7 @@
   "underwrite": {
     "inputs": {
       "deal": {
-        "product": "SPLIT_PRINCIPAL",
+        "product": "ACQUISITION_REHAB",
         "purchase_price": "120000.00",
         "rehab_costs": "30000.00",
         "loan_requested": "110000.00",
@@ -103,10 +103,15 @@
       },
       "flip": {
         "status": "EVALUATED",
-        "broker_costs": "7400.00",
         "total_costs": "159500.00",
-        "net_profit": "18100.00",
-        "profit_yield": "0.113480"
+        "interest": "3300.00",
+        "origination": "2200.00",
+        "borrower_equity": "49500.00",
+        "broker_costs": "11100.00",
+        "net_profit": "14400.00",
+        "project_yield": "0.090282",
+        "cash_on_cash": "0.290909",
+        "cash_on_cash_passed": true
       },
       "rental": {
         "status": "EVALUATED",
@@ -141,7 +146,21 @@
       ],
       "term_months": 3,
       "term_stub_days": 0,
-      "term_months_decimal": "3.000000"
+      "term_months_decimal": "3.000000",
+      "sources_and_uses": {
+        "advance_at_closing": "110000.00",
+        "rehab_holdback": "0.00",
+        "borrower_equity": "49500.00",
+        "total_sources": "159500.00",
+        "purchase_price": "120000.00",
+        "closing_costs": "1000.00",
+        "rehab_costs": "30000.00",
+        "contingency": "0.00",
+        "holding_costs": "3000.00",
+        "interest": "3300.00",
+        "origination": "2200.00",
+        "total_uses": "159500.00"
+      }
     }
   }
 }

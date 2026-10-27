@@ -59,11 +59,14 @@ def test_run_underwrite_prints_every_section(
         "FLIP ANALYSIS",
         "RENTAL ANALYSIS",
         "TAKE-BACK ANALYSIS",
+        "SOURCES & USES",
         "FLAGS",
     ):
         assert section in out, section
+    assert "ANALYSES" not in out  # no toggles to report (engine 2.0.0)
     expected = load(path)["underwrite"]["expected"]
-    assert "IRR" in out and "Yield (Profit / Costs)" in out
+    assert "IRR" in out and "Project yield" in out and "Total deal cost" in out
+    assert "Borrower equity" in out and "Cash-on-cash" in out
     assert "DSCR at loan cost" in out
     # the sensitivity grid: the rate columns across the top, the request on the bottom row
     grid = out[out.index("LENDER SENSITIVITY") : out.index("BORROWER SENSITIVITY")]
@@ -83,7 +86,7 @@ def test_run_underwrite_prints_every_section(
     pricing = out[out.index("PRICING") : out.index("FLIP ANALYSIS")]
     flip = expected["flip"]
     if flip["status"] == "EVALUATED":
-        assert "cash-on-cash" in borrower
+        assert "project yield" in borrower
         assert borrower.count("*") == 1 if on_grid else off_grid in borrower
     else:
         assert "NOT EVALUATED" in borrower
@@ -99,6 +102,12 @@ def test_run_underwrite_prints_every_section(
     assert expected["payoff_date"] in out
     for flag in expected["flags"]:
         assert flag["code"] in out
+    # Sources & Uses, both totals the same figure to the cent (SPEC 8.11)
+    table = out[out.index("SOURCES & USES") : out.index("FLAGS")]
+    total = expected["sources_and_uses"]["total_uses"]
+    assert table.replace("$", "").replace(",", "").count(total) == 2
+    # the requested row's de-risk line is the one row with none; the others say it
+    assert pricing.count("of equity brings the rate to") == 2
 
 
 @pytest.mark.parametrize("path", UNDERWRITE_FILES, ids=UNDERWRITE_IDS)
@@ -137,13 +146,13 @@ def test_a_missing_or_unreadable_file_is_reported_not_traced(
 
 def test_the_irr_is_printed_at_full_precision(capsys: pytest.CaptureFixture[str]) -> None:
     """The IRR is a solve, so it is not rounded to a whole basis point."""
-    denver = FIXTURE_DIR / "go_split_draw_denver.json"
+    denver = FIXTURE_DIR / "go_holdback_denver.json"
     assert main(["run", str(denver), "--underwrite"]) == 0
     assert "17.6198%" in capsys.readouterr().out
 
 
 def test_the_ledger_prints_a_row_for_every_month(capsys: pytest.CaptureFixture[str]) -> None:
-    denver = FIXTURE_DIR / "go_split_draw_denver.json"
+    denver = FIXTURE_DIR / "go_holdback_denver.json"
     assert main(["run", str(denver), "--underwrite"]) == 0
     out = capsys.readouterr().out
     # the deal closes on the 15th; the ledger anchors to month ends (SPEC §8.3)
@@ -156,7 +165,7 @@ def test_the_ledger_prints_a_row_for_every_month(capsys: pytest.CaptureFixture[s
 
 
 def test_a_term_with_no_rehab_period_says_so(capsys: pytest.CaptureFixture[str]) -> None:
-    short = FIXTURE_DIR / "go_split_principal_no_rehab_period_okc.json"
+    short = FIXTURE_DIR / "go_holdback_no_rehab_period_okc.json"
     assert main(["run", str(short), "--underwrite"]) == 0
     out = capsys.readouterr().out
     assert "NO_REHAB_PERIOD" in out
@@ -167,13 +176,13 @@ def test_an_analysis_that_did_not_run_says_why(capsys: pytest.CaptureFixture[str
     no_rent = FIXTURE_DIR / "conditional_no_price_no_rent.json"
     assert main(["run", str(no_rent), "--underwrite"]) == 0
     out = capsys.readouterr().out
-    assert "RENTAL ANALYSIS" in out and "OFF" in out
+    assert "RENTAL ANALYSIS" in out and "OFF" not in out
     assert "NOT EVALUATED: no monthly rent" in out
     assert "MONTHLY_RENT_MISSING" in out
     # ...and the flip, which had no price to sell at (SPEC §8.4)
     assert "NOT EVALUATED: no estimated sale price" in out
     assert "SALE_PRICE_MISSING" in out
-    assert "TAKE-BACK ANALYSIS" in out and "(always on)" in out
+    assert "TAKE-BACK ANALYSIS" in out and "(always on)" not in out
 
 
 def test_run_fixture_refuses_an_underwrite_it_was_not_given(tmp_path: Path) -> None:

@@ -12,8 +12,8 @@
    Intake; when and by whom a version ran, and on which engine, are in the History; the
    status and the verdict are one small line atop the Actions card. Then the results of the
    version shown: Pricing full width; Lender and Borrower Sensitivity side by side; Flip,
-   Rental and Take-Back as three stat cards; the Return Overview as one line of figures with
-   the Cash Flows folded under it. Then what the run read: the Underwriting Assumptions
+   Rental and Take-Back as three stat cards; Sources & Uses; the Return Overview as one line
+   of figures with the Cash Flows folded under it. Then what the run read: the Underwriting Assumptions
    panel, open, Save & Run and Reset all at its foot - the one list of what the ledger runs
    on; the read-only intake summary (Deal Economics and Property) with the sizing table and
    the score components; and the collapsed furniture: the actions, the court search, the
@@ -30,7 +30,9 @@
    the "default" tag (SPEC §8.1). #}
 
 {% macro dflt(name) -%}{% if name in economics.defaulted %} <span class="dflt">default</span>{% endif %}{%- endmacro %}
-{% macro passed(flag) -%}{% if flag is none %}Not tested{% elif flag %}Passes{% else %}Below the floor{% endif %}{%- endmacro %}
+{% macro passed(flag, short="Below the floor") -%}{% if flag is none %}Not tested{% elif flag %}Passes{% else %}{{ short }}{% endif %}{%- endmacro %}
+{# A cost in the flip's profit lines: taken off the sale price, so shown with a minus. #}
+{% macro less(value) -%}{% if value is none %}—{% else %}-{{ value | money }}{% endif %}{%- endmacro %}
 
 {% block content %}
 {% set result = underwrite.result if underwrite else none %}
@@ -135,6 +137,7 @@
           <tr>
             <th>Step</th>
             <th class="num">Loan amount</th>
+            <th class="num">Borrower equity</th>
             <th class="num">Rate</th>
             <th class="num">Lender IRR</th>
             <th class="num">Borrower profit</th>
@@ -146,6 +149,7 @@
             <tr>
               <th scope="row">{{ row.label }}</th>
               <td class="num">{{ row.loan_amount | money }}</td>
+              <td class="num">{{ row.borrower_equity | money }}</td>
               {% if row.cleared %}
                 <td class="num">{{ row.interest_rate | quoted }}</td>
                 <td class="num">{{ row.lender_irr | quoted }}</td>
@@ -162,7 +166,7 @@
       </table>
     </div>
     <ul class="sentences small">
-      {% for row in matrix.rows %}<li>{{ row.sentence }}</li>{% endfor %}
+      {% for row in matrix.rows %}<li>{{ row.sentence }}</li>{% if row.derisk %}<li class="derisk">{{ row.derisk }}</li>{% endif %}{% endfor %}
     </ul>
   {% elif result %}
     <p class="small muted">Not on this ledger; run the analysis again for the table.</p>
@@ -271,7 +275,7 @@
             <tr>
               <td class="num">{{ row.loan_amount | money }}</td>
               {% for cell in row.cells %}
-                <td class="num grid-cell{% if cell.is_deal %} hit{% endif %}">{{ cell.net_profit | money }}<br><span class="unit">{{ cell.cash_on_cash | pct }}</span></td>
+                <td class="num grid-cell{% if cell.is_deal %} hit{% endif %}">{{ cell.net_profit | money }}<br><span class="unit">{{ cell.project_yield | pct }}</span></td>
               {% endfor %}
             </tr>
           {% endfor %}
@@ -279,7 +283,7 @@
       </table>
     </div>
     {% else %}
-    <p class="small muted">Not evaluated: {{ "the Flip Analysis is off" if not result.analyses.flip_analysis else "there is no estimated sale price" }}.</p>
+    <p class="small muted">Not evaluated: {{ "the Flip Analysis was off" if result.analyses and not result.analyses.flip_analysis else "there is no estimated sale price" }}.</p>
     {% endif %}
   {% elif result %}
     <p class="small muted">Not on this ledger; run the analysis again for the table.</p>
@@ -294,8 +298,6 @@
 <section class="panel stat" id="flip">
   <div class="row">
     <h2>Flip Analysis</h2>
-    <span class="tag {{ 'GO' if result and result.analyses.flip_analysis else 'INFO' }}">{{
-      ("ON" if result.analyses.flip_analysis else "OFF") if result else "—" }}</span>
   </div>
   {% if result %}
     {% set flip = result.flip %}
@@ -306,22 +308,47 @@
     <dl class="facts small">
       <dt>Status</dt>
       <dd>{{ flip.status | plain }}</dd>
-      <dt>Toggle</dt>
-      <dd>{{ "On" if result.analyses.flip_analysis else "Off" }}{% if deal.flip_analysis is none %} <span class="dflt">default</span>{% endif %}</dd>
-      <dt>Estimated Sale Price</dt><dd>{{ flip.estimated_sale_price | money }}</dd>
-      <dt>Broker selling costs</dt><dd>{{ flip.broker_costs | money }}</dd>
       <dt>Broker selling %</dt><dd>{{ flip.broker_selling_pct | pct }}{{ dflt("broker_selling_pct") }}</dd>
-      <dt>Purchase price</dt><dd>{{ flip.purchase_price | money }}</dd>
-      <dt>Closing costs</dt><dd>{{ flip.closing_costs | money }}</dd>
-      <dt>Holding costs</dt><dd>{{ flip.holding_costs_total | money }}</dd>
-      <dt>Rehab costs</dt><dd>{{ flip.rehab_costs | money }}</dd>
-      <dt>Contingency</dt><dd>{{ flip.contingency | money }}</dd>
-      <dt>Financing costs</dt>
-      <dd>{{ flip.financing_costs | money }}</dd>
-      <dt>Total costs</dt><dd>{{ flip.total_costs | money }}</dd>
+    </dl>
+    <h3>Profit</h3>
+    <dl class="facts small" id="flip-profit">
+      <dt>Sale price</dt><dd>{{ flip.estimated_sale_price | money }}</dd>
+      <dt>Broker</dt><dd>{{ less(flip.broker_costs) }}</dd>
+      <dt>Purchase</dt><dd>{{ less(flip.purchase_price) }}</dd>
+      <dt>Closing</dt><dd>{{ less(flip.closing_costs) }}</dd>
+      <dt>Rehab</dt><dd>{{ less(flip.rehab_costs) }}</dd>
+      <dt>Contingency</dt><dd>{{ less(flip.contingency) }}</dd>
+      <dt>Holding</dt><dd>{{ less(flip.holding_costs_total) }}</dd>
+      {% if flip.interest is not none %}
+        <dt>Interest</dt><dd>{{ less(flip.interest) }}</dd>
+        <dt>Origination</dt><dd>{{ less(flip.origination) }}</dd>
+      {% else %}
+        <dt>Financing</dt><dd>{{ less(flip.financing_costs) }}</dd>
+      {% endif %}
       <dt>Net profit</dt><dd><strong>{{ flip.net_profit | money }}</strong></dd>
-      <dt>Yield (Profit / Costs)</dt>
-      <dd>{{ flip.profit_yield | pct }}</dd>
+    </dl>
+    <h3>Cost stack</h3>
+    <dl class="facts small" id="flip-costs">
+      <dt>Purchase</dt><dd>{{ flip.purchase_price | money }}</dd>
+      <dt>Closing</dt><dd>{{ flip.closing_costs | money }}</dd>
+      <dt>Rehab</dt><dd>{{ flip.rehab_costs | money }}</dd>
+      <dt>Contingency</dt><dd>{{ flip.contingency | money }}</dd>
+      <dt>Holding</dt><dd>{{ flip.holding_costs_total | money }}</dd>
+      {% if flip.interest is not none %}
+        <dt>Interest</dt><dd>{{ flip.interest | money }}</dd>
+        <dt>Origination</dt><dd>{{ flip.origination | money }}</dd>
+      {% else %}
+        <dt>Financing</dt><dd>{{ flip.financing_costs | money }}</dd>
+      {% endif %}
+      <dt>Total deal cost</dt><dd><strong>{{ flip.total_costs | money }}</strong></dd>
+    </dl>
+    <h3>Borrower</h3>
+    <dl class="facts small" id="flip-borrower">
+      <dt>Borrower equity</dt><dd>{{ flip.borrower_equity | money }}</dd>
+      <dt>Cash-on-cash</dt><dd>{{ flip.cash_on_cash | pct }}</dd>
+      <dt>Cash-on-cash target</dt><dd>{{ flip.cash_on_cash_target | pct }}</dd>
+      <dt>Result</dt><dd>{{ passed(flip.cash_on_cash_passed, "Below the target") }}</dd>
+      <dt>Project yield</dt><dd>{{ flip.project_yield | pct }}</dd>
     </dl>
   {% else %}
     <p class="small muted">No analysis yet.</p>
@@ -331,8 +358,6 @@
 <section class="panel stat" id="rental">
   <div class="row">
     <h2>Rental Analysis</h2>
-    <span class="tag {{ 'GO' if result and result.analyses.rental_analysis else 'INFO' }}">{{
-      ("ON" if result.analyses.rental_analysis else "OFF") if result else "—" }}</span>
   </div>
   {% if result %}
     {% set rental = result.rental %}
@@ -343,8 +368,6 @@
     <dl class="facts small">
       <dt>Status</dt>
       <dd>{{ rental.status | plain }}</dd>
-      <dt>Toggle</dt>
-      <dd>{{ "On" if result.analyses.rental_analysis else "Off" }}{% if deal.rental_analysis is none %} <span class="dflt">default</span>{% endif %}</dd>
       <dt>Monthly Rent</dt><dd>{{ rental.monthly_rent | money }}</dd>
       <dt>Expenses</dt><dd>{{ rental.expenses | money }}</dd>
       <dt>Expenses (% of rent)</dt><dd>{{ rental.expenses_pct | pct }}{{ dflt("rental_expenses_pct_of_rent") }}</dd>
@@ -367,7 +390,6 @@
 <section class="panel stat" id="take-back">
   <div class="row">
     <h2>Take-Back Analysis</h2>
-    <span class="tag GO">ALWAYS ON</span>
   </div>
   {% if result %}
     {% set take_back = result.take_back %}
@@ -397,7 +419,47 @@
 </section>
 </div>
 
-{# --- 5. Return Overview (SPEC §8.3): one line of figures, the Cash Flows folded under it --- #}
+{# --- 5. Sources & Uses (SPEC §8.11): the two advances and the equity against the costs --- #}
+<section class="panel chart" id="sources-uses">
+  <h2>Sources &amp; Uses</h2>
+  {% if result and result.sources_and_uses %}
+    {% set su = result.sources_and_uses %}
+    <div class="pair su">
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Sources</th><th class="num">Amount</th></tr></thead>
+          <tbody>
+            <tr><td>Advance at closing</td><td class="num">{{ su.advance_at_closing | money }}</td></tr>
+            <tr><td>Rehab holdback</td><td class="num">{{ su.rehab_holdback | money }}</td></tr>
+            <tr><td>Borrower equity</td><td class="num">{{ su.borrower_equity | money }}</td></tr>
+          </tbody>
+          <tfoot><tr><th>Total sources</th><th class="num">{{ su.total_sources | money }}</th></tr></tfoot>
+        </table>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Uses</th><th class="num">Amount</th></tr></thead>
+          <tbody>
+            <tr><td>Purchase</td><td class="num">{{ su.purchase_price | money }}</td></tr>
+            <tr><td>Closing</td><td class="num">{{ su.closing_costs | money }}</td></tr>
+            <tr><td>Rehab</td><td class="num">{{ su.rehab_costs | money }}</td></tr>
+            <tr><td>Contingency</td><td class="num">{{ su.contingency | money }}</td></tr>
+            <tr><td>Holding</td><td class="num">{{ su.holding_costs | money }}</td></tr>
+            <tr><td>Interest</td><td class="num">{{ su.interest | money }}</td></tr>
+            <tr><td>Origination</td><td class="num">{{ su.origination | money }}</td></tr>
+          </tbody>
+          <tfoot><tr><th>Total uses</th><th class="num">{{ su.total_uses | money }}</th></tr></tfoot>
+        </table>
+      </div>
+    </div>
+  {% elif result %}
+    <p class="small muted">Not on this ledger; run the analysis again for the table.</p>
+  {% else %}
+    <p class="small muted">No analysis yet.</p>
+  {% endif %}
+</section>
+
+{# --- 6. Return Overview (SPEC §8.3): one line of figures, the Cash Flows folded under it --- #}
 <section class="panel" id="return-overview">
   <h2>Return Overview</h2>
   {% if result %}
@@ -453,7 +515,7 @@
   {% endif %}
 </section>
 
-{# --- 6. Underwriting Assumptions (SPEC §8.1, §8.4-§8.6): editable, open, Save & Run ------- #}
+{# --- 7. Underwriting Assumptions (SPEC §8.1, §8.4-§8.6): editable, open, Save & Run ------- #}
 <section class="panel" id="assumptions">
   <h2>Underwriting Assumptions</h2>
   <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/assumptions">
@@ -472,12 +534,10 @@
                         default=defaults.holding_costs_pct_of_cost,
                         note=holding_costs_hint) }}
       {% if economics.split_product %}
-        {{ fields.money_box("loan_purchase_portion",
-                            "Principal Note" if deal.product | plain == "SPLIT_PRINCIPAL" else "Advance at Closing",
+        {{ fields.money_box("loan_purchase_portion", "Advance at Closing",
                             form.loan_purchase_portion,
                             default=defaults.get("loan_purchase_portion", "")) }}
-        {{ fields.money_box("loan_rehab_portion",
-                            "Tranche A" if deal.product | plain == "SPLIT_PRINCIPAL" else "Rehab Portion",
+        {{ fields.money_box("loan_rehab_portion", "Rehab Portion",
                             form.loan_rehab_portion,
                             default=defaults.get("loan_rehab_portion", "")) }}
       {% endif %}
@@ -497,8 +557,6 @@
       {{ fields.months_box("take_back_lost_interest_months", "Take-Back Lost Interest Months",
                            form.take_back_lost_interest_months,
                            default=defaults.take_back_lost_interest_months, note="months") }}
-      {{ fields.toggle_box("flip_analysis", "Flip Analysis", form.flip_analysis, default=true) }}
-      {{ fields.toggle_box("rental_analysis", "Rental Analysis", form.rental_analysis, default=true) }}
     </div>
     <div class="grid2">
       {{ fields.text_box("version_name", "Version name", "", maxlength=100, id="save_version_name") }}
@@ -510,7 +568,7 @@
   </form>
 </section>
 
-{# --- 7. Deal Economics and Property (SPEC §8.1): the intake, read-only, with the sizing ---- #}
+{# --- 8. Deal Economics and Property (SPEC §8.1): the intake, read-only, with the sizing ---- #}
 <section class="panel" id="economics">
   <div class="row">
     <h2>Deal Economics and Property</h2>
@@ -592,7 +650,7 @@
       <h3>Deal Economics</h3>
       <dl class="facts small">
         <dt>Loan Purpose</dt><dd>{{ deal.loan_purpose | label }}</dd>
-        <dt>Loan Type</dt>
+        <dt>Loan Structure</dt>
         <dd title="{{ deal.product_source | plain }}">{{ deal.product | label }}</dd>
         <dt>Closing Date</dt>
         <dd>{{ deal.closing_date | when }}{{ dflt("closing_date") }}</dd>
@@ -635,9 +693,9 @@
           <dt>Commitment</dt><dd>{{ result.economics.commitment | money }}</dd>
           <dt>Funded at close</dt><dd>{{ result.economics.funded_at_close | money }}</dd>
         {% endif %}
-        <dt>{{ "Principal Note" if deal.product | plain == "SPLIT_PRINCIPAL" else "Advance at closing" }}</dt>
+        <dt>Advance at closing</dt>
         <dd>{{ values.loan_purchase_portion | money }}{{ dflt("loan_purchase_portion") }}</dd>
-        <dt>{{ "Tranche A" if deal.product | plain == "SPLIT_PRINCIPAL" else "Rehab portion" }}</dt>
+        <dt>Rehab portion</dt>
         <dd>{{ values.loan_rehab_portion | money }}{{ dflt("loan_rehab_portion") }}</dd>
       </dl>
     </div>

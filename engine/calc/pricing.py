@@ -44,8 +44,21 @@ workbook and the CLI cannot word the same row three ways:
     A $140,000 loan at 14.37% returns $21,400 profit (28.2% cash-on-cash).
     A $150,000 loan exceeds max quoted rate (20.15% needed).
 
-Pure: ``UnderwriteInputs``, the caps cell, the flip toggle and a ``Config`` in, a
-``PricingMatrix`` out.
+**The de-risk line** (engine 2.0.0). Each row also carries the borrower's equity at its
+solved rate - the Flip Analysis's total deal cost less the loan amount, which needs no sale
+price - and every row but the request says what bringing that much more than the request
+does:
+
+    Adding $9,812 of equity brings the rate to 15.21%.
+    Adding $9,812 of equity brings the rate to 19.30%, above the 18% max quoted rate.
+
+The equity added is the row's equity less the requested row's, each at its own solved rate:
+lending $X less saves the borrower some interest and fee, so the equity rises by a little
+less than $X. A row without a solved rate - no loan, or no rate up to the ceiling - has no
+equity and no line, and neither does any row when the request itself has none. **The rows
+run most equity first**: the smallest loan at the top and the request at the bottom.
+
+Pure: ``UnderwriteInputs``, the caps cell and a ``Config`` in, a ``PricingMatrix`` out.
 """
 
 from __future__ import annotations
@@ -53,7 +66,12 @@ from __future__ import annotations
 from decimal import ROUND_HALF_UP, Decimal
 
 from config.config import Config
-from engine.calc.borrower import BorrowerReturns, borrower_returns, borrower_status
+from engine.calc.borrower import (
+    BorrowerReturns,
+    borrower_equity,
+    borrower_returns,
+    borrower_status,
+)
 from engine.calc.sensitivity import Grid, Point, rate_columns
 from schema.models import (
     AnalysisStatus,
@@ -115,8 +133,7 @@ def pricing_sentence(
     if returns is None:
         return (
             f"A {loan} loan at {rate_text(rate)} reaches the {rate_text(target)} lender IRR "
-            "target; the borrower's profit is not evaluated (no sale price, or the Flip "
-            "Analysis is off)."
+            "target; the borrower's profit is not evaluated (no sale price)."
         )
     if returns.cash_on_cash is None:
         return (
@@ -132,6 +149,42 @@ def pricing_sentence(
 def over_max_sentence(loan_amount: Decimal, rate: Decimal) -> str:
     """The row whose solved rate is above ``pricing.max_quoted_rate``.  # SPEC §8.10"""
     return f"A {dollars(loan_amount)} loan exceeds max quoted rate ({rate_text(rate)} needed)."
+
+
+def derisk_sentence(equity_added: Decimal, rate: Decimal, max_quoted: Decimal) -> str:
+    """What the row's extra equity does to the rate.  # SPEC §8.10
+
+    ``rate`` is the row's solved rate: its quote, or the rate it needs when that is above the
+    maximum, which the line then says.
+    """
+    line = f"Adding {dollars(equity_added)} of equity brings the rate to {rate_text(rate)}"
+    if rate > max_quoted:
+        return f"{line}, above the {rate_text(max_quoted)} max quoted rate."
+    return f"{line}."
+
+
+def with_equity(
+    rows: list[PricingRow], request_equity: Decimal | None, max_quoted: Decimal
+) -> list[PricingRow]:
+    """Each row's equity added over the request and its line, most equity first.
+
+    # SPEC §8.10. The requested row (step 0) gets no line - it adds nothing - and a row or a
+    request with no equity gets none either. The order is the smallest loan first: lending
+    less always means more equity, because the financing it saves is a fraction of the
+    reduction.
+    """
+    out: list[PricingRow] = []
+    for row in rows:
+        solved = row.interest_rate if row.interest_rate is not None else row.rate_needed
+        if row.is_request or row.borrower_equity is None or request_equity is None:
+            out.append(row)
+            continue
+        added = row.borrower_equity - request_equity
+        line = None
+        if solved is not None and added > ZERO:
+            line = derisk_sentence(added, solved, max_quoted)
+        out.append(row.model_copy(update={"equity_added": added, "derisk": line}))
+    return sorted(out, key=lambda row: row.loan_amount)
 
 
 def row_amount(request: Decimal, pct_step: Decimal, rounding: Decimal) -> Decimal:
@@ -155,10 +208,12 @@ def unpriced_row(
     amount: Decimal,
     sentence: str,
     rate_needed: Decimal | None = None,
+    equity: Decimal | None = None,
 ) -> PricingRow:
     """A row no rate is quoted on: every figure None, the sentence saying why.
 
-    ``rate_needed`` is the solved rate when the reason is that it is above the maximum quote.
+    ``rate_needed`` is the solved rate when the reason is that it is above the maximum quote,
+    and ``equity`` the borrower's equity at it then.
     """
     return PricingRow(
         pct_step=pct_step,
@@ -171,6 +226,7 @@ def unpriced_row(
         borrower_cash_on_cash=None,
         sentence=sentence,
         rate_needed=rate_needed,
+        borrower_equity=equity,
     )
 
 
@@ -237,7 +293,6 @@ def pricing_matrix(
     inputs: UnderwriteInputs,
     tranche: Tranche,
     tier: ExperienceTier,
-    flip_on: bool,
     config: Config,
     grid: Grid | None = None,
     ceiling: Decimal = RATE_CEILING,
@@ -245,14 +300,16 @@ def pricing_matrix(
     """One row per loan amount step, priced at the lowest rate that earns the target.
 
     ``ceiling`` is the highest rate the solve tries; it is ``RATE_CEILING`` on every
-    underwrite and lower only where a test wants a row nothing prices.
+    underwrite and lower only where a test wants a row nothing prices. The rows come back
+    most equity first, each with its de-risk line (``with_equity``).
     """
     grid = grid or Grid(inputs, tranche, tier, config)
     # The grid's columns and the deal's own rate, the bracket the solve has always started
     # from; the rate it finds does not depend on the seeds, only how many ledgers it lays out.
     seeds = [*rate_columns(config), inputs.interest_rate]
     target = config.pricing.target_lender_irr
-    status = borrower_status(inputs, flip_on)
+    status = borrower_status(inputs)
+    max_quoted = config.pricing.max_quoted_rate
     rows: list[PricingRow] = []
     request = inputs.deal.loan_requested
     for pct_step in config.pricing.loan_amount_pct_steps:
@@ -268,9 +325,10 @@ def pricing_matrix(
             rows.append(unpriced_row(pct_step, step, amount, sentence))
             continue
         rate, point = solved
-        if rate > config.pricing.max_quoted_rate:
+        equity = borrower_equity(point, config)
+        if rate > max_quoted:
             sentence = over_max_sentence(amount, rate)
-            rows.append(unpriced_row(pct_step, step, amount, sentence, rate))
+            rows.append(unpriced_row(pct_step, step, amount, sentence, rate, equity))
             continue
         returns = borrower_returns(point, config) if status is AnalysisStatus.EVALUATED else None
         rows.append(
@@ -284,13 +342,16 @@ def pricing_matrix(
                 borrower_cash_invested=returns.cash_invested if returns else None,
                 borrower_cash_on_cash=returns.cash_on_cash if returns else None,
                 sentence=pricing_sentence(amount, rate, returns, target),
+                borrower_equity=equity,
             )
         )
+    requested = next((row for row in rows if row.is_request), None)
+    request_equity = requested.borrower_equity if requested is not None else None
     return PricingMatrix(
         target_lender_irr=target,
         borrower_status=status,
-        rows=rows,
+        rows=with_equity(rows, request_equity, max_quoted),
         rate_precision=RATE_PRECISION,
         rate_ceiling=ceiling,
-        max_quoted_rate=config.pricing.max_quoted_rate,
+        max_quoted_rate=max_quoted,
     )

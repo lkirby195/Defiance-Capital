@@ -29,7 +29,7 @@ from api.intake_form import (
 )
 from db.models import Deal
 from db.repository import FORM_COLUMNS
-from schema.models import ExperienceBucket, Tranche
+from schema.models import ExperienceBucket, Product, ProductSource, Tranche
 from services import latest_screen, screen_result
 from tests.conftest import QueueClient, requires_db
 
@@ -112,43 +112,54 @@ def test_the_deal_page_reads_the_same_way(client: QueueClient, stored_deal: Deal
 def test_the_two_read_enums_are_words_not_codes(client: QueueClient, stored_deal: Deal) -> None:
     """SPEC §3: title case with spaces wherever a person reads one."""
     body = form_page(client, f"/queue/deals/{stored_deal.id}")
-    assert re.search(r"<dd[^>]*>Split Draw", body)  # the inferred product
-    # the code stays the stored value on the option, and is never the words on the page
-    assert not re.search(r">\s*SPLIT_DRAW\s*<", body)
+    assert re.search(r"<dd[^>]*>Holdback", body)  # the inferred structure
+    # the code stays the stored value on the radio, and is never the words on the page
+    assert not re.search(r">\s*ACQUISITION_REHAB\s*<", body)
     assert "<dd>Purchase</dd>" in body  # the loan purpose
     # ...and not the §3 definition of the product: the (?) that carried it is gone (v0.15)
     assert "the rehab holdback drawn over the rehab period" not in body
 
 
-def test_the_loan_type_box_offers_the_products_and_defines_none_of_them(
+def test_the_loan_structure_is_a_radio_of_two_and_the_type_select_is_gone(
     client: QueueClient,
 ) -> None:
-    """Labels only on the team form (SPEC §8.1); the definitions live on the deal page."""
+    """The two radios, "100% at close" / "Holdback", after the Loan Amount (SPEC §3, §8.1)."""
     body = form_page(client, "/queue/new")
-    block = re.search(r'name="product"[^>]*>(.*?)</select>', body, re.S)
-    assert block is not None
-    for label in ("No Draw", "Split Draw", "Split Principal", "Wholetail"):
-        assert f">{label}<" in block.group(1) or f">{label}\n" in block.group(1), label
-    assert "<dt>No Draw</dt>" not in body
-    assert "Purchase only, no rehab funding." not in body
-    assert "Buy below market, minimal work, retail resale; short term." not in body
+    radios = re.findall(r'<input[^>]*type="radio" name="product" value="([A-Z_]+)"', body)
+    assert radios == ["ACQUISITION", "ACQUISITION_REHAB"]
+    assert ">\n 100% at close</label>" in body or "> 100% at close</label>" in body
+    assert "> Holdback</label>" in body
+    assert 'role="radiogroup" aria-label="Loan Structure"' in body
+    # nothing is picked on a new deal: blank is inferred from the rehab costs
+    assert not re.search(r'name="product" value="[A-Z_]+"\s+checked', body)
+    # the old select and its four products are gone
+    assert not re.search(r'<select[^>]*name="product"', body)
+    assert "Loan Type" not in body
+    for gone in ("No Draw", "Split Draw", "Split Principal", "Wholetail"):
+        assert gone not in body, gone
 
 
-def test_the_analysis_toggles_are_on_the_deal_page_and_not_on_the_form(
+def test_holdback_reveals_the_rehab_portion_box_without_script(client: QueueClient) -> None:
+    """A stylesheet rule on the checked radio, no JS (CLAUDE.md): the box is in the page and
+    hidden until Holdback is picked, where :has() is supported."""
+    body = form_page(client, "/queue/new")
+    box = re.search(r'<div class="holdback-only">(.*?)</div>\s*</div>', body, re.S)
+    assert box is not None
+    assert 'name="loan_rehab_portion"' in box.group(1) and "Rehab portion" in box.group(1)
+    assert 'data-mask="money"' in box.group(1)
+    assert '<div class="grid2 structure">' in body
+    assert "@supports selector(:has(*))" in body
+    assert 'input[name="product"][value="ACQUISITION_REHAB"]:checked' in body
+
+
+def test_there_are_no_analysis_toggles_on_the_form_or_the_deal_page(
     client: QueueClient, stored_deal: Deal
 ) -> None:
-    """SPEC §8.1: Default / On / Off on the deal page; the Take-Back analysis is not a toggle."""
-    form = form_page(client, "/queue/new")
-    assert '<div class="toggle"' not in form
-    assert 'name="flip_analysis"' not in form and 'name="rental_analysis"' not in form
-    body = form_page(client, f"/queue/deals/{stored_deal.id}")
-    assert '<div class="toggle"' in body
-    for name in ("flip_analysis", "rental_analysis"):
-        assert f'name="{name}" value="true"' in body
-        assert f'name="{name}" value="false"' in body
-        assert f'name="{name}" value=""' in body
-    # the take-back has assumptions of its own on the panel (SPEC §8.6) and no toggle
-    assert 'name="take_back_analysis"' not in body
+    """SPEC §8.1: all three analyses run on every deal (engine 2.0.0)."""
+    for target in ("/queue/new", f"/queue/deals/{stored_deal.id}"):
+        body = form_page(client, target)
+        assert 'name="flip_analysis"' not in body and 'name="rental_analysis"' not in body
+        assert 'name="take_back_analysis"' not in body
 
 
 # --- the form is exactly the listed boxes, and nothing else (SPEC §8.1) ---------------------------
@@ -157,8 +168,9 @@ DEAL_ECONOMICS_IN_ORDER = (
     "purchase_price",
     "rehab_costs",
     "loan_requested",
-    "loan_purpose",
     "product",
+    "loan_rehab_portion",
+    "loan_purpose",
     "closing_date",
     "term_months",
 )
@@ -169,7 +181,6 @@ NOT_ON_THE_FORM = (
     "holding_costs_pct_of_cost",
     "origination_fee_pct",
     "loan_purchase_portion",
-    "loan_rehab_portion",
     "payoff_date",
     "estimated_sale_price_team",
     "monthly_rent",
@@ -188,7 +199,9 @@ def form_control_names(body: str) -> list[str]:
     inner = re.search(r'<form class="stack"[^>]*>(.*?)</form>', body, re.S)
     assert inner is not None
     names = [re.search(r'name="([^"]+)"', tag) for tag in CONTROL.findall(inner.group(1))]
-    return [m.group(1) for m in names if m is not None and m.group(1) != "_csrf"]
+    found = [m.group(1) for m in names if m is not None and m.group(1) != "_csrf"]
+    # a radio group is one control: its inputs share the name, one after another
+    return [name for at, name in enumerate(found) if at == 0 or found[at - 1] != name]
 
 
 @pytest.mark.parametrize("path", ["/queue/new", "deal"])
@@ -201,7 +214,7 @@ def test_the_form_renders_exactly_the_listed_boxes_in_order(
     if path == "/queue/new":
         assert names.pop() == VERSION_NAME
     assert names == list(TEAM_ENTRY_FIELDS)
-    assert tuple(names[-7:]) == DEAL_ECONOMICS_IN_ORDER
+    assert tuple(names[-8:]) == DEAL_ECONOMICS_IN_ORDER
     assert names[:7] == [
         "entity_name",
         "borrower_name",
@@ -227,6 +240,8 @@ def test_the_form_s_boxes_are_the_columns_an_edit_writes() -> None:
         "loan_purpose",
         "product",
         "product_source",
+        "loan_purchase_portion",
+        "loan_rehab_portion",
         "closing_date",
         "term_bucket",
         "term_months",
@@ -463,3 +478,119 @@ def test_an_inferred_state_and_product_come_back_blank(stored_deal: Deal) -> Non
     assert values["state"] == ""
     assert stored_deal.product is not None
     assert values["product"] == ""
+
+
+# --- the loan structure and the rehab portion (SPEC §3, §8.1, v0.17) ------------------------------
+
+
+def posted_form(team_entry: dict[str, Any], **changes: str) -> dict[str, str]:
+    """The fixture as the browser posts it: no advance box, the rehab portion as typed."""
+    posted = {key: str(value) for key, value in team_entry.items() if value is not None}
+    posted["repeat_borrower"] = "false"
+    posted.pop("loan_purchase_portion", None)
+    posted.pop("loan_rehab_portion", None)
+    posted.update(changes)
+    return posted
+
+
+def only_deal(db_session: Session) -> Deal:
+    deal = db_session.scalar(select(Deal))
+    assert deal is not None
+    return deal
+
+
+def test_holdback_with_a_typed_rehab_portion_advances_the_rest(
+    client: QueueClient, db_session: Session, team_entry: dict[str, Any]
+) -> None:
+    """$195,000 with $40,000 held back advances $155,000 at closing, the team's own split."""
+    posted = posted_form(team_entry, product="ACQUISITION_REHAB", loan_rehab_portion="$40,000")
+    response = client.post("/intake/team", data=posted, follow_redirects=False)
+    assert response.status_code == 303, response.text
+    deal = only_deal(db_session)
+    assert deal.product is Product.ACQUISITION_REHAB
+    assert deal.product_source is ProductSource.ENTERED
+    assert (deal.loan_purchase_portion, deal.loan_rehab_portion) == (
+        Decimal("155000.00"),
+        Decimal("40000.00"),
+    )
+    assert "loan_rehab_portion" not in deal.defaulted_fields
+
+
+def test_holdback_with_a_blank_rehab_portion_takes_the_default(
+    client: QueueClient, db_session: Session, team_entry: dict[str, Any]
+) -> None:
+    """The rehab budget times one plus the contingency (0%), capped at the loan amount."""
+    posted = posted_form(team_entry, product="ACQUISITION_REHAB")
+    assert client.post("/intake/team", data=posted, follow_redirects=False).status_code == 303
+    deal = only_deal(db_session)
+    assert (deal.loan_purchase_portion, deal.loan_rehab_portion) == (
+        Decimal("147000.00"),
+        Decimal("48000.00"),
+    )
+    assert {"loan_purchase_portion", "loan_rehab_portion"} <= set(deal.defaulted_fields)
+
+
+def test_a_rehab_portion_above_the_loan_is_refused_under_its_box(
+    client: QueueClient, db_session: Session, team_entry: dict[str, Any]
+) -> None:
+    posted = posted_form(team_entry, product="ACQUISITION_REHAB", loan_rehab_portion="$200,000")
+    response = client.post("/intake/team", data=posted, follow_redirects=False)
+    assert response.status_code == 422
+    assert re.search(
+        r'name="loan_rehab_portion".*?<span class="err" id="loan_rehab_portion-error">'
+        r"Rehab portion cannot be more than the Loan Amount\.</span>",
+        response.text,
+        re.S,
+    )
+    # the box keeps what was typed, and is shown though the stylesheet would hide it
+    assert '<div class="holdback-only shown">' in response.text
+    assert db_session.scalar(select(func.count()).select_from(Deal)) == 0
+
+
+def test_100_pct_at_close_ignores_the_hidden_rehab_portion(
+    client: QueueClient, db_session: Session, team_entry: dict[str, Any]
+) -> None:
+    """The box is hidden at 100% at close; whatever it still holds is not a split."""
+    posted = posted_form(team_entry, product="ACQUISITION", loan_rehab_portion="$40,000")
+    assert client.post("/intake/team", data=posted, follow_redirects=False).status_code == 303
+    deal = only_deal(db_session)
+    assert deal.product is Product.ACQUISITION
+    assert (deal.loan_purchase_portion, deal.loan_rehab_portion) == (None, None)
+
+
+def test_an_unpicked_structure_is_inferred_and_a_typed_portion_still_counts(
+    client: QueueClient, db_session: Session, team_entry: dict[str, Any]
+) -> None:
+    """No radio picked and a rehab budget: a holdback, inferred, with the portion typed."""
+    posted = posted_form(team_entry, loan_rehab_portion="$30,000")
+    assert client.post("/intake/team", data=posted, follow_redirects=False).status_code == 303
+    deal = only_deal(db_session)
+    assert deal.product is Product.ACQUISITION_REHAB
+    assert deal.product_source is ProductSource.INFERRED
+    assert deal.loan_rehab_portion == Decimal("30000.00")
+
+
+def test_edit_intake_shows_a_typed_rehab_portion_and_not_a_default(
+    client: QueueClient, db_session: Session, team_entry: dict[str, Any]
+) -> None:
+    """A default portion is left blank, so an edit that moves the rehab works it out again."""
+    posted = posted_form(team_entry, product="ACQUISITION_REHAB", loan_rehab_portion="$40,000")
+    assert client.post("/intake/team", data=posted, follow_redirects=False).status_code == 303
+    deal = only_deal(db_session)
+    values = intake_form_values(deal)
+    assert values["product"] == "ACQUISITION_REHAB" and values["loan_rehab_portion"] == "$40,000"
+    page = form_page(client, f"/queue/deals/{deal.id}/intake")
+    assert re.search(r'name="product" value="ACQUISITION_REHAB"\s+checked', page)
+    assert re.search(r'id="loan_rehab_portion"[^>]*value="\$40,000"', page)
+
+    # back to the default: blank on the edit form, and a new rehab budget moves it
+    edit = posted_form(team_entry, product="ACQUISITION_REHAB", rehab_costs="$50,000")
+    response = client.post(f"/queue/deals/{deal.id}/intake", data=edit, follow_redirects=False)
+    assert response.status_code == 303, response.text
+    db_session.expire_all()
+    deal = only_deal(db_session)
+    assert (deal.loan_purchase_portion, deal.loan_rehab_portion) == (
+        Decimal("145000.00"),
+        Decimal("50000.00"),
+    )
+    assert intake_form_values(deal)["loan_rehab_portion"] == ""

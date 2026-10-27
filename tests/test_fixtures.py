@@ -172,21 +172,17 @@ def test_underwrite_fixtures_cover_every_product() -> None:
 
 
 def test_the_fixture_set_covers_every_analysis_status() -> None:
-    """One with no rent, one with the flip off, one with no sale price, and the ordinary case."""
+    """One with no rent and no sale price, and the ordinary case; nothing is ever OFF."""
     statuses = {
         (result.flip.status, result.rental.status, result.take_back.status)
         for _, result in (run_underwrite(p) for p in UNDERWRITE_FILES)
     }
-    flip = {status[0] for status in statuses}
-    rental = {status[1] for status in statuses}
-    take_back = {status[2] for status in statuses}
-    assert flip == {
-        AnalysisStatus.EVALUATED,
-        AnalysisStatus.OFF,
-        AnalysisStatus.NOT_EVALUATED,
-    }
-    assert AnalysisStatus.EVALUATED in rental and AnalysisStatus.OFF in rental
-    assert take_back == {AnalysisStatus.EVALUATED, AnalysisStatus.NOT_EVALUATED}
+    both = {AnalysisStatus.EVALUATED, AnalysisStatus.NOT_EVALUATED}
+    assert {status[0] for status in statuses} == both
+    assert {status[1] for status in statuses} == both
+    assert {status[2] for status in statuses} == both
+    for _, result in (run_underwrite(p) for p in UNDERWRITE_FILES):
+        assert result.analyses is None
 
 
 @pytest.mark.parametrize("path", UNDERWRITE_FILES, ids=[p.stem for p in UNDERWRITE_FILES])
@@ -280,7 +276,17 @@ def test_fixture_underwrite_flip_rental_and_take_back(path: Path) -> None:
     assert cents(flip.total_costs) == D(want["total_costs"])
     assert maybe_cents(flip.broker_costs) == want_money(want["broker_costs"])
     assert maybe_cents(flip.net_profit) == want_money(want["net_profit"])
-    assert maybe_rate(flip.profit_yield) == want_money(want["profit_yield"])
+    assert maybe_rate(flip.project_yield) == want_money(want["project_yield"])
+    # the financing as its two parts, and the borrower's side (SPEC §8.4)
+    assert maybe_cents(flip.interest) == D(want["interest"])
+    assert maybe_cents(flip.origination) == D(want["origination"])
+    assert maybe_cents(flip.borrower_equity) == D(want["borrower_equity"])
+    assert maybe_rate(flip.cash_on_cash) == want_money(want["cash_on_cash"])
+    assert flip.cash_on_cash_passed is want["cash_on_cash_passed"]
+    assert flip.cash_on_cash_target == CONFIG.pricing.borrower_coc_target
+    assert flip.interest is not None and flip.origination is not None
+    assert flip.financing_costs == flip.interest + flip.origination
+    assert flip.borrower_equity == flip.total_costs - result.sizing.commitment
 
     rental, want = result.rental, expected["rental"]
     assert rental.status.value == want["status"]
@@ -312,6 +318,33 @@ def test_fixture_underwrite_flags_and_recording(path: Path) -> None:
     assert result.config_hash == CONFIG.config_hash
     again = UnderwriteResult.model_validate_json(result.model_dump_json())
     assert again == result
+
+
+@pytest.mark.parametrize("path", UNDERWRITE_FILES, ids=[p.stem for p in UNDERWRITE_FILES])
+def test_fixture_sources_equal_uses_to_the_cent(path: Path) -> None:
+    """Every line as the independent script worked it out, and the two sides equal (§8.11)."""
+    expected, result = run_underwrite(path)
+    table, want = result.sources_and_uses, expected["sources_and_uses"]
+    assert table is not None
+    for name, value in want.items():
+        assert cents(getattr(table, name)) == D(value), name
+    sources = table.advance_at_closing + table.rehab_holdback + table.borrower_equity
+    uses = (
+        table.purchase_price
+        + table.closing_costs
+        + table.rehab_costs
+        + table.contingency
+        + table.holding_costs
+        + table.interest
+        + table.origination
+    )
+    assert cents(sources) == cents(uses) == cents(table.total_sources) == cents(table.total_uses)
+    # the two advances are the loan, as the ledger lends it
+    assert table.advance_at_closing + table.rehab_holdback == result.sizing.commitment
+    assert table.advance_at_closing == -result.return_overview.entries[0].funding
+    assert table.rehab_holdback == -result.return_overview.total_draws
+    # ...and the uses are the flip's total deal cost
+    assert cents(table.total_uses) == cents(result.flip.total_costs)
 
 
 # --- the borrower's own numbers, and a team correction on top of them (SPEC §4.2, §6.1) ----------

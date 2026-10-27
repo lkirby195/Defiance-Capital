@@ -210,8 +210,8 @@ class LoanTerms(NamedTuple):
     def funded_at_close(self) -> Decimal:
         """Dollars out the door at closing.  # SPEC §8.3
 
-        The sized ``funded_at_close`` - the purchase portion on a split product, the whole
-        commitment on the other two - unless there is no rehab period to draw over, in which
+        The sized ``funded_at_close`` - the advance at closing on a holdback, the whole
+        commitment at 100% at close - unless there is no rehab period to draw over, in which
         case the rehab money goes out at close as well.
         """
         if self.drawn_over_time:

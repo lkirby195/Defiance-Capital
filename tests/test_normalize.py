@@ -38,10 +38,9 @@ FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/synthetic/team_entry_c
 def complete_form(**overrides: object) -> TeamEntryForm:
     """The complete team entry, with anything the caller names replaced.
 
-    The fixture is a SPLIT_DRAW deal and carries a loan split. An override that moves it off
-    a split product takes the split with it, because a NO_DRAW or WHOLETAIL loan has none
-    (SPEC §8.2) and the form refuses one - which is its own test rather than a trap for
-    every test that changes the product.
+    The fixture is a holdback and carries a loan split. An override that moves it to 100% at
+    close takes the split with it, because that loan has none (SPEC §8.2) and the form refuses
+    one - which is its own test rather than a trap for every test that changes the product.
     """
     payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
     payload.update(overrides)
@@ -257,34 +256,35 @@ def test_actual_opex_pass_through_the_team_form() -> None:
 
 
 def test_product_is_inferred_from_the_rehab_costs() -> None:
-    assert infer_product(Decimal("0")) is Product.NO_DRAW
-    assert infer_product(Decimal("0.00")) is Product.NO_DRAW
-    assert infer_product(Decimal("0.01")) is Product.SPLIT_DRAW
-    assert infer_product(Decimal("50000")) is Product.SPLIT_DRAW
+    """A rehab budget means a holdback; none means 100% at close.  # SPEC §3"""
+    assert infer_product(Decimal("0")) is Product.ACQUISITION
+    assert infer_product(Decimal("0.00")) is Product.ACQUISITION
+    assert infer_product(Decimal("0.01")) is Product.ACQUISITION_REHAB
+    assert infer_product(Decimal("50000")) is Product.ACQUISITION_REHAB
     assert infer_product(None) is None
 
 
-def test_wholetail_and_split_principal_are_never_inferred() -> None:
+def test_both_structures_are_inferred_and_nothing_else() -> None:
     inferred = {infer_product(Decimal(x)) for x in ("0", "1", "42000", "999999")}
-    assert inferred == {Product.NO_DRAW, Product.SPLIT_DRAW}
+    assert inferred == set(Product) == {Product.ACQUISITION, Product.ACQUISITION_REHAB}
 
 
 def test_inferred_product_is_recorded_as_inferred() -> None:
     record = normalize(parse_team_form(complete_form()), Channel.TEAM, {})  # rehab 48,000
-    assert record.deal.product is Product.SPLIT_DRAW
+    assert record.deal.product is Product.ACQUISITION_REHAB
     assert record.deal.product_source is ProductSource.INFERRED
     record = normalize(parse_team_form(complete_form(rehab_costs="0")), Channel.TEAM, {})
-    assert record.deal.product is Product.NO_DRAW
+    assert record.deal.product is Product.ACQUISITION
     assert record.deal.product_source is ProductSource.INFERRED
 
 
 def test_entered_product_wins_and_is_recorded_as_entered() -> None:
-    record = normalize(parse_team_form(complete_form(product="WHOLETAIL")), Channel.TEAM, {})
-    assert record.deal.product is Product.WHOLETAIL
+    record = normalize(parse_team_form(complete_form(product="ACQUISITION")), Channel.TEAM, {})
+    assert record.deal.product is Product.ACQUISITION
     assert record.deal.product_source is ProductSource.ENTERED
-    form = complete_form(rehab_costs="0", product="SPLIT_PRINCIPAL")
+    form = complete_form(rehab_costs="0", product="ACQUISITION_REHAB")
     record = normalize(parse_team_form(form), Channel.TEAM, {})
-    assert record.deal.product is Product.SPLIT_PRINCIPAL  # inference does not override
+    assert record.deal.product is Product.ACQUISITION_REHAB  # inference does not override
 
 
 def test_product_stays_unset_until_the_rehab_costs_is_known() -> None:

@@ -6,8 +6,8 @@ Two modules, two halves of the same boundary:
   over a stored ``0.12``, a phone as ``###-###-####`` over stored digits. Everything here is
   a **round trip**: what ``*_display`` writes, ``*_parse`` reads back to the same number, and
   the deal carries the number either way.
-* ``schema/labels.py`` is the other direction for codes: ``SPLIT_DRAW`` is "Split Draw"
-  wherever a person reads it, and the stored value never changes.
+* ``schema/labels.py`` is the other direction for codes: ``ACQUISITION_REHAB`` is
+  "Holdback" wherever a person reads it, and the stored value never changes.
 
 ``api/masks.py`` says which box is which, and holds the one rule that is not pure
 formatting: a box still showing its config default stores nothing, so the deal goes on saying
@@ -181,7 +181,7 @@ def test_the_four_sets_do_not_overlap() -> None:
 def test_a_box_with_no_mask_is_left_alone() -> None:
     assert unmask_one("address", "12 Elm St") == "12 Elm St"
     assert mask_one("credit_range", "T1") == "T1"
-    assert mask_one("flip_analysis", True) == "true"
+    assert mask_one("repeat_borrower", True) == "true"
     assert mask_one("purchase_price", None) == ""
 
 
@@ -249,10 +249,8 @@ def test_the_form_reads_a_masked_submission_into_what_the_deal_stores() -> None:
 @pytest.mark.parametrize(
     "code, label",
     [
-        (Product.NO_DRAW, "No Draw"),
-        (Product.SPLIT_DRAW, "Split Draw"),
-        (Product.SPLIT_PRINCIPAL, "Split Principal"),
-        (Product.WHOLETAIL, "Wholetail"),
+        (Product.ACQUISITION, "100% at close"),
+        (Product.ACQUISITION_REHAB, "Holdback"),
         (LoanPurpose.CASH_OUT, "Cash Out"),
         (LoanPurpose.PURCHASE, "Purchase"),
         (LoanPurpose.REFINANCE, "Refinance"),
@@ -264,12 +262,12 @@ def test_an_enum_a_person_reads_is_title_case_with_spaces(code: Any, label: str)
 
 
 def test_the_stored_value_is_untouched_by_any_of_it() -> None:
-    assert Product.SPLIT_DRAW.value == "SPLIT_DRAW"
+    assert Product.ACQUISITION_REHAB.value == "ACQUISITION_REHAB"
     assert LoanPurpose.CASH_OUT.value == "CASH_OUT"
 
 
 def test_every_product_has_a_one_line_definition() -> None:
-    """SPEC §3, shown under the Loan Type box so a person is told what they are picking."""
+    """SPEC §3, one line per loan structure."""
     for product in Product:
         text = product_definition(product)
         assert text and text.endswith(".") and len(text) < 300, product

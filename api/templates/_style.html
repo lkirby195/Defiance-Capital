@@ -318,6 +318,13 @@
     .toggle label { display: inline-flex; align-items: center; gap: 5px; margin: 0; font-size: 14px;
                     color: var(--ink); white-space: nowrap; }
     .toggle input[type="radio"] { width: auto; min-height: 0; margin: 0; }
+    /* The team form's Holdback radio reveals the Rehab portion box (SPEC §3): a rule on the
+       checked radio, no script. Where :has() is not supported the box is simply always shown;
+       one that carries a value or a complaint (.shown) is never hidden. */
+    @supports selector(:has(*)) {
+      .structure:not(:has(input[name="product"][value="ACQUISITION_REHAB"]:checked))
+        .holdback-only:not(.shown) { display: none; }
+    }
     input[type="radio"], input[type="checkbox"] { width: auto; min-height: 0; }
     .reply { white-space: pre-wrap; background: var(--well); border: 1px solid var(--line);
              border-radius: var(--radius); padding: 10px 12px; margin: 0 0 var(--s2); }

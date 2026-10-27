@@ -1,7 +1,7 @@
 """``glenwood`` command line: run a fixture deal, export one, manage users, purge the deals.
 
-    uv run glenwood run fixtures/synthetic/deals/go_split_draw_denver.json --underwrite
-    uv run glenwood export fixtures/synthetic/deals/go_split_draw_denver.json out.xlsx
+    uv run glenwood run fixtures/synthetic/deals/go_holdback_denver.json --underwrite
+    uv run glenwood export fixtures/synthetic/deals/go_holdback_denver.json out.xlsx
     uv run glenwood users create --name "Sam Reed" --email sam@glenwood.example
     uv run glenwood users deactivate --email sam@glenwood.example
     uv run glenwood users reset-password --email sam@glenwood.example

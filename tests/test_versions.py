@@ -403,14 +403,14 @@ def test_restoring_a_version_after_every_input_changed_reproduces_it_exactly(
         rehab_costs="$30,000",
         loan_requested="$140,000",
         loan_purpose="REFINANCE",
-        product="SPLIT_DRAW",
+        product="ACQUISITION_REHAB",
         closing_date="2027-03-15",
         term_months="9",
     )
     edited = client.post(f"/queue/deals/{deal_id}/intake", data=intake, follow_redirects=False)
     assert edited.status_code == 303, edited.text
 
-    # all sixteen boxes on the panel (v3)
+    # all fourteen boxes on the panel (v3)
     saved = save_and_run(
         client,
         deal_id,
@@ -428,8 +428,6 @@ def test_restoring_a_version_after_every_input_changed_reproduces_it_exactly(
         rental_takeout_rate="7%",
         take_back_legal_costs_usd="$6,000",
         take_back_lost_interest_months="4",
-        flip_analysis="false",
-        rental_analysis="true",
         version_name="Everything moved",
     )
     assert saved.status_code == 303, saved.text

@@ -166,7 +166,6 @@ def test_an_edit_records_who_did_it_and_what_moved(
         form_body(
             team_entry,
             loan_requested="175000.00",
-            loan_purchase_portion="127000.00",  # the split still has to add up (SPEC §8.2)
             borrower_email="dana.w@example.com",
         ),
     )
@@ -179,11 +178,12 @@ def test_an_edit_records_who_did_it_and_what_moved(
     after = dict(row.after or {})
     newest = latest_submission(db_session, stored_deal.id)
     assert newest is not None and after.pop("submission_id") == str(newest.id)
-    # the loan amount moved, so the split the deal carried no longer added up: it was reset
-    # to the §8.2 formula on the new amount (the rehab half is unchanged and is not listed)
+    # the form's Rehab portion stood at 48,000 and the advance is the rest of the new loan
+    # amount (SPEC §8.1, v0.17) - which is the §8.2 formula on it, so it reads as the default
+    # (the rehab half is unchanged and is not listed)
     assert after == {
         "loan_requested": "175000",
-        "loan_purchase_portion": "127000.00",
+        "loan_purchase_portion": "127000",
         "borrower.email": "dana.w@example.com",
     }
     assert row.before == {
@@ -202,13 +202,12 @@ def test_an_edit_leaves_the_deal_page_s_own_columns_alone(
     team_entry_with_overrides: dict[str, Any],
     deal_with_overrides: Deal,
 ) -> None:
-    """The form has no box for the economics, the valuation, the rent, the toggles or the
-    court search, so an edit that could not have known them does not clear them."""
+    """The form has no box for the economics, the valuation, the rent or the court search,
+    so an edit that could not have known them does not clear them."""
     deal_id = deal_with_overrides.id
     assert deal_with_overrides.estimated_sale_price_team == Decimal("200000.00")
     assert deal_with_overrides.interest_rate == Decimal("0.13")
     assert deal_with_overrides.court_records_status is CourtRecordsStatus.CLEAN
-    deal_with_overrides.flip_analysis = False
     db_session.commit()
     # exactly what the browser posts: the boxes the form renders, and nothing else
     body = {
@@ -226,7 +225,6 @@ def test_an_edit_leaves_the_deal_page_s_own_columns_alone(
     assert deal.estimated_sale_price_team == Decimal("200000.00")
     assert deal.monthly_rent == Decimal("1800.00")
     assert deal.interest_rate == Decimal("0.13")
-    assert deal.flip_analysis is False
     assert deal.court_records_status is CourtRecordsStatus.CLEAN
     [row] = trail(db_session, AuditAction.INTAKE_EDITED)
     assert set(row.after or {}) == {"loan_purpose", "submission_id"}
@@ -244,7 +242,7 @@ def test_moving_a_deal_off_a_split_product_clears_its_split(
     assert stored_deal.loan_purchase_portion == Decimal("147000.00")
     body = {
         name: value
-        for name, value in form_body(team_entry, product="NO_DRAW").items()
+        for name, value in form_body(team_entry, product="ACQUISITION").items()
         if name in TEAM_ENTRY_FIELDS
     }
 
@@ -253,7 +251,7 @@ def test_moving_a_deal_off_a_split_product_clears_its_split(
     assert response.status_code == 303, response.text
     db_session.expire_all()
     deal = db_session.get(Deal, stored_deal.id)
-    assert deal is not None and deal.product is not None and deal.product.value == "NO_DRAW"
+    assert deal is not None and deal.product is not None and deal.product.value == "ACQUISITION"
     assert (deal.loan_purchase_portion, deal.loan_rehab_portion) == (None, None)
     [row] = trail(db_session, AuditAction.INTAKE_EDITED)
     assert row.after is not None and row.after["loan_purchase_portion"] is None

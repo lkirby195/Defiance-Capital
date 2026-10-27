@@ -167,14 +167,14 @@ def test_the_page_shows_the_borrower_sensitivity_and_the_pricing_rows(
         assert html.escape(row.sentence) in pricing
 
 
-def test_a_flip_off_deal_says_the_borrower_side_was_not_evaluated(
+def test_a_deal_with_no_sale_price_says_the_borrower_side_was_not_evaluated(
     client: QueueClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    deal_with_overrides.flip_analysis = False
+    deal_with_overrides.estimated_sale_price_team = None
     db_session.commit()
     assert run(client, deal_with_overrides).status_code == 303
     body = client.get(f"/queue/deals/{deal_with_overrides.id}").text
-    assert "Not evaluated: the Flip Analysis is off." in body
+    assert "Not evaluated: there is no estimated sale price." in body
     assert "the borrower&#39;s profit is not evaluated" in body or "No rate on the grid" in body
 
 

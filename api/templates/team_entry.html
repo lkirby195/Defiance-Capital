@@ -7,10 +7,12 @@
 
 {# Labels and boxes, three groups (SPEC §8.1): Overview, Property Overview, Deal Economics,
    two columns on a desktop and one on a phone. No helper text: every box says Required or
-   Optional and nothing else, and a complaint sits in red under the box it is about. The
-   §8.1 economics with a default, the loan split, the valuation, the rent, the analysis
-   toggles and the court search are not here - they populate from the defaults when the deal
-   is stored and are edited on the deal page (api/intake_form.py). The New Deal form adds one
+   Optional and nothing else, and a complaint sits in red under the box it is about. The loan
+   structure is a radio, "100% at close" / "Holdback" (SPEC §3); Holdback reveals the Rehab
+   portion box by a stylesheet rule on the checked radio, not by script (_style.html), and a
+   browser without :has() simply shows the box. The §8.1 economics with a default, the
+   valuation, the rent and the court search are not here - they populate from the defaults
+   when the deal is stored and are edited on the deal page (api/intake_form.py). The New Deal form adds one
    box above the button, not part of the intake: what to call the version the deal arrives
    with (SPEC §5); left blank, it is named for the deal. #}
 
@@ -56,15 +58,16 @@
 
   <section class="panel">
     <h2>Deal Economics</h2>
-    <div class="grid2">
+    <div class="grid2 structure">
       {{ fields.money_box("purchase_price", "Purchase Price", form.purchase_price,
                           required=true) }}
       {{ fields.money_box("rehab_costs", "Rehab Costs", form.rehab_costs, required=true) }}
       {{ fields.money_box("loan_requested", "Loan Amount", form.loan_requested,
                           required=true) }}
+      {{ fields.product_radio("product", "Loan Structure", enums.product, form.product) }}
+      {{ fields.holdback_box("loan_rehab_portion", "Rehab portion", form.loan_rehab_portion) }}
       {{ fields.enum_box("loan_purpose", "Loan Purpose", enums.loan_purpose,
                          form.loan_purpose) }}
-      {{ fields.product_box("product", "Loan Type", enums.product, form.product) }}
       {{ fields.text_box("closing_date", "Closing Date", form.closing_date, kind="date") }}
       {{ fields.text_box("term_months", "Term (months)", form.term_months, required=true,
                          mode="numeric") }}
