@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.17
+# GLENWOOD Underwriting Platform — SPEC v0.18
 
-Status: **v0.17**, 2026-10-27, engine `2.0.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.18**, 2026-10-27, engine `2.0.1`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.18** settles three of the v0.17 questions. The pricing de-risk line's X is the **plain loan reduction** against the requested row - "Adding $19,000 of equity brings the rate to 13.63%" on a row $19,000 below the request - rather than the difference in borrower equity (§8.10, engine `2.0.1`). The borrower's thank-you page lists the **requested row first**, then each smaller loan from largest to smallest; the team's Pricing section keeps most equity first (§4.2). And the deal page's Underwriting Assumptions panel loses its Advance at Closing and Rehab Portion boxes for the team form's own two controls - the **Loan Structure** radio and the **Rehab portion** box it reveals - so the structure is edited there too and the advance is always the rest of the loan (§8.1, §9).
 
 **v0.17** collapses the products to **two loan structures** and puts the borrower's side of the deal in full. `ACQUISITION` - "100% at close", the old `NO_DRAW` - advances the whole loan at closing; `ACQUISITION_REHAB` - "Holdback", the old `SPLIT_DRAW` - advances the purchase side at closing and holds the rehab portion back, drawn over the rehab period; both charge interest on the full commitment from close (§3). `SPLIT_PRINCIPAL` (the two-note ledger with Tranche A's as-drawn interest) and `WHOLETAIL` are gone from the engine, the caps grid and every form; migration `0021` maps the deals across (`SPLIT_PRINCIPAL` to a holdback whose rehab portion is its Tranche A, `WHOLETAIL` to 100% at close) and stored rows that name a retired code read as the structure it became. The team form asks for the structure as a radio right after the Loan Amount; Holdback reveals a **Rehab portion** box, by a stylesheet rule and no script, defaulting to the rehab budget times one plus the contingency, capped at the loan amount (§8.1). The **Flip and Rental toggles are gone**: all three analyses run on every deal, and a missing input is `NOT_EVALUATED` (§8.1). The Flip Analysis is printed line by line - sale price, broker, purchase, closing, rehab, contingency, holding, then the financing as interest and origination, to the profit, and the cost stack to the **total deal cost** - with the borrower's **equity** (total deal cost less the loan), **cash-on-cash** (profit over equity) against `pricing.borrower_coc_target` (placeholder 20%, `BORROWER_COC_BELOW_TARGET`, Soft) and the **project yield** (profit over total deal cost; the renamed "Yield (Profit / Costs)") (§8.4). The broker's default is **6%**. The Borrower Sensitivity's cells show the project yield (§8.9). New **Sources & Uses**: the advance at closing, the rehab holdback and the borrower's equity against the cost stack, equal to the cent (§8.11). Each Pricing row says "Adding $X of equity brings the rate to Y%", and the rows run most equity first (§8.10). Engine `2.0.0`.
 
@@ -187,7 +189,9 @@ unguessable token stored on the deal (`deals.thanks_token`) and live for
 bare `/apply/thanks`, render the plain thank-you. The page says the team will be in touch
 and, when the arrival run allows it, shows one table titled **Indicative terms**, one row per
 pricing step (§8.10) that quotes a rate: Loan amount, Rate, Estimated profit, Yield
-(cash-on-cash). The rules:
+(cash-on-cash). The rows read the **requested row first, then each smaller loan from largest to
+smallest** (v0.18) - what the borrower asked for before what less would cost; the team's
+Pricing section runs the other way, most equity first. The rules:
 
 - shown only when the automatic screen on arrival (version 1) said Go or Conditional, and the
   ledger ran; a Decline, an incomplete intake and a run that stood down show the plain page
@@ -634,7 +638,7 @@ Descriptive: captured, stored on `properties`, and reported. None of them feeds 
 | `purchase_price` | — | |
 | `rehab_costs` | — | 0 allowed |
 | `loan_requested` | — | Labelled **Loan Amount** wherever it is shown |
-| `loan_purchase_portion`, `loan_rehab_portion` | the §8.2 formula, on a holdback | §8.2; the Loan Amount is their sum. The first is labelled **Advance at Closing**, the second **Rehab Portion**. On the team form, Holdback reveals one box, **Rehab portion** (optional): typed, the advance is the rest of the loan, and a portion above the loan amount is refused under the box; blank, it is the default - the rehab budget times one plus the contingency, capped at the loan amount. Nothing on 100% at close: one advance, the whole loan |
+| `loan_purchase_portion`, `loan_rehab_portion` | the §8.2 formula, on a holdback | §8.2; the Loan Amount is their sum. The first is the **Advance at Closing**, the second the **Rehab portion**. Only the rehab portion is typed: on the team form and on the deal page's Underwriting Assumptions panel alike (v0.18), Holdback reveals one box, **Rehab portion** (optional): typed, the advance is the rest of the loan, and a portion above the loan amount is refused under the box; blank, it is the default - the rehab budget times one plus the contingency, capped at the loan amount. On the panel the radio shows the deal's structure and the box its rehab portion, tagged "default" while it is. Nothing on 100% at close: one advance, the whole loan |
 | `interest_rate` | `interest.default_annual_rate` (12.5%, placeholder; the sensitivity grid's first column) | Annual. **Required to underwrite**; the default stands until the team enters the deal's own rate |
 | `contingency_pct` | `fees.contingency_default_pct` (0.00) | `rehab_adj = rehab_costs × (1 + contingency_pct)` |
 | `closing_costs_usd` | `fees.closing_costs_default_usd` (1,000) | The lender's closing costs. It replaces the 3%-of-price borrower closing assumption, which is gone |
@@ -1091,31 +1095,34 @@ A $140,000 loan at 14.37% returns $21,400 profit (28.2% cash-on-cash).
 A $150,000 loan exceeds max quoted rate (20.15% needed).
 ```
 
-**The de-risk line** (v0.17). Each row also carries the borrower's equity at its solved rate -
-the Flip Analysis's total deal cost less the loan amount (§8.4), which needs no sale price -
-and every row but the request says what bringing that much more than the request does:
+**The de-risk line** (v0.17; X redefined in v0.18). Each row also carries the borrower's
+equity at its solved rate - the Flip Analysis's total deal cost less the loan amount (§8.4),
+which needs no sale price - and every row but the request says what lending less does to the
+rate:
 
 ```
-equity_added = the row's borrower_equity - the requested row's, each at its own solved rate
+equity_added = the requested loan amount - the row's loan amount          # the plain reduction
 
-Adding $16,400 of equity brings the rate to 13.63%.
-Adding $8,625 of equity brings the rate to 13.72%, above the 13.7% max quoted rate.
+Adding $19,000 of equity brings the rate to 13.63%.
+Adding $10,000 of equity brings the rate to 13.72%, above the 13.7% max quoted rate.
 ```
 
-Lending $X less saves the borrower some interest and fee, so the equity added is a little less
-than the loan taken off ($19,000 less on Denver adds $16,399.85). The rate is the row's solved
-rate - its quote, or the rate it needs when that is above the maximum, which the line then
-says. A row with no solved rate (no loan, or no rate up to the ceiling) has no equity and no
-line, and neither does any row when the request itself has none. **The rows run most equity
-first**: the smallest loan at the top, the request at the bottom; the thank-you page's
-Indicative terms follow the same order.
+X is the cash the borrower brings at closing in place of the loan (engine `2.0.1`; `2.0.0`
+recorded the difference in borrower equity, which nets off the interest and fee the smaller
+loan saves - $16,399.85 rather than $19,000 on Denver). The rate is the row's solved rate - its
+quote, or the rate it needs when that is above the maximum, which the line then says. A row
+with no solved rate (no loan, or no rate up to the ceiling) has no line, and neither has the
+request. **The rows run most equity first** on the deal page, in the workbook and in the CLI:
+the smallest loan at the top, the request at the bottom. The thank-you page reads them the
+other way round (§4.2).
 
 The solve is checked against an independent one on two fixtures - Wichita's 100% at close note
 and Denver's holdback draws - each a float secant root-find on the continuous rate,
 rounded up to the next 0.01% and confirmed a step either side (`tests/test_pricing.py`):
 Wichita $135,000 / $143,000 / $150,000 all at 16.34%, Denver $176,000 / $185,000 / $195,000
 at 13.63% / 13.72% / 13.82%, with the equity 94,759 / 88,226.20 / 82,510 and 102,451.60 /
-94,676.50 / 86,051.75 worked out by the same script.
+94,676.50 / 86,051.75 worked out by the same script; the lines add $15,000 / $7,000 and
+$19,000 / $10,000.
 
 ### 8.11 Sources & Uses
 
@@ -1174,7 +1181,8 @@ and the borrower's equity, cash-on-cash against its target and project yield (§
 (IRR, total interest, total fees, total profit, payoff date) with the ledger collapsed under
 it as **Cash Flows**. Under the outputs, open, sits the **Underwriting Assumptions** panel:
 two columns of editable boxes - Interest Rate, Origination Fee, Contingency, Closing Costs,
-Holding Costs %, Advance at Closing, Rehab Portion (the last two on a holdback),
+Holding Costs %, the Loan Structure radio and the Rehab portion box it reveals on Holdback
+(the team form's own two controls, v0.18; the advance at closing is the rest of the loan),
 Estimated Sale Price, Monthly Rent, Broker Selling Costs %, Rental Expense %, Rental Takeout
 Rate, Take-Back Legal Costs, Take-Back Lost Interest Months (the two analysis toggles that
 ended the list went with v0.17) -
@@ -1477,14 +1485,8 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
 ## 13. Open items
 
 - 10a's open questions (v0.17):
-  - The de-risk line's "equity" is the §8.4 borrower equity (total deal cost less the loan),
-    each row at its own solved rate, so it is the loan taken off less the financing it saves
-    ($19,000 less on Denver adds $16,399.85). If the line should say the loan taken off
-    instead - the cash a borrower brings at closing - it is one subtraction away
   - The requested row has no de-risk line (it adds nothing); every other row with a solved
     rate has one, an over-the-maximum row included ("..., above the 18% max quoted rate")
-  - The rows now run most equity first on every output, the thank-you page's Indicative
-    terms included, so the request is the last row a borrower reads
   - `BORROWER_COC_BELOW_TARGET` takes its severity from config (placeholder Soft) like the
     two DSCR codes, rather than being fixed in code; it is not tested without a sale price,
     nor when the loan covers every cost
@@ -1498,8 +1500,9 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
   - The structure's caption is **Loan Structure** on the form and the deal page, with the
     two labels exactly as the brief named them ("100% at close", "Holdback")
   - Neither radio is checked on a new deal: left unpicked, the structure is inferred from the
-    rehab costs as before. The deal page panel keeps both split boxes (Advance at Closing,
-    Rehab Portion); the team form has the one
+    rehab costs as before. On the deal page panel (v0.18) the radio always shows the deal's
+    structure, inferred or chosen; saving it as it stands changes nothing, and picking the
+    other one records it as the team's
 
 - LinkedPhone webhook availability
 - PropStream export path
