@@ -35,7 +35,7 @@
     <td class="num">{{ deal.loan_requested | money }}</td>
     <td>{{ deal.product | label }}</td>
     <td>
-      {% if entry.verdict %}<span class="tag {{ entry.verdict | plain }}">{{ entry.verdict | plain }}</span>
+      {% if entry.verdict %}<span class="tag {{ entry.verdict | plain }}">{{ entry.verdict | label }}</span>
       {% else %}<span class="muted">—</span>{% endif %}
     </td>
     <td class="num">{% if entry.irr is not none %}<span class="tag fact">{{ entry.irr | quoted }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
