@@ -295,11 +295,11 @@ def test_a_rate_nobody_entered_is_the_config_default_and_the_button_stays_on(
     row = rows(deal_with_overrides)["deal.interest_rate"]
     assert row.required is True
     assert row.source is InputSource.DEFAULT
-    assert row.value == D("0.12")
-    assert "config default 12.00%" in row.note
+    assert row.value == D("0.125")
+    assert "config default 12.50%" in row.note
     assert readiness.ready is True
     assembled = underwrite_inputs(deal_with_overrides, UnderwriteRequest())
-    assert assembled.interest_rate == D("0.12")
+    assert assembled.interest_rate == D("0.125")
 
 
 @pytest.mark.parametrize(
@@ -339,19 +339,23 @@ def page(client: TestClient, deal: Deal) -> str:
     return response.text
 
 
-def test_the_deal_page_shows_the_checklist(client: TestClient, deal_with_overrides: Deal) -> None:
+def test_the_page_prints_no_checklist_and_names_what_is_missing_in_the_banner(
+    client: TestClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """The Underwriting Assumptions panel is the one list of what the ledger runs on (SPEC
+    §9.2, v0.15); the checklist still decides, and the banner still names what it is short of.
+    """
     body = page(client, deal_with_overrides)
-    assert "What the ledger runs on" in body
-    for label in (
-        "Estimated sale price",
-        "Monthly rent",
-        "Holding costs (% of price + rehab)",
-        "Interest rate",
-        "Payoff date",
-    ):
-        assert label in body, label
-    # the source is shown as a word, not the stored code (SPEC §9.2)
-    assert ">Team<" in body and ">TEAM<" not in body
+    assert "What the ledger runs on" not in body and 'id="readiness"' not in body
+    assert 'class="banner"' not in body
+    deal_with_overrides.term_months = None
+    db_session.commit()
+    body = page(client, deal_with_overrides)
+    banner = body[body.index('<div class="banner">') :]
+    banner = banner[: banner.index("</div>")]
+    assert "The ledger is off until these are entered" in banner
+    for name in underwrite_readiness(deal_with_overrides).missing:
+        assert f"<li>{name}</li>" in banner, name
 
 
 def test_the_deal_page_shows_the_holding_cost_as_a_percentage_and_as_dollars(
@@ -372,8 +376,6 @@ def test_the_deal_page_shows_the_holding_cost_as_a_percentage_and_as_dollars(
     )
     # ...under the box on the override block
     assert f"${dollars:,.2f} over the whole hold, on a ${cost:,.2f} cost basis" in body
-    # ...and on the checklist row, beside the config default it was typed over
-    assert f"${dollars:,.2f} over the whole hold; config default 2.00%" in body
 
 
 def test_the_holding_cost_note_falls_back_to_the_default_it_is_showing(

@@ -116,6 +116,12 @@ REQUIRED_NAMES: frozenset[str] = frozenset(name for name, _ in REQUIRED_FIELDS)
 # Pydantic names has nowhere to sit and goes to the top (``api/problems.py``).
 TEAM_ENTRY_NAMES: frozenset[str] = frozenset(TEAM_ENTRY_FIELDS)
 
+# What to call the version a run records (SPEC §5): the optional box beside Run Analysis and
+# Save & Run, and the New Deal form's one box that is not the intake - the name of the
+# version the deal arrives with. On the new form only (an edit's run is ``Auto v<n>``), and
+# read off the post before the form is, so it is never part of the stored payload.
+VERSION_NAME = "version_name"
+
 
 def missing_required(submitted: Mapping[str, str]) -> FormProblems:
     """One complaint per required box left empty, under that box.  # SPEC §4.1, §8.1

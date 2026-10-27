@@ -298,10 +298,15 @@ def render_sensitivity(table: SensitivityTable | None) -> list[str]:
             f"{pct4(cell.irr) + ('*' if cell.is_deal else ''):>11}" for cell in row.cells
         )
         lines.append(f"  {money(row.loan_amount):<16}{cells}")
-    lines.append(
-        "  reductions come off the advance at closing first; * the deal as it stands (SPEC 8.9)"
-    )
+    lines.append(f"  reductions come off the advance at closing first; {marked(table)} (SPEC 8.9)")
     return lines
+
+
+def marked(table: SensitivityTable | BorrowerSensitivityTable) -> str:
+    """What the ``*`` means, or that there is none: the deal's rate is not a grid column."""
+    if table.deal_cell is not None:
+        return "* the deal as it stands"
+    return f"the deal's own rate ({pct1(table.interest_rate)}) is not a column"
 
 
 def render_borrower_sensitivity(table: BorrowerSensitivityTable | None) -> list[str]:
@@ -322,7 +327,9 @@ def render_borrower_sensitivity(table: BorrowerSensitivityTable | None) -> list[
         )
         lines.append(f"  {money(row.loan_amount):<16}{profits}")
         lines.append(f"  {'  cash-on-cash':<16}{ratios}")
-    lines.append("  profit per the flip; cash = total project costs - loan; * the deal (SPEC 8.9)")
+    lines.append(
+        f"  profit per the flip; cash = total project costs - loan; {marked(table)} (SPEC 8.9)"
+    )
     return lines
 
 

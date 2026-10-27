@@ -252,15 +252,17 @@ def test_the_sensitivity_sheet_is_numbers_under_formats_with_the_request_on_the_
         Decimal(str(sheet.cell(row=4 + len(rows), column=1).value))
         == result.economics.loan_requested
     )
-    # the Denver deal is priced at 12%: its own column, first, and exactly one shaded cell
-    assert Decimal(str(rates[0].value)) == Decimal("0.12")
+    # the Denver deal is priced at 12%, off the grid: the columns start at 12.5% and nothing
+    # is shaded, and the note under the title says why
+    assert Decimal(str(rates[0].value)) == Decimal("0.125")
     shaded = [
         (offset, column)
         for offset in range(len(rows))
         for column in range(5, 5 + len(result.sensitivity.rates))
         if sheet.cell(row=5 + offset, column=column).fill.fgColor.rgb == "00E7F3EC"
     ]
-    assert shaded == [(len(rows) - 1, 5)]
+    assert shaded == []
+    assert "(12.0%), which is not a column" in str(sheet.cell(row=2, column=1).value)
 
 
 def test_the_deals_own_cell_is_shaded_when_its_rate_is_a_column() -> None:
@@ -313,9 +315,11 @@ def test_the_borrower_sheet_is_profit_cash_and_cash_on_cash_under_each_rate() ->
     bottom = 5 + len(grid.rows)
     assert D(str(sheet.cell(row=bottom, column=1).value)) == D("150000")
     profit, cash, coc = (sheet.cell(row=bottom, column=c) for c in (2, 3, 4))
-    assert (D(str(profit.value)), D(str(cash.value))) == (D("23600"), D("76000"))
-    assert round(D(str(coc.value)), 6) == D("0.310526")
-    assert profit.fill.fgColor.rgb == "00E7F3EC" and coc.number_format == "0.0%"
+    # the first column is 12.5% (tests/test_borrower_sensitivity.py records the figures);
+    # Wichita is priced at 12%, off the grid, so nothing is shaded
+    assert (D(str(profit.value)), D(str(cash.value))) == (D("22850"), D("76750"))
+    assert round(D(str(coc.value)), 6) == D("0.297720")
+    assert profit.fill.fgColor.rgb != "00E7F3EC" and coc.number_format == "0.0%"
 
 
 def test_the_pricing_sheet_carries_every_row_and_its_sentence() -> None:

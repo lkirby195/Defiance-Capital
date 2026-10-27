@@ -83,7 +83,7 @@ def test_history_lists_every_version_with_who_and_which_engine(
     # the button's version, newest first, then the automatic run on arrival; the intake the
     # deal was created from is the first version's, so it is not an edit row of its own
     assert [entry.kind for entry in history] == [HistoryKind.VERSION, HistoryKind.VERSION]
-    assert [entry.name for entry in history] == ["v2", "Auto v1"]
+    assert [entry.name for entry in history] == ["v2", "Ortiz; 3320 Meade St, CO - Team"]
     assert [entry.actor for entry in history] == [SAM, "system"]
     assert [entry.working for entry in history] == [False, True]
     assert [entry.engine_version for entry in history] == [ENGINE_VERSION] * 2
@@ -174,7 +174,8 @@ def test_restore_saves_the_old_version_as_a_new_submission_and_re_runs(
     # each of the three intakes was run on, so each is a version and none an edit row
     history = deal_history(db_session, again.id)
     assert [entry.kind for entry in history] == [HistoryKind.VERSION] * 3
-    assert [entry.name for entry in history] == ["Auto v3", "Auto v2", "Auto v1"]
+    arrival = "Ortiz; 3320 Meade St, CO - Team"  # the arrival version (SPEC §5)
+    assert [entry.name for entry in history] == ["Auto v3", "Auto v2", arrival]
 
 
 def test_a_web_version_restores_through_the_web_parser(

@@ -40,7 +40,7 @@ def test_the_page_shows_the_groups_in_order_and_some_values(client: QueueClient)
     at = [body.index(f"<h2>{heading}</h2>") for heading in headings]
     assert at == sorted(at)
     assert f"<h2>{OTHER}</h2>" not in body
-    assert 'data-key="interest.default_annual_rate">12%<' in body
+    assert 'data-key="interest.default_annual_rate">12.5%<' in body
     assert 'data-key="fees.closing_costs_default_usd">$1,000.00<' in body
     assert 'data-key="pricing.target_lender_irr">20%<' in body
     assert 'data-key="pricing.loan_amount_pct_steps">0%, -5%, -10%<' in body

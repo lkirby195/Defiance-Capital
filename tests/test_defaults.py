@@ -139,14 +139,14 @@ def test_a_team_entry_without_the_economics_is_populated_and_tagged(
     for name in ("interest_rate", "closing_costs_usd", "holding_costs_pct_of_cost"):
         del team_entry[name]
     deal = store_deal(db_session, team_entry)
-    assert deal.interest_rate == D("0.12")
+    assert deal.interest_rate == D("0.125")
     assert deal.closing_costs_usd == D("1000.00")
     assert deal.holding_costs_pct_of_cost == D("0.02")
     assert deal.contingency_pct == D("0") and deal.origination_fee_pct == D("0.02")
     assert set(ECONOMICS) <= set(deal.defaulted_fields)
     # the split the fixture typed is left exactly where it was - and because 147,000 /
     # 48,000 is what the §8.2 formula gives this deal, it is the default by the same rule
-    # that makes a 12% rate nobody changed the default
+    # that makes a 12.5% rate nobody changed the default
     assert deal.loan_purchase_portion == D("147000.00")
     assert is_defaulted(deal, "loan_purchase_portion")
 
@@ -155,8 +155,8 @@ def test_a_team_value_is_never_touched_and_never_called_a_default(
     db_session: Session, team_entry: dict[str, Any]
 ) -> None:
     deal = store_deal(db_session, team_entry)  # 12%, $1,500 closing, 3% holding
-    assert deal.interest_rate == D("0.12") and "interest_rate" in deal.defaulted_fields, (
-        "12% is the config default, so a 12% nobody chose differently is the default"
+    assert deal.interest_rate == D("0.12") and "interest_rate" not in deal.defaulted_fields, (
+        "the default is 12.5%, so the fixture's 12% is the team's own"
     )
     assert deal.closing_costs_usd == D("1500.00")
     assert deal.holding_costs_pct_of_cost == D("0.03")
@@ -192,13 +192,13 @@ def test_an_existing_deal_is_populated_on_its_next_open_and_only_once(
     # ...but the checklist already reads a NULL as the default the engine will use
     rows = {row.key: row for row in underwrite_readiness(deal).rows}
     assert rows["deal.interest_rate"].source is InputSource.DEFAULT
-    assert rows["deal.interest_rate"].value == D("0.12")
+    assert rows["deal.interest_rate"].value == D("0.125")
 
     assert client.get(f"/queue/deals/{deal.id}").status_code == 200
     db_session.expire_all()
     opened = db_session.get(Deal, deal.id)
     assert opened is not None
-    assert opened.interest_rate == D("0.12") and opened.contingency_pct == D("0")
+    assert opened.interest_rate == D("0.125") and opened.contingency_pct == D("0")
     assert set(opened.defaulted_fields) == {
         "interest_rate",
         "contingency_pct",
@@ -276,7 +276,7 @@ def test_typing_over_a_default_makes_it_the_teams_and_a_blank_puts_it_back(
     db_session.commit()
     assert deal.closing_costs_usd == D("1000.00")
     assert is_defaulted(deal, "closing_costs_usd")
-    assert deal.interest_rate == D("0.12") and is_defaulted(deal, "interest_rate")
+    assert deal.interest_rate == D("0.125") and is_defaulted(deal, "interest_rate")
     (first, second) = audit(db_session, deal, AuditAction.OVERRIDES_SAVED)
     assert first.after is not None and first.after["closing_costs_usd"] == "2500.00"
     assert second.after is not None and second.after["closing_costs_usd"] == "1000.00"
@@ -367,7 +367,7 @@ def test_the_deal_page_tags_each_default_and_offers_a_reset(
     body = client.get(f"/queue/deals/{deal.id}").text
     # the facts: the value, then the tag, for every default; none on the team's own numbers
     for label, value in (
-        ("Interest Rate", "12.0%"),
+        ("Interest Rate", "12.5%"),
         ("Contingency", "0.0%"),
         ("Origination Fee", "2.0%"),
         ("Advance at closing", "$147,000.00"),
@@ -383,7 +383,7 @@ def test_the_deal_page_tags_each_default_and_offers_a_reset(
         assert re.search(rf'id="{name}"[^>]*data-default="[^"]+"', body), name
         assert f'data-default-tag="{name}"' in body, name
         assert f'data-reset="{name}"' in body, name
-    assert re.search(r'id="interest_rate"[^>]*value="12%"', body)
+    assert re.search(r'id="interest_rate"[^>]*value="12.5%"', body)
     assert re.search(r'id="loan_rehab_portion"[^>]*value="\$48,000"', body)
     # and the checklist calls every one of them present
     assert "The ledger is off until these are entered" not in body

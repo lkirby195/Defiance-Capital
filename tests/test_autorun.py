@@ -67,8 +67,8 @@ def test_a_web_submission_is_screened_and_priced_on_arrival(
     assert actors(db_session, AuditAction.UNDERWRITE_RUN) == ["system"]
     # ...and the page opens on the results, with the flags that say what they rest on
     body = client.get(f"/queue/deals/{deal.id}").text
-    assert "Not analyzed yet." not in body and "No analysis yet." not in body
-    assert "Verdict <strong>" in body
+    assert "IRR <strong>—</strong>" not in body and "No analysis yet." not in body
+    assert 'data-chip="irr">IRR <strong>' in body
     assert "<strong>SCREEN_RUN</strong>" in body and ">system<" in body
     # ...with the flags that say what they rest on, on the stored row (SPEC §9)
     row = latest_screen(db_session, deal.id)
@@ -107,7 +107,7 @@ def test_a_screen_that_declines_stops_the_underwrite_and_closes_the_deal(
     assert response.status_code == 303
     assert notice(response) == (
         "Deal created. Analysis recorded: DECLINE. The ledger did not run: the deal is DECLINED."
-        " Saved as Auto v1 (Working)."
+        " Saved as Ortiz; 3320 Meade St, CO - Team (Working)."
     )
     deal = one_deal(db_session)
     assert deal.status is Status.DECLINED

@@ -89,8 +89,7 @@ def test_the_court_search_is_the_deal_page_s_and_labels_the_outcome_and_the_matt
     assert options(body, "matter_lien_kind") == {
         member.value: enum_label(member) for member in LienKind
     }
-    # The caption stopped shouting the codes at people too.
-    assert "Not Checked is not Clean" in body
+    # No caption at all now (the (?) went in v0.15), and never the codes.
     assert "NOT_CHECKED is not CLEAN" not in body
 
 
@@ -123,10 +122,10 @@ def test_a_verdict_is_styled_by_its_code_and_a_severity_reads_as_a_word(
     assert flag.severity is Severity.HARD and enum_label(flag.severity) == "Hard"
 
 
-def test_the_readiness_checklist_shows_the_court_search_as_words(
+def test_the_court_search_outcome_is_selected_as_words(
     client: QueueClient, deal_with_overrides: Deal
 ) -> None:
+    """The checklist that printed it is gone (SPEC §9.2, v0.15); the section's own box says it."""
     body = client.get(f"/queue/deals/{deal_with_overrides.id}").text
-    row = re.search(r"<td>Court and filing search</td>\s*<td[^>]*>\s*([^<\s]+)", body)
-    assert row is not None
-    assert row.group(1) == "Clean"
+    chosen = re.search(r'<option value="CLEAN" selected>\s*Clean\s*</option>', body)
+    assert chosen is not None

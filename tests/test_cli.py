@@ -11,6 +11,7 @@ import pytest
 from cli.fixtures import FixtureError, run_fixture
 from cli.main import main
 from config.config import Config
+from engine.calc.sensitivity import rate_columns
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures/synthetic/deals"
 FIXTURE_FILES = sorted(FIXTURE_DIR.glob("*.json"))
@@ -68,14 +69,22 @@ def test_run_underwrite_prints_every_section(
     grid = out[out.index("LENDER SENSITIVITY") : out.index("BORROWER SENSITIVITY")]
     assert "12.5%" in grid and "17.5%" in grid
     assert "reductions come off the advance at closing first" in grid
-    # the deal's own rate is a column and its cell is starred, whatever rate it was priced at
-    assert grid.count("%*") == 1 and "* the deal as it stands" in grid
+    # the columns are the grid; the deal's cell is starred only when its rate is one of them
+    ran = run_fixture(path, CONFIG, with_underwrite=True).underwrite_inputs
+    assert ran is not None
+    on_grid = ran.interest_rate in rate_columns(CONFIG)
+    off_grid = f"the deal's own rate ({ran.interest_rate:.1%}) is not a column"
+    if on_grid:
+        assert grid.count("%*") == 1 and "* the deal as it stands" in grid
+    else:
+        assert "%*" not in grid and off_grid in grid
     # the borrower's side and the pricing matrix (SPEC 8.9, 8.10)
     borrower = out[out.index("BORROWER SENSITIVITY") : out.index("PRICING")]
     pricing = out[out.index("PRICING") : out.index("FLIP ANALYSIS")]
     flip = expected["flip"]
     if flip["status"] == "EVALUATED":
-        assert "cash-on-cash" in borrower and borrower.count("*") >= 1
+        assert "cash-on-cash" in borrower
+        assert borrower.count("*") == 1 if on_grid else off_grid in borrower
     else:
         assert "NOT EVALUATED" in borrower
     assert "lender IRR reaches 20.0%" in pricing

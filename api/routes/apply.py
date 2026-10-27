@@ -61,6 +61,7 @@ from db.models import Deal
 from db.session import get_session
 from services import (
     IndicativeTerms,
+    arrival_name,
     auto_run,
     create_deal,
     deal_by_thanks_token,
@@ -170,9 +171,9 @@ def apply_submit(
     actor = f"{WEB_ACTOR_PREFIX}{entry.borrower_email}"
     deal = create_deal(session, record, actor=actor)
     token = issue_thanks_token(session, deal, actor=actor)
-    # Screened and priced on arrival, as the system; the thank-you page decides what of it
-    # the borrower may see (``services/indicative.py``).
-    auto_run(session, deal)
+    # Screened and priced on arrival, as the system, under the deal's own name (SPEC §5); the
+    # thank-you page decides what of it the borrower may see (``services/indicative.py``).
+    auto_run(session, deal, name=arrival_name(deal))
     session.commit()
     return redirect(f"{THANKS_PATH}/{token}?{thanks_query}")
 

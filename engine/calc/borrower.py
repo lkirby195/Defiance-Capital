@@ -90,7 +90,7 @@ def borrower_sensitivity_table(
     two tables line up cell for cell on the page and in the workbook.
     """
     grid = grid or Grid(inputs, tranche, tier, config)
-    rates = rate_columns(config, inputs.interest_rate)
+    rates = rate_columns(config)
     status = borrower_status(inputs, flip_on)
     rows: list[BorrowerSensitivityRow] = []
     if status is AnalysisStatus.EVALUATED:

@@ -24,6 +24,7 @@ from api.intake_form import (
     REQUIRED_FIELDS,
     REQUIRED_NAMES,
     TEAM_ENTRY_FIELDS,
+    VERSION_NAME,
     intake_form_values,
 )
 from db.models import Deal
@@ -115,8 +116,8 @@ def test_the_two_read_enums_are_words_not_codes(client: QueueClient, stored_deal
     # the code stays the stored value on the option, and is never the words on the page
     assert not re.search(r">\s*SPLIT_DRAW\s*<", body)
     assert "<dd>Purchase</dd>" in body  # the loan purpose
-    # ...and the §3 definition of the product the deal is on, behind the (?) on its label
-    assert "the rehab holdback drawn over the rehab period" in body
+    # ...and not the §3 definition of the product: the (?) that carried it is gone (v0.15)
+    assert "the rehab holdback drawn over the rehab period" not in body
 
 
 def test_the_loan_type_box_offers_the_products_and_defines_none_of_them(
@@ -196,6 +197,9 @@ def test_the_form_renders_exactly_the_listed_boxes_in_order(
 ) -> None:
     target = f"/queue/deals/{stored_deal.id}/intake" if path == "deal" else path
     names = form_control_names(form_page(client, target))
+    # New Deal adds one box after the three groups, not the intake: the arrival version's name
+    if path == "/queue/new":
+        assert names.pop() == VERSION_NAME
     assert names == list(TEAM_ENTRY_FIELDS)
     assert tuple(names[-7:]) == DEAL_ECONOMICS_IN_ORDER
     assert names[:7] == [
@@ -292,8 +296,12 @@ def test_every_box_on_the_form_says_which_it_is(
         assert name in shown, f"{name} has no label"
         marker = "Required" if name in REQUIRED_NAMES else "Optional"
         assert marker in shown[name], f"{name} is not marked {marker}"
-    assert body.count('<span class="mark">Optional</span>') == len(TEAM_ENTRY_FIELDS) - len(
-        REQUIRED_NAMES
+    extra = 1 if path == "/queue/new" else 0  # the Version name box, Optional
+    if extra:
+        assert "Optional" in shown[VERSION_NAME]
+    assert (
+        body.count('<span class="mark">Optional</span>')
+        == len(TEAM_ENTRY_FIELDS) - len(REQUIRED_NAMES) + extra
     )
     assert body.count('<span class="mark">Required</span>') == len(REQUIRED_NAMES)
 

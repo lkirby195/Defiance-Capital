@@ -191,7 +191,7 @@ def test_a_box_with_no_mask_is_left_alone() -> None:
 def test_all_five_defaults_are_flat_config_numbers_on_a_blank_form() -> None:
     """Five flat config numbers, the rate among them (SPEC §8.1); nothing on the deal is needed."""
     assert deal_defaults(None, CONFIG)["holding_costs_pct_of_cost"] == D("0.02")
-    assert deal_defaults(None, CONFIG)["interest_rate"] == D("0.12")
+    assert deal_defaults(None, CONFIG)["interest_rate"] == D("0.125")
     # the blank team form has no box for any of them: they populate when the deal is stored
     # and are edited on the deal page (SPEC §8.1)
     for name in ("holding_costs_pct_of_cost", "contingency_pct", "interest_rate"):

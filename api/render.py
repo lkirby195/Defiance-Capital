@@ -39,12 +39,11 @@ from db.models import User
 from schema.labels import (
     enum_label,
     experience_label,
-    product_definition,
     term_bucket_label,
     tranche_label,
 )
 from schema.masks import phone_display
-from schema.models import ExperienceBucket, Product, TermBucket, Tranche
+from schema.models import ExperienceBucket, TermBucket, Tranche
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -68,13 +67,8 @@ def pct(value: Decimal | None) -> str:
     return "—" if value is None else f"{value:.1%}"
 
 
-def rate(value: Decimal | None) -> str:
-    """``14.8333%`` - four decimals, for a solved rate that is a division."""
-    return "—" if value is None else f"{value * 100:.4f}%"
-
-
 def quoted(value: Decimal | None) -> str:
-    """``14.37%`` - two decimals, the way a solved pricing rate is quoted (SPEC §8.10)."""
+    """``14.37%`` - two decimals: a solved pricing rate (SPEC §8.10), and every IRR shown."""
     return "—" if value is None else f"{value * 100:.2f}%"
 
 
@@ -150,11 +144,6 @@ def label(value: Any) -> str:
     return enum_label(value)
 
 
-def definition(value: Product | str | None) -> str:
-    """The SPEC §3 one-line definition of a loan product; empty when there is no product."""
-    return product_definition(value)
-
-
 def phone(value: str | None) -> str:
     """A stored phone as ``555-123-4567``; an em dash when there is none.  # SPEC §4.1"""
     if not value:
@@ -194,7 +183,6 @@ templates.env.filters.update(
     dollars=dollars,
     months=months,
     pct=pct,
-    rate=rate,
     quoted=quoted,
     points=points,
     ratio=ratio,
@@ -204,7 +192,6 @@ templates.env.filters.update(
     day=day,
     plain=plain,
     label=label,
-    definition=definition,
     phone=phone,
     tranche=tranche,
     experience=experience,

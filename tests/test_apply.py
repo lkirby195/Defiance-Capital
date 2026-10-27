@@ -406,7 +406,7 @@ def test_a_full_submission_lands_in_the_queue_as_a_web_deal(
     # no loan-type selector: the normalizer inferred one, as on every channel
     assert deal.product is Product.SPLIT_DRAW and deal.product_source is ProductSource.INFERRED
     # the §8.1 economics the form does not ask were populated as defaults, and say so
-    assert deal.interest_rate == Decimal("0.12")
+    assert deal.interest_rate == Decimal("0.125")
     assert (deal.loan_purchase_portion, deal.loan_rehab_portion) == (
         Decimal("120000"),
         Decimal("40000"),
@@ -462,10 +462,12 @@ def test_a_full_submission_lands_in_the_queue_as_a_web_deal(
     assert deal.thanks_token not in str(tokened.after)
     assert created.after is not None and created.after["channel"] == "WEB"
     assert created.after["intake_source"] == "tulsa-reia"
-    assert created.after["defaults"]["interest_rate"] == "0.12"
+    assert created.after["defaults"]["interest_rate"] == "0.125"
     assert screened.actor == "system" and priced.actor == "system"
     assert versioned.actor == "system" and versioned.after is not None
-    assert versioned.after["name"] == "Auto v1" and versioned.after["working"] is True
+    # the arrival version is named for the deal (SPEC §5): her last name, the street, OK
+    assert versioned.after["name"] == "Ortiz; 1412 S Peoria Ave, OK - Request"
+    assert versioned.after["working"] is True
     # on Home, under Borrower Submissions, at UNDERWRITING
     view = home_view(db_session)
     [entry] = view.section(Section.BORROWER).entries
@@ -662,7 +664,6 @@ def test_a_team_entry_replaces_the_borrower_value_and_keeps_it_for_the_record(
     assert "estimated_sale_price_borrower" not in trail[0].after
 
     body = client.get(f"/queue/deals/{deal.id}").text
-    assert ">Team<" in body and ">Borrower<" in body
     assert "$290,000.00" in body  # the borrower's figure, shown as theirs
 
 

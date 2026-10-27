@@ -119,6 +119,8 @@ TYPED: dict[str, str] = {
     "loan_requested": "$140,000",
     "closing_date": "2026-11-12",
     "term_months": "9",
+    # not the intake: what to call the version the deal arrives with (New Deal only, SPEC §5)
+    "version_name": "First look",
 }
 
 
