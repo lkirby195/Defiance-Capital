@@ -148,7 +148,8 @@ page never names a stage - it shows the IRR and the ledger - and the Flags, the 
 and the Suggested Reply are on the stored rows, the CLI and the workbook, not on it. The
 hand-entered numbers are the **Underwriting Assumptions** panel, open, under the outputs and
 above the read-only intake summary: two columns of boxes - the §8.1 economics with their
-config defaults, the loan split, the valuation, the rent, the five §8.4-§8.6 analysis assumptions (which carry their
+config defaults, the team form's Loan Structure radio and the Rehab portion box it reveals
+(the advance at closing is the rest of the loan), the valuation, the rent, the five §8.4-§8.6 analysis assumptions (which carry their
 own `deals` columns since migration `0017`, config value as default, engine reads the deal's
 when present) - each tagged "default" while it holds its default and
 resettable one at a time, with one **Save & Run** at the bottom and a **Reset all to

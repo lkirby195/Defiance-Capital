@@ -21,11 +21,12 @@ script was re-run on those amounts.
 
 From engine 2.0.0 the rows run most equity first - the smallest loan at the top, the request
 at the bottom - and each carries the borrower's equity at its solved rate (the flip's total
-deal cost less the loan) and, but the request, the equity it adds over the request and the
-line "Adding $X of equity brings the rate to Y%". The standalone script worked the equity out
-on its own: Wichita 94,759 / 88,226.20 / 82,510 (adding 12,249 and 5,716.20), Denver
-102,451.60 / 94,676.50 / 86,051.75 (adding 16,399.85 and 8,624.75). The broker's 6% default
-takes 5,200 off each Wichita profit (2% of the 260,000 sale) and leaves its equity alone.
+deal cost less the loan) and, but the request, the line "Adding $X of equity brings the rate
+to Y%". The standalone script worked the equity out on its own: Wichita 94,759 / 88,226.20 /
+82,510, Denver 102,451.60 / 94,676.50 / 86,051.75. From 2.0.1 X is the plain loan reduction
+against the request - Wichita $15,000 and $7,000, Denver $19,000 and $10,000 - not the
+difference in equity. The broker's 6% default takes 5,200 off each Wichita profit (2% of the
+260,000 sale) and leaves its equity alone.
 """
 
 from __future__ import annotations
@@ -286,10 +287,11 @@ def test_the_rows_run_most_equity_first() -> None:
 def test_the_equity_and_the_line_against_the_independent_script() -> None:
     wichita = matrix_for(wichita_inputs()).rows
     assert [row.borrower_equity for row in wichita] == [D(94759), D("88226.2"), D(82510)]
-    assert [row.equity_added for row in wichita] == [D(12249), D("5716.2"), None]
+    # X is the loan taken off the request (2.0.1): 150,000 less 135,000 and less 143,000
+    assert [row.equity_added for row in wichita] == [D(15000), D(7000), None]
     assert [row.derisk for row in wichita] == [
-        "Adding $12,249 of equity brings the rate to 16.34%.",
-        "Adding $5,716 of equity brings the rate to 16.34%.",
+        "Adding $15,000 of equity brings the rate to 16.34%.",
+        "Adding $7,000 of equity brings the rate to 16.34%.",
         None,
     ]
     denver = matrix_for(denver_inputs()).rows
@@ -298,20 +300,24 @@ def test_the_equity_and_the_line_against_the_independent_script() -> None:
         D("94676.50"),
         D("86051.75"),
     ]
-    assert [row.equity_added for row in denver] == [D("16399.85"), D("8624.75"), None]
+    assert [row.equity_added for row in denver] == [D(19000), D(10000), None]
     assert [row.derisk for row in denver] == [
-        "Adding $16,400 of equity brings the rate to 13.63%.",
-        "Adding $8,625 of equity brings the rate to 13.72%.",
+        "Adding $19,000 of equity brings the rate to 13.63%.",
+        "Adding $10,000 of equity brings the rate to 13.72%.",
         None,
     ]
 
 
-def test_the_equity_added_is_a_little_less_than_the_loan_taken_off() -> None:
-    """Lending $19,000 less saves the borrower interest and fee, so the equity rises by less."""
+def test_the_equity_added_is_the_loan_taken_off() -> None:
+    """X is the plain reduction against the requested row (2.0.1), the cash the borrower
+    brings at closing in its place - not the difference in equity, which is a little less
+    because the smaller loan saves interest and fee."""
     rows = matrix_for(denver_inputs()).rows
+    request = rows[-1]
     for row in rows[:-1]:
-        assert row.equity_added is not None
-        assert D(0) < row.equity_added < -row.step
+        assert row.equity_added == request.loan_amount - row.loan_amount == -row.step
+        assert row.borrower_equity is not None and request.borrower_equity is not None
+        assert row.borrower_equity - request.borrower_equity < row.equity_added
 
 
 def test_the_line_needs_no_sale_price() -> None:
@@ -319,14 +325,14 @@ def test_the_line_needs_no_sale_price() -> None:
     matrix = matrix_for(no_price())
     assert matrix.borrower_status is AnalysisStatus.NOT_EVALUATED
     assert [row.borrower_equity for row in matrix.rows] == [D(94759), D("88226.2"), D(82510)]
-    assert matrix.rows[0].derisk == "Adding $12,249 of equity brings the rate to 16.34%."
+    assert matrix.rows[0].derisk == "Adding $15,000 of equity brings the rate to 16.34%."
 
 
 def test_a_row_over_the_max_quote_says_the_rate_it_brings_and_that_it_is_over() -> None:
     rows = matrix_for(denver_inputs(), config_with(max_quoted_rate="0.137")).rows
-    assert rows[0].derisk == "Adding $16,400 of equity brings the rate to 13.63%."
+    assert rows[0].derisk == "Adding $19,000 of equity brings the rate to 13.63%."
     assert rows[1].derisk == (
-        "Adding $8,625 of equity brings the rate to 13.72%, above the 13.7% max quoted rate."
+        "Adding $10,000 of equity brings the rate to 13.72%, above the 13.7% max quoted rate."
     )
     assert rows[2].is_request and rows[2].derisk is None
 

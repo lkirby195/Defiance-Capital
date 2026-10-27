@@ -73,6 +73,7 @@ from api.intake_form import (
     redisplay_values,
     submitted_holding_costs_hint,
     text_value,
+    with_advance,
 )
 from api.masks import holding_costs_amount, mask_one, masked, unmasked
 from api.problems import NO_PROBLEMS, FormProblems, at_top, from_validation_error
@@ -191,14 +192,15 @@ def enum_values() -> dict[str, list[str]]:
 
 
 # The Underwriting Assumptions panel's boxes (SPEC §8.1, §8.4-§8.6), in the order the panel
-# shows them, two columns reading across. The split boxes render on a split product only.
+# shows them, two columns reading across. The loan structure is the team form's radio and its
+# Rehab portion box (v0.18); the advance at closing is worked out from it, not typed.
 ASSUMPTION_NAMES: tuple[str, ...] = (
     "interest_rate",
     "origination_fee_pct",
     "contingency_pct",
     "closing_costs_usd",
     "holding_costs_pct_of_cost",
-    "loan_purchase_portion",
+    "product",
     "loan_rehab_portion",
     "estimated_sale_price_team",
     "monthly_rent",
@@ -223,8 +225,7 @@ RESET_LABELS: tuple[tuple[str, str], ...] = (
     ("contingency_pct", "Contingency"),
     ("closing_costs_usd", "Closing Costs"),
     ("holding_costs_pct_of_cost", "Holding Costs %"),
-    ("loan_purchase_portion", "Advance at Closing"),
-    ("loan_rehab_portion", "Rehab Portion"),
+    ("loan_rehab_portion", "Rehab portion"),
     ("broker_selling_pct", "Broker Selling Costs %"),
     ("rental_expenses_pct_of_rent", "Rental Expense %"),
     ("rental_takeout_rate", "Rental Takeout Rate"),
@@ -237,10 +238,11 @@ def assumptions_form(deal: Deal) -> dict[str, str]:
     """The Underwriting Assumptions panel as form values: what the deal currently says.
 
     Masked on the way out (``api/masks.py``): a rate shows as ``12%`` and a price as
-    ``$425,000``. Every box with a default - the ten config values, the loan split on a
+    ``$425,000``. Every box with a default - the ten config values, the rehab portion on a
     holdback - is pre-filled with it where the deal carries none, and the page tags
     it: a box holding the default and a box holding a number somebody chose look different
-    on purpose.
+    on purpose. The radio shows the deal's structure, inferred or chosen: re-saving it as it
+    stands changes nothing (``services/actions._apply_product``).
     """
     values: dict[str, object | None] = {name: getattr(deal, name) for name in ASSUMPTION_NAMES}
     for name, default in deal_defaults(deal).items():
@@ -821,7 +823,7 @@ def restore_intake_action(
 def assumptions_action(
     request: Request, deal_id: UUID, session: SessionDep, user: PageUser, form: FormDep
 ) -> HTMLResponse | RedirectResponse:
-    """Save & Run: the panel's sixteen boxes saved, then the analysis run as the person.
+    """Save & Run: the panel saved, then the analysis run as the person.
 
     A box left holding its default is stored and tagged as the default; a box left blank on
     a defaulted input gets the default back (``services/defaults.py``). The save is kept
@@ -835,6 +837,11 @@ def assumptions_action(
     except DealNotFound:
         return redirect(HOME_PATH, "That deal does not exist.")
     values = unmasked(submitted)
+    # The Rehab portion as the split it stands for, against the deal's own loan amount and
+    # rehab costs, which the panel does not post (v0.18).
+    split_values, split_problems = with_advance(
+        values, loan_requested=deal.loan_requested, rehab_costs=deal.rehab_costs
+    )
 
     def back(problems: FormProblems, code: int) -> HTMLResponse:
         return render_deal(
@@ -852,8 +859,10 @@ def assumptions_action(
         name = clean_name(typed_name)
     except ValueError as exc:
         return back(at_top(str(exc)), status.HTTP_422_UNPROCESSABLE_CONTENT)
+    if split_problems:
+        return back(split_problems, status.HTTP_422_UNPROCESSABLE_CONTENT)
     try:
-        assumptions = UnderwritingAssumptions.model_validate(values)
+        assumptions = UnderwritingAssumptions.model_validate(split_values)
     except ValidationError as exc:
         session.rollback()
         problems = from_validation_error(exc, ASSUMPTION_BOX_NAMES)

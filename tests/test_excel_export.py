@@ -356,7 +356,7 @@ def test_the_pricing_sheet_carries_every_row_and_its_sentence() -> None:
     # most equity first: the smallest loan at the top
     assert [sheet.cell(row=r, column=1).value for r in (5, 6, 7)] == ["-10%", "-5%", "Requested"]
     assert sheet.cell(row=5, column=13).value == (
-        "Adding $12,249 of equity brings the rate to 16.34%."
+        "Adding $15,000 of equity brings the rate to 16.34%."
     )
 
 

@@ -19,9 +19,9 @@ engine default:
     monthly_rent                  request -> deal.monthly_rent -> no DSCR at all (§8.5, §8.6)
     loan purpose                  request -> deal -> unstated
 
-``UnderwritingAssumptions`` is the deal page's Underwriting Assumptions panel: the fourteen
-boxes a person edits and saves with one button, and nothing else - not the dates, the term,
-the product or the court search, which the intake form and the court section own.
+``UnderwritingAssumptions`` is the deal page's Underwriting Assumptions panel: the boxes
+and the Loan Structure radio a person edits and saves with one button, and nothing else - not
+the dates, the term or the court search, which the intake form and the court section own.
 ``CourtSearch`` is that section. Each replaces exactly the columns it renders, so a save of
 one cannot clear a value the other owns.
 
@@ -202,14 +202,18 @@ class TeamOverrides(BaseModel):
 class UnderwritingAssumptions(BaseModel):
     """The deal page's Underwriting Assumptions panel.  # SPEC §8.1, §8.4, §8.5, §8.6
 
-    Fourteen boxes, two columns, one Save & Run: the five §8.1 economics with a config
-    default, the loan split on a holdback, the valuation and the rent, and the five
-    analysis assumptions. A submission replaces exactly these columns
-    - the form is rendered with the deal's current values in it, so what comes back is the
-    state the team means - and a blank on anything with a default is the default again
+    Two columns, one Save & Run: the five §8.1 economics with a config default, the loan
+    structure and the loan split, the valuation and the rent, and the five analysis
+    assumptions. The structure is the team form's radio ("100% at close" / "Holdback") and
+    the split is its Rehab portion box: the page posts the rehab portion and the route works
+    the advance out as the rest of the loan (``api/intake_form.with_advance``), so both
+    halves arrive here (v0.18). A submission replaces exactly these columns - the form is
+    rendered with the deal's current values in it, so what comes back is the state the team
+    means - and a blank on anything with a default is the default again
     (``services/defaults.py``); a blank sale price or rent is no value, because nothing
-    stands in for either. The dates, the term and the product are the intake form's; the
-    court search is its own section (``CourtSearch``). Neither is touched by a save here.
+    stands in for either. ``product`` changes the deal only when it names a different
+    structure (``services/actions._apply_product``). The dates and the term are the intake
+    form's; the court search is its own section (``CourtSearch``). Neither is touched here.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -219,6 +223,7 @@ class UnderwritingAssumptions(BaseModel):
     contingency_pct: Decimal | None = Field(default=None, ge=0, le=1)
     closing_costs_usd: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     holding_costs_pct_of_cost: Decimal | None = Field(default=None, ge=0, le=1)
+    product: Product | None = None  # the Loan Structure radio; None leaves the deal's own
     loan_purchase_portion: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )

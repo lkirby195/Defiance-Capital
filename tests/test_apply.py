@@ -770,8 +770,9 @@ def test_a_go_deal_sees_its_indicative_terms_and_nothing_else(
     assert table.index(DISCLAIMER_EN) < table.index("<table>")
     assert table.index("</table>") < table.index("For business-purpose loans only.")
     # one row per pricing step, labelled, with the amount, the rate, the profit and the yield
-    # most equity first (SPEC §8.10, v0.17): the request is the last row the borrower reads
-    assert ["-10%", "-5%", "Requested"] == re.findall(r'<th scope="row">([^<]+)</th>', table)
+    # the request first, then each smaller loan, largest to smallest (SPEC §4.2, v0.18) -
+    # the reverse of the team's Pricing section, which runs most equity first
+    assert ["Requested", "-5%", "-10%"] == re.findall(r'<th scope="row">([^<]+)</th>', table)
     for cell in ("Loan amount", "Rate", "Estimated profit", "Yield (cash-on-cash)"):
         assert f">{cell}</th>" in table
     for row in pricing.rows:
@@ -859,7 +860,7 @@ def test_rows_above_the_max_quoted_rate_are_left_out(
     table = terms_table(anon_client.get(link).text)
     assert table is not None
     assert "Requested" not in table and dollars(left_out[0].loan_amount) not in table
-    assert re.findall(r'<th scope="row">([^<]+)</th>', table) == ["-10%", "-5%"]
+    assert re.findall(r'<th scope="row">([^<]+)</th>', table) == ["-5%", "-10%"]
     for row in kept:
         assert dollars(row.loan_amount) in table and quoted(row.interest_rate) in table
 
@@ -909,8 +910,9 @@ def test_what_was_shown_is_recorded_on_the_deal_once_and_the_team_sees_it(
     record = deal.indicative_terms_shown
     assert record is not None
     assert record["language"] == "es" and record["with_profit"] is True
-    assert [row["label"] for row in record["rows"]] == ["-10%", "-5%", "Requested"]
-    for shown, row in zip(record["rows"], pricing.rows, strict=True):
+    assert [row["label"] for row in record["rows"]] == ["Requested", "-5%", "-10%"]
+    # the borrower's order is the team's reversed: request first, then descending (v0.18)
+    for shown, row in zip(record["rows"], reversed(pricing.rows), strict=True):
         assert Decimal(shown["loan_amount"]) == row.loan_amount
         assert Decimal(shown["interest_rate"]) == row.interest_rate
         assert Decimal(shown["profit"]) == row.borrower_profit
@@ -944,7 +946,7 @@ def test_what_was_shown_is_recorded_on_the_deal_once_and_the_team_sees_it(
     assert "Shown to borrower" in shown_block
     assert "<dt>Language</dt><dd>Spanish</dd>" in shown_block
     assert "Nothing shown to the borrower." not in shown_block
-    assert re.findall(r'<th scope="row">([^<]+)</th>', shown_block) == ["-10%", "-5%", "Requested"]
+    assert re.findall(r'<th scope="row">([^<]+)</th>', shown_block) == ["Requested", "-5%", "-10%"]
     for row in pricing.rows:
         assert dollars(row.loan_amount) in shown_block
         assert quoted(row.interest_rate) in shown_block
@@ -973,7 +975,7 @@ def test_the_table_reads_in_spanish(anon_client: QueueClient, db_session: Sessio
         "Rendimiento (efectivo sobre efectivo)",
     ):
         assert f">{cell}</th>" in table
-    assert re.findall(r'<th scope="row">([^<]+)</th>', table) == ["-10%", "-5%", "Solicitado"]
+    assert re.findall(r'<th scope="row">([^<]+)</th>', table) == ["Solicitado", "-5%", "-10%"]
     assert "Requested" not in table and DISCLAIMER_EN not in table
     assert f'href="{link.split("?")[0]}?lang=en"' in body
 

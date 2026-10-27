@@ -21,7 +21,8 @@ that a re-screen cannot yank a deal out from under the person working it. A pers
 a deal by hand *is* that person, so the manual decline runs from every status still live.
 
 The deal page's two editable blocks are here too (SPEC §8.1, §7.2). The **Underwriting
-Assumptions** panel saves its fourteen boxes as one replacement (``save_assumptions``) or puts
+Assumptions** panel saves its boxes - the Loan Structure radio and its Rehab portion
+among them - as one replacement (``save_assumptions``) or puts
 every one with a default back to it (``reset_assumptions``); the **court search** section
 saves its three columns (``save_court_search``). Each touches exactly the columns it renders,
 so saving one cannot clear a value the other owns, and each audit row names only what moved.
@@ -476,7 +477,7 @@ def save_assumptions(
 ) -> Deal:
     """Save the deal page's Underwriting Assumptions panel.  # SPEC §8.1, §8.4-§8.6
 
-    The panel's sixteen boxes and nothing else: a replacement of those columns, a blank on
+    The panel's boxes and nothing else: a replacement of those columns, a blank on
     anything with a default being the default again, one ``ASSUMPTIONS_SAVED`` row naming
     what moved and no row when nothing did. Allowed from any status, as every block save is.
     The route runs the analysis afterwards; this does not.
@@ -502,6 +503,8 @@ def apply_assumptions(
     after: dict[str, Any] = {}
     original = {field: getattr(deal, field) for field in (*ASSUMPTION_FIELDS, *SPLIT_COLUMNS)}
     _apply_fields(deal, assumptions, ASSUMPTION_FIELDS, before, after)
+    # The Loan Structure radio (v0.18), then the split against the structure it leaves.
+    _apply_product(deal, assumptions, before, after)
     _apply_split(deal, assumptions, before, after)
     _settle(deal, original, before, after, config)
     return before, after
@@ -634,7 +637,10 @@ def _apply_term(
 
 
 def _apply_product(
-    deal: Deal, overrides: TeamOverrides, before: dict[str, Any], after: dict[str, Any]
+    deal: Deal,
+    overrides: TeamOverrides | UnderwritingAssumptions,
+    before: dict[str, Any],
+    after: dict[str, Any],
 ) -> None:
     """Set the product only when the team actually chose a different one.  # SPEC §3
 

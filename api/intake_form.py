@@ -309,7 +309,12 @@ REHAB_PORTION = "loan_rehab_portion"
 ADVANCE = "loan_purchase_portion"
 
 
-def with_advance(values: Mapping[str, str]) -> tuple[dict[str, str], FormProblems]:
+def with_advance(
+    values: Mapping[str, str],
+    *,
+    loan_requested: Decimal | None = None,
+    rehab_costs: Decimal | None = None,
+) -> tuple[dict[str, str], FormProblems]:
     """The Rehab portion box as the split it stands for, or dropped.  # SPEC §3, §8.2
 
     On a holdback - the radio's Holdback, or no choice and rehab costs to infer one from -
@@ -318,13 +323,17 @@ def with_advance(values: Mapping[str, str]) -> tuple[dict[str, str], FormProblem
     loan amount leaves nothing to advance and is refused under its box. On 100% at close the
     box is hidden and whatever it holds is dropped: that loan has no split. A blank box is no
     split, and the deal gets the §8.2 default when it is stored. The values are unmasked.
+
+    The team form posts the loan amount and the rehab costs beside the box; the deal page's
+    Underwriting Assumptions panel does not, and hands in the deal's own (v0.18).
     """
     out = {key: value for key, value in values.items() if key not in (REHAB_PORTION, ADVANCE)}
     typed = values.get(REHAB_PORTION, "").strip()
     if not typed:
         return out, NO_PROBLEMS
     chosen = values.get("product", "").strip()
-    rehab_costs = _decimal(values.get("rehab_costs", ""))
+    if rehab_costs is None:
+        rehab_costs = _decimal(values.get("rehab_costs", ""))
     holdback = chosen == Product.ACQUISITION_REHAB.value or (
         not chosen and rehab_costs is not None and rehab_costs > 0
     )
@@ -332,7 +341,9 @@ def with_advance(values: Mapping[str, str]) -> tuple[dict[str, str], FormProblem
         return out, NO_PROBLEMS
     out[REHAB_PORTION] = typed
     rehab_portion = _decimal(typed)
-    loan = _decimal(values.get("loan_requested", ""))
+    loan = (
+        loan_requested if loan_requested is not None else _decimal(values.get("loan_requested", ""))
+    )
     if rehab_portion is None or loan is None:
         return out, NO_PROBLEMS  # the model names the box that is not a number
     if rehab_portion > loan:
