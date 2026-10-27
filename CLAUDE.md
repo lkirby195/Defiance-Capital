@@ -157,8 +157,9 @@ collapsed section with its own Save; the versions (History) are collapsed too, a
 version ran on, and an edit row restores that intake as a new submission
 (`services/intake.restore_intake`). The deal page prints no explanatory prose and no
 definitions: no sub-line, no parenthetical, no (?) hover; every IRR on it is two decimals.
-Its header is the address, four chips (borrower, entity, "Loan Request: $X", IRR) and the
-phone; the version facts (when, who, engine) are in the History. The Underwriting Assumptions
+Its header is the address, four chips (borrower, entity, "Loan Request: $X" in whole
+dollars, IRR) and the phone; the status and the verdict are a small line atop the Actions
+card; the version facts (when, who, engine) are in the History. The Underwriting Assumptions
 panel is the one list of what the ledger runs on - there is no separate checklist section;
 the banner names what is missing while the ledger is off. The team form prints nothing but
 labels and boxes, each marked Required or Optional in plain text, and asks only for the
@@ -171,7 +172,8 @@ and is edited on the deal page, and Edit Intake writes only the columns the form
 records each run that wrote anything as a `versions` row (`services/versions.py`, SPEC §5):
 a name - typed beside Run Analysis or Save & Run, else `v<n>`, `Auto v<n>` for an automatic
 run, and for the run a web or team deal arrives with `{last name}; {street}, {state} - Request`
-(or `- Team`, or what the New Deal form's Version name box says; `services/versions.arrival_name`)
+(or `- Team`; `services/versions.arrival_name`), or what the New Deal form's Version name box
+says, which makes that version human-selected
 - the actor, the two rows it wrote and a snapshot of every input it read, taken off the
 `deals` table's own column list so a new column is snapshotted by default. The first run on
 a deal is Working; after that an automatic run takes the mark unless the Working version is

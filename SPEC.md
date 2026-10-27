@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.15
+# GLENWOOD Underwriting Platform — SPEC v0.16
 
-Status: **v0.15**, 2026-10-27, engine `1.11.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.16**, 2026-10-27, engine `1.11.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.16** settles four of the v0.15 questions. The deal page's **Actions** card opens on one line of small text, the status and the verdict ("Status: Underwriting · Verdict: Go"), above Progress / Pause / Kill; the header is unchanged except that "Loan Request" is whole dollars (§9). A Version name typed on the New Deal form makes the arrival version **human-selected**, so it holds the Working mark against the automatic runs after it. The arrival name's last name drops a Jr., Sr., II, III or IV before taking the last word, and a state outside OK and CO is the one typed in the address (`TX`, `Texas`) rather than left out (§5). No engine change.
 
 **v0.15** is the deal page cleared down and the default rate put on the grid. The header is the address, four chips - the borrower, the entity, "Loan Request: $X" and the IRR to two decimals (a Draft chip beside them only while the page shows a version that is not Working) - and the phone on the line under them; the loan type, the term, the verdict, the status, the Working chip, the entered/via line and the verdict line are gone from it, and so are the version facts beside the switcher (when, who, engine, chosen by a person), which the History keeps. Every (?) definition is gone from the page, every IRR on it is two decimals, the sensitivity rows show the dollar amount without the step under it, the line of run facts above the ledger is gone and the ledger is **Cash Flows**, and **What the ledger runs on** is gone: the Underwriting Assumptions panel is the one list of what the ledger runs on (§9, §9.2). The two sensitivity tables' columns are the config grid alone - the deal's own rate is no longer inserted - and `interest.default_annual_rate` is **12.5%**, the grid's first column, so a deal on the default has its cell marked and one priced off the grid has none (§8.1, §8.9, engine `1.11.0`; the workbook and the CLI follow). The version a deal **arrives with** is named for it: `{last name}; {street number} {street name}, {state} - Request` on a web deal, `... - Team` on a team one unless the New Deal form's new optional **Version name** box says otherwise; every later run keeps `v<n>` / `Auto v<n>` / a typed name (§5).
 
@@ -394,18 +396,23 @@ Working**, and a partial unique index refuses a second Working row. Who holds th
 | a person's run (Run Analysis, Save & Run, Reset all, Restore inputs) | a draft |
 | Mark as Working | Working, and human-selected |
 
-**Names** (v0.15). A person's run is the name they typed beside Run Analysis or Save & Run,
-else `v<number>`; an automatic run is `Auto v<number>`. The one exception is the run a deal
-**arrives with** on the web or the team channel, which is named for the deal:
+**Names** (v0.15, v0.16). A person's run is the name they typed beside Run Analysis or Save &
+Run, else `v<number>`; an automatic run is `Auto v<number>`. The one exception is the run a
+deal **arrives with** on the web or the team channel, which is named for the deal:
 `{last name}; {street number} {street name}, {state} - Request` on a `WEB` deal and
 `... - Team` on a `TEAM` one (`Whitlock; 1412 S Trenton Ave, OK - Team`). The last name is
-the last word of the borrower's full name, the street is the address line up to its first
-comma, and the state is the two-letter code; a piece the deal does not have is left out (a
-state outside OK and CO has no code stored), the street is shortened to keep the name
-within 100 characters, and a deal with neither a name nor an address is `Auto v1`. The New
-Deal form has an optional **Version name** box above its button; what is typed there names
-the arrival version instead. Either way the arrival version is the system's run and is not
-human-selected. The other channels keep `Auto v1`.
+the last word of the borrower's full name once a trailing Jr., Sr., II, III or IV is taken
+off (`Robert Smith Jr.` is Smith); the street is the address line up to its first comma; the
+state is the two-letter code on an OK or CO deal and otherwise the state as typed in the
+address after the street - a trailing two-letter code (`Amarillo, TX 79101` is TX) or, when a
+city stands between them, the last part (`Amarillo, Texas`). A piece the deal does not have
+is left out (the web form's line outside OK and CO is the street and the city, with no state
+to give), the street is shortened to keep the name within 100 characters, and a deal with
+neither a name nor an address is `Auto v1`. The New Deal form has an optional **Version
+name** box above its button; what is typed there names the arrival version instead and,
+being a person's choice, makes it **human-selected** (v0.16): it holds the Working mark
+against the automatic runs after it, exactly as a named Run Analysis does. The deal's own
+name is nobody's choice. The other channels keep `Auto v1`.
 
 A version is **human-selected** (`versions.human_selected`, migration `0019`) when the person
 who ran it typed its name, or a person marked it Working - marking the version already
@@ -1070,11 +1077,13 @@ The first three are the §8.1 input groups, shown back as the run read them; the
 result. The CLI report and the workbook show all of it. The deal page shows every section but
 the Flags - the flags, the screen's reasons and the suggested reply stay on the stored rows,
 the CLI and the workbook - and puts the outputs first. Its header is the address, one row of
-chips - the borrower, the entity (when there is one), "Loan Request: $X" and the IRR to two
-decimals - and the phone under them, with the controls on the right: the version switcher,
+chips - the borrower, the entity (when there is one), "Loan Request: $X" in whole dollars and
+the IRR to two decimals - and the phone under them, with the controls on the right: the version switcher,
 the one **Run Analysis** button with its optional name, Download Excel and Edit Intake. The
-loan type and the term are in the intake summary below and the verdict in the History;
-when a version ran, who ran it and on which engine are in the History too. Then Pricing, full width; the Lender and Borrower Sensitivity side by side; Flip,
+loan type and the term are in the intake summary below; the status and the verdict are one
+line of small text atop the Actions card ("Status: Underwriting · Verdict: Go", the version
+in view's verdict, a dash before any), above Progress / Pause / Kill (v0.16); when a version
+ran, who ran it and on which engine are in the History. Then Pricing, full width; the Lender and Borrower Sensitivity side by side; Flip,
 Rental and Take-Back as three cards, each led by its headline figure (net profit, DSCR, DSCR
 at loan cost; "Not evaluated" is a state, not an error); and the Return Overview as one line
 (IRR, total interest, total fees, total profit, payoff date) with the ledger collapsed under

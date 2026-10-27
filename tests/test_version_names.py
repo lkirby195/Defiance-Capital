@@ -2,8 +2,11 @@
 
 A web deal's first version is ``{last name}; {street number} {street name}, {state} -
 Request``; a team deal's is the same with ``- Team``, unless the New Deal form's optional
-Version name box says otherwise. Every later run keeps ``v<n>`` / ``Auto v<n>`` / a typed
-name, and the arrival version is the system's run either way: Working, never human-selected.
+Version name box says otherwise. The last name is the last word once a Jr. / Sr. / II / III /
+IV is off the end, and a state outside OK and CO is the one typed in the address. Every
+later run keeps ``v<n>`` / ``Auto v<n>`` / a typed name. The arrival version is the system's
+run and Working; it is human-selected only when a person typed its name on New Deal, and
+then it holds the Working mark against the automatic runs after it.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from api.routes.apply import THANKS_PATH
 from db.models import Borrower, Deal, Property
 from schema.models import Channel, State
 from services import arrival_name, deal_versions
-from services.versions import NAME_MAX
+from services.versions import NAME_MAX, last_name, typed_state
 from tests.conftest import USER_EMAIL, QueueClient, form_body, requires_db
 from tests.test_apply import VALID
 
@@ -59,9 +62,49 @@ def test_the_last_name_is_the_last_word_and_the_street_the_first_part() -> None:
     assert arrival_name(street_only) == "Whitlock; 3320 Meade St, CO - Team"
 
 
+def test_a_name_suffix_is_never_the_last_name() -> None:
+    for full in (
+        "Robert Smith Jr.",
+        "Robert Smith Jr",
+        "Robert Smith, Jr.",
+        "Robert Smith Sr.",
+        "Robert Smith II",
+        "Robert Smith III",
+        "robert smith iv",
+        "Robert Smith, III",
+        "Robert Smith Jr. III",
+    ):
+        assert last_name(full).lower() == "smith", full
+    assert last_name("Dana Whitlock") == "Whitlock"
+    assert last_name("Ivan Petrov") == "Petrov"  # only a whole word is a suffix
+    assert last_name("Jr.") == "Jr."  # nothing else to take: the word stays
+    assert last_name(None) == "" and last_name("  ") == ""
+    deal = deal_of(Channel.TEAM, name="Robert Smith Jr.")
+    assert arrival_name(deal) == "Smith; 1412 S Trenton Ave, OK - Team"
+
+
+def test_a_state_outside_ok_and_co_is_the_one_typed_in_the_address() -> None:
+    assert typed_state("77 Main St, Amarillo, TX 79101") == "TX"
+    assert typed_state("77 Main St, Amarillo, tx") == "TX"
+    assert typed_state("77 Main St, Amarillo TX 79101-1234") == "TX"
+    assert typed_state("77 Main St, Amarillo, Texas") == "Texas"
+    assert typed_state("77 Main St, Amarillo, New  Mexico 88001") == "New Mexico"
+    # nothing after the street is a state: the street's own "St", and a city alone
+    assert typed_state("77 Main St") == ""
+    assert typed_state("77 Main St, Amarillo") == ""
+    assert typed_state(None) == ""
+    other = deal_of(Channel.TEAM, address="77 Main St, Amarillo, TX 79101", state=State.OTHER)
+    assert arrival_name(other) == "Whitlock; 77 Main St, TX - Team"
+    spelled = deal_of(Channel.WEB, address="77 Main St, Amarillo, Texas", state=State.OTHER)
+    assert arrival_name(spelled) == "Whitlock; 77 Main St, Texas - Request"
+    # an OK or CO deal keeps its stored code whatever the address says
+    coded = deal_of(Channel.TEAM, address="1412 S Trenton Ave, Tulsa, Oklahoma", state=State.OK)
+    assert arrival_name(coded) == "Whitlock; 1412 S Trenton Ave, OK - Team"
+
+
 def test_a_piece_the_deal_does_not_have_is_left_out() -> None:
-    # a state outside OK and CO has no two-letter code stored
-    other = deal_of(Channel.WEB, address="77 Main St, Amarillo, TX", state=State.OTHER)
+    # the web form's line outside OK and CO is the street and the city: no state to give
+    other = deal_of(Channel.WEB, address="77 Main St, Amarillo", state=State.OTHER)
     assert arrival_name(other) == "Whitlock; 77 Main St - Request"
     assert arrival_name(deal_of(Channel.TEAM, name=None)) == "1412 S Trenton Ave, OK - Team"
     assert arrival_name(deal_of(Channel.TEAM, name="  ")) == "1412 S Trenton Ave, OK - Team"
@@ -140,16 +183,40 @@ def test_a_new_deal_left_unnamed_arrives_as_team_and_later_runs_keep_their_names
 
 
 @requires_db
-def test_a_typed_version_name_names_the_arrival_run_and_is_not_a_choice(
+def test_a_typed_version_name_is_a_choice_and_holds_working(
     client: QueueClient, db_session: Session, team_entry: dict[str, Any]
 ) -> None:
     posted = {**form_body(team_entry), "version_name": "  First   look "}
     created = client.post("/intake/team", data=posted, follow_redirects=False)
     assert created.status_code == 303, created.text
     deal = only_deal(db_session)
-    assert versions(db_session, deal) == [("First look", True, False, "system")]
+    assert versions(db_session, deal) == [("First look", True, True, "system")]
     # the box is not the intake: the stored payload never carries it
     assert all("version_name" not in sub.raw_payload for sub in deal.submissions)
+    # the automatic run after an edit is a draft beside it, as beside any version a person chose
+    edited = client.post(
+        f"/queue/deals/{deal.id}/intake",
+        data=form_body(team_entry, rehab_costs="50000.00"),
+        follow_redirects=False,
+    )
+    assert edited.status_code == 303, edited.text
+    assert notice(edited).endswith("Saved as Auto v2 (draft).")
+    assert versions(db_session, deal) == [
+        ("First look", True, True, "system"),
+        ("Auto v2", False, False, "system"),
+    ]
+
+
+@requires_db
+def test_a_team_deal_outside_ok_and_co_is_named_with_the_typed_state(
+    client: QueueClient, db_session: Session, team_entry: dict[str, Any]
+) -> None:
+    moved = {**team_entry, "address": "77 Main St, Amarillo, TX 79101", "city": "Amarillo"}
+    created = client.post("/intake/team", data=form_body(moved), follow_redirects=False)
+    assert created.status_code == 303, created.text
+    deal = only_deal(db_session)
+    assert deal.property is not None and deal.property.state is State.OTHER
+    assert [name for name, *_ in versions(db_session, deal)] == ["Ortiz; 77 Main St, TX - Team"]
 
 
 @requires_db

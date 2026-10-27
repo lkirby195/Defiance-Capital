@@ -15,8 +15,10 @@ a deal on the Home page can be traced to whoever typed it in. A deal stored comp
 screened and priced on the way in (``services/autorun.py``, SPEC §4.6), recorded as the
 system's own runs, so the page it redirects to opens on a verdict. That first version is named
 for the deal - ``Whitlock; 1412 S Trenton Ave, OK - Team`` - unless the New Deal form's
-optional Version name box says otherwise (SPEC §5); the box is not part of the intake, so it
-is read off the post before the form is and never reaches the stored payload.
+optional Version name box says otherwise (SPEC §5), and a name typed there is a person's
+choice: the version is human-selected and holds the Working mark against the automatic runs
+after it. The box is not part of the intake, so it is read off the post before the form is
+and never reaches the stored payload.
 """
 
 from __future__ import annotations
@@ -56,12 +58,16 @@ def store(
 
     The record comes back carrying the status the deal ended in: a complete intake has been
     screened by the time this returns, and a JSON client that read ``NEW`` would be reading
-    the status the deal had for a moment nobody saw. The arrival run is ``version_name``, else
-    named for the deal (``services/versions.arrival_name``).
+    the status the deal had for a moment nobody saw. The arrival run is ``version_name`` -
+    typed by a person, so human-selected - else named for the deal
+    (``services/versions.arrival_name``).
     """
     record = intake_record(form)
     deal = create_deal(session, record, actor=actor)
-    run = auto_run(session, deal, name=version_name or arrival_name(deal))
+    if version_name:
+        run = auto_run(session, deal, name=version_name, typed=True)
+    else:
+        run = auto_run(session, deal, name=arrival_name(deal))
     session.commit()
     return record.model_copy(update={"status": deal.status}), run
 

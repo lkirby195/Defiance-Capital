@@ -7,9 +7,10 @@
 {% block title %}Deal — Defiance Capital{% endblock %}
 
 {# Outputs on top, inputs below. The header is the address, one row of chips (borrower,
-   entity, loan request, IRR), the phone under them and, on the right, the version switcher
-   with Download Excel, Run Analysis with its optional name, and Edit Intake; when and by
-   whom a version ran, and on which engine, are in the History. Then the results of the
+   entity, loan request in whole dollars, IRR), the phone under them and, on the right, the
+   version switcher with Download Excel, Run Analysis with its optional name, and Edit
+   Intake; when and by whom a version ran, and on which engine, are in the History; the
+   status and the verdict are one small line atop the Actions card. Then the results of the
    version shown: Pricing full width; Lender and Borrower Sensitivity side by side; Flip,
    Rental and Take-Back as three stat cards; the Return Overview as one line of figures with
    the Cash Flows folded under it. Then what the run read: the Underwriting Assumptions
@@ -46,7 +47,7 @@
     <div class="chips" id="deal-chips">
       <span class="tag fact" data-chip="borrower">{{ deal.borrower.name if deal.borrower and deal.borrower.name else "(no guarantor name)" }}</span>
       {% if deal.borrower and deal.borrower.entities %}<span class="tag fact" data-chip="entity">{{ deal.borrower.entities | map(attribute="name") | join(", ") }}</span>{% endif %}
-      <span class="tag fact" data-chip="loan-amount">Loan Request: {{ deal.loan_requested | money }}</span>
+      <span class="tag fact" data-chip="loan-amount">Loan Request: {{ deal.loan_requested | dollars }}</span>
       <span class="tag fact" data-chip="irr">IRR <strong>{{ result.return_overview.irr | quoted if result else "—" }}</strong></span>
       {% if drafting %}<span class="tag DRAFT" id="draft-badge" title="This page is showing {{ shown.name }}, not the Working version">Draft</span>{% endif %}
     </div>
@@ -673,9 +674,10 @@
   {% endif %}
 </section>
 
-{# --- team actions (SPEC §4.6) ------------------------------------------------------------- #}
+{# --- team actions (SPEC §4.6): where the deal stands, then what can be done with it -------- #}
 <section class="panel" id="actions">
   <h2>Actions</h2>
+  <p class="small muted" id="deal-standing">Status: {{ deal.status | label }} · Verdict: {{ screen.result.verdict | label if screen else "—" }}</p>
   <div class="grid3">
     <div class="actions">
       <form method="post" action="/queue/deals/{{ deal.id }}/advance">

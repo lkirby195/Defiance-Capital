@@ -142,6 +142,7 @@ def run_analysis(
     config: Config | None = None,
     name: str | None = None,
     auto: bool = False,
+    typed: bool = False,
 ) -> AutoRun:
     """Screen the deal, then underwrite it, each as far as the deal allows.  # SPEC §4.6, §7, §8
 
@@ -169,6 +170,7 @@ def run_analysis(
             underwrite=ledger,
             name=name,
             auto=auto,
+            typed=typed,
         )
         return AutoRun(screen=screened.result, version=VersionStamp.of(version), **outcome)
 
@@ -190,13 +192,21 @@ def run_analysis(
 
 
 def auto_run(
-    session: Session, deal: Deal, config: Config | None = None, *, name: str | None = None
+    session: Session,
+    deal: Deal,
+    config: Config | None = None,
+    *,
+    name: str | None = None,
+    typed: bool = False,
 ) -> AutoRun:
     """The automatic analysis, as ``system``, on a deal that is live and complete.  # SPEC §4.6
 
     Its version is named ``name`` - the arrival run's (``services/versions.arrival_name``) -
-    else ``Auto v<number>``; either way it is not a person's choice.
+    else ``Auto v<number>``. ``typed`` says a person typed that name (the New Deal form's
+    Version name), which makes the version human-selected; otherwise it is nobody's choice.
     """
     if deal.status in NOT_RUN_FROM:
         return NOTHING_RAN
-    return run_analysis(session, deal, actor=SYSTEM_ACTOR, config=config, name=name, auto=True)
+    return run_analysis(
+        session, deal, actor=SYSTEM_ACTOR, config=config, name=name, auto=True, typed=typed
+    )
