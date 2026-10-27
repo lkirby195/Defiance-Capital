@@ -6,9 +6,9 @@ against. Pure - text in, text out, no I/O - so the CLI stays a thin wrapper and 
 can be asserted in a test.
 
 The underwrite prints the SPEC §9 sections in order - Deal Economics, Return Overview,
-Lender Sensitivity, Borrower Sensitivity, Pricing, Flip, Rental, Take-Back, Flags - which is
-the same order the deal page shows and the workbook writes, so a person checking one against
-another reads down the same list.
+Lender Sensitivity, Borrower Sensitivity, Pricing, Flip, Rental, Take-Back, Sources & Uses,
+Flags - which is the order the workbook writes, so a person checking one against the other
+reads down the same list.
 """
 
 from __future__ import annotations
@@ -25,13 +25,13 @@ from schema.models import (
     FlipAnalysis,
     LeverageMetric,
     PricingMatrix,
-    Product,
     RentalAnalysis,
     ReturnOverview,
     ScreenComponents,
     ScreenResult,
     SensitivityTable,
     SizingResult,
+    SourcesAndUses,
     TakeBackAnalysis,
     UnderwriteInputs,
     UnderwriteResult,
@@ -103,7 +103,7 @@ def render_sizing(sizing: SizingResult, config: Config, title: str = "SIZING") -
     """Cost stack, commitment and split, then each metric against its cap.  # SPEC §7.4, §8.2"""
     del config  # every figure below is on the result itself
     # The caps cell is the config grid coordinate, so it prints the keys a person would look
-    # up (``leverage_caps.SPLIT_DRAW.T3.E2``) rather than the words they read elsewhere.
+    # up (``leverage_caps.ACQUISITION_REHAB.T3.E2``) rather than the words they read elsewhere.
     cell = f"{sizing.product.value}  {sizing.credit_tranche.value}/{sizing.experience_tier.value}"
     lines = heading(title, cell)
     lines += [
@@ -121,11 +121,7 @@ def render_sizing(sizing: SizingResult, config: Config, title: str = "SIZING") -
         row("Funded at close", money(sizing.funded_at_close)),
     ]
     if sizing.split is not None:
-        purchase, rehab = (
-            ("Principal Note", "Tranche A")
-            if sizing.product is Product.SPLIT_PRINCIPAL
-            else ("Advance at closing", "Rehab holdback")
-        )
+        purchase, rehab = ("Advance at closing", "Rehab holdback")
         capped = (
             f"entered {money(sizing.split.rehab_portion_requested)}, capped at rehab_adj"
             if sizing.split.rehab_portion_capped
@@ -310,25 +306,25 @@ def marked(table: SensitivityTable | BorrowerSensitivityTable) -> str:
 
 
 def render_borrower_sensitivity(table: BorrowerSensitivityTable | None) -> list[str]:
-    """Profit, then cash-on-cash, by loan amount and rate; ``*`` is the deal's own.  # SPEC §8.9"""
-    lines = heading("BORROWER SENSITIVITY", "profit and cash-on-cash by loan amount and rate")
+    """Profit, then project yield, by loan amount and rate; ``*`` is the deal's own.  # SPEC §8.9"""
+    lines = heading("BORROWER SENSITIVITY", "profit and project yield by loan amount and rate")
     if table is None:
         return [*lines, "  (not on this run: the ledger predates the table)"]
     if table.status is not AnalysisStatus.EVALUATED:
-        return [*lines, "  NOT EVALUATED: the Flip Analysis is off or there is no sale price."]
+        return [*lines, "  NOT EVALUATED: there is no sale price."]
     lines.append(f"  {'Loan amount':<16}" + "".join(f"{pct1(rate):>11}" for rate in table.rates))
     for row in table.rows:
         profits = "".join(
             f"{whole(cell.net_profit) + ('*' if cell.is_deal else ''):>11}" for cell in row.cells
         )
         ratios = "".join(
-            f"{'n/a' if cell.cash_on_cash is None else pct1(cell.cash_on_cash):>11}"
+            f"{'n/a' if cell.project_yield is None else pct1(cell.project_yield):>11}"
             for cell in row.cells
         )
         lines.append(f"  {money(row.loan_amount):<16}{profits}")
-        lines.append(f"  {'  cash-on-cash':<16}{ratios}")
+        lines.append(f"  {'  project yield':<16}{ratios}")
     lines.append(
-        f"  profit per the flip; cash = total project costs - loan; {marked(table)} (SPEC 8.9)"
+        f"  profit per the flip; yield = profit / total deal cost; {marked(table)} (SPEC 8.9)"
     )
     return lines
 
@@ -350,6 +346,10 @@ def render_pricing(matrix: PricingMatrix | None) -> list[str]:
     for row in matrix.rows:
         irr = "" if row.lender_irr is None else f"  (lender IRR {pct4(row.lender_irr)})"
         lines.append(f"  {row.label:<10} {row.sentence}{irr}")
+        if row.borrower_equity is not None:
+            lines.append(f"  {'':<10} borrower equity {money(row.borrower_equity)}")
+        if row.derisk:
+            lines.append(f"  {'':<10} {row.derisk}")
     return lines
 
 
@@ -362,29 +362,79 @@ def _status_note(status: AnalysisStatus, off: str, missing: str) -> str:
 
 
 def render_flip(flip: FlipAnalysis) -> list[str]:
-    """The project's margin if the property is sold.  # SPEC §8.4"""
+    """The project's margin if the property is sold, and the borrower's side.  # SPEC §8.4
+
+    The profit line by line from the sale price, then the cost stack to the total deal cost,
+    then the borrower's equity, cash-on-cash against its target, and the project yield.
+    """
     lines = heading("FLIP ANALYSIS", flip.status.value)
     note = _status_note(
         flip.status,
-        "  OFF: the toggle is off, so the flip was not asked for.",
+        "  OFF: the toggle was off (a run before engine 2.0.0).",
         "  NOT EVALUATED: no estimated sale price, so there is nothing to sell at.",
     )
     if note:
         lines.append(note)
+    if flip.interest is not None and flip.origination is not None:
+        financing = [
+            ("Interest", flip.interest, "financing"),
+            ("Origination", flip.origination, "financing, both halves"),
+        ]
+    else:
+        financing = [("Financing", flip.financing_costs, "interest + origination")]
+    costs = [
+        ("Purchase", flip.purchase_price, ""),
+        ("Closing", flip.closing_costs, ""),
+        ("Rehab", flip.rehab_costs, ""),
+        ("Contingency", flip.contingency, ""),
+        ("Holding", flip.holding_costs_total, ""),
+        *financing,
+    ]
+    less = "" if flip.broker_costs is None else money(-flip.broker_costs)
     lines += [
-        row("Estimated sale price", money(flip.estimated_sale_price)),
-        row("Broker selling costs", money(flip.broker_costs), pct1(flip.broker_selling_pct)),
-        row("Purchase price", money(flip.purchase_price)),
-        row("Closing costs", money(flip.closing_costs)),
-        row("Holding costs", money(flip.holding_costs_total)),
-        row("Rehab costs", money(flip.rehab_costs)),
-        row("Contingency", money(flip.contingency)),
-        row("Financing costs", money(flip.financing_costs), "interest + origination"),
-        row("Total costs", money(flip.total_costs)),
+        row("Sale price", money(flip.estimated_sale_price)),
+        row("  Broker", less or money(None), pct1(flip.broker_selling_pct)),
+        *(
+            row(f"  {label}", money(None if flip.net_profit is None else -amount), note)
+            for label, amount, note in costs
+        ),
         row("Net profit", money(flip.net_profit)),
-        row("Yield (Profit / Costs)", pct1(flip.profit_yield), "a project margin, not an IRR"),
+        "",
+        *(row(f"  {label}", money(amount), note) for label, amount, note in costs),
+        row("Total deal cost", money(flip.total_costs)),
+        "",
+        row("Borrower equity", money(flip.borrower_equity), "total deal cost - loan amount"),
+        row(
+            "Cash-on-cash",
+            pct1(flip.cash_on_cash),
+            f"target {pct1(flip.cash_on_cash_target)}; {_passed(flip.cash_on_cash_passed)}",
+        ),
+        row("Project yield", pct1(flip.project_yield), "profit / total deal cost; not an IRR"),
     ]
     return lines
+
+
+def render_sources_uses(table: SourcesAndUses | None) -> list[str]:
+    """The two advances and the borrower's equity against the cost stack.  # SPEC §8.11"""
+    lines = heading("SOURCES & USES", "equal to the cent")
+    if table is None:
+        return [*lines, "  (not on this run: the ledger predates the table)"]
+    return [
+        *lines,
+        row("Advance at closing", money(table.advance_at_closing)),
+        row("Rehab holdback", money(table.rehab_holdback)),
+        row("Borrower equity", money(table.borrower_equity), "total deal cost - loan amount"),
+        row("Total sources", money(table.total_sources)),
+        "",
+        row("Purchase", money(table.purchase_price)),
+        row("Closing", money(table.closing_costs)),
+        row("Rehab", money(table.rehab_costs)),
+        row("Contingency", money(table.contingency)),
+        row("Holding", money(table.holding_costs)),
+        row("Interest", money(table.interest)),
+        row("Origination", money(table.origination)),
+        row("Total uses", money(table.total_uses)),
+    ]
 
 
 def _passed(passed: bool | None) -> str:
@@ -398,7 +448,7 @@ def render_rental(rental: RentalAnalysis) -> list[str]:
     lines = heading("RENTAL ANALYSIS", rental.status.value)
     note = _status_note(
         rental.status,
-        "  OFF: the toggle is off.",
+        "  OFF: the toggle was off (a run before engine 2.0.0).",
         "  NOT EVALUATED: no monthly rent, so there is no net monthly income.",
     )
     if note:
@@ -425,7 +475,7 @@ def render_rental(rental: RentalAnalysis) -> list[str]:
 
 def render_take_back(take_back: TakeBackAnalysis) -> list[str]:
     """Whether the rent carries what the loan cost GLENWOOD.  # SPEC §8.6"""
-    lines = heading("TAKE-BACK ANALYSIS", f"{take_back.status.value}  (always on)")
+    lines = heading("TAKE-BACK ANALYSIS", take_back.status.value)
     if take_back.status is AnalysisStatus.NOT_EVALUATED:
         lines.append("  NOT EVALUATED: no monthly rent, so there is no DSCR to test.")
     lines += [
@@ -499,19 +549,8 @@ def render_underwrite(
         ]
     else:
         sizing = render_sizing(result.sizing, config, title="SIZING (underwrite: verified)")
-    toggles = result.analyses
-    toggle_note = (
-        f"flip {'on' if toggles.flip_analysis else 'off'}"
-        f"{'' if toggles.flip_analysis == toggles.flip_analysis_default else ' (by hand)'}, "
-        f"rental {'on' if toggles.rental_analysis else 'off'}"
-        f"{'' if toggles.rental_analysis == toggles.rental_analysis_default else ' (by hand)'}, "
-        "take-back always on"
-    )
     return [
         *sizing,
-        *heading("ANALYSES", toggle_note),
-        "  Flip is on by default with a sale price, rental with a rent; a hand setting wins "
-        "(SPEC §8.1).",
         *render_economics(result),
         *render_return_overview(result.return_overview),
         *render_sensitivity(result.sensitivity),
@@ -521,6 +560,7 @@ def render_underwrite(
         *render_rental(result.rental),
         *render_rent_provenance(inputs),
         *render_take_back(result.take_back),
+        *render_sources_uses(result.sources_and_uses),
         *render_flags(result),
     ]
 

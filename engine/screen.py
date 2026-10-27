@@ -36,7 +36,6 @@ from schema.models import (
     Flag,
     LeverageMetric,
     LienKind,
-    Product,
     RepeatBorrowerStatus,
     ScreenComponents,
     ScreenFlag,
@@ -463,20 +462,14 @@ def leverage_flags(sizing: SizingResult) -> list[Flag]:
     # SPEC §7.4, §7.5, §8.2
     """
     flags: list[Flag] = []
-    # The caps cell is a config grid coordinate (``leverage_caps.SPLIT_DRAW.T3.E2``), not a
+    # The caps cell is a config grid coordinate (``leverage_caps.ACQUISITION_REHAB.T3.E2``), not a
     # label, so it is printed as the keys a person would look up rather than as prose.
     cell = f"{sizing.product.value}/{sizing.credit_tranche.value}/{sizing.experience_tier.value}"
     split = sizing.split
     if split is not None and split.rehab_portion_capped:
-        # What the cap does next differs by product, and a reader wants the consequence as
-        # much as the fact: SPLIT_PRINCIPAL loses the difference off the commitment, which
-        # COMMITMENT_BELOW_REQUEST then reports; SPLIT_DRAW keeps it and advances it at
-        # close, so only the timing of the money moves.
-        consequence = (
-            "Tranche A is capped at the budget, so the commitment falls below the request"
-            if sizing.product is Product.SPLIT_PRINCIPAL
-            else "the holdback is capped at the budget and the difference is advanced at close"
-        )
+        # A reader wants the consequence as much as the fact: there is one note, so the
+        # difference is advanced at close and only the timing of the money moves.
+        consequence = "the holdback is capped at the budget and the difference is advanced at close"
         flags.append(
             Flag(
                 code=ScreenFlag.REHAB_PORTION_EXCEEDS_BUDGET,
@@ -486,25 +479,6 @@ def leverage_flags(sizing: SizingResult) -> list[Flag]:
                     f"{money(split.rehab_portion_requested)} exceeds the "
                     f"contingency-adjusted rehab cost {money(sizing.rehab_adj)}; "
                     f"{consequence}."
-                ),
-            )
-        )
-    if sizing.product is Product.SPLIT_PRINCIPAL and sizing.commitment < sizing.loan_requested:
-        notes = (
-            f" (Principal Note {money(split.purchase_portion)} + "
-            f"Tranche A {money(split.rehab_portion)})"
-            if split is not None
-            else ""
-        )
-        flags.append(
-            Flag(
-                code=ScreenFlag.COMMITMENT_BELOW_REQUEST,
-                severity=Severity.INFO,
-                message=(
-                    f"{enum_label(Product.SPLIT_PRINCIPAL)} commitment "
-                    f"{money(sizing.commitment)}{notes} is below the "
-                    f"{money(sizing.loan_requested)} loan amount: the entered rehab portion is "
-                    f"capped at the contingency-adjusted rehab cost {money(sizing.rehab_adj)}."
                 ),
             )
         )

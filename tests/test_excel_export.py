@@ -39,6 +39,7 @@ SHEETS = [
     "Flip",
     "Rental",
     "Take-Back",
+    "Sources & Uses",
     "Flags",
 ]
 
@@ -115,7 +116,7 @@ def find_row(sheet: Worksheet, label: str) -> tuple[Any, Any]:
 # --- the sheets (SPEC §9.6) ----------------------------------------------------------------------
 
 
-def test_the_workbook_has_the_seven_sheets_in_the_spec_order() -> None:
+def test_the_workbook_has_its_sheets_in_the_spec_order() -> None:
     assert book_for(UNDERWRITE_FILES[0]).sheetnames == SHEETS
 
 
@@ -166,7 +167,9 @@ def test_percentages_are_percentages_and_ratios_are_ratios() -> None:
     book = book_for(UNDERWRITE_FILES[0])
     _, fmt = find_row(book["Inputs"], "Interest rate")
     assert fmt == "0.0%"
-    _, fmt = find_row(book["Flip"], "Yield (Profit / Costs)")
+    _, fmt = find_row(book["Flip"], "Project yield")
+    assert fmt == "0.0%"
+    _, fmt = find_row(book["Flip"], "Cash-on-cash")
     assert fmt == "0.0%"
     _, fmt = find_row(book["Rental"], "DSCR floor")
     assert fmt == '0.00"x"'
@@ -182,6 +185,11 @@ def test_no_money_cell_is_a_string() -> None:
             for row in book[name].iter_rows():
                 for cell in row:
                     if cell.number_format == '"$"#,##0.00' and cell.value is not None:
+                        # Excel's own arithmetic is a formula, not text: the Sources & Uses
+                        # check row (SPEC §8.11) is the one money formula
+                        if str(cell.value).startswith("="):
+                            assert name == "Sources & Uses", (name, cell.coordinate)
+                            continue
                         assert isinstance(cell.value, Decimal | int | float), (
                             name,
                             cell.coordinate,
@@ -225,7 +233,7 @@ def test_the_workbook_ledger_solves_to_the_engines_irr(path: Path) -> None:
 def test_the_sensitivity_sheet_is_numbers_under_formats_with_the_request_on_the_bottom_row() -> (
     None
 ):
-    path = FIXTURE_DIR / "go_split_draw_denver.json"
+    path = FIXTURE_DIR / "go_holdback_denver.json"
     result = run(path).underwrite_result
     assert result is not None and result.sensitivity is not None
     sheet = book_for(path)["Lender Sensitivity"]
@@ -269,7 +277,7 @@ def test_the_deals_own_cell_is_shaded_when_its_rate_is_a_column() -> None:
     from engine.underwrite import underwrite
     from tests.test_sensitivity import denver_inputs
 
-    path = FIXTURE_DIR / "go_split_draw_denver.json"
+    path = FIXTURE_DIR / "go_holdback_denver.json"
     fixture = run(path)
     inputs = denver_inputs(interest_rate="0.145")
     result = underwrite(inputs, CONFIG)
@@ -284,7 +292,7 @@ def test_the_deals_own_cell_is_shaded_when_its_rate_is_a_column() -> None:
 
 
 def test_a_result_from_before_the_table_still_exports_and_says_so() -> None:
-    path = FIXTURE_DIR / "go_split_draw_denver.json"
+    path = FIXTURE_DIR / "go_holdback_denver.json"
     fixture = run(path)
     assert fixture.underwrite_inputs is not None and fixture.underwrite_result is not None
     older = fixture.underwrite_result.model_copy(update={"sensitivity": None})
@@ -297,36 +305,36 @@ def test_a_result_from_before_the_table_still_exports_and_says_so() -> None:
 # --- the borrower sensitivity and pricing sheets (SPEC §8.9, §8.10) ----------------------------
 
 
-def test_the_borrower_sheet_is_profit_cash_and_cash_on_cash_under_each_rate() -> None:
-    fixture = run(FIXTURE_DIR / "go_no_draw_wichita.json")
+def test_the_borrower_sheet_is_profit_cost_and_project_yield_under_each_rate() -> None:
+    fixture = run(FIXTURE_DIR / "go_acquisition_wichita.json")
     result = fixture.underwrite_result
     assert result is not None and result.borrower_sensitivity is not None
     grid = result.borrower_sensitivity
-    sheet = book_for(FIXTURE_DIR / "go_no_draw_wichita.json")["Borrower Sensitivity"]
+    sheet = book_for(FIXTURE_DIR / "go_acquisition_wichita.json")["Borrower Sensitivity"]
     assert [D(str(sheet.cell(row=4, column=2 + 3 * n).value)) for n in range(len(grid.rates))] == (
         grid.rates
     )
     assert [sheet.cell(row=5, column=c).value for c in range(1, 5)] == [
         "Loan amount",
         "Profit",
-        "Cash in",
-        "Cash-on-cash",
+        "Total cost",
+        "Project yield",
     ]
     bottom = 5 + len(grid.rows)
     assert D(str(sheet.cell(row=bottom, column=1).value)) == D("150000")
-    profit, cash, coc = (sheet.cell(row=bottom, column=c) for c in (2, 3, 4))
+    profit, cost, project = (sheet.cell(row=bottom, column=c) for c in (2, 3, 4))
     # the first column is 12.5% (tests/test_borrower_sensitivity.py records the figures);
     # Wichita is priced at 12%, off the grid, so nothing is shaded
-    assert (D(str(profit.value)), D(str(cash.value))) == (D("22850"), D("76750"))
-    assert round(D(str(coc.value)), 6) == D("0.297720")
-    assert profit.fill.fgColor.rgb != "00E7F3EC" and coc.number_format == "0.0%"
+    assert (D(str(profit.value)), D(str(cost.value))) == (D("17650"), D("226750"))
+    assert round(D(str(project.value)), 6) == D("0.077839")
+    assert profit.fill.fgColor.rgb != "00E7F3EC" and project.number_format == "0.0%"
 
 
 def test_the_pricing_sheet_carries_every_row_and_its_sentence() -> None:
-    fixture = run(FIXTURE_DIR / "go_no_draw_wichita.json")
+    fixture = run(FIXTURE_DIR / "go_acquisition_wichita.json")
     result = fixture.underwrite_result
     assert result is not None and result.pricing is not None
-    sheet = book_for(FIXTURE_DIR / "go_no_draw_wichita.json")["Pricing"]
+    sheet = book_for(FIXTURE_DIR / "go_acquisition_wichita.json")["Pricing"]
     assert D(str(sheet.cell(row=2, column=2).value)) == D("0.20")
     assert sheet.cell(row=4, column=1).value == "Step"
     for offset, row in enumerate(result.pricing.rows, start=5):
@@ -335,7 +343,21 @@ def test_the_pricing_sheet_carries_every_row_and_its_sentence() -> None:
         assert D(str(sheet.cell(row=offset, column=3).value)) == row.step
         assert D(str(sheet.cell(row=offset, column=4).value)) == row.interest_rate
         assert sheet.cell(row=offset, column=9).value == row.sentence
-    assert [sheet.cell(row=r, column=1).value for r in (5, 6, 7)] == ["Requested", "-5%", "-10%"]
+        # three columns on the end, so the ones before them did not move (engine 2.0.0)
+        assert D(str(sheet.cell(row=offset, column=11).value)) == row.borrower_equity
+        added = sheet.cell(row=offset, column=12).value
+        assert (None if added is None else D(str(added))) == row.equity_added
+        assert sheet.cell(row=offset, column=13).value == row.derisk
+    assert [sheet.cell(row=4, column=c).value for c in (11, 12, 13)] == [
+        "Borrower equity",
+        "Equity added",
+        "De-risk",
+    ]
+    # most equity first: the smallest loan at the top
+    assert [sheet.cell(row=r, column=1).value for r in (5, 6, 7)] == ["-10%", "-5%", "Requested"]
+    assert sheet.cell(row=5, column=13).value == (
+        "Adding $12,249 of equity brings the rate to 16.34%."
+    )
 
 
 def test_the_pricing_sheet_carries_the_max_quote_and_the_rate_a_row_needs() -> None:
@@ -346,7 +368,7 @@ def test_the_pricing_sheet_carries_the_max_quote_and_the_rate_a_row_needs() -> N
     data = load_yaml(DEFAULT_PATH.read_text(encoding="utf-8"))
     data["pricing"]["max_quoted_rate"] = "0.16"
     capped = Config.from_dict(data)
-    fixture = run(FIXTURE_DIR / "go_no_draw_wichita.json")
+    fixture = run(FIXTURE_DIR / "go_acquisition_wichita.json")
     assert fixture.underwrite_inputs is not None
     result = underwrite(fixture.underwrite_inputs, capped)
     sheet = build_workbook(fixture.screen_inputs, fixture.underwrite_inputs, result, capped)[
@@ -359,12 +381,12 @@ def test_the_pricing_sheet_carries_the_max_quote_and_the_rate_a_row_needs() -> N
     needed = sheet.cell(row=5, column=10)
     assert D(str(needed.value)) == D("0.1634") and needed.number_format == "0.00%"
     assert sheet.cell(row=5, column=9).value == (
-        "A $150,000 loan exceeds max quoted rate (16.34% needed)."
+        "A $135,000 loan exceeds max quoted rate (16.34% needed)."
     )
 
 
-def test_a_flip_off_borrower_sheet_says_not_evaluated() -> None:
-    fixture = run(FIXTURE_DIR / "go_hold_flip_off_denver.json")
+def test_a_borrower_sheet_with_no_sale_price_says_not_evaluated() -> None:
+    fixture = run(FIXTURE_DIR / "conditional_no_price_no_rent.json")
     assert fixture.underwrite_inputs is not None and fixture.underwrite_result is not None
     sheet = build_workbook(
         fixture.screen_inputs, fixture.underwrite_inputs, fixture.underwrite_result, CONFIG
@@ -373,7 +395,7 @@ def test_a_flip_off_borrower_sheet_says_not_evaluated() -> None:
 
 
 def test_a_result_from_before_1_7_0_exports_both_sheets_saying_so() -> None:
-    fixture = run(FIXTURE_DIR / "go_no_draw_wichita.json")
+    fixture = run(FIXTURE_DIR / "go_acquisition_wichita.json")
     assert fixture.underwrite_inputs is not None and fixture.underwrite_result is not None
     older = fixture.underwrite_result.model_copy(
         update={"borrower_sensitivity": None, "pricing": None}
@@ -397,13 +419,13 @@ def test_the_inputs_sheet_names_where_each_valuation_came_from() -> None:
 def test_an_analysis_that_did_not_run_says_why_on_its_own_sheet() -> None:
     book = book_for(FIXTURE_DIR / "conditional_no_price_no_rent.json")
     status, _ = find_row(book["Rental"], "Status")
-    assert status == "OFF"
+    assert status == "NOT_EVALUATED"
     status, _ = find_row(book["Take-Back"], "Status")
     assert status == "NOT_EVALUATED"
     take_back = book["Take-Back"]
     notes = {row[0].value: row[2].value for row in take_back.iter_rows(min_col=1, max_col=3)}
     assert "no monthly rent" in notes["Status"]
-    assert notes["Toggle"] == "it runs on every deal (SPEC §8.6)"
+    assert "Toggle" not in notes
     flip = book["Flip"]
     status, _ = find_row(flip, "Status")
     assert status == "NOT_EVALUATED"
@@ -411,18 +433,61 @@ def test_an_analysis_that_did_not_run_says_why_on_its_own_sheet() -> None:
     assert "no estimated sale price" in flip_notes["Status"]
 
 
-def test_the_flip_sheet_reports_the_cost_stack_even_when_the_toggle_is_off() -> None:
-    book = book_for(FIXTURE_DIR / "go_hold_flip_off_denver.json")
+def test_the_flip_sheet_reports_the_cost_stack_with_no_sale_price() -> None:
+    book = book_for(FIXTURE_DIR / "conditional_no_price_no_rent.json")
     status, _ = find_row(book["Flip"], "Status")
-    assert status == "OFF"
-    total_costs, fmt = find_row(book["Flip"], "Total costs")
+    assert status == "NOT_EVALUATED"
+    total_costs, fmt = find_row(book["Flip"], "Total deal cost")
     assert total_costs > 0 and fmt == '"$"#,##0.00'
     net_profit, _ = find_row(book["Flip"], "Net profit")
     assert net_profit is None
+    equity, _ = find_row(book["Flip"], "Borrower equity")
+    assert D(str(equity)) == D("29400")  # 109,400 of deal cost on an 80,000 loan
+
+
+def test_the_flip_sheet_is_the_profit_line_by_line_then_the_cost_stack() -> None:
+    """Sale price, broker, purchase, closing, rehab, contingency, holding, interest,
+    origination, profit; then the stack to the total deal cost (SPEC §8.4)."""
+    sheet = book_for(FIXTURE_DIR / "go_holdback_denver.json")["Flip"]
+    labels = [row[0].value for row in sheet.iter_rows(min_col=1, max_col=1)]
+    profit = labels[labels.index("PROFIT") + 1 : labels.index("Net profit") + 1]
+    assert profit == [
+        "Sale price",
+        "Broker",
+        "Purchase",
+        "Closing",
+        "Rehab",
+        "Contingency",
+        "Holding",
+        "Interest",
+        "Origination",
+        "Net profit",
+    ]
+    stack = labels[labels.index("COST STACK") + 1 : labels.index("Total deal cost") + 1]
+    assert stack == profit[2:-1] + ["Total deal cost"]
+    rows = [(row[0].value, row[1].value) for row in sheet.iter_rows(min_col=1, max_col=2)]
+    start = labels.index("PROFIT") + 1
+    lines = [D(str(value)) for _, value in rows[start : start + len(profit) - 1]]
+    assert lines[0] == D("330000") and all(line <= 0 for line in lines[1:])
+    values = dict(rows)
+    assert sum(lines, D(0)) == D(str(values["Net profit"])) == D("31810")
+    assert D(str(values["Total deal cost"])) == D("278390")
+    assert D(str(values["Borrower equity"])) == D("83390")
+
+
+def test_the_sources_and_uses_sheet_balances_with_an_excel_formula() -> None:
+    sheet = book_for(FIXTURE_DIR / "go_holdback_denver.json")["Sources & Uses"]
+    values = {row[0].value: row[1].value for row in sheet.iter_rows(min_col=1, max_col=2)}
+    assert D(str(values["Advance at closing"])) == D("147000")
+    assert D(str(values["Rehab holdback"])) == D("48000")
+    assert D(str(values["Borrower equity"])) == D("83390")
+    assert D(str(values["Total sources"])) == D(str(values["Total uses"])) == D("278390")
+    assert values["Sources - uses"] == "=B7-B17"
+    assert sheet["A7"].value == "Total sources" and sheet["A17"].value == "Total uses"
 
 
 def test_the_flags_sheet_lists_every_flag_with_its_severity_and_message() -> None:
-    path = FIXTURE_DIR / "go_no_draw_wichita.json"
+    path = FIXTURE_DIR / "go_acquisition_wichita.json"
     result = run(path).underwrite_result
     assert result is not None
     sheet = book_for(path)["Flags"]
@@ -439,7 +504,10 @@ def test_the_flags_sheet_lists_every_flag_with_its_severity_and_message() -> Non
 
 
 def test_a_run_with_no_flags_says_so() -> None:
-    sheet = book_for(FIXTURE_DIR / "go_hold_flip_off_denver.json")["Flags"]
+    fixture = run(FIXTURE_DIR / "go_hold_denver.json")
+    assert fixture.underwrite_inputs is not None and fixture.underwrite_result is not None
+    clean = fixture.underwrite_result.model_copy(update={"flags": []})
+    sheet = build_workbook(fixture.screen_inputs, fixture.underwrite_inputs, clean, CONFIG)["Flags"]
     assert sheet.cell(row=4, column=1).value == "(none)"
 
 

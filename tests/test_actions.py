@@ -330,10 +330,10 @@ def test_resaving_the_same_product_does_not_relabel_an_inferred_one(
     assert stored_deal.product_source is ProductSource.INFERRED
 
     save_overrides(
-        db_session, stored_deal.id, TeamOverrides(product=Product.WHOLETAIL), actor=ACTOR
+        db_session, stored_deal.id, TeamOverrides(product=Product.ACQUISITION), actor=ACTOR
     )
     db_session.commit()
-    assert stored_deal.product is Product.WHOLETAIL
+    assert stored_deal.product is Product.ACQUISITION
     assert stored_deal.product_source is ProductSource.ENTERED
 
 

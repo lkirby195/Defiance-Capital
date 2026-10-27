@@ -8,12 +8,13 @@ and compare. Sheets, in the SPEC §9 order:
     Inputs           what went in, screen and underwrite, plus the sizing it produced
     Return Overview  the monthly ledger, its totals, and an XIRR formula over it
     Lender Sensitivity    the IRR at every loan amount and rate on the grid (SPEC §8.9)
-    Borrower Sensitivity  the borrower's profit, cash and cash-on-cash on the same grid
-    Pricing          the lowest rate, solved to 0.01%, that earns the target lender IRR
-                     (SPEC §8.10)
-    Flip             the project's margin if it sells
+    Borrower Sensitivity  the borrower's profit, total deal cost and project yield on it
+    Pricing          the lowest rate, solved to 0.01%, that earns the target lender IRR,
+                     with the borrower's equity and the de-risk line (SPEC §8.10)
+    Flip             the project's margin if it sells, line by line, and the borrower's side
     Rental           whether the rent carries a takeout loan
     Take-Back        whether the rent carries what the loan cost GLENWOOD
+    Sources & Uses   the two advances and the equity against the cost stack (SPEC §8.11)
     Flags            every flag with its severity and the threshold it names
 
 The ``Return Overview`` sheet carries an **``XIRR`` formula** over the ledger's dates and its
@@ -41,7 +42,6 @@ from schema.models import (
     SPLIT_PRODUCTS,
     AnalysisStatus,
     LeverageMetric,
-    Product,
     ScreenInputs,
     SizingResult,
     UnderwriteInputs,
@@ -214,20 +214,6 @@ def _sheet_inputs(
             else "source unstated",
         ),
         (
-            "Flip analysis",
-            "on" if result.analyses.flip_analysis else "off",
-            None,
-            "default with a sale price: "
-            f"{'on' if result.analyses.flip_analysis_default else 'off'}",
-        ),
-        (
-            "Rental analysis",
-            "on" if result.analyses.rental_analysis else "off",
-            None,
-            f"default with a rent: {'on' if result.analyses.rental_analysis_default else 'off'}",
-        ),
-        ("Take-back analysis", "on", None, "always on; not a toggle (SPEC §8.6)"),
-        (
             "Court records",
             _value(
                 underwrite_inputs.court_records.source if underwrite_inputs.court_records else None
@@ -322,11 +308,7 @@ def _split_rows(sizing: SizingResult) -> list[Row]:
         if sizing.product in SPLIT_PRODUCTS:
             return [("Loan split", None, None, "not entered; sized on the loan amount (SPEC §8.2)")]
         return []
-    purchase, rehab = (
-        ("Principal Note", "Tranche A")
-        if sizing.product is Product.SPLIT_PRINCIPAL
-        else ("Advance at closing", "Rehab holdback")
-    )
+    purchase, rehab = ("Advance at closing", "Rehab holdback")
     note = (
         f"entered {sizing.split.rehab_portion_requested}, capped at the "
         "contingency-adjusted rehab cost"
@@ -479,14 +461,15 @@ def _sheet_sensitivity(book: Workbook, result: UnderwriteResult) -> None:
 
 
 def _sheet_borrower_sensitivity(book: Workbook, result: UnderwriteResult) -> None:
-    """The borrower's profit, cash and cash-on-cash on the lender's grid.  # SPEC §8.9
+    """The borrower's profit, total deal cost and project yield on the lender's grid.
 
-    Three columns under each rate - Profit, Cash in, Cash-on-cash - so a reader can divide
-    the first by the second and get the third. The rows and columns are the Lender
-    Sensitivity's; the shaded cells are the deal as it stands, when its rate is a column.
+    # SPEC §8.9. Three columns under each rate - Profit, Total cost, Project yield - so a
+    reader can divide the first by the second and get the third. The rows and columns are
+    the Lender Sensitivity's; the shaded cells are the deal as it stands, when its rate is a
+    column. A cell stored before engine 2.0.0 has no total cost or yield, and leaves both empty.
     """
     sheet = book.create_sheet("Borrower Sensitivity")
-    _title(sheet, "Borrower Sensitivity — profit and cash-on-cash by loan amount and rate")
+    _title(sheet, "Borrower Sensitivity — profit and project yield by loan amount and rate")
     grid = result.borrower_sensitivity
     if grid is None:
         sheet.cell(
@@ -501,15 +484,15 @@ def _sheet_borrower_sensitivity(book: Workbook, result: UnderwriteResult) -> Non
         column=1,
         value=(
             "Profit is the Flip Analysis's net profit with the deal re-sized and re-ledgered at "
-            "that loan amount and rate; cash in is the total project costs less the loan; "
-            "cash-on-cash is the one over the other (SPEC §8.9)."
+            "that loan amount and rate; total cost is the flip's total deal cost there; "
+            "project yield is the one over the other (SPEC §8.9)."
         ),
     )
     if grid.status is not AnalysisStatus.EVALUATED:
         sheet.cell(
             row=3,
             column=1,
-            value="NOT EVALUATED: the Flip Analysis is off or there is no estimated sale price.",
+            value="NOT EVALUATED: there is no estimated sale price.",
         )
         _widths(sheet, 80)
         return
@@ -518,7 +501,7 @@ def _sheet_borrower_sensitivity(book: Workbook, result: UnderwriteResult) -> Non
         cell.number_format = PCT1
         cell.font = HEAD
     at = _header(
-        sheet, 5, ["Loan amount", *(["Profit", "Cash in", "Cash-on-cash"] * len(grid.rates))]
+        sheet, 5, ["Loan amount", *(["Profit", "Total cost", "Project yield"] * len(grid.rates))]
     )
     for row in grid.rows:
         sheet.cell(row=at, column=1, value=row.loan_amount).number_format = MONEY
@@ -526,8 +509,8 @@ def _sheet_borrower_sensitivity(book: Workbook, result: UnderwriteResult) -> Non
             column = 2 + 3 * offset
             values = (
                 (point.net_profit, MONEY),
-                (point.cash_invested, MONEY),
-                (point.cash_on_cash, PCT1),
+                (point.total_costs, MONEY),
+                (point.project_yield, PCT1),
             )
             for step, (value, fmt) in enumerate(values):
                 cell = sheet.cell(row=at, column=column + step, value=value)
@@ -571,6 +554,9 @@ def _sheet_pricing(book: Workbook, result: UnderwriteResult) -> None:
             "Cash-on-cash",
             "In plain English",
             "Rate needed",
+            "Borrower equity",
+            "Equity added",
+            "De-risk",
         ],
     )
     for row in matrix.rows:
@@ -585,43 +571,75 @@ def _sheet_pricing(book: Workbook, result: UnderwriteResult) -> None:
             (row.borrower_cash_on_cash, PCT1),
             (row.sentence, None),
             (row.rate_needed, PCT2),
+            (row.borrower_equity, MONEY),
+            (row.equity_added, MONEY),
+            (row.derisk, None),
         )
         for column, (value, fmt) in enumerate(values, start=1):
             cell = sheet.cell(row=at, column=column, value=value)
             if fmt is not None:
                 cell.number_format = fmt
         at += 1
-    _widths(sheet, 11, 16, 12, 9, 12, 16, 17, 13, 90, 12)
+    _widths(sheet, 11, 16, 12, 9, 12, 16, 17, 13, 90, 12, 16, 14, 70)
 
 
 def _sheet_flip(book: Workbook, result: UnderwriteResult) -> None:
+    """The profit line by line, the cost stack, and the borrower's side.  # SPEC §8.4"""
     sheet = book.create_sheet("Flip")
     _title(sheet, "Flip Analysis — the project's margin if it sells")
     flip = result.flip
+    if flip.interest is not None and flip.origination is not None:
+        financing: list[tuple[str, Any, str]] = [
+            ("Interest", flip.interest, "total over the term"),
+            ("Origination", flip.origination, "both halves"),
+        ]
+    else:
+        financing = [("Financing", flip.financing_costs, "total interest + both fee halves")]
+    costs: list[tuple[str, Any, str]] = [
+        ("Purchase", flip.purchase_price, ""),
+        ("Closing", flip.closing_costs, ""),
+        ("Rehab", flip.rehab_costs, ""),
+        ("Contingency", flip.contingency, ""),
+        ("Holding", flip.holding_costs_total, "total over the hold"),
+        *financing,
+    ]
+    evaluated = flip.net_profit is not None
     rows: list[Row] = [
         ("Status", flip.status.value, None, _flip_note(flip.status)),
-        ("Estimated sale price", flip.estimated_sale_price, MONEY, ""),
         ("Broker selling", flip.broker_selling_pct, PCT1, "of the sale price"),
-        ("Broker selling costs", flip.broker_costs, MONEY, "off the price, not in total costs"),
-        ("Purchase price", flip.purchase_price, MONEY, ""),
-        ("Closing costs", flip.closing_costs, MONEY, ""),
-        ("Holding costs", flip.holding_costs_total, MONEY, "total over the hold"),
+        ("", None, None, ""),
+        ("PROFIT", None, None, ""),
+        ("Sale price", flip.estimated_sale_price, MONEY, ""),
+        (
+            "Broker",
+            None if flip.broker_costs is None else -flip.broker_costs,
+            MONEY,
+            "off the price, not in the total deal cost",
+        ),
+        *((label, -amount if evaluated else None, MONEY, note) for label, amount, note in costs),
+        ("Net profit", flip.net_profit, MONEY, "the lines above, added"),
+        ("", None, None, ""),
+        ("COST STACK", None, None, ""),
+        *((label, amount, MONEY, note) for label, amount, note in costs),
+        ("Total deal cost", flip.total_costs, MONEY, "the lines above, added"),
+        ("", None, None, ""),
+        ("BORROWER", None, None, ""),
+        ("Loan amount", flip.loan_amount, MONEY, "the commitment"),
+        ("Borrower equity", flip.borrower_equity, MONEY, "total deal cost - loan amount"),
+        ("Cash-on-cash", flip.cash_on_cash, PCT1, "net profit / borrower equity"),
+        ("Cash-on-cash target", flip.cash_on_cash_target, PCT1, "pricing.borrower_coc_target"),
+        ("Passed", flip.cash_on_cash_passed, None, ""),
+        (
+            "Project yield",
+            flip.project_yield,
+            PCT1,
+            "net profit / total deal cost; a project margin, not an annualized return",
+        ),
         (
             "Holding costs (% of cost)",
             result.economics.holding_costs_pct_of_cost,
             PCT1,
             "of the purchase price plus the rehab costs (SPEC §8.1)",
-        ),
-        ("Rehab costs", flip.rehab_costs, MONEY, ""),
-        ("Contingency", flip.contingency, MONEY, ""),
-        ("Financing costs", flip.financing_costs, MONEY, "total interest + both fee halves"),
-        ("Total costs", flip.total_costs, MONEY, ""),
-        ("Net profit", flip.net_profit, MONEY, "sale price - broker - total costs"),
-        (
-            "Yield (Profit / Costs)",
-            flip.profit_yield,
-            PCT1,
-            "a project margin, not an annualized return",
         ),
     ]
     _rows(sheet, rows)
@@ -630,7 +648,7 @@ def _sheet_flip(book: Workbook, result: UnderwriteResult) -> None:
 
 def _flip_note(status: AnalysisStatus) -> str:
     if status is AnalysisStatus.OFF:
-        return "the toggle is off, so the flip was not asked for"
+        return "the toggle was off (a run before engine 2.0.0)"
     if status is AnalysisStatus.NOT_EVALUATED:
         return "no estimated sale price; the cost stack below still stands"
     return ""
@@ -653,7 +671,7 @@ def _sheet_rental(book: Workbook, result: UnderwriteResult) -> None:
             "Status",
             rental.status.value,
             None,
-            _rent_note(rental.status, "the toggle is off"),
+            _rent_note(rental.status, "the toggle was off (a run before engine 2.0.0)"),
         ),
         ("Monthly rent", rental.monthly_rent, MONEY, ""),
         ("Expenses", rental.expenses_pct, PCT1, "of rent"),
@@ -683,7 +701,6 @@ def _sheet_take_back(book: Workbook, result: UnderwriteResult) -> None:
     take_back = result.take_back
     rows: list[Row] = [
         ("Status", take_back.status.value, None, _rent_note(take_back.status, "")),
-        ("Toggle", "always on", None, "it runs on every deal (SPEC §8.6)"),
         ("Loan amount", take_back.loan_amount, MONEY, "the commitment"),
         ("Interest rate", take_back.interest_rate, PCT1, "the deal's own, not a takeout rate"),
         ("Lost interest (months)", take_back.lost_interest_months, INTEGER, ""),
@@ -698,6 +715,49 @@ def _sheet_take_back(book: Workbook, result: UnderwriteResult) -> None:
         ("Passed", take_back.passed, None, ""),
     ]
     _rows(sheet, rows)
+    _widths(sheet, 26, 18, 44)
+
+
+def _sheet_sources_uses(book: Workbook, result: UnderwriteResult) -> None:
+    """The two advances and the borrower's equity against the cost stack.  # SPEC §8.11
+
+    Every line a number; the last row is an Excel formula, total sources less total uses,
+    which is zero on every run - the workbook checks the identity itself.
+    """
+    sheet = book.create_sheet("Sources & Uses")
+    _title(sheet, "Sources & Uses — where the money comes from and where it goes")
+    table = result.sources_and_uses
+    if table is None:
+        sheet.cell(
+            row=3,
+            column=1,
+            value="Not on this run: the ledger predates Sources & Uses (engine 2.0.0).",
+        )
+        _widths(sheet, 80)
+        return
+    rows: list[Row] = [
+        ("SOURCES", None, None, ""),
+        ("Advance at closing", table.advance_at_closing, MONEY, "the ledger's month 0 funding"),
+        ("Rehab holdback", table.rehab_holdback, MONEY, "the ledger's draws"),
+        ("Borrower equity", table.borrower_equity, MONEY, "total deal cost - loan amount"),
+        ("Total sources", table.total_sources, MONEY, ""),
+        ("", None, None, ""),
+        ("USES", None, None, ""),
+        ("Purchase", table.purchase_price, MONEY, ""),
+        ("Closing", table.closing_costs, MONEY, ""),
+        ("Rehab", table.rehab_costs, MONEY, ""),
+        ("Contingency", table.contingency, MONEY, ""),
+        ("Holding", table.holding_costs, MONEY, ""),
+        ("Interest", table.interest, MONEY, ""),
+        ("Origination", table.origination, MONEY, "both halves"),
+        ("Total uses", table.total_uses, MONEY, ""),
+    ]
+    at = _rows(sheet, rows)
+    sources_row, uses_row = 3 + 4, 3 + 14
+    sheet.cell(row=at, column=1, value="Sources - uses")
+    check = sheet.cell(row=at, column=2, value=f"=B{sources_row}-B{uses_row}")
+    check.number_format = MONEY
+    sheet.cell(row=at, column=3, value="Excel's own subtraction; zero to the cent")
     _widths(sheet, 26, 18, 44)
 
 
@@ -732,6 +792,7 @@ def build_workbook(
     _sheet_flip(book, result)
     _sheet_rental(book, result)
     _sheet_take_back(book, result)
+    _sheet_sources_uses(book, result)
     _sheet_flags(book, result)
     return book
 

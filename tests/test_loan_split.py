@@ -1,4 +1,4 @@
-"""The purchase / rehab split of a split loan.  # SPEC §8.2
+"""The advance-at-closing / rehab split of a holdback.  # SPEC §8.2
 
 It used to be derived — the purchase portion was `commitment - rehab_adj`, and a team member
 who disagreed typed one number into an `UnderwriteRequest` at run time. It is now two columns
@@ -6,15 +6,15 @@ on the deal, entered together on the team-entry form and adding up to the loan r
 
 Three states, and keeping them apart is most of what is tested here:
 
-* **entered** — a split product with both portions. The screen and the underwrite both use
+* **entered** — a holdback with both portions. The screen and the underwrite both use
   them; the rehab side is capped at the contingency-adjusted rehab budget.
-* **defaulted** — a split product nobody has divided. That is a borrower-channel intake
+* **defaulted** — a holdback nobody has divided. That is a borrower-channel intake
   (SPEC §4.1, §4.2), or a team form that left both boxes blank: the deal is populated with
   the SPEC §8.2 formula split, tagged as a default, and both stages size on it
   (``services/defaults.py``). A deal stored before that existed and never opened is sized
   on the same formula at run time.
-* **forbidden** — a NO_DRAW or WHOLETAIL deal, which is one advance and carries no split at
-  all. The model, the form and the database each refuse one.
+* **forbidden** — 100% at close, which is one advance and carries no split at all. The
+  model, the form and the database each refuse one.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -90,22 +91,21 @@ def test_one_portion_without_the_other_is_refused() -> None:
         TeamEntryForm(**payload(loan_rehab_portion=None))
 
 
-@pytest.mark.parametrize("product", ["NO_DRAW", "WHOLETAIL"])
-def test_a_single_note_product_cannot_carry_a_split(product: str) -> None:
+def test_100_pct_at_close_cannot_carry_a_split() -> None:
     with pytest.raises(ValidationError, match="applies only to"):
-        TeamEntryForm(**payload(product=product))
+        TeamEntryForm(**payload(product="ACQUISITION"))
 
 
 def test_the_rule_is_tested_against_the_inferred_product_too() -> None:
     """The product box may be blank; the normalizer infers one from the rehab costs."""
-    with pytest.raises(ValidationError, match="not NO_DRAW"):
-        TeamEntryForm(**payload(rehab_costs="0"))  # inferred NO_DRAW, split still attached
+    with pytest.raises(ValidationError, match="not ACQUISITION"):
+        TeamEntryForm(**payload(rehab_costs="0"))  # inferred 100% at close, split still attached
 
 
 def test_a_split_product_with_no_split_is_coherent() -> None:
     """A borrower-channel intake carries a loan amount and nothing about its shape."""
     form = TeamEntryForm(**payload(loan_purchase_portion=None, loan_rehab_portion=None))
-    assert form.effective_product is Product.SPLIT_DRAW
+    assert form.effective_product is Product.ACQUISITION_REHAB
     assert form.loan_purchase_portion is None
 
 
@@ -113,7 +113,7 @@ def test_deal_info_holds_the_same_line() -> None:
     """The record the normalizer produces is checked the same way the form is."""
     with pytest.raises(ValidationError, match="must add up to the loan requested"):
         DealInfo(
-            product=Product.SPLIT_DRAW,
+            product=Product.ACQUISITION_REHAB,
             product_source=ProductSource.INFERRED,
             loan_requested=D("100000.00"),
             loan_purchase_portion=D("60000.00"),
@@ -151,10 +151,24 @@ def test_the_form_takes_a_split_that_adds_up(client: TestClient, db_session: Ses
     assert "loan_purchase_portion" not in deal.defaulted_fields
 
 
-def test_the_form_says_so_when_a_split_does_not_add_up(client: TestClient) -> None:
-    response = form_post(client, payload(loan_rehab_portion="50000.00"))
+def test_the_form_works_the_advance_out_and_the_json_body_still_refuses_a_bad_split(
+    client: TestClient, db_session: Session
+) -> None:
+    """The form has a Rehab portion box and no advance box (SPEC §8.1, v0.17): a posted
+    advance is not read, the advance is the rest of the loan, and a portion above the loan is
+    refused under its box. The JSON body carries both halves and is held to them adding up."""
+    response = form_post(client, payload(loan_rehab_portion="250000.00"))
     assert response.status_code == 422
-    assert "must add up to the loan requested" in response.text
+    assert "Rehab portion cannot be more than the Loan Amount." in response.text
+
+    refused = client.post("/intake/team", json=payload(loan_rehab_portion="50000.00"))
+    assert refused.status_code == 422
+    assert "must add up to the loan requested" in refused.text
+
+    response = form_post(client, payload(loan_rehab_portion="50000.00"))
+    assert response.status_code == 303, response.text
+    deal = db_session.scalars(select(Deal)).one()
+    assert (deal.loan_purchase_portion, deal.loan_rehab_portion) == (D("145000.00"), D("50000.00"))
 
 
 def test_a_json_intake_may_still_arrive_without_one_and_is_defaulted(
@@ -167,7 +181,7 @@ def test_a_json_intake_may_still_arrive_without_one_and_is_defaulted(
     assert response.status_code == 201, response.text
     deal = db_session.get(Deal, response.json()["id"])
     assert deal is not None
-    assert deal.product is Product.SPLIT_DRAW
+    assert deal.product is Product.ACQUISITION_REHAB
     assert (deal.loan_purchase_portion, deal.loan_rehab_portion) == (D("147000.00"), D("48000.00"))
     assert {"loan_purchase_portion", "loan_rehab_portion"} <= set(deal.defaulted_fields)
 
@@ -181,7 +195,7 @@ def test_half_a_split_is_refused_by_the_database(db_session: Session) -> None:
             channel=Channel.TEAM,
             status=Status.NEW,
             missing_fields=[],
-            product=Product.SPLIT_DRAW,
+            product=Product.ACQUISITION_REHAB,
             product_source=ProductSource.INFERRED,
             loan_purchase_portion=D("1.00"),
         )
@@ -240,12 +254,12 @@ def test_moving_off_a_split_product_takes_the_split_with_it(db_session: Session)
     """A WHOLETAIL loan has no division, and the database would refuse a stale one."""
     split = store_deal(db_session, split_entry())
     assert split.loan_purchase_portion is not None
-    save_overrides(db_session, split.id, TeamOverrides(product=Product.WHOLETAIL), actor=ACTOR)
+    save_overrides(db_session, split.id, TeamOverrides(product=Product.ACQUISITION), actor=ACTOR)
     db_session.commit()
     db_session.expire_all()
     deal = db_session.get(Deal, split.id)
     assert deal is not None
-    assert deal.product is Product.WHOLETAIL
+    assert deal.product is Product.ACQUISITION
     assert deal.loan_purchase_portion is None and deal.loan_rehab_portion is None
 
 
@@ -263,17 +277,18 @@ def test_the_sizing_table_names_the_portions(client: TestClient, db_session: Ses
     deal = store_deal(db_session, split_entry())
     client.post(f"/queue/deals/{deal.id}/run", follow_redirects=False)
     body = client.get(f"/queue/deals/{deal.id}").text
-    assert "Rehab holdback" in body  # SPLIT_DRAW names, not SPLIT_PRINCIPAL's
+    assert "Rehab holdback" in body
     assert re.search(r"<dt>Rehab holdback</dt>\s*<dd>\$48,000\.00", body)
 
 
 def test_the_console_report_names_the_two_portions() -> None:
     """The CLI is where the math is checked by hand, so the shape belongs beside it."""
     fixtures = Path(__file__).resolve().parents[1] / "fixtures/synthetic/deals"
-    run = run_fixture(fixtures / "go_split_principal_okc.json", CONFIG, True)
+    run = run_fixture(fixtures / "go_holdback_okc.json", CONFIG, True)
     assert run.underwrite_result is not None
     text = "\n".join(render_underwrite(run.underwrite_result, CONFIG))
-    assert "Principal Note" in text and "Tranche A" in text
+    assert "Advance at closing" in text and "Rehab holdback" in text
+    assert "Principal Note" not in text and "Tranche A" not in text
     assert "$136,000.00" in text and "$54,000.00" in text
 
 

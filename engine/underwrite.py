@@ -5,12 +5,15 @@ Pure: ``UnderwriteInputs`` and ``Config`` in, ``UnderwriteResult`` out. The caps
 from the verified credit score and deal count exactly as in the screen (``credit_check``,
 ``experience_check``), and their flags - credit below floor, self-reported vs. verified
 mismatches, repeat-borrower notes - carry into the underwrite flags alongside the leverage
-flags (SPEC §8.2) and the two DSCR flags (SPEC §8.5, §8.6).
+flags (SPEC §8.2), the two DSCR flags (SPEC §8.5, §8.6) and the borrower's cash-on-cash
+flag (SPEC §8.4).
 
 The order below is the order the math runs and the order every output shows it (SPEC §9):
 size the deal, resolve the §8.1 economics, lay out the ledger, re-run it across the
 Lender and Borrower Sensitivity grids (SPEC §8.9) and the pricing matrix (SPEC §8.10), then
-ask the three questions the ledger makes answerable - sell it, let it, or own it.
+ask the three questions the ledger makes answerable - sell it, let it, or own it - on every
+deal (there are no toggles from engine 2.0.0), and lay the money out as Sources & Uses
+(SPEC §8.11).
 
 The SPEC §7.2 court and filing tests run again here, on whatever source is in force at
 underwrite time - adapter over team, the same precedence as the screen (SPEC §6.1). They are
@@ -22,13 +25,13 @@ therefore self-contained, which is what the credit memo (SPEC §9.3) needs.
 from __future__ import annotations
 
 from config.config import Config
-from engine.calc.analyses import analysis_toggles
 from engine.calc.borrower import borrower_sensitivity_table
 from engine.calc.flip import flip_analysis
 from engine.calc.ledger import return_overview
 from engine.calc.pricing import pricing_matrix
 from engine.calc.rental import rental_analysis, take_back_analysis
 from engine.calc.sensitivity import Grid, sensitivity_table
+from engine.calc.sources_uses import sources_and_uses
 from engine.calc.terms import LoanTerms, loan_terms
 from engine.screen import (
     court_flags,
@@ -109,28 +112,23 @@ def structure_flags(loan: LoanTerms, config: Config) -> list[Flag]:
     ]
 
 
-def rent_flags(rental: RentalAnalysis, take_back: TakeBackAnalysis) -> list[Flag]:
+def rent_flags(take_back: TakeBackAnalysis) -> list[Flag]:
     """MONTHLY_RENT_MISSING when neither DSCR could be computed.  # SPEC §8.5, §8.6, §8.8
 
     One flag for both analyses, fixed INFO. It replaces the two DSCR tests rather than
     joining them: with no rent there is no net monthly income, so there is no DSCR that could
     fall short, and reporting one would be reporting a failure the deal has not been shown to
-    have. The Take-Back analysis is what makes this unconditional - it runs on every deal, so
-    a missing rent always costs the run something, whatever the Rental toggle says.
+    have. Both analyses run on every deal, so a missing rent always costs the run both.
     """
     if take_back.status is not AnalysisStatus.NOT_EVALUATED:
         return []
-    not_evaluated = (
-        "the Take-Back analysis was not evaluated (the Rental analysis is off in any case)"
-        if rental.status is AnalysisStatus.OFF
-        else "neither the Rental nor the Take-Back analysis was evaluated"
-    )
     return [
         Flag(
             code=UnderwriteFlag.MONTHLY_RENT_MISSING,
             severity=Severity.INFO,
             message=(
-                f"No monthly rent on the deal, so {not_evaluated}: there is no net monthly "
+                "No monthly rent on the deal, so neither the Rental nor the Take-Back "
+                "analysis was evaluated: there is no net monthly "
                 "income to cover a debt service with, and nothing stands in for what a "
                 f"property lets for. The {money(take_back.total_cost)} take-back cost and its "
                 f"{money(take_back.debt_service_monthly)} monthly debt service are reported "
@@ -146,11 +144,8 @@ def sale_price_flags(flip: FlipAnalysis) -> list[Flag]:
     Fixed INFO, and the sibling of MONTHLY_RENT_MISSING: the underwrite runs without an
     estimated sale price, and what it costs is the four figures the sale price feeds. The
     whole cost stack is still reported, so the flag says what was lost rather than that
-    something failed - a flip nobody could price has not lost money.
-
-    It is raised only where the flip was asked for. A toggle somebody turned off is a
-    decision, not a gap, and the screen's own ESTIMATED_SALE_PRICE_MISSING (SOFT) already
-    says the leverage side of the same absence whatever the toggle is doing.
+    something failed - a flip nobody could price has not lost money. The screen's own
+    ESTIMATED_SALE_PRICE_MISSING (SOFT) says the leverage side of the same absence.
     """
     if flip.status is not AnalysisStatus.NOT_EVALUATED:
         return []
@@ -163,6 +158,32 @@ def sale_price_flags(flip: FlipAnalysis) -> list[Flag]:
                 f"evaluated: the {money(flip.total_costs)} cost stack is reported, and the "
                 "broker's cut, the net profit and the yield are not. LTV is not computed "
                 "either (SPEC §7.4). Enter a price and re-run to get all four."
+            ),
+        )
+    ]
+
+
+def cash_on_cash_flags(flip: FlipAnalysis, config: Config) -> list[Flag]:
+    """BORROWER_COC_BELOW_TARGET when the flip's cash-on-cash is under the target.
+
+    # SPEC §8.4, §8.8. Severity from config (placeholder SOFT). Not tested without a sale
+    price - there is no profit - nor when the loan covers every cost, where there is no
+    equity to earn a return on.
+    """
+    if flip.cash_on_cash_passed is not False:
+        return []
+    assert flip.cash_on_cash is not None and flip.cash_on_cash_target is not None
+    assert flip.net_profit is not None and flip.borrower_equity is not None
+    assert flip.loan_amount is not None
+    return [
+        Flag(
+            code=UnderwriteFlag.BORROWER_COC_BELOW_TARGET,
+            severity=config.flags.underwrite_severities[UnderwriteFlag.BORROWER_COC_BELOW_TARGET],
+            message=(
+                f"Borrower cash-on-cash {pct(flip.cash_on_cash)} is below the "
+                f"{pct(flip.cash_on_cash_target)} target: {money(flip.net_profit)} profit on "
+                f"{money(flip.borrower_equity)} of equity (the {money(flip.total_costs)} total "
+                f"deal cost less the {money(flip.loan_amount)} loan)."
             ),
         )
     ]
@@ -222,19 +243,15 @@ def underwrite(inputs: UnderwriteInputs, config: Config) -> UnderwriteResult:
     experience = experience_check(inputs.borrower, config)
     sizing = size_deal(inputs.deal, credit.tranche, experience.tier, config)
     loan = loan_terms(sizing, inputs, config)
-    toggles = analysis_toggles(inputs)
     overview = return_overview(loan)
     # Every cell of the grid re-sizes and re-ledgers the deal in the same caps cell (SPEC §8.9).
     # The three tables read one set of ledgers, each laid out once (SPEC §8.9, §8.10).
     grid = Grid(inputs, credit.tranche, experience.tier, config)
     sensitivity = sensitivity_table(inputs, credit.tranche, experience.tier, config, grid)
-    flip_on = toggles.flip_analysis
-    borrower = borrower_sensitivity_table(
-        inputs, credit.tranche, experience.tier, flip_on, config, grid
-    )
-    pricing = pricing_matrix(inputs, credit.tranche, experience.tier, flip_on, config, grid)
-    flip = flip_analysis(inputs, loan, overview, toggles.flip_analysis, config)
-    rental = rental_analysis(inputs, loan, toggles.rental_analysis, config)
+    borrower = borrower_sensitivity_table(inputs, credit.tranche, experience.tier, config, grid)
+    pricing = pricing_matrix(inputs, credit.tranche, experience.tier, config, grid)
+    flip = flip_analysis(inputs, loan, overview, config)
+    rental = rental_analysis(inputs, loan, config)
     take_back = take_back_analysis(inputs, loan, config)
     flags = order_flags(
         credit.flags
@@ -244,7 +261,8 @@ def underwrite(inputs: UnderwriteInputs, config: Config) -> UnderwriteResult:
         + provenance_flags(sizing, inputs.court_records, inputs.monthly_rent_source)
         + structure_flags(loan, config)
         + sale_price_flags(flip)
-        + rent_flags(rental, take_back)
+        + cash_on_cash_flags(flip, config)
+        + rent_flags(take_back)
         + rental_flags(rental, config)
         + take_back_flags(take_back, config)
     )
@@ -258,13 +276,13 @@ def underwrite(inputs: UnderwriteInputs, config: Config) -> UnderwriteResult:
         term_stub_days=loan.stub_days,
         term_months_decimal=loan.term_months_decimal,
         rehab_months=loan.rehab_months,
-        analyses=toggles,
         sizing=sizing,
         economics=deal_economics(loan),
         return_overview=overview,
         sensitivity=sensitivity,
         borrower_sensitivity=borrower,
         pricing=pricing,
+        sources_and_uses=sources_and_uses(loan, flip),
         flip=flip,
         rental=rental,
         take_back=take_back,

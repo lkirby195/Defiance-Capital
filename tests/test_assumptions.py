@@ -143,7 +143,7 @@ def post(client: QueueClient, deal: Deal, **changes: str) -> Any:
 def test_the_panel_is_open_under_the_outputs_with_every_box_and_the_right_tag(
     client: QueueClient, db_session: Session, team_entry: dict[str, Any]
 ) -> None:
-    """A SPLIT_DRAW with a typed closing cost and holding cost and a split equal to the
+    """A holdback with a typed closing cost and holding cost and a split equal to the
     formula, so the tags say the different things they have to say."""
     deal = store_deal(db_session, team_entry)
     body = client.get(f"/queue/deals/{deal.id}").text
@@ -168,12 +168,12 @@ def test_the_panel_is_open_under_the_outputs_with_every_box_and_the_right_tag(
     # ...absent on the two with no default at all
     assert tag(section, "estimated_sale_price_team") is None
     assert tag(section, "monthly_rent") is None
-    # ...and on the toggles, shown while Default is the chosen state, with a reset of their own
+    # ...and there are no analysis toggles any more (SPEC §8.1): all three always run
     for name in ("flip_analysis", "rental_analysis"):
-        assert tag(section, name) == "shown", name
-        assert f'data-reset-toggle="{name}"' in section
+        assert f'name="{name}"' not in section, name
+    assert "data-reset-toggle" not in section
     # the boxes show what the deal carries, masked, the five assumptions at their config value
-    assert re.search(r'id="broker_selling_pct"[^>]*value="4%"', section)
+    assert re.search(r'id="broker_selling_pct"[^>]*value="6%"', section)
     assert re.search(r'id="rental_expenses_pct_of_rent"[^>]*value="35%"', section)
     assert re.search(r'id="rental_takeout_rate"[^>]*value="6.5%"', section)
     assert re.search(r'id="take_back_legal_costs_usd"[^>]*value="\$5,000"', section)
@@ -200,7 +200,6 @@ def test_a_typed_over_assumption_is_tagged_as_the_teams_on_the_page(
             estimated_sale_price_team=D("200000.00"),
             monthly_rent=D("1800.00"),
             rental_takeout_rate=D("0.07"),
-            flip_analysis=False,
         ),
         actor=ACTOR,
     )
@@ -209,8 +208,6 @@ def test_a_typed_over_assumption_is_tagged_as_the_teams_on_the_page(
     assert tag(section, "rental_takeout_rate") == "hidden"
     assert re.search(r'id="rental_takeout_rate"[^>]*value="7%"', section)
     assert tag(section, "broker_selling_pct") == "shown"
-    assert tag(section, "flip_analysis") == "hidden"
-    assert re.search(r'name="flip_analysis" value="false"\s+checked', section)
     # and the readiness checklist agrees about where each came from
     rows = {row.key: row for row in underwrite_readiness(deal_with_overrides).rows}
     assert rows["rental_takeout_rate"].source is InputSource.TEAM
@@ -327,8 +324,6 @@ def typed_over(session: Session, deal: Deal) -> None:
             rental_takeout_rate=D("0.07"),
             take_back_legal_costs_usd=D("7500.00"),
             take_back_lost_interest_months=4,
-            flip_analysis=False,
-            rental_analysis=True,
         ),
         actor=ACTOR,
     )
@@ -338,7 +333,7 @@ def typed_over(session: Session, deal: Deal) -> None:
 def test_reset_all_restores_the_config_values_and_runs_again(
     client: QueueClient, db_session: Session, team_entry: dict[str, Any]
 ) -> None:
-    deal = store_deal(db_session, team_entry)  # a SPLIT_DRAW: the split resets too
+    deal = store_deal(db_session, team_entry)  # a holdback: the split resets too
     typed_over(db_session, deal)
     assert deal.defaulted_fields == []
 
@@ -379,7 +374,6 @@ def test_reset_all_restores_the_config_values_and_runs_again(
     assert deal.take_back_legal_costs_usd == CONFIG.take_back.legal_costs_usd
     assert deal.take_back_lost_interest_months == CONFIG.take_back.lost_interest_months
     assert (deal.loan_purchase_portion, deal.loan_rehab_portion) == (D("147000.00"), D("48000.00"))
-    assert deal.flip_analysis is None and deal.rental_analysis is None
     for name in (*FLAT, "loan_purchase_portion", "loan_rehab_portion"):
         assert is_defaulted(deal, name), name
     # the sale price and the rent have no default and stay
@@ -393,10 +387,10 @@ def test_reset_all_restores_the_config_values_and_runs_again(
     priced = underwrite_result(row)
     assert priced.flip.broker_selling_pct == CONFIG.fees.broker_selling_pct
     assert priced.take_back.lost_interest_months == CONFIG.take_back.lost_interest_months
-    assert priced.analyses.flip_analysis is True  # the default, now that the toggle is back
+    assert priced.analyses is None  # there are no toggles to report (engine 2.0.0)
     # the page says every one is the default again
     section = panel(client, deal)
-    for name in (*FLAT, "loan_purchase_portion", "loan_rehab_portion", "flip_analysis"):
+    for name in (*FLAT, "loan_purchase_portion", "loan_rehab_portion"):
         assert tag(section, name) == "shown", name
 
 
@@ -459,7 +453,6 @@ def test_the_reset_row_names_what_went_back_and_the_default_it_landed_on(
             estimated_sale_price_team=D("200000.00"),
             monthly_rent=D("1800.00"),
             take_back_legal_costs_usd=D("7500.00"),
-            rental_analysis=False,
         ),
         actor=ACTOR,
     )
@@ -473,10 +466,9 @@ def test_the_reset_row_names_what_went_back_and_the_default_it_landed_on(
     (reset,) = audit(db_session, deal_with_overrides, AuditAction.ASSUMPTIONS_RESET)
     assert reset.actor == USER_EMAIL
     assert reset.after is not None and reset.before is not None
-    assert set(reset.after) == {"interest_rate", "take_back_legal_costs_usd", "rental_analysis"}
+    assert set(reset.after) == {"interest_rate", "take_back_legal_costs_usd"}
     assert Decimal(reset.before["take_back_legal_costs_usd"]) == D("7500")
     assert Decimal(reset.after["take_back_legal_costs_usd"]) == CONFIG.take_back.legal_costs_usd
-    assert reset.before["rental_analysis"] is False and reset.after["rental_analysis"] is None
     assert "estimated_sale_price_team" not in reset.after
     assert "monthly_rent" not in reset.after
 

@@ -146,7 +146,7 @@ from services import (
     version_results,
     version_rows,
 )
-from services.actions import RESETTABLE, TOGGLE_FIELDS
+from services.actions import RESETTABLE
 from services.autorun import AutoRun
 from services.readiness import deal_term
 
@@ -207,8 +207,6 @@ ASSUMPTION_NAMES: tuple[str, ...] = (
     "rental_takeout_rate",
     "take_back_legal_costs_usd",
     "take_back_lost_interest_months",
-    "flip_analysis",
-    "rental_analysis",
 )
 # The court search section's own boxes (SPEC §7.2); the matter rows are read separately.
 COURT_NAMES: tuple[str, ...] = ("court_records_status", "court_records_as_of")
@@ -218,8 +216,7 @@ COURT_NAMES: tuple[str, ...] = ("court_records_status", "court_records_as_of")
 ASSUMPTION_BOX_NAMES: frozenset[str] = frozenset(ASSUMPTION_NAMES)
 COURT_BOX_NAMES: frozenset[str] = frozenset(COURT_NAMES)
 
-# What the reset confirmation page lists, by the caption the panel uses. The split's two
-# captions depend on the product and are filled in by ``reset_rows``.
+# What the reset confirmation page lists, by the caption the panel uses.
 RESET_LABELS: tuple[tuple[str, str], ...] = (
     ("interest_rate", "Interest Rate"),
     ("origination_fee_pct", "Origination Fee"),
@@ -233,13 +230,7 @@ RESET_LABELS: tuple[tuple[str, str], ...] = (
     ("rental_takeout_rate", "Rental Takeout Rate"),
     ("take_back_legal_costs_usd", "Take-Back Legal Costs"),
     ("take_back_lost_interest_months", "Take-Back Lost Interest Months"),
-    ("flip_analysis", "Flip Analysis"),
-    ("rental_analysis", "Rental Analysis"),
 )
-SPLIT_PRINCIPAL_LABELS: dict[str, str] = {
-    "loan_purchase_portion": "Principal Note",
-    "loan_rehab_portion": "Tranche A",
-}
 
 
 def assumptions_form(deal: Deal) -> dict[str, str]:
@@ -247,7 +238,7 @@ def assumptions_form(deal: Deal) -> dict[str, str]:
 
     Masked on the way out (``api/masks.py``): a rate shows as ``12%`` and a price as
     ``$425,000``. Every box with a default - the ten config values, the loan split on a
-    split product - is pre-filled with it where the deal carries none, and the page tags
+    holdback - is pre-filled with it where the deal carries none, and the page tags
     it: a box holding the default and a box holding a number somebody chose look different
     on purpose.
     """
@@ -263,34 +254,16 @@ def court_form(deal: Deal) -> dict[str, str]:
     return {name: mask_one(name, getattr(deal, name)) for name in COURT_NAMES}
 
 
-def _toggle_word(value: bool | None) -> str:
-    return "Default" if value is None else ("On" if value else "Off")
-
-
 def reset_rows(deal: Deal) -> list[dict[str, Any]]:
     """What Reset all to defaults would do, one row per box: the value now and the default.
 
     The split rows appear only where the deal carries a formula split to go back to - a
-    split product with its loan amount and rehab known - under the names the product gives
-    them (SPEC §8.2). A toggle's default is Default itself.
+    holdback with its loan amount and rehab known (SPEC §8.2).
     """
     defaults = default_marks(deal)
     rows: list[dict[str, Any]] = []
     for name, label in RESET_LABELS:
         if name not in RESETTABLE:  # pragma: no cover - the two lists are kept in step
-            continue
-        if deal.product is Product.SPLIT_PRINCIPAL:
-            label = SPLIT_PRINCIPAL_LABELS.get(name, label)
-        if name in TOGGLE_FIELDS:
-            chosen = getattr(deal, name)
-            rows.append(
-                {
-                    "label": label,
-                    "current": _toggle_word(chosen),
-                    "default": "Default",
-                    "changes": chosen is not None,
-                }
-            )
             continue
         if name not in defaults:
             continue

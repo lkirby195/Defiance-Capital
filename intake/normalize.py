@@ -133,13 +133,13 @@ def infer_term_months(bucket: TermBucket | None, entered: int | None) -> int | N
 
 
 def infer_product(rehab_costs: Decimal | None) -> Product | None:
-    """NO_DRAW when there are no rehab costs, else SPLIT_DRAW; None until they are known.
+    """100% at close with no rehab costs, else a holdback; None until they are known.
 
-    WHOLETAIL and SPLIT_PRINCIPAL are never inferred; the team sets them.  # SPEC §3
+    # SPEC §3: ACQUISITION when ``rehab_costs`` is 0, ACQUISITION_REHAB when it is more.
     """
     if rehab_costs is None:
         return None
-    return Product.NO_DRAW if rehab_costs == 0 else Product.SPLIT_DRAW
+    return Product.ACQUISITION if rehab_costs == 0 else Product.ACQUISITION_REHAB
 
 
 def missing_fields(borrower: BorrowerInfo, prop: PropertyInfo, deal: DealInfo) -> list[str]:

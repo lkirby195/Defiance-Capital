@@ -404,7 +404,8 @@ def test_a_full_submission_lands_in_the_queue_as_a_web_deal(
     assert deal.estimated_sale_price_team is None and deal.monthly_rent is None
     assert str(deal.closing_date) == "2026-11-15"
     # no loan-type selector: the normalizer inferred one, as on every channel
-    assert deal.product is Product.SPLIT_DRAW and deal.product_source is ProductSource.INFERRED
+    assert deal.product is Product.ACQUISITION_REHAB
+    assert deal.product_source is ProductSource.INFERRED
     # the §8.1 economics the form does not ask were populated as defaults, and say so
     assert deal.interest_rate == Decimal("0.125")
     assert (deal.loan_purchase_portion, deal.loan_rehab_portion) == (
@@ -769,7 +770,8 @@ def test_a_go_deal_sees_its_indicative_terms_and_nothing_else(
     assert table.index(DISCLAIMER_EN) < table.index("<table>")
     assert table.index("</table>") < table.index("For business-purpose loans only.")
     # one row per pricing step, labelled, with the amount, the rate, the profit and the yield
-    assert ["Requested", "-5%", "-10%"] == re.findall(r'<th scope="row">([^<]+)</th>', table)
+    # most equity first (SPEC §8.10, v0.17): the request is the last row the borrower reads
+    assert ["-10%", "-5%", "Requested"] == re.findall(r'<th scope="row">([^<]+)</th>', table)
     for cell in ("Loan amount", "Rate", "Estimated profit", "Yield (cash-on-cash)"):
         assert f">{cell}</th>" in table
     for row in pricing.rows:
@@ -835,15 +837,15 @@ def test_a_declined_deal_gets_the_plain_thank_you(
 def test_rows_above_the_max_quoted_rate_are_left_out(
     anon_client: QueueClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A draw deal prices each row at its own rate, the request's the highest; a maximum set
-    at the middle row's rate drops the request row from the table, and a maximum below every
-    row leaves the plain thank-you."""
+    """A draw deal prices each row at its own rate, the request's the highest (the last row,
+    most equity first); a maximum set at the middle row's rate drops the request row from the
+    table, and a maximum below every row leaves the plain thank-you."""
     thanks_link(post(anon_client))
     (first,) = deals(db_session)
     _, pricing = arrival(db_session, first)
     assert pricing is not None
     rates = [row.interest_rate for row in pricing.rows]
-    assert len(set(rates)) == 3 and rates[0] == max(rate for rate in rates if rate is not None)
+    assert len(set(rates)) == 3 and rates[-1] == max(rate for rate in rates if rate is not None)
 
     middle = sorted(rate for rate in rates if rate is not None)[1]
     capped(monkeypatch, str(middle))
@@ -857,7 +859,7 @@ def test_rows_above_the_max_quoted_rate_are_left_out(
     table = terms_table(anon_client.get(link).text)
     assert table is not None
     assert "Requested" not in table and dollars(left_out[0].loan_amount) not in table
-    assert re.findall(r'<th scope="row">([^<]+)</th>', table) == ["-5%", "-10%"]
+    assert re.findall(r'<th scope="row">([^<]+)</th>', table) == ["-10%", "-5%"]
     for row in kept:
         assert dollars(row.loan_amount) in table and quoted(row.interest_rate) in table
 
@@ -907,7 +909,7 @@ def test_what_was_shown_is_recorded_on_the_deal_once_and_the_team_sees_it(
     record = deal.indicative_terms_shown
     assert record is not None
     assert record["language"] == "es" and record["with_profit"] is True
-    assert [row["label"] for row in record["rows"]] == ["Requested", "-5%", "-10%"]
+    assert [row["label"] for row in record["rows"]] == ["-10%", "-5%", "Requested"]
     for shown, row in zip(record["rows"], pricing.rows, strict=True):
         assert Decimal(shown["loan_amount"]) == row.loan_amount
         assert Decimal(shown["interest_rate"]) == row.interest_rate
@@ -942,7 +944,7 @@ def test_what_was_shown_is_recorded_on_the_deal_once_and_the_team_sees_it(
     assert "Shown to borrower" in shown_block
     assert "<dt>Language</dt><dd>Spanish</dd>" in shown_block
     assert "Nothing shown to the borrower." not in shown_block
-    assert re.findall(r'<th scope="row">([^<]+)</th>', shown_block) == ["Requested", "-5%", "-10%"]
+    assert re.findall(r'<th scope="row">([^<]+)</th>', shown_block) == ["-10%", "-5%", "Requested"]
     for row in pricing.rows:
         assert dollars(row.loan_amount) in shown_block
         assert quoted(row.interest_rate) in shown_block
@@ -971,7 +973,7 @@ def test_the_table_reads_in_spanish(anon_client: QueueClient, db_session: Sessio
         "Rendimiento (efectivo sobre efectivo)",
     ):
         assert f">{cell}</th>" in table
-    assert re.findall(r'<th scope="row">([^<]+)</th>', table) == ["Solicitado", "-5%", "-10%"]
+    assert re.findall(r'<th scope="row">([^<]+)</th>', table) == ["-10%", "-5%", "Solicitado"]
     assert "Requested" not in table and DISCLAIMER_EN not in table
     assert f'href="{link.split("?")[0]}?lang=en"' in body
 

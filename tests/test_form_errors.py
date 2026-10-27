@@ -263,24 +263,24 @@ def test_edit_intake_takes_a_term_in_months_and_the_payoff_date_derives(
 
 
 @pytest.fixture
-def unpriceable_deal(db_session: Session, team_entry: dict[str, Any]) -> Deal:
-    """A SPLIT_PRINCIPAL whose whole loan is a rehab tranche against no rehab budget.
+def unpriceable_deal(
+    db_session: Session, team_entry: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> Deal:
+    """A deal whose values are all present and which the engine still refuses.
 
-    The split adds up and every column is filled in, so nothing refuses it before the engine:
-    the rehab portion is capped at a contingency-adjusted rehab cost of zero (SPEC §8.2), so
-    the commitment is zero and every §8 figure divides by it.
+    Before engine 2.0.0 a SPLIT_PRINCIPAL whose whole loan was a Tranche A against no rehab
+    budget sized to a zero commitment. Both structures now lend the request in full, so no
+    stored deal reaches the engine's refusal; the engine is made to give it here, so the
+    route's answer to one - a page, not a 500 - is still held to.
     """
-    return store_deal(
-        db_session,
-        {
-            **team_entry,
-            "product": "SPLIT_PRINCIPAL",
-            "rehab_costs": "0.00",
-            "loan_requested": "100000.00",
-            "loan_purchase_portion": "0.00",
-            "loan_rehab_portion": "100000.00",
-        },
-    )
+
+    def refuse(*_: object, **__: object) -> object:
+        raise ValueError(
+            "a deal with no commitment cannot be priced: every §8 figure divides by it"
+        )
+
+    monkeypatch.setattr("services.runner.underwrite", refuse)
+    return store_deal(db_session, team_entry)
 
 
 def test_a_deal_the_engine_cannot_price_says_so_on_the_page(

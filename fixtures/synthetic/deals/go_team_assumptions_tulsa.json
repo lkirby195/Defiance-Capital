@@ -1,6 +1,6 @@
 {
   "name": "go_team_assumptions_tulsa",
-  "description": "The Tulsa WHOLETAIL (go_team_overrides_tulsa) after the team has typed over all five analysis assumptions on the Underwriting Assumptions panel: broker selling 5% (config 4%), rental expenses 40% of rent (config 35%), a 7% takeout rate (config 6.5%), $7,500 of take-back legal costs (config $5,000) and 4 months of lost interest (config 3). The ledger and its 18.263% IRR do not read any of them and stand exactly as in the Tulsa fixture; the flip nets $20,700 instead of $22,700, the rental DSCR falls to 0.71x on a $798.36 takeout payment against $563.33 of net income, and the take-back costs $132,700 with a 0.38x DSCR. Every number computed by hand from SPEC 8.4-8.6 before the engine ran on it.",
+  "description": "The Tulsa deal at 100% at close (go_team_overrides_tulsa) after the team has typed over all five analysis assumptions on the Underwriting Assumptions panel: broker selling 5% (config 6%), rental expenses 40% of rent (config 35%), a 7% takeout rate (config 6.5%), $7,500 of take-back legal costs (config $5,000) and 4 months of lost interest (config 3). The ledger and its 18.263% IRR do not read any of them and stand exactly as in the Tulsa fixture; the flip nets $20,700 instead of $18,700, the rental DSCR falls to 0.71x on a $798.36 takeout payment against $563.33 of net income, and the take-back costs $132,700 with a 0.38x DSCR. Every number computed by an independent script from SPEC 8.4-8.6 before the engine ran on it.",
   "team_entry": {
     "borrower_name": "Dana Whitlock",
     "borrower_phone": "918-555-0147",
@@ -10,7 +10,7 @@
     "experience_bucket": "6_PLUS",
     "repeat_borrower": false,
     "loan_purpose": "PURCHASE",
-    "product": "WHOLETAIL",
+    "product": "ACQUISITION",
     "closing_date": "2027-02-01",
     "address": "1412 S Trenton Ave, Tulsa, OK 74120",
     "city": "Tulsa",
@@ -118,10 +118,15 @@
       },
       "flip": {
         "status": "EVALUATED",
-        "broker_costs": "10000.00",
         "total_costs": "169300.00",
+        "interest": "7800.00",
+        "origination": "2400.00",
+        "borrower_equity": "49300.00",
+        "broker_costs": "10000.00",
         "net_profit": "20700.00",
-        "profit_yield": "0.122268"
+        "project_yield": "0.122268",
+        "cash_on_cash": "0.419878",
+        "cash_on_cash_passed": true
       },
       "rental": {
         "status": "EVALUATED",
@@ -156,7 +161,21 @@
       ],
       "term_months": 6,
       "term_stub_days": 0,
-      "term_months_decimal": "6.000000"
+      "term_months_decimal": "6.000000",
+      "sources_and_uses": {
+        "advance_at_closing": "120000.00",
+        "rehab_holdback": "0.00",
+        "borrower_equity": "49300.00",
+        "total_sources": "169300.00",
+        "purchase_price": "150000.00",
+        "closing_costs": "1000.00",
+        "rehab_costs": "5000.00",
+        "contingency": "0.00",
+        "holding_costs": "3100.00",
+        "interest": "7800.00",
+        "origination": "2400.00",
+        "total_uses": "169300.00"
+      }
     }
   }
 }

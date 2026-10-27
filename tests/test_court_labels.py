@@ -5,7 +5,7 @@ config severity is keyed on, and what a later reader greps for. It is not a thin
 picked off a form. Everywhere the court block is *read* - the outcome select, the matter
 table's code and lien-kind columns, the severity on a flag, the readiness checklist's row -
 it goes through ``schema/labels.py`` and comes out title case with spaces, exactly as
-``SPLIT_DRAW`` comes out "Split Draw" under the Loan Type box.
+``CASH_OUT`` comes out "Cash Out" under the Loan Purpose box.
 
 The stored value is untouched by any of it. Every ``<option>`` below still posts its code, and
 every flag tag is still styled by the code in its class - only the words a person reads change.

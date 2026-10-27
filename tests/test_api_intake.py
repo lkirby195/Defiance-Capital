@@ -137,17 +137,17 @@ def test_product_inference_and_source_are_stored(client: TestClient, db_session:
     payload = json.loads(FIXTURE.read_text(encoding="utf-8"))  # rehab 42,000 -> SPLIT_DRAW
     inferred = client.post("/intake/team", json=payload)
     assert inferred.status_code == 201, inferred.text
-    assert inferred.json()["deal"]["product"] == "SPLIT_DRAW"
+    assert inferred.json()["deal"]["product"] == "ACQUISITION_REHAB"
     assert inferred.json()["deal"]["product_source"] == "INFERRED"
     deal = db_session.get(Deal, inferred.json()["id"])
     assert deal is not None
-    assert deal.product is Product.SPLIT_DRAW
+    assert deal.product is Product.ACQUISITION_REHAB
     assert deal.product_source is ProductSource.INFERRED
 
     # WHOLETAIL is one advance, so the fixture's split comes off with the product (SPEC §8.2)
     wholetail = {
         **payload,
-        "product": "WHOLETAIL",
+        "product": "ACQUISITION",
         "loan_purchase_portion": None,
         "loan_rehab_portion": None,
     }
@@ -155,13 +155,18 @@ def test_product_inference_and_source_are_stored(client: TestClient, db_session:
     assert entered.status_code == 201, entered.text
     deal = db_session.get(Deal, entered.json()["id"])
     assert deal is not None
-    assert deal.product is Product.WHOLETAIL
+    assert deal.product is Product.ACQUISITION
     assert deal.product_source is ProductSource.ENTERED
 
 
 def test_product_without_source_is_rejected_by_the_database(db_session: Session) -> None:
     db_session.add(
-        Deal(channel=Channel.TEAM, status=Status.NEW, product=Product.NO_DRAW, missing_fields=[])
+        Deal(
+            channel=Channel.TEAM,
+            status=Status.NEW,
+            product=Product.ACQUISITION,
+            missing_fields=[],
+        )
     )
     with pytest.raises(IntegrityError, match="ck_deals_product_and_source_together"):
         db_session.flush()

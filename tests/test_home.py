@@ -577,11 +577,11 @@ def test_the_home_page_lists_every_section_and_the_row_columns(
         assert title in body
     assert body.index("Borrower Submissions") < body.index("DCF New Deals")
     assert body.index("DCF New Deals") < body.index("On Pause") < body.index("Dead")
-    for column in ("Borrower", "Address", "Loan type", "Verdict", "Source", "Last activity"):
+    for column in ("Borrower", "Address", "Loan structure", "Verdict", "Source", "Last activity"):
         assert f"<th>{column}</th>" in body, column
     assert '<th class="num">Loan amount</th>' in body and '<th class="num">IRR</th>' in body
     assert str(deal_with_overrides.id) in body
-    assert ">Go<" in body and "Wholetail" in body and "Team" in body
+    assert ">Go<" in body and "100% at close" in body and "Team" in body
     for control in ("Progress", "Pause", "Kill"):
         assert f">{control}</button>" in body or f">{control}</a>" in body, control
     assert "Review queue" not in body and "pinned" not in body.lower()
@@ -677,9 +677,11 @@ def test_the_deal_page_renders_a_screen_and_an_underwrite(
     assert body.index("<h2>Borrower Sensitivity") < body.index("<h2>Flip Analysis")
     assert body.index("<h2>Flip Analysis") < body.index("<h2>Rental Analysis")
     assert body.index("<h2>Rental Analysis") < body.index("<h2>Take-Back Analysis")
-    assert body.index("<h2>Take-Back Analysis") < body.index("<h2>Return Overview")
+    assert body.index("<h2>Take-Back Analysis") < body.index("<h2>Sources &amp; Uses")
+    assert body.index("<h2>Sources &amp; Uses") < body.index("<h2>Return Overview")
     assert "Future Draws" in body
-    assert "Yield (Profit / Costs)" in body
+    assert "Project yield" in body and "Total deal cost" in body
+    assert "Yield (Profit / Costs)" not in body
     assert "DSCR at loan cost" in body
     assert AuditAction.UNDERWRITE_RUN.value in body
     # the payoff date is the month end, derived and read-only (SPEC §8.1)

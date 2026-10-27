@@ -37,8 +37,9 @@ glenwood-uw/
     sizing.py              # LTC / LTV, product-specific commitment split
     screen.py              # score components + verdict + reasons
     calc/                  # the v0.3 ledger model: terms.py, ledger.py, irr.py,
-                           #   flip.py, rental.py, analyses.py, sensitivity.py (the lender's),
-                           #   borrower.py (the Borrower Sensitivity), pricing.py (the matrix)
+                           #   flip.py, rental.py, sensitivity.py (the lender's),
+                           #   borrower.py (the Borrower Sensitivity), pricing.py (the matrix),
+                           #   sources_uses.py (Sources & Uses)
     version.py             # ENGINE_VERSION string, bump on any math change
   adapters/
     base.py                # Adapter Protocol + AdapterResult
@@ -128,7 +129,7 @@ input goes in one place and both readers pick it up.
 **A missing input is not a failing one.** Where an input has a defensible stand-in, the deal
 is populated with it at intake and the source recorded as `DEFAULT` (`services/defaults.py`:
 the rate, the four fees, the five analysis assumptions, the closing date - the month end
-`closing.default_lead_days` after the deal came in - and the loan split on a split product).
+`closing.default_lead_days` after the deal came in - and the loan split on a holdback).
 The value is stored, so the
 engine runs on what the page shows; `deals.defaulted_fields` is what says it was nobody's
 choice, and a value equal to the default is the default. Where there is no stand-in - the
@@ -149,7 +150,7 @@ hand-entered numbers are the **Underwriting Assumptions** panel, open, under the
 above the read-only intake summary: two columns of boxes - the §8.1 economics with their
 config defaults, the loan split, the valuation, the rent, the five §8.4-§8.6 analysis assumptions (which carry their
 own `deals` columns since migration `0017`, config value as default, engine reads the deal's
-when present) and the two toggles - each tagged "default" while it holds its default and
+when present) - each tagged "default" while it holds its default and
 resettable one at a time, with one **Save & Run** at the bottom and a **Reset all to
 defaults** beside it that goes through a confirmation page. The court search is its own
 collapsed section with its own Save; the versions (History) are collapsed too, a plain
@@ -163,10 +164,22 @@ card; the version facts (when, who, engine) are in the History. The Underwriting
 panel is the one list of what the ledger runs on - there is no separate checklist section;
 the banner names what is missing while the ledger is off. The team form prints nothing but
 labels and boxes, each marked Required or Optional in plain text, and asks only for the
-Overview, the Property Overview and seven Deal Economics boxes, plus, on New Deal only, an
-optional Version name for the arrival version; everything with a default populates from config
-and is edited on the deal page, and Edit Intake writes only the columns the form has a box for
-(`db/repository.form_columns`).
+Overview, the Property Overview and the Deal Economics - the loan structure among them as a
+radio, "100% at close" / "Holdback", whose Holdback reveals a Rehab portion box by a
+stylesheet rule - plus, on New Deal only, an optional Version name for the arrival version;
+everything with a default populates from config and is edited on the deal page, and Edit
+Intake writes only the columns the form has a box for (`db/repository.form_columns`, the loan
+split among them).
+
+**Two loan structures, three analyses, no toggles** (SPEC §3, §8, engine `2.0.0`). `Product`
+is `ACQUISITION` ("100% at close") or `ACQUISITION_REHAB` ("Holdback"), both on the full
+commitment from close; the four products before them are gone, and a stored row naming one
+reads as the structure it became (`schema.models.LEGACY_PRODUCTS`) - never write a retired
+code, and never key the caps grid by one (the loader refuses it). The Flip, Rental and
+Take-Back analyses all run on every deal; a missing input is `NOT_EVALUATED`, never `OFF`.
+The Flip prints its profit and cost stack line by line with the borrower's equity,
+cash-on-cash and project yield; Sources & Uses balances to the cent by construction, and a
+test holds every fixture to it.
 
 **Every analysis run is a version, and one version is Working.** `services/autorun.py`
 records each run that wrote anything as a `versions` row (`services/versions.py`, SPEC §5):
@@ -210,11 +223,11 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
 - **A code the model stores is never a label a person reads.** `Tranche` and
   `ExperienceBucket` are grid coordinates and stored values; `Product` and `LoanPurpose`
   are SCREAMING_SNAKE for the same reason. `schema/labels.py`
-  turns each into the words somebody actually picked - the FICO range, the deal count, "Split
-  Draw" - and every rendered page and flag message goes through it. The credit labels are
+  turns each into the words somebody actually picked - the FICO range, the deal count,
+  "Holdback" - and every rendered page and flag message goes through it. The credit labels are
   derived from the config cutoffs, so moving a cutoff moves the label. The one exception is
-  the caps cell (`SPLIT_DRAW/T3/E2`), which is a config grid coordinate a person looks up
-  rather than a label they read.
+  the caps cell (`ACQUISITION_REHAB/T3/E2`), which is a config grid coordinate a person looks
+  up rather than a label they read.
 - **A number the model stores is not the text a person types.** `schema/masks.py` and
   `api/masks.py` are the two halves: money is typed and shown `$425,000`, a percent `12%`
   (the deal carries `0.12`), a phone `555-123-4567` (the deal carries the digits). The
@@ -225,11 +238,13 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
   Server-rendered Jinja, plain form posts, POST-redirect-GET. The one exception is a
   convenience and not load-bearing: the masks in `base.html` that format a price, a percent
   and a phone as they are typed and toggle the "default" tag on the §8.1 inputs that have
-  one, the two analysis toggles included. The server parses `$425,000`, `425000`, `12%` and
+  one. The server parses `$425,000`, `425000`, `12%` and
   `12` alike, and renders the tag hidden or shown itself, so a browser that runs none of it
   still posts a deal that saves and still reads the right tag. The collapsed sections on
   the deal page are the browser's own `<details>`, and Reset all to defaults confirms on a
-  page of its own, as Kill does. Nothing client-side validates, fetches or decides. If a page
+  page of its own, as Kill does. The team form's Holdback radio reveals its Rehab portion box
+  by a stylesheet rule on the checked radio (`:has()`, shown always where it is unsupported),
+  not by script. Nothing client-side validates, fetches or decides. If a page
   seems to need script for anything else, it needs a different page. The public borrower form (`/apply`,
   SPEC §4.2) adds one more on the same terms: a few lines that keep the submit button off
   until every required box is filled and lift `required` off the address boxes while the
@@ -255,8 +270,9 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
 - The queue is one inline stylesheet, `api/templates/_style.html`: a system font stack, 15px on
   a 1.5 line, one accent for actions and neutral grays for the rest on white, cards with a 1px
   border and a title row, verdicts and severities as chips. The deal page puts the outputs
-  first - the header chips, Pricing, the two sensitivities, the three analyses, the Return
-  Overview - and the inputs below; the CLI report and the workbook keep the SPEC §9 order.
+  first - the header chips, Pricing, the two sensitivities, the three analyses, Sources &
+  Uses, the Return Overview - and the inputs below; the CLI report and the workbook keep the
+  SPEC §9 order.
 - Docstrings state the formula or the source of a rule and reference the SPEC section (e.g., `# SPEC §8.4`).
 - Every flag has a stable `code`, a `severity`, and a human message that names the threshold tested.
 - Commit messages: `area: what changed` (`engine: add S-curve avg outstanding`, `adapters: forecasa lien parser`).
@@ -283,8 +299,8 @@ uv run glenwood users list
 uv run glenwood deals purge --all --confirm
 
 # run the engine on a fixture deal, no database:
-uv run glenwood run fixtures/synthetic/deals/go_split_draw_denver.json --underwrite
-uv run glenwood export fixtures/synthetic/deals/go_split_draw_denver.json denver.xlsx
+uv run glenwood run fixtures/synthetic/deals/go_holdback_denver.json --underwrite
+uv run glenwood export fixtures/synthetic/deals/go_holdback_denver.json denver.xlsx
 
 # a stored deal's version, rebuilt off its rows (the Working one unless --version says):
 uv run glenwood deals run <deal-id> --version 3

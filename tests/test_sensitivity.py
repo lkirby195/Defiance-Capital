@@ -45,7 +45,7 @@ from tests.test_excel_export import xirr_by_secant
 CONFIG = Config.load()
 D = Decimal
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures/synthetic/deals"
-DENVER = FIXTURE_DIR / "go_split_draw_denver.json"
+DENVER = FIXTURE_DIR / "go_holdback_denver.json"
 
 
 def denver_inputs(**changes: Any) -> UnderwriteInputs:
@@ -174,9 +174,9 @@ def test_a_reduction_comes_off_the_advance_first_then_the_rehab_portion() -> Non
     assert reduced_split(D(15000), D(30000), D(15000)) == (D(0), D(30000))
 
 
-def test_a_single_note_product_simply_lends_less() -> None:
+def test_100_pct_at_close_simply_lends_less() -> None:
     deal = SizingInputs(
-        product=Product.NO_DRAW,
+        product=Product.ACQUISITION,
         purchase_price=D(100000),
         rehab_costs=D(0),
         loan_requested=D(70000),
@@ -190,7 +190,7 @@ def test_a_single_note_product_simply_lends_less() -> None:
 def test_a_row_that_would_leave_no_loan_is_left_out() -> None:
     inputs = denver_inputs(
         deal={
-            "product": "NO_DRAW",
+            "product": "ACQUISITION",
             "purchase_price": "100000.00",
             "rehab_costs": "0.00",
             "loan_requested": "15000.00",
@@ -212,7 +212,7 @@ def anchor(closing: date, months: int) -> date:
     return month_end(closing.year + total // 12, total % 12 + 1)
 
 
-def split_draw_flows(
+def holdback_flows(
     *,
     advance: Decimal,
     rehab: Decimal,
@@ -221,7 +221,7 @@ def split_draw_flows(
     closing: date,
     term: int,
 ) -> list[tuple[date, float]]:
-    """A SPLIT_DRAW ledger written out as SPEC §8.3 states it, in plain floats.
+    """A holdback ledger written out as SPEC §8.3 states it, in plain floats.
 
     Interest on the full commitment every month; the rehab portion drawn straight-line over
     ``term - listing_months``; the origination fee half at close and half at payoff; the
@@ -252,7 +252,7 @@ def test_every_denver_cell_matches_the_independent_ledger() -> None:
         for cell in row.cells:
             assert cell.irr is not None
             expected = xirr_by_secant(
-                split_draw_flows(
+                holdback_flows(
                     advance=D(147000) - row.reduction,
                     rehab=D(48000),
                     commitment=D(195000) - row.reduction,
@@ -268,7 +268,7 @@ def test_a_small_advance_runs_out_and_the_rehab_gives_matching_the_independent_l
     """$15,000 at close, $30,000 of rehab: the -$20,000 row advances nothing and holds $25,000."""
     inputs = UnderwriteInputs(
         deal=SizingInputs(
-            product=Product.SPLIT_DRAW,
+            product=Product.ACQUISITION_REHAB,
             purchase_price=D(100000),
             rehab_costs=D(30000),
             loan_requested=D(45000),
@@ -300,7 +300,7 @@ def test_a_small_advance_runs_out_and_the_rehab_gives_matching_the_independent_l
         for cell in row.cells:
             assert cell.irr is not None
             expected = xirr_by_secant(
-                split_draw_flows(
+                holdback_flows(
                     advance=row.loan_purchase_portion,
                     rehab=row.loan_rehab_portion,
                     commitment=row.loan_amount,

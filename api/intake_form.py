@@ -6,12 +6,17 @@ the same form filled in from the deal, and ``POST`` of either decides whether wh
 is complete.
 
 **The form is labels and boxes**, three groups (SPEC §8.1): the Overview, the Property
-Overview, and seven Deal Economics boxes - Purchase Price, Rehab Costs, Loan Amount, Loan
-Purpose, Loan Type, Closing Date, Term (months), in that order. Nothing else is on it. The
-§8.1 economics with a config default and the loan split populate from the defaults when the
-deal is stored (``services/defaults.py``); the valuation, the rent, the analysis toggles and
-the court search are the deal page's. All of it is edited there, and Edit Intake leaves all
-of it alone (``db/repository.form_columns``).
+Overview, and the Deal Economics - Purchase Price, Rehab Costs, Loan Amount, the loan
+structure as a radio ("100% at close" / "Holdback"), Loan Purpose, Closing Date, Term
+(months), in that order. Holdback reveals one more box, **Rehab portion**: the amount held
+back, the advance at closing being the rest of the loan (``with_advance``). The reveal is a
+stylesheet rule on the checked radio, not script; the box is always in the page, and the
+server ignores it unless the deal is a holdback. Left blank, the rehab portion is the §8.2
+default - the rehab budget times one plus the contingency, capped at the loan amount - which
+``services/defaults.py`` writes when the deal is stored. Left unpicked, the structure is
+inferred from the rehab costs, as on every channel. The §8.1 economics with a config default
+populate from the defaults; the valuation, the rent and the court search are the deal
+page's, and Edit Intake leaves them alone (``db/repository.form_columns``).
 
 **Required is what an engine run cannot proceed without**, and nothing else. That is the
 SPEC §4.1 minimum viable intake, less the credit range, plus the one SPEC §8.1 input the
@@ -61,8 +66,15 @@ from db.models import Deal
 from intake.normalize import normalize
 from intake.parsers.team_form import TeamEntryForm, parse_team_form
 from schema.masks import money_parse
-from schema.models import Channel, IntakeRecord, ProductSource, StateSource
-from services.defaults import defaults_for
+from schema.models import (
+    SPLIT_PRODUCTS,
+    Channel,
+    IntakeRecord,
+    Product,
+    ProductSource,
+    StateSource,
+)
+from services.defaults import defaults_for, is_defaulted
 
 # Every name the form renders, grouped as SPEC §8.1 groups them and in the order the page
 # asks, so a blank the browser dropped is still a blank box.
@@ -92,8 +104,9 @@ TEAM_ENTRY_FIELDS: tuple[str, ...] = (
     "purchase_price",
     "rehab_costs",
     "loan_requested",
-    "loan_purpose",
     "product",
+    "loan_rehab_portion",
+    "loan_purpose",
     "closing_date",
     "term_months",
 )
@@ -231,11 +244,14 @@ def submitted_holding_costs_hint(
 def intake_form_values(deal: Deal) -> dict[str, str]:
     """The deal as the flat form that produced it, ready to be edited and posted back.
 
-    Two fields are deliberately blank when the deal never carried an answer of its own.
+    Three fields are deliberately blank when the deal never carried an answer of its own.
     ``state`` and ``product`` are both stored with a source column, and both are inferred
     from something else when nobody chose (SPEC §3, §4.5); rendering the inferred value into
     the box would have the next save record it as a person's choice. A blank re-derives in
-    either case, which is what the deal currently says.
+    either case, which is what the deal currently says. The Rehab portion is the third: a
+    holdback whose split is still the §8.2 default shows an empty box, so an edit that moves
+    the rehab costs or the loan amount gets the default worked out again rather than the old
+    one kept as if somebody had typed it.
     """
     borrower = deal.borrower
     prop = deal.property
@@ -270,6 +286,11 @@ def intake_form_values(deal: Deal) -> dict[str, str]:
         "loan_requested": deal.loan_requested,
         "loan_purpose": deal.loan_purpose,
         "product": deal.product if deal.product_source is ProductSource.ENTERED else None,
+        "loan_rehab_portion": (
+            deal.loan_rehab_portion
+            if deal.product in SPLIT_PRODUCTS and not is_defaulted(deal, "loan_rehab_portion")
+            else None
+        ),
         "closing_date": deal.closing_date,
         "term_months": deal.term_months,
     }
@@ -284,6 +305,51 @@ def blank_form_values() -> dict[str, str]:
     return dict.fromkeys(TEAM_ENTRY_FIELDS, "")
 
 
+REHAB_PORTION = "loan_rehab_portion"
+ADVANCE = "loan_purchase_portion"
+
+
+def with_advance(values: Mapping[str, str]) -> tuple[dict[str, str], FormProblems]:
+    """The Rehab portion box as the split it stands for, or dropped.  # SPEC §3, §8.2
+
+    On a holdback - the radio's Holdback, or no choice and rehab costs to infer one from -
+    a typed rehab portion is held back and the advance at closing is the rest of the loan,
+    so the post carries both halves the way the deal stores them. A rehab portion above the
+    loan amount leaves nothing to advance and is refused under its box. On 100% at close the
+    box is hidden and whatever it holds is dropped: that loan has no split. A blank box is no
+    split, and the deal gets the §8.2 default when it is stored. The values are unmasked.
+    """
+    out = {key: value for key, value in values.items() if key not in (REHAB_PORTION, ADVANCE)}
+    typed = values.get(REHAB_PORTION, "").strip()
+    if not typed:
+        return out, NO_PROBLEMS
+    chosen = values.get("product", "").strip()
+    rehab_costs = _decimal(values.get("rehab_costs", ""))
+    holdback = chosen == Product.ACQUISITION_REHAB.value or (
+        not chosen and rehab_costs is not None and rehab_costs > 0
+    )
+    if not holdback:
+        return out, NO_PROBLEMS
+    out[REHAB_PORTION] = typed
+    rehab_portion = _decimal(typed)
+    loan = _decimal(values.get("loan_requested", ""))
+    if rehab_portion is None or loan is None:
+        return out, NO_PROBLEMS  # the model names the box that is not a number
+    if rehab_portion > loan:
+        return out, by_field(
+            {REHAB_PORTION: ["Rehab portion cannot be more than the Loan Amount."]}
+        )
+    out[ADVANCE] = str(loan - rehab_portion)
+    return out, NO_PROBLEMS
+
+
+def _decimal(text: str) -> Decimal | None:
+    try:
+        return Decimal(text.strip()) if text.strip() else None
+    except ArithmeticError:
+        return None
+
+
 def read_form(submitted: Mapping[str, str]) -> tuple[TeamEntryForm | None, FormProblems]:
     """The posted form as a model, or the complaints saying why it is not one.
 
@@ -296,7 +362,8 @@ def read_form(submitted: Mapping[str, str]) -> tuple[TeamEntryForm | None, FormP
     (``api/problems.py``).
     """
     missing = missing_required(submitted)
-    values = unmasked(submitted)
+    values, split_problems = with_advance(unmasked(submitted))
+    missing = missing.merge(split_problems)
     try:
         form = TeamEntryForm.model_validate(values)
     except ValidationError as exc:

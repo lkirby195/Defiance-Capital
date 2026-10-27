@@ -152,8 +152,6 @@ class DealView(BaseModel):
     rental_takeout_rate: Decimal | None
     take_back_legal_costs_usd: Decimal | None
     take_back_lost_interest_months: int | None
-    flip_analysis: bool | None
-    rental_analysis: bool | None
     credit_range_self_reported: Tranche | None
     experience_bucket_self_reported: ExperienceBucket | None
     repeat_borrower_self_reported: bool | None
@@ -326,8 +324,6 @@ def deal_view(deal: Deal, session: Session) -> DealView:
         rental_takeout_rate=deal.rental_takeout_rate,
         take_back_legal_costs_usd=deal.take_back_legal_costs_usd,
         take_back_lost_interest_months=deal.take_back_lost_interest_months,
-        flip_analysis=deal.flip_analysis,
-        rental_analysis=deal.rental_analysis,
         credit_range_self_reported=deal.credit_range_self_reported,
         experience_bucket_self_reported=deal.experience_bucket_self_reported,
         repeat_borrower_self_reported=deal.repeat_borrower_self_reported,

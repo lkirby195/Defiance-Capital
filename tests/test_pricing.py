@@ -2,8 +2,8 @@
 
 Two fixtures carry the weight, each against a solve done here with no code shared with
 ``engine/calc``. The ledgers are the ones the sensitivity tests already write out by hand -
-Wichita's NO_DRAW note in closed form, Denver's SPLIT_DRAW flows from
-``tests/test_sensitivity.split_draw_flows`` - with their own month ends and their own float
+Wichita's 100%-at-close note in closed form, Denver's holdback flows from
+``tests/test_sensitivity.holdback_flows`` - with their own month ends and their own float
 XIRR. The solve is a different method from the engine's on purpose: a secant root-find on
 the continuous rate at which the IRR equals the target, rounded up to the next 0.01% and
 then nudged a step either way until the rate one step down falls short and the rate itself
@@ -18,6 +18,14 @@ From engine 1.10.0 the rows are percent steps (0, -5%, -10%) rounded to the near
 so Wichita's $150,000 prices as $150,000, $143,000 (142,500 rounded half-up) and $135,000,
 and Denver's $195,000 as $195,000, $185,000 (185,250) and $176,000 (175,500 rounded up); the
 script was re-run on those amounts.
+
+From engine 2.0.0 the rows run most equity first - the smallest loan at the top, the request
+at the bottom - and each carries the borrower's equity at its solved rate (the flip's total
+deal cost less the loan) and, but the request, the equity it adds over the request and the
+line "Adding $X of equity brings the rate to Y%". The standalone script worked the equity out
+on its own: Wichita 94,759 / 88,226.20 / 82,510 (adding 12,249 and 5,716.20), Denver
+102,451.60 / 94,676.50 / 86,051.75 (adding 16,399.85 and 8,624.75). The broker's 6% default
+takes 5,200 off each Wichita profit (2% of the 260,000 sale) and leaves its equity alone.
 """
 
 from __future__ import annotations
@@ -36,6 +44,7 @@ from engine.calc.borrower import BorrowerReturns
 from engine.calc.pricing import (
     RATE_CEILING,
     RATE_PRECISION,
+    derisk_sentence,
     dollars,
     pricing_matrix,
     pricing_sentence,
@@ -47,9 +56,9 @@ from engine.calc.sensitivity import Grid
 from engine.screen import credit_check, experience_check
 from engine.underwrite import underwrite
 from schema.models import AnalysisStatus, PricingMatrix, UnderwriteInputs, UnderwriteResult
-from tests.test_borrower_sensitivity import by_hand, wichita_inputs
+from tests.test_borrower_sensitivity import by_hand, no_price, wichita_inputs
 from tests.test_excel_export import xirr_by_secant
-from tests.test_sensitivity import denver_inputs, split_draw_flows
+from tests.test_sensitivity import denver_inputs, holdback_flows
 
 CONFIG = Config.load()
 D = Decimal
@@ -65,16 +74,15 @@ def config_with(**pricing: Any) -> Config:
 def matrix_for(
     inputs: UnderwriteInputs,
     config: Config = CONFIG,
-    flip_on: bool = True,
     ceiling: Decimal = RATE_CEILING,
 ) -> PricingMatrix:
     credit = credit_check(inputs.borrower, config)
     experience = experience_check(inputs.borrower, config)
-    return pricing_matrix(inputs, credit.tranche, experience.tier, flip_on, config, ceiling=ceiling)
+    return pricing_matrix(inputs, credit.tranche, experience.tier, config, ceiling=ceiling)
 
 
 def wichita_irr_by_hand(rate: Decimal | float) -> float:
-    """XIRR of a $150,000 12-month NO_DRAW note at ``rate`` with a 2% fee split either end."""
+    """XIRR of a $150,000 12-month note, all at close, at ``rate``; a 2% fee either end."""
     dates = []
     for k in range(13):
         year, month = 2027 + (k // 12), k % 12 + 1
@@ -98,7 +106,7 @@ def wichita_irr_by_hand(rate: Decimal | float) -> float:
 def denver_irr_by_hand(rate: float, reduction: Decimal) -> float:
     """Denver's ledger ``reduction`` less, at ``rate``: every reduction comes off the advance."""
     return xirr_by_secant(
-        split_draw_flows(
+        holdback_flows(
             advance=D(147000) - reduction,
             rehab=D(48000),
             commitment=D(195000) - reduction,
@@ -107,6 +115,17 @@ def denver_irr_by_hand(rate: float, reduction: Decimal) -> float:
             term=9,
         )
     )
+
+
+def denver_equity_by_hand(loan: Decimal, rate: Decimal) -> Decimal:
+    """Denver's total deal cost less the loan at one amount and rate (SPEC §8.4).
+
+    200,000 price + 1,500 closing + 48,000 rehab + 3% of 248,000 holding, then nine months
+    of interest on the whole loan and the 2% fee; less the loan.
+    """
+    total = D(200000) + D(1500) + D(48000) + D(248000) * D("0.03")
+    total += loan * rate / 12 * 9 + loan * D("0.02")
+    return total - loan
 
 
 def independent_min_rate(irr_at: Callable[[float], float], target: float) -> Decimal:
@@ -162,35 +181,38 @@ def test_the_request_row_is_never_rounded_and_no_row_is_above_the_request() -> N
 
 def test_each_row_carries_its_share_its_dollar_change_and_its_label() -> None:
     rows = matrix_for(denver_inputs()).rows
-    assert [row.pct_step for row in rows] == [D(0), D("-0.05"), D("-0.10")]
-    assert [row.loan_amount for row in rows] == [D(195000), D(185000), D(176000)]
-    assert [row.step for row in rows] == [D(0), D(-10000), D(-19000)]
-    assert [row.label for row in rows] == ["Requested", "-5%", "-10%"]
-    assert [row.is_request for row in rows] == [True, False, False]
+    assert [row.pct_step for row in rows] == [D("-0.10"), D("-0.05"), D(0)]
+    assert [row.loan_amount for row in rows] == [D(176000), D(185000), D(195000)]
+    assert [row.step for row in rows] == [D(-19000), D(-10000), D(0)]
+    assert [row.label for row in rows] == ["-10%", "-5%", "Requested"]
+    assert [row.is_request for row in rows] == [False, False, True]
 
 
 def test_a_finer_share_is_labelled_with_the_digits_it_needs() -> None:
     rows = matrix_for(wichita_inputs(), config_with(loan_amount_pct_steps=[0, "-0.075"])).rows
-    assert rows[1].label == "-7.5%" and rows[1].loan_amount == D(139000)  # 138,750 half-up
+    assert rows[0].label == "-7.5%" and rows[0].loan_amount == D(139000)  # 138,750 half-up
 
 
 def test_the_rounding_unit_moves_the_rows() -> None:
     rows = matrix_for(denver_inputs(), config_with(loan_amount_rounding=100)).rows
-    assert [row.loan_amount for row in rows] == [D(195000), D(185300), D(175500)]
+    assert [row.loan_amount for row in rows] == [D(175500), D(185300), D(195000)]
     rows = matrix_for(denver_inputs(), config_with(loan_amount_rounding=5000)).rows
-    assert [row.loan_amount for row in rows] == [D(195000), D(185000), D(175000)]
+    assert [row.loan_amount for row in rows] == [D(175000), D(185000), D(195000)]
 
 
 def test_a_1_9_0_row_loads_and_is_labelled_by_its_dollar_step() -> None:
     stored = underwrite(wichita_inputs(), CONFIG).model_dump(mode="json")
     assert stored["pricing"] is not None
-    for row, step in zip(stored["pricing"]["rows"], ("0", "-10000", "-20000"), strict=True):
+    for row, step in zip(stored["pricing"]["rows"], ("-20000", "-10000", "0"), strict=True):
         del row["pct_step"]
+        for key in ("borrower_equity", "equity_added", "derisk"):
+            del row[key]
         row["step"] = step
     older = UnderwriteResult.model_validate(stored)
     assert older.pricing is not None
     assert [row.pct_step for row in older.pricing.rows] == [None, None, None]
-    assert [row.label for row in older.pricing.rows] == ["Requested", "-$10,000", "-$20,000"]
+    assert [row.label for row in older.pricing.rows] == ["-$20,000", "-$10,000", "Requested"]
+    assert {row.derisk for row in older.pricing.rows} == {None}
 
 
 # --- against the independent solve, two fixtures (SPEC §8.10) -------------------------------------
@@ -202,13 +224,14 @@ def test_wichita_against_the_independent_solve() -> None:
     matrix = matrix_for(wichita_inputs())
     assert matrix.target_lender_irr == D("0.20") and matrix.solved
     assert matrix.borrower_status is AnalysisStatus.EVALUATED
-    assert [row.loan_amount for row in matrix.rows] == [D(150000), D(143000), D(135000)]
+    assert [row.loan_amount for row in matrix.rows] == [D(135000), D(143000), D(150000)]
     for row in matrix.rows:
         assert row.interest_rate == expected
         assert row.lender_irr is not None and row.lender_irr >= D("0.20")
         assert abs(float(row.lender_irr) - wichita_irr_by_hand(expected)) < 1e-7
         profit, cash, coc = by_hand(row.loan_amount, expected)
         assert (row.borrower_profit, row.borrower_cash_invested) == (profit, cash)
+        assert row.borrower_equity == cash
         assert row.borrower_cash_on_cash is not None
         assert abs(row.borrower_cash_on_cash - coc) < D("1e-20")
 
@@ -216,14 +239,15 @@ def test_wichita_against_the_independent_solve() -> None:
 def test_denver_against_the_independent_solve() -> None:
     """A draw ledger: each row's flows differ, so each row solves to its own rate."""
     rows = matrix_for(denver_inputs()).rows
-    assert [row.loan_amount for row in rows] == [D(195000), D(185000), D(176000)]
+    assert [row.loan_amount for row in rows] == [D(176000), D(185000), D(195000)]
     for row in rows:
         reduction = -row.step
         expected = independent_min_rate(lambda r, x=reduction: denver_irr_by_hand(r, x), 0.20)
         assert row.interest_rate == expected, row.loan_amount
         assert row.lender_irr is not None
         assert abs(float(row.lender_irr) - denver_irr_by_hand(float(expected), reduction)) < 1e-6
-    assert [row.interest_rate for row in rows] == [D("0.1382"), D("0.1372"), D("0.1363")]
+        assert row.borrower_equity == denver_equity_by_hand(row.loan_amount, expected)
+    assert [row.interest_rate for row in rows] == [D("0.1363"), D("0.1372"), D("0.1382")]
 
 
 def test_the_rate_is_the_minimum_one_step_down_falls_short() -> None:
@@ -238,15 +262,73 @@ def test_the_recorded_values_from_the_independent_script() -> None:
     rows = matrix_for(wichita_inputs()).rows
     assert round(rows[0].lender_irr or 0, 8) == D("0.20001167")
     assert [(r.borrower_profit, r.borrower_cash_invested) for r in rows] == [
-        (D(17090), D(82510)),
-        (D("18373.8"), D("88226.2")),
-        (D(19841), D(94759)),
+        (D(14641), D(94759)),
+        (D("13173.8"), D("88226.2")),
+        (D(11890), D(82510)),
     ]
     assert [r.sentence for r in rows] == [
-        "A $150,000 loan at 16.34% returns $17,090 profit (20.7% cash-on-cash).",
-        "A $143,000 loan at 16.34% returns $18,374 profit (20.8% cash-on-cash).",
-        "A $135,000 loan at 16.34% returns $19,841 profit (20.9% cash-on-cash).",
+        "A $135,000 loan at 16.34% returns $14,641 profit (15.5% cash-on-cash).",
+        "A $143,000 loan at 16.34% returns $13,174 profit (14.9% cash-on-cash).",
+        "A $150,000 loan at 16.34% returns $11,890 profit (14.4% cash-on-cash).",
     ]
+
+
+# --- the borrower's equity and the de-risk line (SPEC §8.10, engine 2.0.0) ------------------------
+
+
+def test_the_rows_run_most_equity_first() -> None:
+    for inputs in (wichita_inputs(), denver_inputs()):
+        equity = [row.borrower_equity for row in matrix_for(inputs).rows]
+        assert all(value is not None for value in equity)
+        assert equity == sorted(equity, reverse=True)  # type: ignore[type-var]
+
+
+def test_the_equity_and_the_line_against_the_independent_script() -> None:
+    wichita = matrix_for(wichita_inputs()).rows
+    assert [row.borrower_equity for row in wichita] == [D(94759), D("88226.2"), D(82510)]
+    assert [row.equity_added for row in wichita] == [D(12249), D("5716.2"), None]
+    assert [row.derisk for row in wichita] == [
+        "Adding $12,249 of equity brings the rate to 16.34%.",
+        "Adding $5,716 of equity brings the rate to 16.34%.",
+        None,
+    ]
+    denver = matrix_for(denver_inputs()).rows
+    assert [row.borrower_equity for row in denver] == [
+        D("102451.60"),
+        D("94676.50"),
+        D("86051.75"),
+    ]
+    assert [row.equity_added for row in denver] == [D("16399.85"), D("8624.75"), None]
+    assert [row.derisk for row in denver] == [
+        "Adding $16,400 of equity brings the rate to 13.63%.",
+        "Adding $8,625 of equity brings the rate to 13.72%.",
+        None,
+    ]
+
+
+def test_the_equity_added_is_a_little_less_than_the_loan_taken_off() -> None:
+    """Lending $19,000 less saves the borrower interest and fee, so the equity rises by less."""
+    rows = matrix_for(denver_inputs()).rows
+    for row in rows[:-1]:
+        assert row.equity_added is not None
+        assert D(0) < row.equity_added < -row.step
+
+
+def test_the_line_needs_no_sale_price() -> None:
+    """The equity is the cost stack less the loan; a deal with no price still gets the line."""
+    matrix = matrix_for(no_price())
+    assert matrix.borrower_status is AnalysisStatus.NOT_EVALUATED
+    assert [row.borrower_equity for row in matrix.rows] == [D(94759), D("88226.2"), D(82510)]
+    assert matrix.rows[0].derisk == "Adding $12,249 of equity brings the rate to 16.34%."
+
+
+def test_a_row_over_the_max_quote_says_the_rate_it_brings_and_that_it_is_over() -> None:
+    rows = matrix_for(denver_inputs(), config_with(max_quoted_rate="0.137")).rows
+    assert rows[0].derisk == "Adding $16,400 of equity brings the rate to 13.63%."
+    assert rows[1].derisk == (
+        "Adding $8,625 of equity brings the rate to 13.72%, above the 13.7% max quoted rate."
+    )
+    assert rows[2].is_request and rows[2].derisk is None
 
 
 def test_another_target_solves_to_its_own_rate() -> None:
@@ -270,7 +352,8 @@ def test_a_row_nothing_up_to_the_ceiling_clears_says_so() -> None:
     for row in matrix.rows:
         assert not row.cleared
         assert row.lender_irr is None and row.borrower_profit is None
-    assert matrix.rows[0].sentence == (
+        assert row.borrower_equity is None and row.derisk is None
+    assert matrix.rows[-1].sentence == (
         "No rate up to 15% gets a $150,000 loan to the 20% lender IRR target."
     )
 
@@ -307,9 +390,9 @@ def test_a_rate_above_the_max_quote_is_not_a_quote() -> None:
             None,
         )
     assert [row.sentence for row in matrix.rows] == [
-        "A $150,000 loan exceeds max quoted rate (16.34% needed).",
-        "A $143,000 loan exceeds max quoted rate (16.34% needed).",
         "A $135,000 loan exceeds max quoted rate (16.34% needed).",
+        "A $143,000 loan exceeds max quoted rate (16.34% needed).",
+        "A $150,000 loan exceeds max quoted rate (16.34% needed).",
     ]
 
 
@@ -322,10 +405,10 @@ def test_a_rate_equal_to_the_max_quote_is_quoted() -> None:
 def test_the_max_quote_is_per_row() -> None:
     """Denver's rows need 13.82%, 13.72% and 13.63%: a 13.7% maximum quotes only the last."""
     rows = matrix_for(denver_inputs(), config_with(max_quoted_rate="0.137")).rows
-    assert [row.rate_needed for row in rows] == [D("0.1382"), D("0.1372"), None]
-    assert [row.interest_rate for row in rows] == [None, None, D("0.1363")]
-    assert rows[0].sentence == "A $195,000 loan exceeds max quoted rate (13.82% needed)."
-    assert rows[2].sentence.startswith("A $176,000 loan at 13.63% returns")
+    assert [row.rate_needed for row in rows] == [None, D("0.1372"), D("0.1382")]
+    assert [row.interest_rate for row in rows] == [D("0.1363"), None, None]
+    assert rows[2].sentence == "A $195,000 loan exceeds max quoted rate (13.82% needed)."
+    assert rows[0].sentence.startswith("A $176,000 loan at 13.63% returns")
 
 
 def test_the_placeholder_maximum_quotes_every_fixture_row() -> None:
@@ -339,6 +422,8 @@ def test_a_1_8_0_matrix_still_loads() -> None:
     del stored["pricing"]["max_quoted_rate"]
     for row in stored["pricing"]["rows"]:
         del row["rate_needed"]
+        for key in ("borrower_equity", "equity_added", "derisk"):
+            del row[key]
     older = UnderwriteResult.model_validate(stored)
     assert older.pricing is not None and older.pricing.max_quoted_rate is None
     assert not any(row.over_max_quote for row in older.pricing.rows)
@@ -346,16 +431,17 @@ def test_a_1_8_0_matrix_still_loads() -> None:
 
 def test_a_step_that_leaves_no_loan_cannot_be_priced() -> None:
     rows = matrix_for(wichita_inputs(), config_with(loan_amount_pct_steps=[0, -1])).rows
-    assert rows[0].cleared
-    assert not rows[1].cleared and rows[1].loan_amount == D(0)
-    assert rows[1].label == "-100%" and rows[1].step == D(-150000)
-    assert rows[1].sentence == "A $0 loan cannot be priced: it leaves no commitment to lend."
+    assert rows[1].cleared
+    assert not rows[0].cleared and rows[0].loan_amount == D(0)
+    assert rows[0].label == "-100%" and rows[0].step == D(-150000)
+    assert rows[0].sentence == "A $0 loan cannot be priced: it leaves no commitment to lend."
+    assert rows[0].borrower_equity is None and rows[0].derisk is None
 
 
-def test_the_borrower_side_is_not_evaluated_without_a_flip() -> None:
-    matrix = matrix_for(wichita_inputs(), flip_on=False)
+def test_the_borrower_side_is_not_evaluated_without_a_sale_price() -> None:
+    matrix = matrix_for(no_price())
     assert matrix.borrower_status is AnalysisStatus.NOT_EVALUATED
-    row = matrix.rows[0]
+    row = matrix.rows[-1]
     assert row.interest_rate == D("0.1634") and row.borrower_profit is None
     assert "not evaluated" in row.sentence
 
@@ -378,11 +464,11 @@ def test_a_1_7_0_matrix_still_loads() -> None:
 
 
 def test_the_sentence_wording() -> None:
-    returns = BorrowerReturns(D("-5000.4"), D(1000), D("-5.0004"))
+    returns = BorrowerReturns(D("-5000.4"), D(200000), D("-0.025"), D(1000), D("-5.0004"))
     assert pricing_sentence(D(140000), D("0.1275"), returns, D("0.2")) == (
         "A $140,000 loan at 12.75% returns -$5,000 profit (-500.0% cash-on-cash)."
     )
-    no_cash = BorrowerReturns(D(100), D(0), None)
+    no_cash = BorrowerReturns(D(100), D(1000), D("0.1"), D(0), None)
     assert "no cash-on-cash" in pricing_sentence(D(1), D("0.12"), no_cash, D("0.2"))
     assert pricing_sentence(D(1000), None, None, D("0.2")) == (
         "No rate up to 100% gets a $1,000 loan to the 20% lender IRR target."
@@ -391,6 +477,12 @@ def test_the_sentence_wording() -> None:
         "$1,235",
         "12%",
         "14.37%",
+    )
+    assert derisk_sentence(D("9811.6"), D("0.1521"), D("0.18")) == (
+        "Adding $9,812 of equity brings the rate to 15.21%."
+    )
+    assert derisk_sentence(D("9811.6"), D("0.193"), D("0.18")) == (
+        "Adding $9,812 of equity brings the rate to 19.3%, above the 18% max quoted rate."
     )
 
 
@@ -406,6 +498,7 @@ def test_the_sentence_wording() -> None:
         {"target_lender_irr": "1.5"},
         {"max_quoted_rate": "0"},
         {"max_quoted_rate": "1.2"},
+        {"borrower_coc_target": "-0.1"},
     ],
     ids=[
         "empty",
@@ -417,6 +510,7 @@ def test_the_sentence_wording() -> None:
         "irr_over_one",
         "max_quote_zero",
         "max_quote_over_one",
+        "coc_target_negative",
     ],
 )
 def test_config_refuses_a_bad_pricing_block(pricing: dict[str, Any]) -> None:

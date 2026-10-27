@@ -10,9 +10,10 @@ shows them back. The Overview is who the borrower is; the loan's own terms - its
 type, its closing date and its term - are Deal Economics, beside the money they describe.
 
 The HTML form (``api/intake_form.py``) renders a subset of this model: the Overview, the
-Property Overview, and seven Deal Economics boxes. The §8.1 economics with a config default,
-the loan split, the valuation, the rent, the analysis toggles and the court search have no
-box on it - they populate from defaults and are edited on the deal page - and stay on the
+Property Overview, and the Deal Economics boxes, the loan structure among them as a radio
+whose Holdback reveals the Rehab portion (the form works out the advance at closing from it).
+The §8.1 economics with a config default, the valuation, the rent and the court search have
+no box on it - they populate from defaults and are edited on the deal page - and stay on the
 model for the JSON half of ``POST /intake/team`` and for the fixtures the CLI runs.
 
 The team form asks for the term in months and not as the SPEC §4.1 bucket. The bucket is the
@@ -85,7 +86,9 @@ class TeamEntryForm(BaseModel):
     # Deal Economics (SPEC §8.1). Everything but the price, the costs, the loan and the rate
     # falls back to a config default when the box is left blank.
     loan_purpose: LoanPurpose | None = None
-    product: Product | None = None  # "Loan Type"; inferred from the rehab costs when omitted
+    # "100% at close" (ACQUISITION) or "Holdback" (ACQUISITION_REHAB); inferred from the rehab
+    # costs when omitted (SPEC §3).
+    product: Product | None = None
     closing_date: date | None = None  # any date; the ledger's month 0 is its month end (§8.3)
     # Whole months; the payoff date derives (SPEC §8.1). The form requires it
     # (``api/intake_form.py``); a JSON post of a partial intake may leave it out.
@@ -93,9 +96,9 @@ class TeamEntryForm(BaseModel):
     purchase_price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     rehab_costs: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     loan_requested: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
-    # The split of the loan requested, on the two split products only (SPEC §8.2). No box
-    # on the form: the deal is populated with the §8.2 formula split and the deal page edits
-    # it. A JSON post may carry one.
+    # The split of the loan requested, on a holdback only (SPEC §8.2). The form has a box for
+    # the rehab portion alone and works the advance out from it; a JSON post carries both.
+    # Neither given, the deal is populated with the §8.2 formula split.
     loan_purchase_portion: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
@@ -107,9 +110,6 @@ class TeamEntryForm(BaseModel):
     # figure is computed from it and is never entered.
     holding_costs_pct_of_cost: Decimal | None = Field(default=None, ge=0, le=1)
     origination_fee_pct: Decimal | None = Field(default=None, ge=0, le=1)
-    # The two analysis toggles (SPEC §8.1); blank leaves the default in force.
-    flip_analysis: bool | None = None
-    rental_analysis: bool | None = None
     # Team-supplied valuation, rent and court search, used until the Phase 3 adapters land
     # (SPEC §6). An adapter value always wins over any of these.
     estimated_sale_price_team: Decimal | None = Field(
@@ -209,8 +209,6 @@ def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
             origination_fee_pct=form.origination_fee_pct,
             product=form.product,
             product_source=ProductSource.ENTERED if form.product is not None else None,
-            flip_analysis=form.flip_analysis,
-            rental_analysis=form.rental_analysis,
             monthly_rent=form.monthly_rent,
             estimated_sale_price_team=form.estimated_sale_price_team,
             court_records_status=form.court_records_status,

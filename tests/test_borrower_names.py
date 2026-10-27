@@ -117,6 +117,7 @@ TYPED: dict[str, str] = {
     "purchase_price": "$150,000",
     "rehab_costs": "$40,000",
     "loan_requested": "$140,000",
+    "loan_rehab_portion": "$40,000",  # read only on a holdback (SPEC §8.1)
     "closing_date": "2026-11-12",
     "term_months": "9",
     # not the intake: what to call the version the deal arrives with (New Deal only, SPEC §5)

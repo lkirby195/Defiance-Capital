@@ -1,9 +1,9 @@
 {
-  "name": "decline_leverage_split_draw",
-  "description": "SPLIT_DRAW asking for more than the project costs and more than it will sell for: LTC 107.4% is past the 100% cap and LTV 86.7% is past the 75% cap, both by more than the 5-point tolerance band, so both are Hard and the screen declines. No underwrite block: a declined deal is not priced.",
+  "name": "decline_leverage_holdback",
+  "description": "A holdback asking for more than the project costs and more than it will sell for: LTC 107.4% is past the 100% cap and LTV 86.7% is past the 75% cap, both by more than the 5-point tolerance band, so both are Hard and the screen declines. No underwrite block: a declined deal is not priced.",
   "inputs": {
     "deal": {
-      "product": "SPLIT_DRAW",
+      "product": "ACQUISITION_REHAB",
       "purchase_price": "100000.00",
       "rehab_costs": "20000.00",
       "loan_requested": "130000.00",

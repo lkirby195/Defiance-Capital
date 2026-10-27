@@ -13,7 +13,7 @@ has the rehab budget. It re-applies the intake form's own columns rather than pa
 field, because that is what the form posts and because ``missing_fields`` and the status are
 computed from the record as a whole (``intake/normalize.py``). Only the columns the form asks
 for are touched (``db/repository.form_columns``): the §8.1 economics, the valuation, the
-rent, the toggles and the court search are edited on the deal page and have no box on the
+rent and the court search are edited on the deal page and have no box on the
 form, so an edit that could not have known them leaves them exactly as they were. Nothing a
 reader would want back is overwritten - every submission is kept on ``intake_submissions``,
 immutable, and the audit row names the columns that moved.
@@ -181,6 +181,10 @@ def record_from_submission(submission: IntakeSubmission, deal: Deal) -> IntakeRe
     return record_from_payload(submission.channel, submission.raw_payload, deal)
 
 
+# Keys a stored team payload may carry that the form no longer has (engine 2.0.0).
+RETIRED_TEAM_KEYS: frozenset[str] = frozenset({"flip_analysis", "rental_analysis"})
+
+
 def record_from_payload(channel: Channel, payload: Any, deal: Deal) -> IntakeRecord:
     """The ``IntakeRecord`` one channel's stored payload normalizes to.  # SPEC §4.2, §4.5
 
@@ -190,7 +194,11 @@ def record_from_payload(channel: Channel, payload: Any, deal: Deal) -> IntakeRec
     if not isinstance(payload, dict):
         raise ValueError("that intake version has no form payload to read back")
     if channel is Channel.TEAM:
-        team = TeamEntryForm.model_validate(payload)
+        # A payload stored before engine 2.0.0 may name the two retired analysis toggles
+        # (SPEC §8.1); they are gone from the deal, so they are read past, not refused.
+        team = TeamEntryForm.model_validate(
+            {key: value for key, value in payload.items() if key not in RETIRED_TEAM_KEYS}
+        )
         return normalize(parse_team_form(team), Channel.TEAM, raw_payload=payload)
     if channel is Channel.WEB:
         web = WebApplyForm.model_validate(

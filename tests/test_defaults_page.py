@@ -48,7 +48,7 @@ def test_the_page_shows_the_groups_in_order_and_some_values(client: QueueClient)
     assert 'data-key="web_intake.thanks_token_hours">24<' in body
     assert 'data-key="rental.dscr_floor">1.20x<' in body
     assert 'data-key="states.served">OK, CO<' in body
-    assert 'data-key="leverage_caps.SPLIT_DRAW.T3.E2.ltv">75%<' in body
+    assert 'data-key="leverage_caps.ACQUISITION_REHAB.T3.E2.ltv">75%<' in body
 
 
 @requires_db
@@ -87,7 +87,7 @@ def test_the_groups_the_brief_names() -> None:
     assert group_of("fees.broker_selling_pct") == "Flip"
     assert group_of("interest.day_count_basis") == "Dates"
     assert group_of("closing.default_lead_days") == "Dates"
-    assert group_of("leverage_caps.NO_DRAW.T1.E0.ltc") == "Screen caps and thresholds"
+    assert group_of("leverage_caps.ACQUISITION.T1.E0.ltc") == "Screen caps and thresholds"
 
 
 def test_display() -> None:

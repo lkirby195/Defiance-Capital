@@ -35,6 +35,7 @@ ORDER = (
     "<h2>Flip Analysis</h2>",
     "<h2>Rental Analysis</h2>",
     "<h2>Take-Back Analysis",
+    '<section class="panel chart" id="sources-uses">',
     "<h2>Return Overview</h2>",
     '<section class="panel" id="assumptions">',
     '<section class="panel" id="economics">',
@@ -119,11 +120,10 @@ def test_the_sensitivities_share_a_row_and_the_analyses_another(
 def test_an_unevaluated_analysis_is_a_state_not_an_error(
     client: QueueClient, deal_with_overrides: Deal
 ) -> None:
-    """Flip off, rental on with no rent: the three cards say so quietly and keep their lines."""
+    """No price and no rent: the three cards say so quietly and keep their lines."""
     form = {name: value for name, value in assumptions_form(deal_with_overrides).items() if value}
     form.pop("monthly_rent", None)
-    form["flip_analysis"] = "false"
-    form["rental_analysis"] = "true"  # left at Default it would be Off without a rent
+    form.pop("estimated_sale_price_team", None)
     saved = client.post(
         f"/queue/deals/{deal_with_overrides.id}/assumptions", data=form, follow_redirects=False
     )
@@ -133,7 +133,7 @@ def test_an_unevaluated_analysis_is_a_state_not_an_error(
     flip = between(trio, 'id="flip"', 'id="rental"')
     rental = between(trio, 'id="rental"', 'id="take-back"')
     take_back = trio[trio.index('id="take-back"') :]
-    assert '<p class="headline na">Off</p>' in flip
+    assert '<p class="headline na">Not evaluated</p>' in flip
     assert '<p class="headline na">Not evaluated</p>' in rental
     assert '<p class="headline na">Not evaluated</p>' in take_back
     assert '<p class="headline">' not in trio
@@ -212,7 +212,7 @@ def test_the_header_carries_the_chips(client: QueueClient, deal_with_overrides: 
     # those four, in the brief's order, and nothing else: no loan type, term, verdict, status
     assert re.findall(r'data-chip="([^"]+)"', chips) == ["borrower", "entity", "loan-amount", "irr"]
     assert chips.count('<span class="tag') == 4
-    assert "Wholetail" not in chips and "month(s)" not in chips
+    assert "100% at close" not in chips and "month(s)" not in chips
     assert '<span class="tag GO">' not in chips and "UNDERWRITING" not in chips
     assert 'id="working-version"' not in body and 'id="draft-badge"' not in chips
     # the IRR is the version in view's: the Return Overview shows the same

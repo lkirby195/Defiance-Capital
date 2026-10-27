@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from config.config import Config
 from db.models import Deal, Screen
 from engine.version import ENGINE_VERSION
-from schema.models import AnalysisStatus, TermBucket, Verdict
+from schema.models import AnalysisStatus, Product, TermBucket, UnderwriteResult, Verdict
 from services import (
     DealNotFound,
     DealNotReady,
@@ -65,7 +65,7 @@ def test_run_screen_appends_a_row_and_returns_the_result(
     assert row.verdict is result.verdict
     assert row.reasons == result.reasons
     assert row.suggested_reply == result.suggested_reply
-    assert row.inputs["deal"]["product"] == "SPLIT_DRAW"
+    assert row.inputs["deal"]["product"] == "ACQUISITION_REHAB"
 
 
 def test_screen_row_rebuilds_the_exact_result(db_session: Session, stored_deal: Deal) -> None:
@@ -186,21 +186,51 @@ def test_underwrite_falls_back_to_the_deals_own_economics(
     db_session.commit()
 
 
-def test_underwrite_defaults_the_toggles_from_what_is_on_the_deal(
+def test_underwrite_runs_all_three_analyses_with_no_toggles(
     db_session: Session, deal_with_overrides: Deal
 ) -> None:
-    """A sale price turns the flip on, a rent the rental; a hand setting wins (SPEC §8.1)."""
-    both = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
-    assert both.analyses.flip_analysis is True and both.analyses.flip_analysis_default is True
-    assert both.analyses.rental_analysis is True
-    assert both.flip.status is AnalysisStatus.EVALUATED
-
-    deal_with_overrides.flip_analysis = False
-    db_session.flush()
-    off = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
-    assert off.analyses.flip_analysis is False and off.analyses.flip_analysis_default is True
-    assert off.flip.status is AnalysisStatus.OFF
+    """A sale price and a rent on the deal evaluate all three (SPEC §8.1, engine 2.0.0)."""
+    result = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
+    assert result.analyses is None
+    assert result.flip.status is AnalysisStatus.EVALUATED
+    assert result.rental.status is AnalysisStatus.EVALUATED
+    assert result.sources_and_uses is not None
     db_session.commit()
+
+
+def test_a_stored_result_from_before_2_0_0_still_loads(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """The toggles, an OFF flip, ``profit_yield`` and a retired product on a stored row all
+    read back (SPEC §8.7): a version written before engine 2.0.0 is still on the page."""
+    result = run_underwrite(db_session, deal_with_overrides.id, request(), CONFIG, actor=ACTOR)
+    stored = result.model_dump(mode="json")
+    stored["engine_version"] = "1.11.0"
+    stored["analyses"] = {
+        "flip_analysis": False,
+        "rental_analysis": True,
+        "flip_analysis_default": True,
+        "rental_analysis_default": True,
+    }
+    stored["sizing"]["product"] = "WHOLETAIL"
+    del stored["sources_and_uses"]
+    flip = stored["flip"]
+    for name in ("interest", "origination", "loan_amount", "borrower_equity", "cash_on_cash"):
+        del flip[name]
+    del flip["cash_on_cash_target"], flip["cash_on_cash_passed"], flip["project_yield"]
+    flip.update(
+        status="OFF",
+        estimated_sale_price=None,
+        broker_costs=None,
+        net_profit=None,
+        profit_yield=None,
+    )
+    old = UnderwriteResult.model_validate(stored)
+    assert old.analyses is not None and old.analyses.flip_analysis is False
+    assert old.flip.status is AnalysisStatus.OFF and old.flip.project_yield is None
+    assert old.sizing.product is Product.ACQUISITION
+    assert old.sources_and_uses is None
+    db_session.rollback()
 
 
 def test_missing_deal_and_incomplete_deal_are_named_not_guessed(

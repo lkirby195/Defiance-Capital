@@ -3,6 +3,31 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**2.0.0 (10a-structures, 2026-10-27) collapses the products to two loan structures and
+shows the borrower's side in full.** ``Product`` is ``ACQUISITION`` ("100% at close", the
+old ``NO_DRAW``) and ``ACQUISITION_REHAB`` ("Holdback", the old ``SPLIT_DRAW``); both lend
+the request in full and charge interest on the full commitment from close. ``SPLIT_PRINCIPAL``
+- the two-note ledger with Tranche A's interest on the drawn balance - and ``WHOLETAIL`` are
+gone from the engine, the caps grid and every form; a stored row naming one reads as the
+structure it became (``schema.models.LEGACY_PRODUCTS``, the mapping migration ``0021``
+applied to ``deals.product``), and ``COMMITMENT_BELOW_REQUEST`` is never raised. The Flip and
+Rental toggles are gone: all three analyses run on every deal, so a run is ``EVALUATED`` or
+``NOT_EVALUATED`` and ``UnderwriteResult.analyses`` is None (``engine/calc/analyses.py`` is
+deleted). The Flip Analysis reports its cost stack line by line - the financing as its
+interest and its origination - and the borrower's side: equity (total deal cost less the
+loan, no sale price needed), cash-on-cash (profit over equity) against
+``pricing.borrower_coc_target`` (placeholder 20%, ``BORROWER_COC_BELOW_TARGET``, severity from
+config, placeholder SOFT), and the project yield (profit over the total deal cost; it was
+``profit_yield``, and a stored one still reads). ``fees.broker_selling_pct`` is 6% where it
+was 4%. The Borrower Sensitivity's cells carry the total deal cost and the project yield, which
+is what they show. New ``SourcesAndUses`` (SPEC §8.11, ``engine/calc/sources_uses.py``): the
+advance at closing, the rehab holdback and the borrower's equity against the cost stack, equal
+to the cent. Each pricing row carries the borrower's equity at its solved rate, the equity it
+adds over the request and the line "Adding $X of equity brings the rate to Y%", and the rows
+run most equity first. Every fixture moves: the holdback fixtures that were ``SPLIT_PRINCIPAL``
+now accrue on the whole commitment, every flip pays a 6% broker, and the fixtures' new
+figures were computed by an independent script before they were recorded.
+
 **1.11.0 (ui-deal, 2026-10-27) puts the default rate on the grid and takes the deal's rate
 off it.** ``interest.default_annual_rate`` is 12.5% where it was 12%, the sensitivity grid's
 first column, and the two sensitivity tables' columns are the config grid alone
@@ -185,4 +210,4 @@ REHAB_PORTION_EXCEEDS_BUDGET.
 
 from __future__ import annotations
 
-ENGINE_VERSION = "1.11.0"
+ENGINE_VERSION = "2.0.0"

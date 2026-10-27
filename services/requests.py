@@ -17,10 +17,9 @@ engine default:
     holding costs / origination   request -> deal -> the config default (§8.1)
     the five analysis assumptions request -> deal -> the config value (§8.4, §8.5, §8.6)
     monthly_rent                  request -> deal.monthly_rent -> no DSCR at all (§8.5, §8.6)
-    flip / rental toggles         request -> deal -> on when the price / the rent is there (§8.1)
     loan purpose                  request -> deal -> unstated
 
-``UnderwritingAssumptions`` is the deal page's Underwriting Assumptions panel: the sixteen
+``UnderwritingAssumptions`` is the deal page's Underwriting Assumptions panel: the fourteen
 boxes a person edits and saves with one button, and nothing else - not the dates, the term,
 the product or the court search, which the intake form and the court section own.
 ``CourtSearch`` is that section. Each replaces exactly the columns it renders, so a save of
@@ -103,8 +102,6 @@ class UnderwriteRequest(BaseModel):
     # The Rental and Take-Back analyses (SPEC §8.5, §8.6).
     monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     # Overrides of what intake captured; None leaves the deal's own value in force.
-    flip_analysis: bool | None = None
-    rental_analysis: bool | None = None
     loan_purpose: LoanPurpose | None = None
 
     @model_validator(mode="after")
@@ -177,10 +174,6 @@ class TeamOverrides(BaseModel):
         default=None, ge=0, max_digits=14, decimal_places=2
     )
     take_back_lost_interest_months: int | None = Field(default=None, ge=0, le=60)
-    # The two analysis toggles (SPEC §8.1): blank is the default - on when the sale price,
-    # or the rent, is on the deal - and On / Off is a person overriding it.
-    flip_analysis: bool | None = None
-    rental_analysis: bool | None = None
     # The team's own court search (SPEC §7.2), one typed matter per entry.
     court_records_status: CourtRecordsStatus | None = None
     court_records_as_of: date | None = None
@@ -209,9 +202,9 @@ class TeamOverrides(BaseModel):
 class UnderwritingAssumptions(BaseModel):
     """The deal page's Underwriting Assumptions panel.  # SPEC §8.1, §8.4, §8.5, §8.6
 
-    Sixteen boxes, two columns, one Save & Run: the five §8.1 economics with a config
-    default, the loan split on a split product, the valuation and the rent, the five
-    analysis assumptions, and the two toggles. A submission replaces exactly these columns
+    Fourteen boxes, two columns, one Save & Run: the five §8.1 economics with a config
+    default, the loan split on a holdback, the valuation and the rent, and the five
+    analysis assumptions. A submission replaces exactly these columns
     - the form is rendered with the deal's current values in it, so what comes back is the
     state the team means - and a blank on anything with a default is the default again
     (``services/defaults.py``); a blank sale price or rent is no value, because nothing
@@ -241,8 +234,6 @@ class UnderwritingAssumptions(BaseModel):
         default=None, ge=0, max_digits=14, decimal_places=2
     )
     take_back_lost_interest_months: int | None = Field(default=None, ge=0, le=60)
-    flip_analysis: bool | None = None
-    rental_analysis: bool | None = None
 
     @model_validator(mode="after")
     def _split_is_both_or_neither(self) -> UnderwritingAssumptions:

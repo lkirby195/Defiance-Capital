@@ -31,7 +31,7 @@
     </table>
   </div>
   <dl class="facts small" style="margin-top:12px">
-    <dt>Loan Type</dt><dd>{{ sizing.product | label }}</dd>
+    <dt>Loan Structure</dt><dd>{{ sizing.product | label }}</dd>
     <dt>Caps cell</dt>
     <dd>{{ sizing.credit_tranche | tranche }} × {{ sizing.experience_tier | plain }}</dd>
     <dt>Purchase price</dt><dd>{{ sizing.purchase_price | money }}</dd>
@@ -45,16 +45,15 @@
     <dt>Commitment</dt><dd>{{ sizing.commitment | money }}</dd>
     <dt>Funded at close</dt><dd>{{ sizing.funded_at_close | money }}</dd>
     {% if sizing.split %}
-      {% set principal = sizing.product | plain == "SPLIT_PRINCIPAL" %}
-      <dt>{{ "Principal Note" if principal else "Advance at closing" }}</dt>
+      <dt>Advance at closing</dt>
       <dd>{{ sizing.split.purchase_portion | money }}</dd>
-      <dt>{{ "Tranche A" if principal else "Rehab holdback" }}</dt>
+      <dt>Rehab holdback</dt>
       <dd>{{ sizing.split.rehab_portion | money }}
         {% if sizing.split.rehab_portion_capped %}
           <span class="small muted">(entered
             {{ sizing.split.rehab_portion_requested | money }}, capped at the
             contingency-adjusted rehab cost)</span>{% endif %}</dd>
-    {% elif sizing.product | plain in ("SPLIT_DRAW", "SPLIT_PRINCIPAL") %}
+    {% elif sizing.product | plain == "ACQUISITION_REHAB" %}
       <dt>Loan split</dt>
       <dd class="muted">not entered — sized on the loan amount (SPEC §8.2)</dd>
     {% endif %}

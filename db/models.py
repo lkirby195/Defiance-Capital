@@ -221,7 +221,7 @@ class Deal(Base):
         # a deal with no product yet and a split on it would slip through.
         CheckConstraint(
             "loan_purchase_portion IS NULL "
-            "OR (product IS NOT NULL AND product IN ('SPLIT_DRAW', 'SPLIT_PRINCIPAL'))",
+            "OR (product IS NOT NULL AND product = 'ACQUISITION_REHAB')",
             name="ck_deals_loan_split_only_on_split_products",
         ),
         # The term does not have to match the bucket. The bucket is the borrower's answer to
@@ -270,9 +270,9 @@ class Deal(Base):
     purchase_price: Mapped[Decimal | None] = mapped_column(MONEY)
     rehab_costs: Mapped[Decimal | None] = mapped_column(MONEY)
     loan_requested: Mapped[Decimal | None] = mapped_column(MONEY)
-    # How the loan requested divides between the purchase advance and the rehab money, on
-    # the two split products (SPEC §8.2). A team entry: a borrower-channel intake carries
-    # the amount and nothing about its shape, so both stay NULL until somebody enters them.
+    # How the loan requested divides between the advance at closing and the rehab holdback,
+    # on a holdback (ACQUISITION_REHAB) only (SPEC §8.2). A borrower-channel intake carries the
+    # amount and nothing about its shape; the deal is populated with the §8.2 default split.
     loan_purchase_portion: Mapped[Decimal | None] = mapped_column(MONEY)
     loan_rehab_portion: Mapped[Decimal | None] = mapped_column(MONEY)
     term_bucket: Mapped[TermBucket | None] = mapped_column(_enum(TermBucket, "term_bucket"))
@@ -304,10 +304,6 @@ class Deal(Base):
     rental_takeout_rate: Mapped[Decimal | None] = mapped_column(RATE)
     take_back_legal_costs_usd: Mapped[Decimal | None] = mapped_column(MONEY)
     take_back_lost_interest_months: Mapped[int | None] = mapped_column(Integer)
-    # The two SPEC §8.1 analysis toggles. NULL leaves the default: the flip is on when there
-    # is a sale price, the rental when there is a rent.
-    flip_analysis: Mapped[bool | None] = mapped_column(Boolean)
-    rental_analysis: Mapped[bool | None] = mapped_column(Boolean)
     # The monthly rent the Rental and Take-Back analyses run on (SPEC §8.5, §8.6). No
     # config default and no adapter behind it, so the queue collects it once on the deal
     # rather than asking again on every run; an UnderwriteRequest still outranks it.

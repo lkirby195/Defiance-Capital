@@ -1,6 +1,6 @@
 {
   "name": "go_team_overrides_tulsa",
-  "description": "WHOLETAIL in Tulsa, entered on the team form and assembled the way the API assembles a stored deal: the valuation, the rent and the court search are all the team's own, so TEAM_SOURCED_VALUES is raised and the Go rests on hand-entered numbers. $120,000 at 13% for 6 months from a 1 February 2027 closing (the ledger anchors to 28 February and pays off 31 August), the whole commitment at close; IRR 18.263%. The holding costs are the config default, 2% of the $155,000 price-plus-rehab.",
+  "description": "100% at close in Tulsa, entered on the team form and assembled the way the API assembles a stored deal: the valuation, the rent and the court search are all the team's own, so TEAM_SOURCED_VALUES is raised and the Go rests on hand-entered numbers. $120,000 at 13% for 6 months from a 1 February 2027 closing (the ledger anchors to 28 February and pays off 31 August), the whole commitment at close; IRR 18.263%. The holding costs are the config default, 2% of the $155,000 price-plus-rehab; the flip nets $18,700 after a 6% broker on $169,300 of total deal cost, 37.9% on the borrower's $49,300 of equity.",
   "team_entry": {
     "borrower_name": "Dana Whitlock",
     "borrower_phone": "918-555-0147",
@@ -10,7 +10,7 @@
     "experience_bucket": "6_PLUS",
     "repeat_borrower": false,
     "loan_purpose": "PURCHASE",
-    "product": "WHOLETAIL",
+    "product": "ACQUISITION",
     "closing_date": "2027-02-01",
     "address": "1412 S Trenton Ave, Tulsa, OK 74120",
     "city": "Tulsa",
@@ -96,10 +96,15 @@
       },
       "flip": {
         "status": "EVALUATED",
-        "broker_costs": "8000.00",
         "total_costs": "169300.00",
-        "net_profit": "22700.00",
-        "profit_yield": "0.134082"
+        "interest": "7800.00",
+        "origination": "2400.00",
+        "borrower_equity": "49300.00",
+        "broker_costs": "12000.00",
+        "net_profit": "18700.00",
+        "project_yield": "0.110455",
+        "cash_on_cash": "0.379310",
+        "cash_on_cash_passed": true
       },
       "rental": {
         "status": "EVALUATED",
@@ -134,7 +139,21 @@
       ],
       "term_months": 6,
       "term_stub_days": 0,
-      "term_months_decimal": "6.000000"
+      "term_months_decimal": "6.000000",
+      "sources_and_uses": {
+        "advance_at_closing": "120000.00",
+        "rehab_holdback": "0.00",
+        "borrower_equity": "49300.00",
+        "total_sources": "169300.00",
+        "purchase_price": "150000.00",
+        "closing_costs": "1000.00",
+        "rehab_costs": "5000.00",
+        "contingency": "0.00",
+        "holding_costs": "3100.00",
+        "interest": "7800.00",
+        "origination": "2400.00",
+        "total_uses": "169300.00"
+      }
     }
   }
 }

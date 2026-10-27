@@ -28,11 +28,10 @@ thirtieths of a tenth month rather than a whole one or nothing. Draws are whole 
 a stub is days at the end of the term, after the rehab period in every case, and there is no
 draw to schedule in it.
 
-The balance rule is where the products differ (SPEC §3). ``NO_DRAW``, ``WHOLETAIL`` and
-``SPLIT_DRAW`` pay on the full commitment from close - on ``SPLIT_DRAW`` that is deliberately
-more than has been advanced, which is the product. ``SPLIT_PRINCIPAL`` pays on the Principal
-Note plus whatever of Tranche A has actually been drawn, so a draw taken in month *k* first
-earns interest in month *k + 1*.
+Both structures pay interest on the full commitment from close (SPEC §3). On a holdback that
+is deliberately more than has been advanced while the rehab portion is still being drawn -
+that is the structure. The as-drawn balance of the retired two-note product went with it
+(engine 2.0.0).
 
 The draws are straight-line, in whole cents, and the last one is the remainder rather than
 another copy of the quotient. A rehab portion that does not divide evenly - $55,000 over six
@@ -49,15 +48,10 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from engine.calc.irr import xirr
 from engine.calc.terms import LoanTerms
-from schema.models import LedgerEntry, Product, ReturnOverview
+from schema.models import LedgerEntry, ReturnOverview
 
 ZERO = Decimal(0)
 CENTS = Decimal("0.01")
-
-# The products whose interest accrues on the full commitment from close, drawn or not.
-FULL_COMMITMENT_INTEREST: frozenset[Product] = frozenset(
-    {Product.NO_DRAW, Product.WHOLETAIL, Product.SPLIT_DRAW}
-)
 
 
 def draw_schedule(loan: LoanTerms) -> dict[int, Decimal]:
@@ -96,27 +90,19 @@ def period_date(loan: LoanTerms, month: int) -> date:
     return loan.anchor(month)
 
 
-def interest_balance(loan: LoanTerms, schedule: dict[int, Decimal], month: int) -> Decimal:
-    """The balance period ``month`` accrues interest on: the one standing at its start.
+def interest_balance(loan: LoanTerms) -> Decimal:
+    """The balance every period accrues interest on: the full commitment.  # SPEC §3, §8.3
 
-    # SPEC §8.3. A draw dated month *k* is money that went out at the end of month *k*, so
-    it is in the balance from month *k + 1* onwards and not before.
-
-    The SPLIT_PRINCIPAL balance starts from ``funded_at_close`` rather than from the
-    Principal Note, and the two are the same number whenever there is a rehab period to draw
-    over. Where there is not, the rehab money went out at close (SPEC §8.3) - and money that
-    is out is money that accrues, so Tranche A earns from month 1 like the note beside it.
+    On both structures, from close, whatever of the holdback has been drawn so far.
     """
-    if loan.product in FULL_COMMITMENT_INTEREST:
-        return loan.commitment
-    return loan.funded_at_close + drawn_by(schedule, month - 1)
+    return loan.commitment
 
 
-def period_interest(loan: LoanTerms, schedule: dict[int, Decimal], month: int) -> Decimal:
+def period_interest(loan: LoanTerms, month: int) -> Decimal:
     """Interest for period ``month``: a whole month of it, or the stub's prorated share."""
     if month == 0:
         return ZERO
-    balance = interest_balance(loan, schedule, month)
+    balance = interest_balance(loan)
     if loan.has_stub and month == last_period(loan):
         return loan.stub_interest(balance)
     return loan.monthly_interest(balance)
@@ -131,7 +117,7 @@ def build_ledger(loan: LoanTerms) -> list[LedgerEntry]:
         is_stub = loan.has_stub and month == last
         funding = -loan.funded_at_close if month == 0 else ZERO
         draws = -schedule.get(month, ZERO)
-        interest = period_interest(loan, schedule, month)
+        interest = period_interest(loan, month)
         fees = ZERO
         if month == 0:
             fees += loan.origination_at_close

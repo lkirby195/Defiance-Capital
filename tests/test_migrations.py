@@ -17,6 +17,7 @@ from alembic.autogenerate import compare_metadata
 from alembic.config import Config as AlembicConfig
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import Engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 from db.models import Base
 from tests.conftest import requires_db
@@ -495,6 +496,108 @@ def test_0019_marks_the_versions_a_person_named_or_marked(
         columns = {column["name"] for column in inspect(conn).get_columns("versions")}
         assert "human_selected" not in columns
         assert conn.execute(text("SELECT count(*) FROM versions")).scalar() == 5
+
+    command.downgrade(alembic_cfg, "base")
+    with test_engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
+
+
+# One deal per retired product, written against 0020 and read back after 0021 (SPEC §3).
+BEFORE_0021 = text(
+    """
+    INSERT INTO deals (id, channel, status, missing_fields, court_records_team,
+                       credit_authorization_signed, created_at, updated_at, defaulted_fields,
+                       product, product_source, loan_requested, loan_purchase_portion,
+                       loan_rehab_portion, flip_analysis, rental_analysis, broker_selling_pct)
+    VALUES (:id, 'TEAM', 'NEW', '[]', '[]', false, now(), now(), CAST(:tagged AS jsonb),
+            :product, 'ENTERED', 190000, :purchase, :rehab, false, true, :broker)
+    """
+)
+
+
+def test_0021_maps_four_products_to_two_drops_the_toggles_and_moves_the_broker_default(
+    alembic_cfg: AlembicConfig, test_engine: Engine
+) -> None:
+    """SPLIT_PRINCIPAL keeps its Tranche A as the rehab portion; a tagged 4% broker moves to
+    6% and a typed one does not; the downgrade maps back, losing which were which."""
+    command.upgrade(alembic_cfg, "0020")
+    deals = {
+        "NO_DRAW": (uuid.uuid4(), None, None, '["broker_selling_pct"]', "0.04"),
+        "WHOLETAIL": (uuid.uuid4(), None, None, "[]", "0.04"),  # a 4% somebody typed
+        "SPLIT_DRAW": (uuid.uuid4(), "142000", "48000", '["broker_selling_pct"]', "0.04"),
+        "SPLIT_PRINCIPAL": (uuid.uuid4(), "136000", "54000", "[]", "0.05"),
+    }
+    with test_engine.begin() as conn:
+        for product, (deal_id, purchase, rehab, tagged, broker) in deals.items():
+            conn.execute(
+                BEFORE_0021,
+                {
+                    "id": deal_id,
+                    "product": product,
+                    "purchase": purchase,
+                    "rehab": rehab,
+                    "tagged": tagged,
+                    "broker": broker,
+                },
+            )
+
+    command.upgrade(alembic_cfg, "0021")
+
+    with test_engine.connect() as conn:
+        columns = {column["name"] for column in inspect(conn).get_columns("deals")}
+        assert "flip_analysis" not in columns and "rental_analysis" not in columns
+        rows = {
+            row.id: row
+            for row in conn.execute(
+                text(
+                    "SELECT id, product::text AS product, loan_purchase_portion, "
+                    "loan_rehab_portion, broker_selling_pct FROM deals"
+                )
+            )
+        }
+        labels = {e["name"]: e["labels"] for e in inspect(conn).get_enums()}
+    assert labels["product"] == ["ACQUISITION", "ACQUISITION_REHAB"]
+    got = {product: rows[deals[product][0]] for product in deals}
+    assert got["NO_DRAW"].product == "ACQUISITION"
+    assert got["WHOLETAIL"].product == "ACQUISITION"
+    assert got["SPLIT_DRAW"].product == "ACQUISITION_REHAB"
+    assert got["SPLIT_PRINCIPAL"].product == "ACQUISITION_REHAB"
+    # Tranche A is the rehab portion now, the Principal Note the advance at closing
+    assert (
+        got["SPLIT_PRINCIPAL"].loan_purchase_portion,
+        got["SPLIT_PRINCIPAL"].loan_rehab_portion,
+    ) == (
+        Decimal("136000.00"),
+        Decimal("54000.00"),
+    )
+    # the stand-in moves with the default; a typed 4% and a 5% stay where they were
+    assert got["NO_DRAW"].broker_selling_pct == Decimal("0.06")
+    assert got["SPLIT_DRAW"].broker_selling_pct == Decimal("0.06")
+    assert got["WHOLETAIL"].broker_selling_pct == Decimal("0.04")
+    assert got["SPLIT_PRINCIPAL"].broker_selling_pct == Decimal("0.05")
+    # a split is still refused on 100% at close
+    with pytest.raises(IntegrityError), test_engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE deals SET loan_purchase_portion = 1, loan_rehab_portion = 189999 "
+                "WHERE id = :id"
+            ),
+            {"id": deals["NO_DRAW"][0]},
+        )
+
+    command.downgrade(alembic_cfg, "0020")
+    with test_engine.connect() as conn:
+        columns = {column["name"] for column in inspect(conn).get_columns("deals")}
+        assert {"flip_analysis", "rental_analysis"} <= columns
+        back = {
+            row.id: row
+            for row in conn.execute(
+                text("SELECT id, product::text AS product, broker_selling_pct FROM deals")
+            )
+        }
+    assert {back[deals[p][0]].product for p in ("NO_DRAW", "WHOLETAIL")} == {"NO_DRAW"}
+    assert {back[deals[p][0]].product for p in ("SPLIT_DRAW", "SPLIT_PRINCIPAL")} == {"SPLIT_DRAW"}
+    assert back[deals["NO_DRAW"][0]].broker_selling_pct == Decimal("0.04")
 
     command.downgrade(alembic_cfg, "base")
     with test_engine.begin() as conn:
