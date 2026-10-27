@@ -102,7 +102,7 @@ def test_run_analysis_runs_both_as_the_person_and_reloads_on_the_result(
     assert deal is not None and deal.status is Status.UNDERWRITING
 
     body = client.get(f"/queue/deals/{deal.id}").text
-    assert "Verdict <strong>GO</strong>" in body
+    assert "Verdict <strong>Go</strong>" in body
     assert "· IRR <strong>" in body
     assert "Scored as" in body and "Leverage against caps" in body
     assert body.index("<h2>Pricing") < body.index("<h2>Lender Sensitivity")
@@ -196,7 +196,7 @@ def test_run_analysis_says_what_stood_down_and_keeps_what_ran(
     response = run(client, deal_with_overrides)
     assert response.status_code == 422
     assert "The ledger did not run: it still needs deal.term_months" in response.text
-    assert "Verdict <strong>GO</strong>" in response.text, "the verdict was kept"
+    assert "Verdict <strong>Go</strong>" in response.text, "the verdict was kept"
     assert count(db_session, Screen) == 1 and count(db_session, Underwrite) == 0
     db_session.expire_all()
     deal = db_session.get(Deal, deal_with_overrides.id)

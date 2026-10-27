@@ -21,7 +21,10 @@ thank-you.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
 from starlette.responses import RedirectResponse, Response
 from starlette.status import HTTP_303_SEE_OTHER, HTTP_403_FORBIDDEN
 
@@ -34,7 +37,12 @@ from api.routes.intake import router as intake_router
 from api.routes.queue import router as queue_router
 from api.security import SIGN_IN_PATH, CsrfRejected, NotSignedIn
 
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
 app = FastAPI(title="glenwood-uw", version="0.1.0")
+# The brand assets (static/brand, docs/brand.md): the only files served as they are. Public,
+# like the borrower form's own shell that shows them; nothing under static/ is a deal.
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(auth_router)
 app.include_router(queue_router)
 app.include_router(intake_router)

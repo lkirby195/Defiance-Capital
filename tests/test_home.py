@@ -581,7 +581,7 @@ def test_the_home_page_lists_every_section_and_the_row_columns(
         assert f"<th>{column}</th>" in body, column
     assert '<th class="num">Loan amount</th>' in body and '<th class="num">IRR</th>' in body
     assert str(deal_with_overrides.id) in body
-    assert ">GO<" in body and "Wholetail" in body and "Team" in body
+    assert ">Go<" in body and "Wholetail" in body and "Team" in body
     for control in ("Progress", "Pause", "Kill"):
         assert f">{control}</button>" in body or f">{control}</a>" in body, control
     assert "Review queue" not in body and "pinned" not in body.lower()

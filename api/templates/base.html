@@ -2,7 +2,7 @@
    queue is one small internal app and a second request for a few kB of CSS buys nothing.
    The public borrower form has its own shell (public.html) on the same stylesheet.
 
-   The top bar is the same on every page: the wordmark (plain text, standing in for a logo),
+   The top bar is the same on every page: the logo (static/brand, served at /static),
    Home, New Deal and Defaults, then the signed-in person's name, Change password and Sign
    out. Everything in it is a plain text link; the one accent colour is kept for actions.
 
@@ -23,7 +23,7 @@
 </head>
 <body>
   <header class="bar">
-    <span class="brand">Defiance Capital</span>
+    <span class="brand"><img src="/static/brand/logo-bar.png" alt="Defiance Capital" height="40"></span>
     <nav>
       <a class="btn" href="/queue">Home</a>
       <a class="btn" href="/queue/new">New Deal</a>

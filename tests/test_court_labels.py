@@ -115,7 +115,7 @@ def test_a_verdict_is_styled_by_its_code_and_a_severity_reads_as_a_word(
     assert client.post(f"/queue/deals/{deal.id}/run").status_code == 409
 
     body = client.get(f"/queue/deals/{deal.id}").text
-    assert '<span class="tag DECLINE">DECLINE</span>' in body
+    assert '<span class="tag DECLINE">Decline</span>' in body
     assert "LTV_OVER_CAP" not in body
     row = latest_screen(db_session, deal.id)
     assert row is not None

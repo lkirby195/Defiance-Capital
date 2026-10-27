@@ -159,7 +159,7 @@ def test_the_header_carries_the_chips(client: QueueClient, deal_with_overrides: 
     assert '<span class="tag fact" data-chip="loan-type">Wholetail</span>' in chips
     assert '<span class="tag fact" data-chip="loan-amount">$120,000.00</span>' in chips
     assert '<span class="tag fact" data-chip="term">6 month(s)</span>' in chips
-    assert '<span class="tag GO">GO</span>' in chips
+    assert '<span class="tag GO">Go</span>' in chips
     irr = re.search(r'data-chip="irr">IRR <strong>(\d+\.\d{4}%)</strong>', chips)
     assert irr is not None
     # in the brief's order: borrower, loan type, loan amount, term, verdict, IRR
@@ -201,6 +201,9 @@ def test_the_header_holds_the_controls(client: QueueClient, deal_with_overrides:
 
 # --- the top bar ----------------------------------------------------------------------------------
 
+# The wordmark is the logo (static/brand, docs/brand.md), on the queue's bar and the borrower's.
+LOGO = '<span class="brand"><img src="/static/brand/logo-bar.png" alt="Defiance Capital"'
+
 
 def test_the_top_bar_is_the_same_on_every_page(
     client: QueueClient, deal_with_overrides: Deal
@@ -209,7 +212,7 @@ def test_the_top_bar_is_the_same_on_every_page(
     for path in ("/queue", "/queue/new", deal, f"{deal}/intake", "/defaults", "/account/password"):
         body = client.get(path).text
         bar = between(body, '<header class="bar">', "</header>")
-        assert '<span class="brand">Defiance Capital</span>' in bar, path
+        assert LOGO in bar, path
         for link in (
             '<a class="btn" href="/queue">Home</a>',
             '<a class="btn" href="/queue/new">New Deal</a>',
@@ -232,7 +235,7 @@ def test_the_borrower_form_s_bar_holds_the_wordmark_and_the_toggle_only(
     for path in ("/apply", "/apply?lang=es", "/apply/thanks"):
         body = anon_client.get(path).text
         bar = between(body, '<header class="bar">', "</header>")
-        assert '<span class="brand">Defiance Capital</span>' in bar, path
+        assert LOGO in bar, path
         assert 'class="lang"' in bar, path
         assert "<nav" not in bar and 'href="/queue' not in bar and "Sign out" not in bar, path
     # one column: the borrower's main is the narrow one, and the boxes say which they are in
@@ -242,6 +245,13 @@ def test_the_borrower_form_s_bar_holds_the_wordmark_and_the_toggle_only(
     assert '<span class="mark">Required</span>' in body
     assert '<span class="mark">Optional</span>' in body
     assert 'class="req"' not in body and 'class="opt"' not in body
+
+
+def test_the_logo_is_served_to_anybody(anon_client: QueueClient) -> None:
+    response = anon_client.get("/static/brand/logo-bar.png")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content.startswith(bytes([137, 80, 78, 71]))
 
 
 # --- Home -----------------------------------------------------------------------------------------
@@ -254,7 +264,7 @@ def test_home_rows_carry_chips_and_an_empty_section_says_so_in_one_line(
     body = client.get("/queue").text
     row = body[body.index(str(deal_with_overrides.id)) :]
     row = row[: row.index("</tr>")]
-    assert '<span class="tag GO">GO</span>' in row
+    assert '<span class="tag GO">Go</span>' in row
     # the verdict chip and nothing else: no version name beside it, no status chip
     assert "Auto v" not in row and 'title="The Working version"' not in row
     assert 'class="tag status"' not in row

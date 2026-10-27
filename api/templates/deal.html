@@ -48,7 +48,7 @@
       <span class="tag fact" data-chip="loan-type">{{ deal.product | label }}</span>
       <span class="tag fact" data-chip="loan-amount">{{ deal.loan_requested | money }}</span>
       <span class="tag fact" data-chip="term">{{ deal.term_months | plain }}{% if deal.term_months is not none %} month(s){% endif %}{% if deal.term_stub_days %} and {{ deal.term_stub_days }} day(s){% endif %}</span>
-      {% if screen %}<span class="tag {{ screen.result.verdict | plain }}">{{ screen.result.verdict | plain }}</span>{% endif %}
+      {% if screen %}<span class="tag {{ screen.result.verdict | plain }}">{{ screen.result.verdict | label }}</span>{% endif %}
       <span class="tag fact" data-chip="irr">IRR <strong>{{ result.return_overview.irr | rate if result else "—" }}</strong></span>
       <span class="tag status">{{ deal.status | plain }}</span>
       {% if working %}<span class="tag WORKING" id="working-version" title="The version the deal stands on: Home and this page show it unless asked for another">Working: {{ working.name }}</span>{% endif %}
@@ -61,7 +61,7 @@
     </p>
     <p class="meta" id="run-line">
       {% if screen %}
-        Verdict <strong>{{ screen.result.verdict | plain }}</strong>
+        Verdict <strong>{{ screen.result.verdict | label }}</strong>
         {%- if result %} · IRR <strong>{{ result.return_overview.irr | rate }}</strong>{% endif %}
         {%- if shown %} · {{ shown.name }} by {{ shown.actor }}{% endif %}
         · run {{ screen.created_at | when }} · engine {{ screen.result.engine_version }}
@@ -831,7 +831,7 @@
                 <td class="small"><span class="tag {{ 'WORKING' if entry.working else 'DRAFT' }}">{{ "Working" if entry.working else "Draft" }}</span></td>
                 <td class="small">{{ entry.engine_version | plain }}</td>
                 <td class="small">
-                  {% if entry.verdict %}<span class="tag {{ entry.verdict | plain }}">{{ entry.verdict | plain }}</span>{% endif %}
+                  {% if entry.verdict %}<span class="tag {{ entry.verdict | plain }}">{{ entry.verdict | label }}</span>{% endif %}
                   IRR {{ entry.irr | rate }}
                 </td>
                 <td class="small"><a class="btn small quiet" href="/queue/deals/{{ deal.id }}?version={{ entry.number }}">View</a></td>
