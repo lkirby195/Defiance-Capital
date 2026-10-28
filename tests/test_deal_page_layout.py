@@ -113,8 +113,8 @@ def test_the_sensitivities_share_a_row_and_the_analyses_another(
     # this deal has a sale price and a rent, so all three carry a figure
     assert trio.count('<p class="headline">') == 3
     assert '<span class="headline-label">Net profit</span>' in trio
-    assert '<span class="headline-label">DSCR</span>' in trio
-    assert '<span class="headline-label">DSCR at loan cost</span>' in trio
+    assert '<span class="headline-label">Required rent</span>' in trio
+    assert '<span class="headline-label">Sale price needed</span>' in trio
 
 
 def test_an_unevaluated_analysis_is_a_state_not_an_error(
@@ -139,7 +139,7 @@ def test_an_unevaluated_analysis_is_a_state_not_an_error(
     assert '<p class="headline">' not in trio
     assert 'class="problem"' not in trio and 'class="banner"' not in trio
     for card in (flip, rental, take_back):
-        assert "<dt>Status" in card and '<dl class="facts small">' in card
+        assert "<dt>Status" in card and '<dl class="facts small' in card
 
 
 def test_a_deal_on_the_grid_has_its_cell_marked_on_both_tables(

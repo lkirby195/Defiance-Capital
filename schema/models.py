@@ -690,30 +690,46 @@ class ScreenFlag(StrEnum):
 
 
 class UnderwriteFlag(StrEnum):
-    """Stable codes for flags the underwrite raises.  # SPEC §8.6, §8.7
+    """Stable codes for flags the underwrite raises.  # SPEC §8.5, §8.6, §8.8
 
-    The two DSCR codes and the borrower's cash-on-cash code take their severity from
-    ``flags.underwrite_severities``; the three informational codes are fixed INFO in code and
-    config must not grade them.
+    The four graded codes - the rental's two and the take-back's price test and the
+    borrower's cash-on-cash - take their severity from ``flags.underwrite_severities``; the
+    informational codes are fixed INFO in code and config must not grade them. The two DSCR
+    codes engine 2.0 raised are retired (engine 2.1.0): a stored row still names one, so the
+    members stay, but nothing raises them and config refuses to grade them.
     """
 
-    DSCR_BELOW_FLOOR = "DSCR_BELOW_FLOOR"  # SPEC §8.5: rental DSCR under rental.dscr_floor
-    TAKE_BACK_DSCR_BELOW_FLOOR = "TAKE_BACK_DSCR_BELOW_FLOOR"  # SPEC §8.6: under take_back floor
+    # SPEC §8.5: the market rent is below the rent the takeout loan requires
+    MARKET_RENT_BELOW_REQUIRED = "MARKET_RENT_BELOW_REQUIRED"
+    # SPEC §8.5: the takeout loan is short of the payoff due on this loan
+    TAKEOUT_BELOW_PAYOFF = "TAKEOUT_BELOW_PAYOFF"
+    # SPEC §8.6: the sale price the lender needs to hit its target is above the purchase price
+    TAKE_BACK_PRICE_ABOVE_PURCHASE = "TAKE_BACK_PRICE_ABOVE_PURCHASE"
     # SPEC §8.4: the flip's cash-on-cash under pricing.borrower_coc_target
     BORROWER_COC_BELOW_TARGET = "BORROWER_COC_BELOW_TARGET"
-    MONTHLY_RENT_MISSING = "MONTHLY_RENT_MISSING"  # INFO, SPEC §8.5, §8.6: no rent to run either on
+    MONTHLY_RENT_MISSING = "MONTHLY_RENT_MISSING"  # INFO, SPEC §8.5, §8.6: no market rent
     SALE_PRICE_MISSING = "SALE_PRICE_MISSING"  # INFO, SPEC §8.4: no price, so no flip to evaluate
     NO_REHAB_PERIOD = "NO_REHAB_PERIOD"  # INFO, SPEC §8.3: no rehab period, so no draw schedule
+    # INFO, SPEC §8.6: no foreclosure months for the deal's state, so no take-back
+    FORECLOSURE_MONTHS_MISSING = "FORECLOSURE_MONTHS_MISSING"
+    # Retired with engine 2.1.0 (the DSCR tests): a stored row from before still reads.
+    DSCR_BELOW_FLOOR = "DSCR_BELOW_FLOOR"
+    TAKE_BACK_DSCR_BELOW_FLOOR = "TAKE_BACK_DSCR_BELOW_FLOOR"
 
 
 # Underwrite codes whose severity is a config decision; every other code is fixed INFO
-# in code (SPEC §8.7) and ``flags.underwrite_severities`` rejects it.
+# in code (SPEC §8.8) and ``flags.underwrite_severities`` rejects it.
 GRADED_UNDERWRITE_FLAGS: frozenset[UnderwriteFlag] = frozenset(
     {
-        UnderwriteFlag.DSCR_BELOW_FLOOR,
-        UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR,
+        UnderwriteFlag.MARKET_RENT_BELOW_REQUIRED,
+        UnderwriteFlag.TAKEOUT_BELOW_PAYOFF,
+        UnderwriteFlag.TAKE_BACK_PRICE_ABOVE_PURCHASE,
         UnderwriteFlag.BORROWER_COC_BELOW_TARGET,
     }
+)
+# The DSCR codes engine 2.0 graded; never raised since 2.1.0, refused by name in config.
+RETIRED_UNDERWRITE_FLAGS: frozenset[UnderwriteFlag] = frozenset(
+    {UnderwriteFlag.DSCR_BELOW_FLOOR, UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR}
 )
 
 
@@ -1001,9 +1017,12 @@ class UnderwriteInputs(BaseModel):
     and ``rental_takeout_rate`` (SPEC §8.5), ``take_back_legal_costs_usd`` and
     ``take_back_lost_interest_months`` (SPEC §8.6): the deal's own number when it carries
     one, the config value otherwise, each resolved in ``engine/calc/terms.py``.
-    ``monthly_rent`` has no default - nothing stands in for what a property lets for - so
-    ``None`` leaves the Rental and Take-Back analyses NOT_EVALUATED (SPEC §8.5, §8.6) rather
-    than computed on a zero.
+    ``monthly_rent`` - the market rent - has no default: nothing stands in for what a property
+    lets for, so ``None`` leaves the market-rent lines of the Rental and Take-Back analyses
+    NOT_EVALUATED (SPEC §8.5, §8.6) rather than computed on a zero. ``rental_exit_value`` is
+    the value the takeout lender lends against (SPEC §8.5): the deal's own when the team typed
+    one, else the estimated sale price. ``as_is_value`` is the team's as-is valuation, which
+    the take-back's haircut is set beside when there is one (SPEC §8.6).
 
     ``court_records`` is the latest source in force at underwrite time, adapter over team,
     exactly as at the screen (SPEC §6.1, §8.1). The underwrite re-runs the SPEC §7.2 tests on
@@ -1032,6 +1051,10 @@ class UnderwriteInputs(BaseModel):
         default=None, ge=0, max_digits=14, decimal_places=2
     )
     take_back_lost_interest_months: int | None = Field(default=None, ge=0, le=60)
+    # The rental's exit value (SPEC §8.5): typed on the panel, else the estimated sale price.
+    rental_exit_value: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    # The as-is value (SPEC §8.6): optional, team-typed, read by the take-back alone.
+    as_is_value: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     # Where the rent came from (SPEC §4.2, §6.1): the team's own entry, or the borrower's
     # claim on the public form. None when nobody said, which a fixture handed straight to
@@ -1251,8 +1274,251 @@ class FlipAnalysis(BaseModel):
         )
 
 
+class ExitValueSource(StrEnum):
+    """Where the rental's exit value came from.  # SPEC §8.5"""
+
+    SALE_PRICE = "SALE_PRICE"  # the default: the estimated sale price in force
+    ENTERED = "ENTERED"  # the team typed one on the Underwriting Assumptions panel
+
+
 class RentalAnalysis(BaseModel):
-    """Whether the rent carries a takeout loan on the commitment.  # SPEC §8.5"""
+    """The takeout: what the property has to let for to carry a loan on its exit value.
+
+    # SPEC §8.5 (engine 2.1.0). ``status`` is EVALUATED when there is an exit value - the
+    takeout loan, the two debt services, the required NOI and rent, the payoff due and the
+    spread all follow from it alone - and ``market_rent_status`` is EVALUATED when there is a
+    market rent beside it: the gap, the two DSCRs at the market rent and the rent test. The
+    five assumptions are reported whatever the status; so is the market rent, when there is
+    one, since it does not depend on the exit value.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: AnalysisStatus
+    market_rent_status: AnalysisStatus
+    # The assumptions it ran on, always reported.
+    expenses_pct: Decimal  # operating expenses as a share of the rent
+    takeout_ltv: Decimal
+    takeout_rate: Decimal
+    amortization_years: int
+    target_dscr: Decimal
+    # What the exit value feeds; None when the status is NOT_EVALUATED.
+    exit_value: Decimal | None
+    exit_value_source: ExitValueSource | None
+    takeout_loan: Decimal | None  # exit value x takeout LTV
+    debt_service_amortizing: Decimal | None  # monthly, level payment over the amortization
+    debt_service_interest_only: Decimal | None  # monthly, takeout loan x rate / 12
+    required_noi: Decimal | None  # amortizing debt service x target DSCR
+    required_rent: Decimal | None  # required NOI / (1 - expenses_pct)
+    payoff_due: Decimal | None  # this loan's principal and the payoff half of the fee
+    spread_to_loan: Decimal | None  # takeout loan - payoff due
+    spread_passed: bool | None  # spread >= 0
+    # What the market rent feeds; None when market_rent_status is NOT_EVALUATED.
+    market_rent: Decimal | None  # reported whenever there is one
+    market_noi: Decimal | None  # market rent x (1 - expenses_pct)
+    rent_gap: Decimal | None  # market rent - required rent
+    dscr_amortizing: Decimal | None  # market NOI / amortizing debt service
+    dscr_interest_only: Decimal | None  # market NOI / interest-only debt service
+    rent_passed: bool | None  # market rent >= required rent
+
+    @model_validator(mode="after")
+    def _statuses_agree_with_figures(self) -> RentalAnalysis:
+        _status_agrees_with_figures(
+            self.status,
+            (
+                self.exit_value,
+                self.exit_value_source,
+                self.takeout_loan,
+                self.debt_service_amortizing,
+                self.debt_service_interest_only,
+                self.required_noi,
+                self.required_rent,
+                self.payoff_due,
+                self.spread_to_loan,
+                self.spread_passed,
+            ),
+            "the exit value feeds",
+            self,
+        )
+        _status_agrees_with_figures(
+            self.market_rent_status,
+            # The interest-only DSCR is left out: at a zero takeout rate there is no
+            # interest-only payment to divide by, and it is None rather than infinite.
+            (self.market_noi, self.rent_gap, self.dscr_amortizing, self.rent_passed),
+            "the market rent feeds",
+            self,
+        )
+        if (
+            self.market_rent_status is AnalysisStatus.EVALUATED
+            and self.status is not AnalysisStatus.EVALUATED
+        ):
+            raise ValueError("the market-rent lines cannot be evaluated without an exit value")
+        if self.market_rent_status is AnalysisStatus.EVALUATED and self.market_rent is None:
+            raise ValueError("the market-rent lines cannot be evaluated without a market rent")
+        return self
+
+
+class SolveStatus(StrEnum):
+    """What a bisection on the lender's XIRR came back with.  # SPEC §8.6"""
+
+    SOLVED = "SOLVED"  # the lowest whole dollar inside the bounds that reaches the target
+    NO_SOLUTION = "NO_SOLUTION"  # a bound was hit: nothing inside them reaches the target
+    NOT_EVALUATED = "NOT_EVALUATED"  # an input the solve needs is missing
+
+
+class BoundHit(StrEnum):
+    """Which bound a solve with no solution ran into.  # SPEC §8.6"""
+
+    LOWER = "LOWER"  # the lower bound already reaches the target: nothing is needed
+    UPPER = "UPPER"  # the upper bound falls short: nothing in range reaches the target
+
+
+class Solve(BaseModel):
+    """One figure solved by bisection on the lender's XIRR, with the bounds it ran in.
+
+    # SPEC §8.6. ``value`` is the lowest whole dollar in ``[lower, upper]`` at which the
+    lender's XIRR reaches ``target``; ``irr`` is the XIRR there. ``NO_SOLUTION`` when the
+    upper bound does not reach the target, or the lower one already does - the answer would
+    be a bound, which is not an answer - and ``bound_hit`` says which. ``NOT_EVALUATED``
+    carries no bounds either.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: SolveStatus
+    value: Decimal | None
+    irr: Decimal | None
+    lower: Decimal | None
+    upper: Decimal | None
+    bound_hit: BoundHit | None = None
+
+    @model_validator(mode="after")
+    def _status_agrees(self) -> Solve:
+        solved = self.status is SolveStatus.SOLVED
+        if solved != (self.value is not None and self.irr is not None):
+            raise ValueError("a SOLVED figure carries its value and its IRR; nothing else does")
+        bounded = self.status is not SolveStatus.NOT_EVALUATED
+        if bounded != (self.lower is not None and self.upper is not None):
+            raise ValueError("a solve that ran carries its bounds; one that did not carries none")
+        if (self.status is SolveStatus.NO_SOLUTION) != (self.bound_hit is not None):
+            raise ValueError("a solve with no solution says which bound it hit; no other does")
+        return self
+
+
+class DatedFlow(BaseModel):
+    """One of the lender's dated flows on the take-back timeline.  # SPEC §8.6"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    month: int  # the ledger's period index (0 is the closing month end)
+    date: date
+    amount: Decimal  # the lender's sign: money out negative, money in positive
+
+
+class HoldRow(BaseModel):
+    """One hold period of the take-back's hold-and-rent block.  # SPEC §8.6
+
+    ``required_rent`` is the monthly rent, at the projected sale price, at which the lender's
+    XIRR over the whole loan reaches the target; ``required_sale_price`` the sale price at the
+    market rent that does the same, NOT_EVALUATED without a market rent.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    hold_months: int
+    sale_month: int  # the ledger month the hold ends and the property sells in
+    required_rent: Solve
+    required_sale_price: Solve
+
+
+class TakeBackAnalysis(BaseModel):
+    """The lender's own downside: what the property has to sell or let for after a default.
+
+    # SPEC §8.6 (engine 2.1.0). The timeline and the costs - the default month, the lost
+    interest, the legal bill, the foreclosure carry - are reported on every run. ``status`` is
+    EVALUATED when the two things the solves need are there: a projected sale price (the
+    haircut and the bounds are set against it) and foreclosure months for the deal's state;
+    ``market_rent_status`` is EVALUATED when there is a market rent beside them. The haircut
+    block is ``haircut_price``; the hold-and-rent block is ``holds``.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: AnalysisStatus
+    market_rent_status: AnalysisStatus
+    # The loan and the timeline, always reported.
+    loan_amount: Decimal  # the commitment
+    interest_rate: Decimal  # the deal's own
+    term_months: int
+    default_month: int  # max(1, term_months - listing_months)
+    interest_received: Decimal  # months 1 .. default_month, on the commitment
+    lost_interest_months: int
+    lost_interest: Decimal  # what those months would have paid
+    legal_costs: Decimal
+    state: State
+    foreclosure_months: int | None  # config, by state; None when the state has none
+    holding_costs_monthly: Decimal
+    foreclosure_carry: Decimal | None  # foreclosure months x the monthly holding cost
+    sale_month: int | None  # default + lost + foreclosure months; the REO sale
+    broker_selling_pct: Decimal
+    expenses_pct: Decimal  # the rental's, on the hold's rent
+    target_irr: Decimal  # pricing.target_lender_irr
+    hold_months: list[int]  # config
+    # The haircut-to-target block; None when the status is NOT_EVALUATED.
+    projected_sale_price: Decimal | None
+    purchase_price: Decimal
+    as_is_value: Decimal | None  # reported whenever there is one
+    haircut_price: Solve | None  # the sale price P at which the lender's XIRR = target
+    haircut_amount: Decimal | None  # projected sale price - P
+    haircut_pct: Decimal | None  # of the projected sale price
+    price_pct_of_purchase: Decimal | None  # P / purchase price
+    price_above_purchase: bool | None  # the flag's test
+    price_vs_as_is: Decimal | None  # P - as-is value, when there is one
+    price_pct_of_as_is: Decimal | None  # P / as-is value, when there is one
+    # The lender's flows at the solved haircut price, so the workbook can XIRR them itself;
+    # empty when there is no solved price.
+    haircut_flows: list[DatedFlow] = Field(default_factory=list)
+    # The hold-and-rent block, one row per config hold period.
+    holds: list[HoldRow]
+
+    @model_validator(mode="after")
+    def _statuses_agree_with_figures(self) -> TakeBackAnalysis:
+        # The projected sale price is reported whenever there is one, solved against or not.
+        _status_agrees_with_figures(
+            self.status, (self.haircut_price,), "the projected sale price feeds", self
+        )
+        if self.status is AnalysisStatus.EVALUATED:
+            if self.foreclosure_months is None or self.sale_month is None:
+                raise ValueError("an EVALUATED take-back carries its foreclosure months")
+        # The figures derived from P are there exactly when P was solved; the two against the
+        # as-is value only when there is an as-is value as well.
+        assert self.haircut_price is None or self.status is AnalysisStatus.EVALUATED
+        solved = self.haircut_price is not None and self.haircut_price.value is not None
+        derived = (
+            self.haircut_amount,
+            self.haircut_pct,
+            self.price_pct_of_purchase,
+            self.price_above_purchase,
+        )
+        if solved != all(figure is not None for figure in derived) or (
+            not solved and any(figure is not None for figure in derived)
+        ):
+            raise ValueError("the figures derived from P are there exactly when P was solved")
+        beside_as_is = solved and self.as_is_value is not None
+        if beside_as_is != (
+            self.price_vs_as_is is not None and self.price_pct_of_as_is is not None
+        ):
+            raise ValueError("P is set beside the as-is value exactly when both are there")
+        if (
+            self.market_rent_status is AnalysisStatus.EVALUATED
+            and self.status is not AnalysisStatus.EVALUATED
+        ):
+            raise ValueError("the market-rent column cannot be evaluated without the solves")
+        return self
+
+
+class LegacyRentalAnalysis(BaseModel):
+    """The Rental DSCR test engine 1.0 to 2.0 recorded; a stored row still reads.  # SPEC §8.5"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1271,7 +1537,7 @@ class RentalAnalysis(BaseModel):
     passed: bool | None  # None when there was no DSCR to test
 
     @model_validator(mode="after")
-    def _evaluated_means_every_rent_figure_is_there(self) -> RentalAnalysis:
+    def _evaluated_means_every_rent_figure_is_there(self) -> LegacyRentalAnalysis:
         return _status_agrees_with_figures(
             self.status,
             (self.monthly_rent, self.expenses, self.net_monthly_income, self.dscr, self.passed),
@@ -1280,11 +1546,8 @@ class RentalAnalysis(BaseModel):
         )
 
 
-class TakeBackAnalysis(BaseModel):
-    """Whether the rent carries what the loan cost GLENWOOD, if it takes the property back.
-
-    # SPEC §8.6. Always run: it is not a toggle, and the Rental toggle does not gate it.
-    """
+class LegacyTakeBackAnalysis(BaseModel):
+    """The Take-Back DSCR test engine 1.0 to 2.0 recorded; a stored row still reads.  # SPEC §8.6"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1303,7 +1566,7 @@ class TakeBackAnalysis(BaseModel):
     passed: bool | None
 
     @model_validator(mode="after")
-    def _evaluated_means_every_rent_figure_is_there(self) -> TakeBackAnalysis:
+    def _evaluated_means_every_rent_figure_is_there(self) -> LegacyTakeBackAnalysis:
         return _status_agrees_with_figures(
             self.status,
             (self.net_monthly_income, self.dscr, self.passed),
@@ -1584,7 +1847,9 @@ class UnderwriteResult(BaseModel):
     ``borrower_sensitivity`` and ``pricing`` only on one written before 1.7.0: every run since
     carries them, and a stored result from before loads rather than failing. The same goes
     for ``sources_and_uses`` before 2.0.0. ``analyses`` is the other way round: the two
-    toggles a run before 2.0.0 ran under, None on every run since (SPEC §8.1).
+    toggles a run before 2.0.0 ran under, None on every run since (SPEC §8.1). ``rental`` and
+    ``take_back`` are the 2.1.0 analyses on every run since; a row written before carries the
+    two DSCR tests it ran, which read back as the legacy blocks and are shown as such.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1607,6 +1872,6 @@ class UnderwriteResult(BaseModel):
     pricing: PricingMatrix | None = None  # SPEC §8.10
     sources_and_uses: SourcesAndUses | None = None  # SPEC §8.11
     flip: FlipAnalysis
-    rental: RentalAnalysis
-    take_back: TakeBackAnalysis
+    rental: RentalAnalysis | LegacyRentalAnalysis
+    take_back: TakeBackAnalysis | LegacyTakeBackAnalysis
     flags: list[Flag]

@@ -12,8 +12,9 @@ and compare. Sheets, in the SPEC §9 order:
     Pricing          the lowest rate, solved to 0.01%, that earns the target lender IRR,
                      with the borrower's equity and the de-risk line (SPEC §8.10)
     Flip             the project's margin if it sells, line by line, and the borrower's side
-    Rental           whether the rent carries a takeout loan
-    Take-Back        whether the rent carries what the loan cost GLENWOOD
+    Rental           the takeout: what the property has to let for (SPEC §8.5)
+    Take-Back        the lender's downside: what it has to sell or let for after a
+                     default, with the flows at the solved price and an XIRR over them
     Sources & Uses   the two advances and the equity against the cost stack (SPEC §8.11)
     Flags            every flag with its severity and the threshold it names
 
@@ -41,9 +42,15 @@ from schema.labels import enum_label
 from schema.models import (
     SPLIT_PRODUCTS,
     AnalysisStatus,
+    BoundHit,
+    ExitValueSource,
+    LegacyRentalAnalysis,
+    LegacyTakeBackAnalysis,
     LeverageMetric,
     ScreenInputs,
     SizingResult,
+    Solve,
+    SolveStatus,
     UnderwriteInputs,
     UnderwriteResult,
     ValueSource,
@@ -82,6 +89,11 @@ def _source(source: ValueSource | None) -> str:
     if source is ValueSource.BORROWER:
         return "borrower, on the public form"
     return "adapter / paid pull"
+
+
+def _or_config(own: Any, config_value: Any) -> Any:
+    """The deal's own assumption when it carries one, else the config value it ran on."""
+    return config_value if own is None else own
 
 
 def _assumption_note(own: object | None, what: str) -> str:
@@ -196,7 +208,7 @@ def _sheet_inputs(
         ("Advance at closing", economics.loan_purchase_portion, MONEY, "split products only"),
         ("Rehab portion", economics.loan_rehab_portion, MONEY, "holdback / Tranche A"),
         ("", None, None, ""),
-        ("VALUATION, RENT AND TOGGLES", None, None, ""),
+        ("VALUATION AND RENT", None, None, ""),
         (
             "Estimated sale price",
             deal.estimated_sale_price,
@@ -204,10 +216,22 @@ def _sheet_inputs(
             _source(deal.estimated_sale_price_source),
         ),
         (
+            "As-is value",
+            underwrite_inputs.as_is_value,
+            MONEY,
+            "optional; the take-back's haircut is set beside it (SPEC 8.6)",
+        ),
+        (
+            "Rental exit value",
+            underwrite_inputs.rental_exit_value,
+            MONEY,
+            "blank = the estimated sale price stands in (SPEC 8.5)",
+        ),
+        (
             "Monthly rent",
             underwrite_inputs.monthly_rent,
             MONEY,
-            "blank = no DSCR at all"
+            "the market rent; blank = the market-rent lines are not evaluated"
             if underwrite_inputs.monthly_rent is None
             else _source(underwrite_inputs.monthly_rent_source)
             if underwrite_inputs.monthly_rent_source is not None
@@ -255,31 +279,50 @@ def _sheet_inputs(
         ),
         (
             "Rental expenses",
-            result.rental.expenses_pct,
+            _or_config(
+                underwrite_inputs.rental_expenses_pct_of_rent, config.rental.expenses_pct_of_rent
+            ),
             PCT1,
             _assumption_note(underwrite_inputs.rental_expenses_pct_of_rent, "of rent"),
         ),
         (
             "Rental takeout rate",
-            result.rental.takeout_rate,
+            _or_config(underwrite_inputs.rental_takeout_rate, config.rental.takeout_rate),
             PCT1,
             _assumption_note(underwrite_inputs.rental_takeout_rate, ""),
         ),
         (
             "Lost interest months",
-            result.take_back.lost_interest_months,
+            _or_config(
+                underwrite_inputs.take_back_lost_interest_months,
+                config.take_back.lost_interest_months,
+            ),
             INTEGER,
             _assumption_note(underwrite_inputs.take_back_lost_interest_months, ""),
         ),
         (
             "Legal costs",
-            result.take_back.legal_costs,
+            _or_config(
+                underwrite_inputs.take_back_legal_costs_usd, config.take_back.legal_costs_usd
+            ),
             MONEY,
             _assumption_note(underwrite_inputs.take_back_legal_costs_usd, ""),
         ),
         ("Config: listing months", config.draws.listing_months, INTEGER, ""),
-        ("Config: rental DSCR floor", config.rental.dscr_floor, RATIO, ""),
-        ("Config: take-back DSCR floor", config.take_back.dscr_floor, RATIO, ""),
+        ("Config: rental takeout LTV", config.rental.takeout_ltv, PCT1, ""),
+        ("Config: rental target DSCR", config.rental.target_dscr, RATIO, ""),
+        (
+            "Config: take-back foreclosure months",
+            ", ".join(f"{s.value} {m}" for s, m in config.take_back.foreclosure_months.items()),
+            None,
+            "",
+        ),
+        (
+            "Config: take-back hold months",
+            ", ".join(map(str, config.take_back.hold_months)),
+            None,
+            "",
+        ),
     ]
     at = _rows(sheet, rows) + 1
     at = _header(sheet, at, ["Metric", "Actual", "Cap", "Limit", "Status", "Denominator"])
@@ -654,68 +697,170 @@ def _flip_note(status: AnalysisStatus) -> str:
     return ""
 
 
-def _rent_note(status: AnalysisStatus, off: str) -> str:
-    if status is AnalysisStatus.OFF:
-        return off
-    if status is AnalysisStatus.NOT_EVALUATED:
-        return "no monthly rent, so there is no net monthly income and no DSCR to test"
-    return ""
+def _solve_cell(solve: Solve) -> tuple[Any, str | None, str]:
+    """A solved figure as a cell: the dollars, or the reason there are none."""
+    if solve.status is SolveStatus.SOLVED:
+        return solve.value, MONEY, f"searched {solve.lower:,.0f} to {solve.upper:,.0f}"
+    if solve.status is SolveStatus.NOT_EVALUATED:
+        return "not evaluated", None, ""
+    if solve.bound_hit is BoundHit.LOWER:
+        return "none needed", None, f"{solve.lower:,.0f} already reaches the target"
+    return "no solution", None, f"none up to {solve.upper:,.0f}"
 
 
 def _sheet_rental(book: Workbook, result: UnderwriteResult) -> None:
     sheet = book.create_sheet("Rental")
-    _title(sheet, "Rental Analysis — does the rent carry a takeout loan")
+    _title(sheet, "Rental Analysis — what the property has to let for to refinance us out")
     rental = result.rental
+    if isinstance(rental, LegacyRentalAnalysis):
+        sheet.cell(
+            row=3,
+            column=1,
+            value="A run before engine 2.1.0: it recorded the DSCR test, which this sheet no "
+            "longer prints. Run the analysis again.",
+        )
+        _widths(sheet, 100)
+        return
+    if rental.status is AnalysisStatus.NOT_EVALUATED:
+        note = "no exit value (no estimated sale price and none entered), so no takeout to size"
+    elif rental.market_rent_status is AnalysisStatus.NOT_EVALUATED:
+        note = "no market rent: the gap, the DSCRs and the rent test are not evaluated"
+    else:
+        note = ""
+    source = {
+        ExitValueSource.SALE_PRICE: "the estimated sale price (default)",
+        ExitValueSource.ENTERED: "entered on the deal",
+        None: "",
+    }[rental.exit_value_source]
     rows: list[Row] = [
-        (
-            "Status",
-            rental.status.value,
-            None,
-            _rent_note(rental.status, "the toggle was off (a run before engine 2.0.0)"),
-        ),
-        ("Monthly rent", rental.monthly_rent, MONEY, ""),
-        ("Expenses", rental.expenses_pct, PCT1, "of rent"),
-        ("Expenses (monthly)", rental.expenses, MONEY, ""),
-        (
-            "Holding costs (monthly)",
-            rental.holding_costs_monthly,
-            MONEY,
-            "the total over the exact term in months, stub included",
-        ),
-        ("Net monthly income", rental.net_monthly_income, MONEY, "rent - expenses - holding"),
-        ("Loan amount", rental.loan_amount, MONEY, "the commitment"),
-        ("Takeout rate", rental.takeout_rate, PCT1, ""),
+        ("Status", rental.status.value, None, note),
+        ("Exit value", rental.exit_value, MONEY, source),
+        ("Takeout LTV", rental.takeout_ltv, PCT1, "config"),
+        ("Takeout loan", rental.takeout_loan, MONEY, "exit value x LTV"),
+        ("Takeout rate", rental.takeout_rate, PCT2, ""),
         ("Amortization (years)", rental.amortization_years, INTEGER, ""),
-        ("Debt service (monthly)", rental.debt_service_monthly, MONEY, "level payment"),
-        ("DSCR", rental.dscr, RATIO, ""),
-        ("DSCR floor", rental.dscr_floor, RATIO, ""),
-        ("Passed", rental.passed, None, ""),
+        ("Debt service, amortizing", rental.debt_service_amortizing, MONEY, "monthly, level"),
+        ("Debt service, interest-only", rental.debt_service_interest_only, MONEY, "monthly"),
+        ("Target DSCR", rental.target_dscr, RATIO, "config"),
+        ("Required NOI", rental.required_noi, MONEY, "amortizing debt service x target DSCR"),
+        ("Expenses", rental.expenses_pct, PCT1, "of rent"),
+        ("Required rent", rental.required_rent, MONEY, "required NOI / (1 - expenses)"),
+        ("Market rent", rental.market_rent, MONEY, ""),
+        ("Market NOI", rental.market_noi, MONEY, "market rent x (1 - expenses)"),
+        ("Gap", rental.rent_gap, MONEY, "market rent - required rent"),
+        ("DSCR at market, amortizing", rental.dscr_amortizing, RATIO, ""),
+        ("DSCR at market, interest-only", rental.dscr_interest_only, RATIO, ""),
+        ("Rent test passed", rental.rent_passed, None, "market rent >= required rent"),
+        ("Our payoff due", rental.payoff_due, MONEY, "commitment + the fee's payoff half"),
+        ("Spread to loan", rental.spread_to_loan, MONEY, "takeout loan - payoff due"),
+        ("Spread passed", rental.spread_passed, None, "spread >= 0"),
     ]
     _rows(sheet, rows)
-    _widths(sheet, 26, 18, 44)
+    _widths(sheet, 30, 18, 44)
 
 
 def _sheet_take_back(book: Workbook, result: UnderwriteResult) -> None:
+    """The lender's downside: the timeline, the two blocks, and the flows at the solved
+    price with an XIRR formula over them, so the workbook checks the solve itself."""
     sheet = book.create_sheet("Take-Back")
-    _title(sheet, "Take-Back Analysis — does the rent carry what the loan cost GLENWOOD")
+    _title(sheet, "Take-Back Analysis — what the property has to sell or let for after a default")
     take_back = result.take_back
+    if isinstance(take_back, LegacyTakeBackAnalysis):
+        sheet.cell(
+            row=3,
+            column=1,
+            value="A run before engine 2.1.0: it recorded the DSCR test, which this sheet no "
+            "longer prints. Run the analysis again.",
+        )
+        _widths(sheet, 100)
+        return
+    if take_back.foreclosure_months is None:
+        note = f"no foreclosure months in config for {take_back.state.value}"
+    elif take_back.status is AnalysisStatus.NOT_EVALUATED:
+        note = "no projected sale price to set the haircut and the bounds against"
+    elif take_back.market_rent_status is AnalysisStatus.NOT_EVALUATED:
+        note = "no market rent: the sale price at the market rent is not evaluated"
+    else:
+        note = ""
     rows: list[Row] = [
-        ("Status", take_back.status.value, None, _rent_note(take_back.status, "")),
+        ("Status", take_back.status.value, None, note),
         ("Loan amount", take_back.loan_amount, MONEY, "the commitment"),
-        ("Interest rate", take_back.interest_rate, PCT1, "the deal's own, not a takeout rate"),
+        ("Interest rate", take_back.interest_rate, PCT2, "the deal's own"),
+        ("Term (months)", take_back.term_months, INTEGER, ""),
+        ("Default month", take_back.default_month, INTEGER, "term - listing months, floored at 1"),
+        ("Interest received", take_back.interest_received, MONEY, "months 1 to the default"),
         ("Lost interest (months)", take_back.lost_interest_months, INTEGER, ""),
-        ("Lost interest", take_back.lost_interest, MONEY, "interest GLENWOOD stops collecting"),
-        ("Legal costs", take_back.legal_costs, MONEY, ""),
-        ("Total cost", take_back.total_cost, MONEY, "loan + lost interest + legal"),
-        ("Amortization (years)", take_back.amortization_years, INTEGER, ""),
-        ("Debt service (monthly)", take_back.debt_service_monthly, MONEY, "on the total cost"),
-        ("Net monthly income", take_back.net_monthly_income, MONEY, "as in the Rental sheet"),
-        ("DSCR at loan cost", take_back.dscr, RATIO, ""),
-        ("DSCR floor", take_back.dscr_floor, RATIO, ""),
-        ("Passed", take_back.passed, None, ""),
+        ("Lost interest", take_back.lost_interest, MONEY, "nothing collected after the default"),
+        ("Legal costs", take_back.legal_costs, MONEY, "paid when the lender starts foreclosing"),
+        (
+            "Foreclosure months",
+            take_back.foreclosure_months,
+            INTEGER,
+            f"config, {take_back.state.value}",
+        ),
+        ("Holding cost (monthly)", take_back.holding_costs_monthly, MONEY, "the deal's own"),
+        ("Foreclosure carry", take_back.foreclosure_carry, MONEY, "months x monthly holding cost"),
+        ("REO sale month", take_back.sale_month, INTEGER, "default + lost + foreclosure months"),
+        ("Broker", take_back.broker_selling_pct, PCT1, "off every sale"),
+        ("Expenses", take_back.expenses_pct, PCT1, "of the hold's rent"),
+        ("Target lender IRR", take_back.target_irr, PCT1, "every solve bisects the XIRR to it"),
+        ("", None, None, ""),
+        ("HAIRCUT TO TARGET", None, None, ""),
+        ("Projected sale price", take_back.projected_sale_price, MONEY, ""),
+        ("Purchase price", take_back.purchase_price, MONEY, ""),
+        ("As-is value", take_back.as_is_value, MONEY, ""),
     ]
-    _rows(sheet, rows)
-    _widths(sheet, 26, 18, 44)
+    if take_back.haircut_price is not None:
+        value, fmt, reason = _solve_cell(take_back.haircut_price)
+        rows.append(("Sale price needed", value, fmt, reason))
+        rows.append(("XIRR at it", take_back.haircut_price.irr, PCT4, ""))
+    rows += [
+        ("Haircut", take_back.haircut_amount, MONEY, "projected sale price - sale price needed"),
+        ("Haircut (%)", take_back.haircut_pct, PCT2, "of the projected sale price"),
+        ("Needed / purchase price", take_back.price_pct_of_purchase, PCT2, ""),
+        ("Above purchase price", take_back.price_above_purchase, None, "the flag's test"),
+        ("Needed - as-is value", take_back.price_vs_as_is, MONEY, ""),
+        ("Needed / as-is value", take_back.price_pct_of_as_is, PCT2, ""),
+        ("", None, None, ""),
+        ("HOLD AND RENT", None, None, ""),
+    ]
+    at = _rows(sheet, rows)
+    at = _header(
+        sheet,
+        at,
+        ["Hold (months)", "Sale month", "Rent needed", "", "Sale price needed", ""],
+    )
+    for hold in take_back.holds:
+        sheet.cell(row=at, column=1, value=hold.hold_months).number_format = INTEGER
+        sheet.cell(row=at, column=2, value=hold.sale_month).number_format = INTEGER
+        for column, solve in ((3, hold.required_rent), (5, hold.required_sale_price)):
+            value, fmt, reason = _solve_cell(solve)
+            cell = sheet.cell(row=at, column=column, value=value)
+            if fmt:
+                cell.number_format = fmt
+            sheet.cell(row=at, column=column + 1, value=reason)
+        at += 1
+    sheet.cell(row=at, column=3, value="at the projected sale price")
+    sheet.cell(row=at, column=5, value="at the market rent")
+    at += 2
+    if take_back.haircut_flows:
+        sheet.cell(
+            row=at, column=1, value="The lender's flows at the sale price needed"
+        ).font = HEAD
+        at += 1
+        at = _header(sheet, at, ["Date", "Month", "Amount"])
+        first = at
+        for flow in take_back.haircut_flows:
+            sheet.cell(row=at, column=1, value=flow.date).number_format = DATE
+            sheet.cell(row=at, column=2, value=flow.month).number_format = INTEGER
+            sheet.cell(row=at, column=3, value=flow.amount).number_format = MONEY
+            at += 1
+        last = at - 1
+        sheet.cell(row=at, column=1, value="XIRR (this workbook)")
+        formula = sheet.cell(row=at, column=3, value=f"=XIRR(C{first}:C{last},A{first}:A{last})")
+        formula.number_format = PCT4
+        sheet.cell(row=at, column=4, value="Excel's own; the engine's is above, at the target")
+    _widths(sheet, 30, 18, 20, 34, 20, 34)
 
 
 def _sheet_sources_uses(book: Workbook, result: UnderwriteResult) -> None:

@@ -1,6 +1,6 @@
 {
   "name": "go_team_assumptions_tulsa",
-  "description": "The Tulsa deal at 100% at close (go_team_overrides_tulsa) after the team has typed over all five analysis assumptions on the Underwriting Assumptions panel: broker selling 5% (config 6%), rental expenses 40% of rent (config 35%), a 7% takeout rate (config 6.5%), $7,500 of take-back legal costs (config $5,000) and 4 months of lost interest (config 3). The ledger and its 18.263% IRR do not read any of them and stand exactly as in the Tulsa fixture; the flip nets $20,700 instead of $18,700, the rental DSCR falls to 0.71x on a $798.36 takeout payment against $563.33 of net income, and the take-back costs $132,700 with a 0.38x DSCR. Every number computed by an independent script from SPEC 8.4-8.6 before the engine ran on it.",
+  "description": "The Tulsa deal at 100% at close (go_team_overrides_tulsa) after the team has typed over all five analysis assumptions on the Underwriting Assumptions panel: broker selling 5% (config 6%), rental expenses 40% of rent (config 35%), a 7% takeout rate (config 6.5%), $7,500 of take-back legal costs (config $5,000) and 4 months of lost interest (config 3). The ledger and its 18.263% IRR do not read any of them and stand exactly as in the Tulsa fixture; Every number computed by an independent script from SPEC 8.4-8.6 before the engine ran on it. Rental: a $150,000 takeout on the $200,000 exit value needs $1,995.91 of rent against $1,800 of market rent. Take-back: a default in month 3 and a sale in month 13 need $159,668 (20.2% under the projected sale price, 106.4% of the purchase price) for a 20% lender XIRR.",
   "team_entry": {
     "borrower_name": "Dana Whitlock",
     "borrower_phone": "918-555-0147",
@@ -129,34 +129,91 @@
         "cash_on_cash_passed": true
       },
       "rental": {
+        "market_rent": "1800.00",
         "status": "EVALUATED",
-        "expenses": "720.00",
-        "net_monthly_income": "563.33",
-        "debt_service_monthly": "798.36",
-        "dscr": "0.705611",
-        "passed": false
+        "exit_value": "200000.00",
+        "takeout_loan": "150000.00",
+        "debt_service_amortizing": "997.95",
+        "debt_service_interest_only": "875.00",
+        "required_noi": "1197.54",
+        "required_rent": "1995.91",
+        "payoff_due": "121200.00",
+        "spread_to_loan": "28800.00",
+        "spread_passed": true,
+        "market_rent_status": "EVALUATED",
+        "market_noi": "1080.00",
+        "rent_gap": "-195.91",
+        "dscr_amortizing": "1.082214",
+        "dscr_interest_only": "1.234286",
+        "rent_passed": false
       },
       "take_back": {
-        "status": "EVALUATED",
+        "default_month": 3,
+        "interest_received": "3900.00",
         "lost_interest": "5200.00",
-        "total_cost": "132700.00",
-        "debt_service_monthly": "1467.93",
-        "net_monthly_income": "563.33",
-        "dscr": "0.383761",
-        "passed": false
+        "legal_costs": "7500.00",
+        "foreclosure_months": 6,
+        "foreclosure_carry": "3100.00",
+        "sale_month": 13,
+        "projected_sale_price": "200000.00",
+        "as_is_value": null,
+        "status": "EVALUATED",
+        "market_rent_status": "EVALUATED",
+        "haircut_status": "SOLVED",
+        "haircut_bound_hit": null,
+        "haircut_price": 159668,
+        "haircut_irr": 0.200007,
+        "haircut_amount": "40332.00",
+        "haircut_pct": "0.201660",
+        "price_pct_of_purchase": "1.064453",
+        "price_above_purchase": true,
+        "price_vs_as_is": null,
+        "price_pct_of_as_is": null,
+        "holds": [
+          {
+            "hold_months": 12,
+            "sale_month": 25,
+            "required_rent_status": "NO_SOLUTION",
+            "required_rent_bound_hit": "LOWER",
+            "required_rent": null,
+            "required_sale_price_status": "SOLVED",
+            "required_sale_price_bound_hit": null,
+            "required_sale_price": 176753
+          },
+          {
+            "hold_months": 24,
+            "sale_month": 37,
+            "required_rent_status": "SOLVED",
+            "required_rent_bound_hit": null,
+            "required_rent": 1649,
+            "required_sale_price_status": "SOLVED",
+            "required_sale_price_bound_hit": null,
+            "required_sale_price": 197255
+          },
+          {
+            "hold_months": 36,
+            "sale_month": 49,
+            "required_rent_status": "SOLVED",
+            "required_rent_bound_hit": null,
+            "required_rent": 2528,
+            "required_sale_price_status": "SOLVED",
+            "required_sale_price_bound_hit": null,
+            "required_sale_price": 221858
+          }
+        ]
       },
       "flags": [
         {
-          "code": "DSCR_BELOW_FLOOR",
+          "code": "TEAM_SOURCED_VALUES",
+          "severity": "INFO"
+        },
+        {
+          "code": "MARKET_RENT_BELOW_REQUIRED",
           "severity": "SOFT"
         },
         {
-          "code": "TAKE_BACK_DSCR_BELOW_FLOOR",
+          "code": "TAKE_BACK_PRICE_ABOVE_PURCHASE",
           "severity": "HARD"
-        },
-        {
-          "code": "TEAM_SOURCED_VALUES",
-          "severity": "INFO"
         }
       ],
       "term_months": 6,

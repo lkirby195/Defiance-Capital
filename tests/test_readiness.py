@@ -115,8 +115,8 @@ def test_the_monthly_rent_has_no_default_and_says_what_it_costs(
     db_session.commit()
     row = rows(deal_with_overrides)["monthly_rent"]
     assert row.source is InputSource.MISSING
-    assert row.required is False, "optional: the run goes ahead without either DSCR"
-    assert "Rental and Take-Back analyses are not evaluated" in row.note
+    assert row.required is False, "optional: the run goes ahead without a market rent"
+    assert "market-rent lines of the Rental and Take-Back analyses are not evaluated" in row.note
 
 
 def test_the_payoff_date_is_derived_and_never_turns_the_button_off(

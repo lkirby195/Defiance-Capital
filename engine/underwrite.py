@@ -5,8 +5,8 @@ Pure: ``UnderwriteInputs`` and ``Config`` in, ``UnderwriteResult`` out. The caps
 from the verified credit score and deal count exactly as in the screen (``credit_check``,
 ``experience_check``), and their flags - credit below floor, self-reported vs. verified
 mismatches, repeat-borrower notes - carry into the underwrite flags alongside the leverage
-flags (SPEC §8.2), the two DSCR flags (SPEC §8.5, §8.6) and the borrower's cash-on-cash
-flag (SPEC §8.4).
+flags (SPEC §8.2), the rental's two flags and the take-back's (SPEC §8.5, §8.6) and the
+borrower's cash-on-cash flag (SPEC §8.4).
 
 The order below is the order the math runs and the order every output shows it (SPEC §9):
 size the deal, resolve the §8.1 economics, lay out the ledger, re-run it across the
@@ -24,14 +24,17 @@ therefore self-contained, which is what the credit memo (SPEC §9.3) needs.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from config.config import Config
 from engine.calc.borrower import borrower_sensitivity_table
 from engine.calc.flip import flip_analysis
 from engine.calc.ledger import return_overview
 from engine.calc.pricing import pricing_matrix
-from engine.calc.rental import rental_analysis, take_back_analysis
+from engine.calc.rental import rental_analysis
 from engine.calc.sensitivity import Grid, sensitivity_table
 from engine.calc.sources_uses import sources_and_uses
+from engine.calc.take_back import take_back_analysis
 from engine.calc.terms import LoanTerms, loan_terms
 from engine.screen import (
     court_flags,
@@ -59,6 +62,8 @@ from schema.models import (
     UnderwriteInputs,
     UnderwriteResult,
 )
+
+ZERO = Decimal(0)
 
 
 def deal_economics(loan: LoanTerms) -> DealEconomics:
@@ -112,43 +117,56 @@ def structure_flags(loan: LoanTerms, config: Config) -> list[Flag]:
     ]
 
 
-def rent_flags(take_back: TakeBackAnalysis) -> list[Flag]:
-    """MONTHLY_RENT_MISSING when neither DSCR could be computed.  # SPEC §8.5, §8.6, §8.8
+def rent_flags(rental: RentalAnalysis) -> list[Flag]:
+    """MONTHLY_RENT_MISSING when there is no market rent.  # SPEC §8.5, §8.6, §8.8
 
-    One flag for both analyses, fixed INFO. It replaces the two DSCR tests rather than
-    joining them: with no rent there is no net monthly income, so there is no DSCR that could
-    fall short, and reporting one would be reporting a failure the deal has not been shown to
-    have. Both analyses run on every deal, so a missing rent always costs the run both.
+    One flag for both analyses, fixed INFO. Nothing stands in for what a property lets for,
+    so the lines that read the market rent - the Rental's gap, its two DSCRs and its rent
+    test, the Take-Back's required sale price at the market rent - are NOT_EVALUATED rather
+    than computed on a zero, which would report a shortfall the deal has not been shown to
+    have. Everything else in both analyses runs without it.
     """
-    if take_back.status is not AnalysisStatus.NOT_EVALUATED:
+    if rental.market_rent is not None:
         return []
+    required = (
+        f"The {money(rental.required_rent)} required rent and the "
+        f"{money(rental.spread_to_loan)} spread to loan are reported regardless"
+        if rental.required_rent is not None and rental.spread_to_loan is not None
+        else "The takeout itself is not sized either, for want of an exit value"
+    )
     return [
         Flag(
             code=UnderwriteFlag.MONTHLY_RENT_MISSING,
             severity=Severity.INFO,
             message=(
-                "No monthly rent on the deal, so neither the Rental nor the Take-Back "
-                "analysis was evaluated: there is no net monthly "
-                "income to cover a debt service with, and nothing stands in for what a "
-                f"property lets for. The {money(take_back.total_cost)} take-back cost and its "
-                f"{money(take_back.debt_service_monthly)} monthly debt service are reported "
-                "regardless; enter a rent and re-run to test either DSCR."
+                "No market rent on the deal, so the Rental analysis's market-rent lines - the "
+                "gap, the two DSCRs at the market rent and the rent test - and the Take-Back's "
+                "required sale price at the market rent were not evaluated: nothing stands in "
+                f"for what a property lets for. {required}; enter a rent and re-run for the "
+                "rest."
             ),
         )
     ]
 
 
-def sale_price_flags(flip: FlipAnalysis) -> list[Flag]:
+def sale_price_flags(flip: FlipAnalysis, rental: RentalAnalysis) -> list[Flag]:
     """SALE_PRICE_MISSING when the flip had no price to sell at.  # SPEC §8.4, §8.8
 
     Fixed INFO, and the sibling of MONTHLY_RENT_MISSING: the underwrite runs without an
-    estimated sale price, and what it costs is the four figures the sale price feeds. The
-    whole cost stack is still reported, so the flag says what was lost rather than that
-    something failed - a flip nobody could price has not lost money. The screen's own
+    estimated sale price, and what it costs is the figures the sale price feeds - the flip's
+    four, the Take-Back's solves (its haircut and its bounds are set against the projected
+    sale price) and, unless the team typed an exit value, the Rental's takeout. The whole
+    cost stack is still reported, so the flag says what was lost rather than that something
+    failed - a flip nobody could price has not lost money. The screen's own
     ESTIMATED_SALE_PRICE_MISSING (SOFT) says the leverage side of the same absence.
     """
     if flip.status is not AnalysisStatus.NOT_EVALUATED:
         return []
+    takeout = (
+        "The Rental's takeout is sized on the exit value the team entered."
+        if rental.status is AnalysisStatus.EVALUATED
+        else "The Rental's exit value defaults to it, so the takeout is not sized either."
+    )
     return [
         Flag(
             code=UnderwriteFlag.SALE_PRICE_MISSING,
@@ -157,7 +175,32 @@ def sale_price_flags(flip: FlipAnalysis) -> list[Flag]:
                 "No estimated sale price on the deal, so the Flip analysis was not "
                 f"evaluated: the {money(flip.total_costs)} cost stack is reported, and the "
                 "broker's cut, the net profit and the yield are not. LTV is not computed "
-                "either (SPEC §7.4). Enter a price and re-run to get all four."
+                "either (SPEC §7.4), and the Take-Back's haircut and hold-and-rent solves are "
+                f"set against the projected sale price, so they did not run. {takeout} Enter "
+                "a price and re-run for all of them."
+            ),
+        )
+    ]
+
+
+def foreclosure_flags(take_back: TakeBackAnalysis) -> list[Flag]:
+    """FORECLOSURE_MONTHS_MISSING when config has no timeline for the deal's state.
+
+    # SPEC §8.6, §8.8. Fixed INFO: the take-back's solves need to know how long the lender
+    carries the property, and a state outside the footprint has no entry.
+    """
+    if take_back.foreclosure_months is not None:
+        return []
+    return [
+        Flag(
+            code=UnderwriteFlag.FORECLOSURE_MONTHS_MISSING,
+            severity=Severity.INFO,
+            message=(
+                f"No foreclosure months in config for {enum_label(take_back.state)}, so the "
+                "Take-Back analysis was not evaluated: the lender's timeline needs how long "
+                "it carries the property before it can sell or let it. The default month, "
+                f"the {money(take_back.lost_interest)} of lost interest and the "
+                f"{money(take_back.legal_costs)} legal bill are reported regardless."
             ),
         )
     ]
@@ -190,48 +233,86 @@ def cash_on_cash_flags(flip: FlipAnalysis, config: Config) -> list[Flag]:
 
 
 def rental_flags(rental: RentalAnalysis, config: Config) -> list[Flag]:
-    """DSCR_BELOW_FLOOR when the rent does not carry a takeout loan.  # SPEC §8.5, §8.8"""
-    if rental.status is not AnalysisStatus.EVALUATED or rental.passed:
-        return []
-    assert rental.dscr is not None and rental.net_monthly_income is not None
-    return [
-        Flag(
-            code=UnderwriteFlag.DSCR_BELOW_FLOOR,
-            severity=config.flags.underwrite_severities[UnderwriteFlag.DSCR_BELOW_FLOOR],
-            message=(
-                f"Rental DSCR {rental.dscr:.2f}x is below the "
-                f"{rental.dscr_floor:.2f}x floor: net monthly income "
-                f"{money(rental.net_monthly_income)} against "
-                f"{money(rental.debt_service_monthly)} of monthly debt service on the "
-                f"{money(rental.loan_amount)} commitment at {pct(rental.takeout_rate)} over "
-                f"{rental.amortization_years} years."
-            ),
+    """The rental's two tests: the market rent against the required rent, and the takeout
+    loan against our payoff due.  # SPEC §8.5, §8.8
+
+    MARKET_RENT_BELOW_REQUIRED (severity from config, placeholder Soft) when the market rent
+    is under the rent the takeout needs; not tested without a market rent. TAKEOUT_BELOW_PAYOFF
+    (config, placeholder Soft) when the takeout loan is short of what this loan collects at
+    payoff; it needs only the exit value.
+    """
+    flags: list[Flag] = []
+    severities = config.flags.underwrite_severities
+    if rental.rent_passed is False:
+        assert rental.market_rent is not None and rental.required_rent is not None
+        assert rental.rent_gap is not None and rental.dscr_amortizing is not None
+        assert rental.takeout_loan is not None and rental.debt_service_amortizing is not None
+        flags.append(
+            Flag(
+                code=UnderwriteFlag.MARKET_RENT_BELOW_REQUIRED,
+                severity=severities[UnderwriteFlag.MARKET_RENT_BELOW_REQUIRED],
+                message=(
+                    f"Market rent {money(rental.market_rent)} is below the "
+                    f"{money(rental.required_rent)} the takeout requires, a gap of "
+                    f"{money(-rental.rent_gap)}: a {money(rental.takeout_loan)} takeout "
+                    f"({pct(rental.takeout_ltv)} of the {money(rental.exit_value or ZERO)} "
+                    f"exit value) at {pct(rental.takeout_rate)} over "
+                    f"{rental.amortization_years} years costs "
+                    f"{money(rental.debt_service_amortizing)} a month, and at the "
+                    f"{rental.target_dscr:.2f}x target DSCR needs "
+                    f"{money(rental.required_noi or ZERO)} of NOI; the market rent nets "
+                    f"{money(rental.market_noi or ZERO)} after {pct(rental.expenses_pct)} "
+                    f"expenses, a {rental.dscr_amortizing:.2f}x DSCR amortizing."
+                ),
+            )
         )
-    ]
+    if rental.spread_passed is False:
+        assert rental.takeout_loan is not None and rental.payoff_due is not None
+        assert rental.spread_to_loan is not None
+        flags.append(
+            Flag(
+                code=UnderwriteFlag.TAKEOUT_BELOW_PAYOFF,
+                severity=severities[UnderwriteFlag.TAKEOUT_BELOW_PAYOFF],
+                message=(
+                    f"The {money(rental.takeout_loan)} takeout loan is "
+                    f"{money(-rental.spread_to_loan)} short of the {money(rental.payoff_due)} "
+                    "payoff due on this loan (the "
+                    "commitment and the payoff half of the origination fee): a refinance "
+                    "would not take us out."
+                ),
+            )
+        )
+    return flags
 
 
 def take_back_flags(take_back: TakeBackAnalysis, config: Config) -> list[Flag]:
-    """TAKE_BACK_DSCR_BELOW_FLOOR when the rent does not carry GLENWOOD's own cost.
+    """TAKE_BACK_PRICE_ABOVE_PURCHASE when the lender needs more than the house cost.
 
-    # SPEC §8.6, §8.8
+    # SPEC §8.6, §8.8. Severity from config (placeholder Hard). Tested only when the haircut
+    price was solved.
     """
-    if take_back.status is not AnalysisStatus.EVALUATED or take_back.passed:
+    if take_back.price_above_purchase is not True:
         return []
-    assert take_back.dscr is not None and take_back.net_monthly_income is not None
+    assert take_back.haircut_price is not None and take_back.haircut_price.value is not None
+    assert take_back.projected_sale_price is not None and take_back.haircut_pct is not None
+    assert take_back.price_pct_of_purchase is not None
     return [
         Flag(
-            code=UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR,
-            severity=config.flags.underwrite_severities[UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR],
+            code=UnderwriteFlag.TAKE_BACK_PRICE_ABOVE_PURCHASE,
+            severity=config.flags.underwrite_severities[
+                UnderwriteFlag.TAKE_BACK_PRICE_ABOVE_PURCHASE
+            ],
             message=(
-                f"Take-back DSCR {take_back.dscr:.2f}x is below the "
-                f"{take_back.dscr_floor:.2f}x floor: net monthly income "
-                f"{money(take_back.net_monthly_income)} against "
-                f"{money(take_back.debt_service_monthly)} of monthly debt service on a "
-                f"{money(take_back.total_cost)} take-back cost (commitment "
-                f"{money(take_back.loan_amount)} + {take_back.lost_interest_months} months' "
-                f"lost interest {money(take_back.lost_interest)} + legal costs "
-                f"{money(take_back.legal_costs)}) at {pct(take_back.interest_rate)} over "
-                f"{take_back.amortization_years} years."
+                f"The take-back needs a {money(take_back.haircut_price.value)} sale "
+                f"({pct(take_back.price_pct_of_purchase)} of the "
+                f"{money(take_back.purchase_price)} purchase price, a "
+                f"{pct(take_back.haircut_pct)} haircut from the "
+                f"{money(take_back.projected_sale_price)} projected sale price) for the "
+                f"lender's XIRR to reach {pct(take_back.target_irr)} after a default in month "
+                f"{take_back.default_month}, {take_back.lost_interest_months} months' lost "
+                f"interest, {money(take_back.legal_costs)} of legal costs and "
+                f"{take_back.foreclosure_months} months' foreclosure carry: it needs more than "
+                "the house cost to come out whole."
             ),
         )
     ]
@@ -260,9 +341,10 @@ def underwrite(inputs: UnderwriteInputs, config: Config) -> UnderwriteResult:
         + court_flags(inputs.court_records, config)
         + provenance_flags(sizing, inputs.court_records, inputs.monthly_rent_source)
         + structure_flags(loan, config)
-        + sale_price_flags(flip)
+        + sale_price_flags(flip, rental)
         + cash_on_cash_flags(flip, config)
-        + rent_flags(take_back)
+        + rent_flags(rental)
+        + foreclosure_flags(take_back)
         + rental_flags(rental, config)
         + take_back_flags(take_back, config)
     )

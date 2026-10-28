@@ -171,7 +171,9 @@ def test_percentages_are_percentages_and_ratios_are_ratios() -> None:
     assert fmt == "0.0%"
     _, fmt = find_row(book["Flip"], "Cash-on-cash")
     assert fmt == "0.0%"
-    _, fmt = find_row(book["Rental"], "DSCR floor")
+    _, fmt = find_row(book["Rental"], "Target DSCR")
+    assert fmt == '0.00"x"'
+    _, fmt = find_row(book["Rental"], "DSCR at market, amortizing")
     assert fmt == '0.00"x"'
     _, fmt = find_row(book["Inputs"], "Closing date")
     assert fmt == "yyyy-mm-dd"
@@ -413,7 +415,7 @@ def test_the_inputs_sheet_names_where_each_valuation_came_from() -> None:
     sheet = book["Inputs"]
     notes = {row[0].value: row[2].value for row in sheet.iter_rows(min_col=1, max_col=3)}
     assert notes["Estimated sale price"] == "team, by hand"
-    assert "As-is value" not in notes  # SPEC §7.4: one value ratio, one valuation
+    assert "As-is value" in notes and "Rental exit value" in notes  # SPEC §8.5, §8.6
 
 
 def test_an_analysis_that_did_not_run_says_why_on_its_own_sheet() -> None:
@@ -424,8 +426,12 @@ def test_an_analysis_that_did_not_run_says_why_on_its_own_sheet() -> None:
     assert status == "NOT_EVALUATED"
     take_back = book["Take-Back"]
     notes = {row[0].value: row[2].value for row in take_back.iter_rows(min_col=1, max_col=3)}
-    assert "no monthly rent" in notes["Status"]
+    assert "no projected sale price" in notes["Status"]
     assert "Toggle" not in notes
+    rental_notes = {
+        row[0].value: row[2].value for row in book["Rental"].iter_rows(min_col=1, max_col=3)
+    }
+    assert "no exit value" in rental_notes["Status"]
     flip = book["Flip"]
     status, _ = find_row(flip, "Status")
     assert status == "NOT_EVALUATED"

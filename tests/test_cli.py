@@ -67,7 +67,7 @@ def test_run_underwrite_prints_every_section(
     expected = load(path)["underwrite"]["expected"]
     assert "IRR" in out and "Project yield" in out and "Total deal cost" in out
     assert "Borrower equity" in out and "Cash-on-cash" in out
-    assert "DSCR at loan cost" in out
+    assert "Required rent" in out and "Sale price needed" in out
     # the sensitivity grid: the rate columns across the top, the request on the bottom row
     grid = out[out.index("LENDER SENSITIVITY") : out.index("BORROWER SENSITIVITY")]
     assert "12.5%" in grid and "17.5%" in grid
@@ -98,7 +98,9 @@ def test_run_underwrite_prints_every_section(
     plain = out.replace("$", "").replace(",", "")
     assert expected["ledger"]["total_interest"] in plain
     assert expected["ledger"]["total_profit"] in plain
-    assert expected["take_back"]["total_cost"] in plain
+    assert expected["take_back"]["lost_interest"] in plain
+    if expected["rental"]["market_rent"] is not None:
+        assert expected["rental"]["market_rent"] in plain
     assert expected["payoff_date"] in out
     for flag in expected["flags"]:
         assert flag["code"] in out
@@ -177,7 +179,8 @@ def test_an_analysis_that_did_not_run_says_why(capsys: pytest.CaptureFixture[str
     assert main(["run", str(no_rent), "--underwrite"]) == 0
     out = capsys.readouterr().out
     assert "RENTAL ANALYSIS" in out and "OFF" not in out
-    assert "NOT EVALUATED: no monthly rent" in out
+    assert "NOT EVALUATED: no exit value" in out
+    assert "NOT EVALUATED: no projected sale price" in out
     assert "MONTHLY_RENT_MISSING" in out
     # ...and the flip, which had no price to sell at (SPEC §8.4)
     assert "NOT EVALUATED: no estimated sale price" in out

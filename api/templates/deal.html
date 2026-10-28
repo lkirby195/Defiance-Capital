@@ -33,6 +33,8 @@
 {% macro passed(flag, short="Below the floor") -%}{% if flag is none %}Not tested{% elif flag %}Passes{% else %}{{ short }}{% endif %}{%- endmacro %}
 {# A cost in the flip's profit lines: taken off the sale price, so shown with a minus. #}
 {% macro less(value) -%}{% if value is none %}—{% else %}-{{ value | money }}{% endif %}{%- endmacro %}
+{# A take-back solve (SPEC §8.6): the dollars, or why there are none. #}
+{% macro solved(solve) -%}{% if solve.status | plain == "SOLVED" %}{{ solve.value | money }}{% elif solve.status | plain == "NOT_EVALUATED" %}Not evaluated{% elif solve.bound_hit | plain == "LOWER" %}None needed{% else %}No solution{% endif %}{%- endmacro %}
 
 {% block content %}
 {% set result = underwrite.result if underwrite else none %}
@@ -361,27 +363,46 @@
   </div>
   {% if result %}
     {% set rental = result.rental %}
-    {% if rental.status | plain == "EVALUATED" %}<p class="headline">{{ rental.dscr | ratio }}</p>
-    {% elif rental.status | plain == "OFF" %}<p class="headline na">Off</p>
+    {% if rental.required_rent is not defined %}
+      <p class="headline na">Not on this run</p>
+      <span class="headline-label">Required rent</span>
+      <p class="small muted">Run the analysis again for the takeout; this version recorded the earlier DSCR test.</p>
+    {% else %}
+    {% if rental.status | plain == "EVALUATED" %}<p class="headline">{{ rental.required_rent | money }}</p>
     {% else %}<p class="headline na">Not evaluated</p>{% endif %}
-    <span class="headline-label">DSCR</span>
-    <dl class="facts small">
+    <span class="headline-label">Required rent</span>
+    <dl class="facts small" id="rental-takeout">
       <dt>Status</dt>
       <dd>{{ rental.status | plain }}</dd>
-      <dt>Monthly Rent</dt><dd>{{ rental.monthly_rent | money }}</dd>
-      <dt>Expenses</dt><dd>{{ rental.expenses | money }}</dd>
-      <dt>Expenses (% of rent)</dt><dd>{{ rental.expenses_pct | pct }}{{ dflt("rental_expenses_pct_of_rent") }}</dd>
-      <dt>Monthly holding costs</dt><dd>{{ rental.holding_costs_monthly | money }}</dd>
-      <dt>Net monthly income</dt><dd>{{ rental.net_monthly_income | money }}</dd>
-      <dt>Debt service</dt>
-      <dd>{{ rental.debt_service_monthly | money }}</dd>
-      <dt>Takeout loan amount</dt><dd>{{ rental.loan_amount | money }}</dd>
+      <dt>Exit value</dt><dd>{{ rental.exit_value | money }}{% if rental.exit_value_source | plain == "SALE_PRICE" %} <span class="dflt">default</span>{% endif %}</dd>
+      <dt>Takeout LTV</dt><dd>{{ rental.takeout_ltv | pct }}</dd>
+      <dt>Takeout loan</dt><dd>{{ rental.takeout_loan | money }}</dd>
       <dt>Takeout rate</dt><dd>{{ rental.takeout_rate | pct }}{{ dflt("rental_takeout_rate") }}</dd>
       <dt>Amortization (years)</dt><dd>{{ rental.amortization_years | plain }}</dd>
-      <dt>DSCR</dt><dd>{{ rental.dscr | ratio }}</dd>
-      <dt>DSCR floor</dt><dd>{{ rental.dscr_floor | ratio }}</dd>
-      <dt>Result</dt><dd>{{ passed(rental.passed) }}</dd>
+      <dt>Debt service, amortizing</dt><dd>{{ rental.debt_service_amortizing | money }}</dd>
+      <dt>Debt service, interest-only</dt><dd>{{ rental.debt_service_interest_only | money }}</dd>
+      <dt>Target DSCR</dt><dd>{{ rental.target_dscr | ratio }}</dd>
+      <dt>Required NOI</dt><dd>{{ rental.required_noi | money }}</dd>
+      <dt>Expenses (% of rent)</dt><dd>{{ rental.expenses_pct | pct }}{{ dflt("rental_expenses_pct_of_rent") }}</dd>
+      <dt>Required rent</dt><dd><strong>{{ rental.required_rent | money }}</strong></dd>
     </dl>
+    <h3>Market rent</h3>
+    <dl class="facts small" id="rental-market">
+      <dt>Status</dt><dd>{{ rental.market_rent_status | plain }}</dd>
+      <dt>Market rent</dt><dd>{{ rental.market_rent | money }}</dd>
+      <dt>Gap</dt><dd>{{ rental.rent_gap | money }}</dd>
+      <dt>DSCR, amortizing</dt><dd>{{ rental.dscr_amortizing | ratio }}</dd>
+      <dt>DSCR, interest-only</dt><dd>{{ rental.dscr_interest_only | ratio }}</dd>
+      <dt>Result</dt><dd>{{ passed(rental.rent_passed, "Below the required rent") }}</dd>
+    </dl>
+    <h3>Spread to loan</h3>
+    <dl class="facts small" id="rental-spread">
+      <dt>Takeout loan</dt><dd>{{ rental.takeout_loan | money }}</dd>
+      <dt>Our payoff due</dt><dd>{{ less(rental.payoff_due) }}</dd>
+      <dt>Spread to loan</dt><dd><strong>{{ rental.spread_to_loan | money }}</strong></dd>
+      <dt>Result</dt><dd>{{ passed(rental.spread_passed, "Short of the payoff") }}</dd>
+    </dl>
+    {% endif %}
   {% else %}
     <p class="small muted">No analysis yet.</p>
   {% endif %}
@@ -393,26 +414,62 @@
   </div>
   {% if result %}
     {% set take_back = result.take_back %}
-    {% if take_back.status | plain == "EVALUATED" %}<p class="headline">{{ take_back.dscr | ratio }}</p>
+    {% if take_back.holds is not defined %}
+      <p class="headline na">Not on this run</p>
+      <span class="headline-label">Sale price needed</span>
+      <p class="small muted">Run the analysis again for the lender's downside; this version recorded the earlier DSCR test.</p>
+    {% else %}
+    {% if take_back.haircut_price and take_back.haircut_price.value is not none %}<p class="headline">{{ take_back.haircut_price.value | money }}</p>
+    {% elif take_back.haircut_price %}<p class="headline na">{{ solved(take_back.haircut_price) }}</p>
     {% else %}<p class="headline na">Not evaluated</p>{% endif %}
-    <span class="headline-label">DSCR at loan cost</span>
-    <dl class="facts small">
+    <span class="headline-label">Sale price needed</span>
+    <dl class="facts small" id="take-back-timeline">
       <dt>Status</dt>
       <dd>{{ take_back.status | plain }}</dd>
       <dt>Loan amount</dt><dd>{{ take_back.loan_amount | money }}</dd>
-      <dt>Lost interest</dt><dd>{{ take_back.lost_interest | money }}</dd>
+      <dt>Default month</dt><dd>{{ take_back.default_month | plain }}</dd>
+      <dt>Interest received</dt><dd>{{ take_back.interest_received | money }}</dd>
       <dt>Lost interest (months)</dt><dd>{{ take_back.lost_interest_months | plain }}{{ dflt("take_back_lost_interest_months") }}</dd>
-      <dt>Interest rate</dt><dd>{{ take_back.interest_rate | pct }}</dd>
+      <dt>Lost interest</dt><dd>{{ take_back.lost_interest | money }}</dd>
       <dt>Legal costs</dt><dd>{{ take_back.legal_costs | money }}{{ dflt("take_back_legal_costs_usd") }}</dd>
-      <dt>Total cost</dt><dd><strong>{{ take_back.total_cost | money }}</strong></dd>
-      <dt>Debt service</dt>
-      <dd>{{ take_back.debt_service_monthly | money }}</dd>
-      <dt>Amortization (years)</dt><dd>{{ take_back.amortization_years | plain }}</dd>
-      <dt>Net monthly income</dt><dd>{{ take_back.net_monthly_income | money }}</dd>
-      <dt>DSCR at loan cost</dt><dd>{{ take_back.dscr | ratio }}</dd>
-      <dt>DSCR floor</dt><dd>{{ take_back.dscr_floor | ratio }}</dd>
-      <dt>Result</dt><dd>{{ passed(take_back.passed) }}</dd>
+      <dt>Foreclosure months</dt><dd>{{ take_back.foreclosure_months | plain }}</dd>
+      <dt>Foreclosure carry</dt><dd>{{ take_back.foreclosure_carry | money }}</dd>
+      <dt>REO sale month</dt><dd>{{ take_back.sale_month | plain }}</dd>
+      <dt>Broker selling %</dt><dd>{{ take_back.broker_selling_pct | pct }}{{ dflt("broker_selling_pct") }}</dd>
+      <dt>Target lender IRR</dt><dd>{{ take_back.target_irr | pct }}</dd>
     </dl>
+    <h3>Haircut to target</h3>
+    <dl class="facts small" id="take-back-haircut">
+      <dt>Projected sale price</dt><dd>{{ take_back.projected_sale_price | money }}</dd>
+      <dt>Sale price needed</dt><dd><strong>{% if take_back.haircut_price %}{{ solved(take_back.haircut_price) }}{% else %}—{% endif %}</strong></dd>
+      <dt>Haircut</dt><dd>{{ take_back.haircut_amount | money }}</dd>
+      <dt>Haircut (%)</dt><dd>{{ take_back.haircut_pct | pct }}</dd>
+      <dt>Purchase price</dt><dd>{{ take_back.purchase_price | money }}</dd>
+      <dt>Needed / purchase price</dt><dd>{{ take_back.price_pct_of_purchase | pct }}</dd>
+      <dt>Result</dt><dd>{% if take_back.price_above_purchase is none %}Not tested{% elif take_back.price_above_purchase %}Above the purchase price{% else %}Under the purchase price{% endif %}</dd>
+      {% if take_back.as_is_value is not none %}
+        <dt>As-is value</dt><dd>{{ take_back.as_is_value | money }}</dd>
+        <dt>Needed vs as-is</dt><dd>{{ take_back.price_vs_as_is | money }}</dd>
+        <dt>Needed / as-is value</dt><dd>{{ take_back.price_pct_of_as_is | pct }}</dd>
+      {% endif %}
+    </dl>
+    <h3>Hold and rent</h3>
+    <div class="scroll">
+      <table id="take-back-holds">
+        <thead><tr><th>Hold</th><th class="num">Rent needed</th><th class="num">Sale price needed</th></tr></thead>
+        <tbody>
+          {% for hold in take_back.holds %}
+            <tr>
+              <td>{{ hold.hold_months }} months</td>
+              <td class="num">{{ solved(hold.required_rent) }}</td>
+              <td class="num">{{ solved(hold.required_sale_price) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot><tr><th></th><th class="num">at the projected sale price</th><th class="num">at the market rent</th></tr></tfoot>
+      </table>
+    </div>
+    {% endif %}
   {% else %}
     <p class="small muted">No analysis yet.</p>
   {% endif %}
@@ -541,6 +598,11 @@
                              default=defaults.get("loan_rehab_portion", ""), pin=false) }}
       {{ fields.money_box("estimated_sale_price_team", "Estimated Sale Price",
                           form.estimated_sale_price_team) }}
+      {{ fields.money_box("as_is_value", "As-Is Value", form.as_is_value) }}
+      {# The rental's exit value (SPEC §8.5): the sale price stands in, tagged as a default
+         while the box holds it; the server stores a box equal to it as nothing. #}
+      {{ fields.money_box("rental_exit_value", "Exit Value", form.rental_exit_value,
+                          default=defaults.get("rental_exit_value", "")) }}
       {{ fields.money_box("monthly_rent", "Monthly Rent", form.monthly_rent) }}
       {{ fields.pct_box("broker_selling_pct", "Broker Selling Costs %", form.broker_selling_pct,
                         default=defaults.broker_selling_pct) }}

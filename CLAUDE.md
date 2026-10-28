@@ -37,7 +37,8 @@ glenwood-uw/
     sizing.py              # LTC / LTV, product-specific commitment split
     screen.py              # score components + verdict + reasons
     calc/                  # the v0.3 ledger model: terms.py, ledger.py, irr.py,
-                           #   flip.py, rental.py, sensitivity.py (the lender's),
+                           #   flip.py, rental.py (the takeout), take_back.py (the
+                           #   lender's downside, solved on its XIRR), sensitivity.py (the lender's),
                            #   borrower.py (the Borrower Sensitivity), pricing.py (the matrix),
                            #   sources_uses.py (Sources & Uses)
     version.py             # ENGINE_VERSION string, bump on any math change
@@ -149,7 +150,7 @@ and the Suggested Reply are on the stored rows, the CLI and the workbook, not on
 hand-entered numbers are the **Underwriting Assumptions** panel, open, under the outputs and
 above the read-only intake summary: two columns of boxes - the §8.1 economics with their
 config defaults, the team form's Loan Structure radio and the Rehab portion box it reveals
-(the advance at closing is the rest of the loan), the valuation, the rent, the five §8.4-§8.6 analysis assumptions (which carry their
+(the advance at closing is the rest of the loan), the valuation, the as-is value, the exit value (the sale price by default, never stored as one), the rent, the five §8.4-§8.6 analysis assumptions (which carry their
 own `deals` columns since migration `0017`, config value as default, engine reads the deal's
 when present) - each tagged "default" while it holds its default and
 resettable one at a time, with one **Save & Run** at the bottom and a **Reset all to
@@ -179,8 +180,12 @@ reads as the structure it became (`schema.models.LEGACY_PRODUCTS`) - never write
 code, and never key the caps grid by one (the loader refuses it). The Flip, Rental and
 Take-Back analyses all run on every deal; a missing input is `NOT_EVALUATED`, never `OFF`.
 The Flip prints its profit and cost stack line by line with the borrower's equity,
-cash-on-cash and project yield; Sources & Uses balances to the cent by construction, and a
-test holds every fixture to it.
+cash-on-cash and project yield; the Rental is the takeout, sized from the exit value down to
+the required rent and set against the market rent (engine `2.1.0`, SPEC §8.5); the Take-Back
+is the lender's own downside - the sale price and the rents it needs after a default, each
+solved by bisection on the lender's XIRR inside documented bounds, "no solution" when a
+bound is hit (SPEC §8.6) - and a run before `2.1.0` reads back as the DSCR tests it recorded.
+Sources & Uses balances to the cent by construction, and a test holds every fixture to it.
 
 **Every analysis run is a version, and one version is Working.** `services/autorun.py`
 records each run that wrote anything as a `versions` row (`services/versions.py`, SPEC §5):
@@ -310,4 +315,4 @@ uv run glenwood deals export <deal-id> deal.xlsx --version "Base case"
 
 ## When unsure
 
-Ask. In particular, do not guess at: leverage caps, fee treatment, the listing period, the rental takeout assumptions, or the take-back's lost-interest months and legal costs. Use the placeholder in config and flag it.
+Ask. In particular, do not guess at: leverage caps, fee treatment, the listing period, the rental takeout assumptions (the LTV and the target DSCR included), or the take-back's lost-interest months, legal costs, foreclosure months by state and hold periods. Use the placeholder in config and flag it.

@@ -457,6 +457,10 @@ def underwrite_inputs(
         take_back_lost_interest_months=_first(
             request.take_back_lost_interest_months, deal.take_back_lost_interest_months
         ),
+        # The exit value and the as-is value (SPEC §8.5, §8.6): the request, then the deal,
+        # then None - the engine reads the sale price for the first and nothing for the second.
+        rental_exit_value=_first(request.rental_exit_value, deal.rental_exit_value),
+        as_is_value=_first(request.as_is_value, deal.as_is_value),
         monthly_rent=rent.monthly_rent,
         monthly_rent_source=rent.monthly_rent_source,
         loan_purpose=_first(request.loan_purpose, deal.loan_purpose),

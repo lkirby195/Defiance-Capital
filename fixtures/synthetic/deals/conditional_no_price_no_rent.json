@@ -1,6 +1,6 @@
 {
   "name": "conditional_no_price_no_rent",
-  "description": "100% at close with no estimated sale price and no monthly rent. LTV is the commitment over the sale price and there is no fallback denominator (SPEC 7.4), so it is NOT_AVAILABLE, ESTIMATED_SALE_PRICE_MISSING is raised and the screen goes Conditional on it. The underwrite still runs - the ledger, the economics, the take-back cost and Sources & Uses do not read a sale price - and, with all three analyses running on every deal, reports the Flip NOT_EVALUATED with SALE_PRICE_MISSING beside it and neither DSCR tested (MONTHLY_RENT_MISSING). The borrower's equity is still there: $109,400 of total deal cost on an $80,000 loan is $29,400. Closing 31 March on a 6-month term pays off 30 September.",
+  "description": "100% at close with no estimated sale price and no monthly rent. LTV is the commitment over the sale price and there is no fallback denominator (SPEC 7.4), so it is NOT_AVAILABLE, ESTIMATED_SALE_PRICE_MISSING is raised and the screen goes Conditional on it. The borrower's equity is still there: $109,400 of total deal cost on an $80,000 loan is $29,400. Closing 31 March on a 6-month term pays off 30 September.",
   "inputs": {
     "deal": {
       "product": "ACQUISITION",
@@ -110,26 +110,24 @@
       },
       "rental": {
         "status": "NOT_EVALUATED",
-        "expenses": null,
-        "net_monthly_income": null,
-        "debt_service_monthly": "505.65",
-        "dscr": null,
-        "passed": null
+        "market_rent_status": "NOT_EVALUATED",
+        "market_rent": null
       },
       "take_back": {
-        "status": "NOT_EVALUATED",
+        "default_month": 3,
+        "interest_received": "2400.00",
         "lost_interest": "2400.00",
-        "total_cost": "87400.00",
-        "debt_service_monthly": "899.01",
-        "net_monthly_income": null,
-        "dscr": null,
-        "passed": null
+        "legal_costs": "5000.00",
+        "foreclosure_months": 6,
+        "foreclosure_carry": "2000.00",
+        "sale_month": 12,
+        "projected_sale_price": null,
+        "as_is_value": null,
+        "status": "NOT_EVALUATED",
+        "market_rent_status": "NOT_EVALUATED",
+        "holds": []
       },
       "flags": [
-        {
-          "code": "MONTHLY_RENT_MISSING",
-          "severity": "INFO"
-        },
         {
           "code": "SALE_PRICE_MISSING",
           "severity": "INFO"
@@ -137,6 +135,10 @@
         {
           "code": "ESTIMATED_SALE_PRICE_MISSING",
           "severity": "SOFT"
+        },
+        {
+          "code": "MONTHLY_RENT_MISSING",
+          "severity": "INFO"
         }
       ],
       "term_months": 6,

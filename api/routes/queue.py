@@ -203,6 +203,8 @@ ASSUMPTION_NAMES: tuple[str, ...] = (
     "product",
     "loan_rehab_portion",
     "estimated_sale_price_team",
+    "as_is_value",
+    "rental_exit_value",
     "monthly_rent",
     "broker_selling_pct",
     "rental_expenses_pct_of_rent",
@@ -226,6 +228,7 @@ RESET_LABELS: tuple[tuple[str, str], ...] = (
     ("closing_costs_usd", "Closing Costs"),
     ("holding_costs_pct_of_cost", "Holding Costs %"),
     ("loan_rehab_portion", "Rehab portion"),
+    ("rental_exit_value", "Exit Value"),
     ("broker_selling_pct", "Broker Selling Costs %"),
     ("rental_expenses_pct_of_rent", "Rental Expense %"),
     ("rental_takeout_rate", "Rental Takeout Rate"),
@@ -260,7 +263,8 @@ def reset_rows(deal: Deal) -> list[dict[str, Any]]:
     """What Reset all to defaults would do, one row per box: the value now and the default.
 
     The split rows appear only where the deal carries a formula split to go back to - a
-    holdback with its loan amount and rehab known (SPEC §8.2).
+    holdback with its loan amount and rehab known (SPEC §8.2) - and the exit value's only
+    where there is a sale price for it to go back to (SPEC §8.5).
     """
     defaults = default_marks(deal)
     rows: list[dict[str, Any]] = []

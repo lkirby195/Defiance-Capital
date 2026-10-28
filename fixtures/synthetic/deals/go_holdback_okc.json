@@ -75,7 +75,8 @@
       "origination_fee_pct": "0.03",
       "monthly_rent": "2400.00",
       "loan_purpose": "CONSTRUCTION",
-      "holding_costs_pct_of_cost": "0.05"
+      "holding_costs_pct_of_cost": "0.05",
+      "rental_exit_value": "290000.00"
     },
     "expected": {
       "payoff_date": "2027-11-30",
@@ -118,34 +119,91 @@
         "cash_on_cash_passed": false
       },
       "rental": {
+        "market_rent": "2400.00",
         "status": "EVALUATED",
-        "expenses": "840.00",
-        "net_monthly_income": "560.00",
-        "debt_service_monthly": "1200.93",
-        "dscr": "0.466306",
-        "passed": false
+        "exit_value": "290000.00",
+        "takeout_loan": "217500.00",
+        "debt_service_amortizing": "1374.75",
+        "debt_service_interest_only": "1178.12",
+        "required_noi": "1649.70",
+        "required_rent": "2538.00",
+        "payoff_due": "192850.00",
+        "spread_to_loan": "24650.00",
+        "spread_passed": true,
+        "market_rent_status": "EVALUATED",
+        "market_noi": "1560.00",
+        "rent_gap": "-138.00",
+        "dscr_amortizing": "1.134753",
+        "dscr_interest_only": "1.324138",
+        "rent_passed": false
       },
       "take_back": {
-        "status": "EVALUATED",
+        "default_month": 9,
+        "interest_received": "17100.00",
         "lost_interest": "5700.00",
-        "total_cost": "200700.00",
-        "debt_service_monthly": "2064.43",
-        "net_monthly_income": "560.00",
-        "dscr": "0.271262",
-        "passed": false
+        "legal_costs": "5000.00",
+        "foreclosure_months": 6,
+        "foreclosure_carry": "6000.00",
+        "sale_month": 18,
+        "projected_sale_price": "300000.00",
+        "as_is_value": null,
+        "status": "EVALUATED",
+        "market_rent_status": "EVALUATED",
+        "haircut_status": "SOLVED",
+        "haircut_bound_hit": null,
+        "haircut_price": 246594,
+        "haircut_irr": 0.200002,
+        "haircut_amount": "53406.00",
+        "haircut_pct": "0.178020",
+        "price_pct_of_purchase": "1.369967",
+        "price_above_purchase": true,
+        "price_vs_as_is": null,
+        "price_pct_of_as_is": null,
+        "holds": [
+          {
+            "hold_months": 12,
+            "sale_month": 30,
+            "required_rent_status": "NO_SOLUTION",
+            "required_rent_bound_hit": "LOWER",
+            "required_rent": null,
+            "required_sale_price_status": "SOLVED",
+            "required_sale_price_bound_hit": null,
+            "required_sale_price": 274235
+          },
+          {
+            "hold_months": 24,
+            "sale_month": 42,
+            "required_rent_status": "SOLVED",
+            "required_rent_bound_hit": null,
+            "required_rent": 2773,
+            "required_sale_price_status": "SOLVED",
+            "required_sale_price_bound_hit": null,
+            "required_sale_price": 307405
+          },
+          {
+            "hold_months": 36,
+            "sale_month": 54,
+            "required_rent_status": "SOLVED",
+            "required_rent_bound_hit": null,
+            "required_rent": 3836,
+            "required_sale_price_status": "SOLVED",
+            "required_sale_price_bound_hit": null,
+            "required_sale_price": 347209
+          }
+        ]
       },
       "flags": [
         {
-          "code": "DSCR_BELOW_FLOOR",
-          "severity": "SOFT"
-        },
-        {
-          "code": "TAKE_BACK_DSCR_BELOW_FLOOR",
-          "severity": "HARD"
-        },
-        {
           "code": "BORROWER_COC_BELOW_TARGET",
           "severity": "SOFT"
+        },
+        {
+          "code": "MARKET_RENT_BELOW_REQUIRED",
+          "severity": "SOFT"
+        },
+        {
+          "code": "TAKE_BACK_PRICE_ABOVE_PURCHASE",
+          "severity": "HARD"
         }
       ],
       "term_months": 12,

@@ -60,6 +60,8 @@ MONEY_FIELDS: frozenset[str] = frozenset(
         "loan_rehab_portion",
         "closing_costs_usd",
         "estimated_sale_price_team",
+        "as_is_value",
+        "rental_exit_value",
         "monthly_rent",
         "take_back_legal_costs_usd",
     }

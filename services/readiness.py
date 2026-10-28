@@ -23,10 +23,11 @@ the SPEC §8.2 formula split (``services/defaults.py``). What turns the ledger o
 input nothing stands in for - the term.
 
 An optional row that is MISSING is not a problem to fix before running - it is a thing the
-ledger will do without, and the note says what that costs: no DSCR at all without a
-monthly rent, no LTV and no flip without an estimated sale price, the self-reported tranche
-without a verified score. The five §8.4-§8.6 analysis assumptions are rows too, DEFAULT
-until the team types over them on the Underwriting Assumptions panel.
+ledger will do without, and the note says what that costs: no market-rent lines without
+a monthly rent, no LTV, no flip and no take-back without an estimated sale price, the
+self-reported tranche without a verified score. The five §8.4-§8.6 analysis assumptions are
+rows too, DEFAULT until the team types over them on the Underwriting Assumptions panel, and
+so is the rental's exit value, DEFAULT with the sale price until one is typed (SPEC §8.5).
 """
 
 from __future__ import annotations
@@ -394,13 +395,36 @@ def underwrite_readiness(
                 "flip is not evaluated and LTV is not available (SPEC §7.4, §8.4)"
             ),
         ),
+        _row(
+            "as_is_value",
+            "As-is value",
+            deal.as_is_value,
+            fmt="money",
+            note=(
+                "optional; the Take-Back's haircut price is set beside it when there is one "
+                "(SPEC §8.6)"
+            ),
+        ),
+        _resolved_row(
+            "rental_exit_value",
+            "Rental exit value",
+            team=deal.rental_exit_value,
+            default=defaults.get("rental_exit_value"),
+            note=(
+                "what the takeout lends against: the deal's own, else the estimated sale "
+                "price (SPEC §8.5); without either the Rental analysis is not evaluated"
+            ),
+        ),
         _resolved_row(
             "monthly_rent",
             "Monthly rent",
             adapter=adapters.monthly_rent,
             team=deal.monthly_rent,
             borrower=deal.monthly_rent_borrower,
-            note="without it the Rental and Take-Back analyses are not evaluated (SPEC §8.5)",
+            note=(
+                "the market rent; without it the market-rent lines of the Rental and "
+                "Take-Back analyses are not evaluated (SPEC §8.5, §8.6)"
+            ),
         ),
         _defaulted_row(
             deal,

@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from schema.models import (
     GRADED_UNDERWRITE_FLAGS,
+    RETIRED_UNDERWRITE_FLAGS,
     CourtFlag,
     ExperienceTier,
     Product,
@@ -117,6 +118,25 @@ class FlagsConfig(_Section):
     underwrite_severities: dict[UnderwriteFlag, Severity]
     lookbacks: Lookbacks
     thresholds: Thresholds
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_the_retired_dscr_codes(cls, data: Any) -> Any:
+        """The two DSCR codes are not raised since engine 2.1.0; a yaml grading one says so."""
+        graded = data.get("underwrite_severities") if isinstance(data, dict) else None
+        stale = [
+            code.value
+            for code in RETIRED_UNDERWRITE_FLAGS
+            if isinstance(graded, dict) and code.value in graded
+        ]
+        if stale:
+            raise ValueError(
+                f"flags.underwrite_severities grades retired codes ({', '.join(sorted(stale))}): "
+                "the DSCR tests went with engine 2.1.0; the Rental analysis raises "
+                "MARKET_RENT_BELOW_REQUIRED and TAKEOUT_BELOW_PAYOFF, the Take-Back "
+                "TAKE_BACK_PRICE_ABOVE_PURCHASE (SPEC §8.8)"
+            )
+        return data
 
     @model_validator(mode="after")
     def _every_flag_has_a_severity(self) -> FlagsConfig:
@@ -290,30 +310,75 @@ class RentalConfig(_Section):
 
     ``expenses_pct_of_rent`` and ``takeout_rate`` are the **defaults for per-deal inputs**
     since Phase 7c: a deal carries its own on the Underwriting Assumptions panel and these
-    stand in when nobody has typed one. The amortization and the floor are config alone.
+    stand in when nobody has typed one. The takeout LTV, the amortization and the target
+    DSCR are config alone (engine 2.1.0): the takeout loan is the exit value times the LTV,
+    the required NOI is the amortizing debt service times the target DSCR, and the required
+    rent is that NOI grossed up by the expense ratio. ``dscr_floor``, the floor the DSCR test
+    was held to, is refused by name.
     """
 
     expenses_pct_of_rent: Pct
+    takeout_ltv: Annotated[Decimal, Field(gt=0, le=1)]
     takeout_rate: Pct
     amortization_years: Annotated[int, Field(ge=1, le=40)]
-    dscr_floor: Annotated[Decimal, Field(gt=0, le=5)]
+    target_dscr: Annotated[Decimal, Field(gt=0, le=5)]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_the_dscr_floor(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "dscr_floor" in data:
+            raise ValueError(
+                "rental.dscr_floor (the DSCR test's floor) was replaced by rental.target_dscr, "
+                "the DSCR the required rent is sized to (engine 2.1.0)"
+            )
+        return data
 
 
 class TakeBackConfig(_Section):
     """Take-back analysis assumptions.  # SPEC §8.6
 
-    What it costs GLENWOOD to end up owning the property: the interest it stops collecting
-    while that happens, and the legal bill. The debt service is computed at the deal's own
-    note rate, not a takeout rate - this is GLENWOOD carrying its own money, not a borrower
-    refinancing away from it. ``lost_interest_months`` and ``legal_costs_usd`` are the
-    **defaults for per-deal inputs** since Phase 7c; the amortization and the floor are
-    config alone.
+    The lender's own downside (engine 2.1.0): the borrower defaults at the end of the rehab
+    period, the lender collects nothing for ``lost_interest_months``, pays ``legal_costs_usd``,
+    carries the property for ``foreclosure_months`` in the deal's state at the deal's monthly
+    holding cost, and then sells it - or holds and rents it for each of ``hold_months`` first.
+    ``lost_interest_months`` and ``legal_costs_usd`` are the **defaults for per-deal inputs**
+    since Phase 7c; the foreclosure months and the hold periods are config alone. The DSCR
+    test's ``amortization_years`` and ``dscr_floor`` are refused by name.
     """
 
     lost_interest_months: Months
     legal_costs_usd: Money
-    amortization_years: Annotated[int, Field(ge=1, le=40)]
-    dscr_floor: Annotated[Decimal, Field(gt=0, le=5)]
+    foreclosure_months: dict[State, Months]
+    hold_months: Annotated[
+        list[Annotated[int, Field(ge=1, le=120)]], Field(min_length=1, max_length=12)
+    ]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_the_dscr_test(cls, data: Any) -> Any:
+        stale = [
+            key
+            for key in ("amortization_years", "dscr_floor")
+            if isinstance(data, dict) and key in data
+        ]
+        if stale:
+            raise ValueError(
+                f"take_back.{' and take_back.'.join(stale)}: the take-back DSCR test went with "
+                "engine 2.1.0; the analysis solves the sale price and the rent the lender "
+                "needs on its XIRR (SPEC §8.6)"
+            )
+        return data
+
+    @model_validator(mode="after")
+    def _holds_run_upwards(self) -> TakeBackConfig:
+        if list(self.hold_months) != sorted(set(self.hold_months)):
+            raise ValueError("take_back.hold_months must be distinct and ascending")
+        if State.OTHER in self.foreclosure_months:
+            raise ValueError(
+                "take_back.foreclosure_months cannot name OTHER: a state outside the footprint "
+                "has no foreclosure timeline and its take-back is not evaluated"
+            )
+        return self
 
 
 class WebIntakeConfig(_Section):
@@ -392,6 +457,20 @@ class Config(_Section):
                 "(Holdback)"
             )
         return data
+
+    @model_validator(mode="after")
+    def _every_served_state_has_foreclosure_months(self) -> Config:
+        """The take-back needs a foreclosure timeline for every state a deal can be in."""
+        uncovered = [
+            state.value
+            for state in self.states.served
+            if state not in self.take_back.foreclosure_months
+        ]
+        if uncovered:
+            raise ValueError(
+                f"take_back.foreclosure_months is missing a served state: {', '.join(uncovered)}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _caps_grid_is_complete(self) -> Config:

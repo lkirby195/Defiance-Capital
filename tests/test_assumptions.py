@@ -67,21 +67,21 @@ OVERRIDES: list[tuple[str, str, Decimal | int, Figure, Figure]] = [
         "40%",
         D("0.40"),
         lambda r: r.rental.expenses_pct,
-        lambda r: r.rental.dscr,
+        lambda r: r.rental.required_rent,
     ),
     (
         "rental_takeout_rate",
         "7%",
         D("0.07"),
         lambda r: r.rental.takeout_rate,
-        lambda r: r.rental.debt_service_monthly,
+        lambda r: r.rental.debt_service_amortizing,
     ),
     (
         "take_back_legal_costs_usd",
         "$7,500",
         D("7500"),
         lambda r: r.take_back.legal_costs,
-        lambda r: r.take_back.total_cost,
+        lambda r: r.take_back.haircut_price.value,
     ),
     (
         "take_back_lost_interest_months",
@@ -337,7 +337,8 @@ def test_reset_all_restores_the_config_values_and_runs_again(
 ) -> None:
     deal = store_deal(db_session, team_entry)  # a holdback: the split resets too
     typed_over(db_session, deal)
-    assert deal.defaulted_fields == []
+    # the exit value is the one default that is never written: NULL is the sale price (SPEC §8.5)
+    assert deal.defaulted_fields == ["rental_exit_value"]
 
     # the confirmation page first, saying what will move
     page = client.get(f"/queue/deals/{deal.id}/assumptions/reset")

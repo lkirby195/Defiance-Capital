@@ -28,8 +28,9 @@ flags:                                    # SPEC §7.2, §8.8
     LANDLORD_TENANT_AS_LANDLORD: INFO
     SUBJECT_PROPERTY_LIEN_OR_LIS_PENDENS: HARD   # applies when senior and unresolved at close
   underwrite_severities:                  # SPEC §8.8 underwrite flags
-    DSCR_BELOW_FLOOR: SOFT                       # rental DSCR below rental.dscr_floor (SPEC §8.5)
-    TAKE_BACK_DSCR_BELOW_FLOOR: HARD             # take-back DSCR below take_back.dscr_floor (§8.6)
+    MARKET_RENT_BELOW_REQUIRED: SOFT             # market rent below the rent the takeout needs (SPEC §8.5)
+    TAKEOUT_BELOW_PAYOFF: SOFT                   # takeout loan short of our payoff due (SPEC §8.5)
+    TAKE_BACK_PRICE_ABOVE_PURCHASE: HARD         # the sale price the lender needs is above the purchase price (§8.6)
     BORROWER_COC_BELOW_TARGET: SOFT              # flip cash-on-cash below pricing.borrower_coc_target (§8.4)
   lookbacks:
     bankruptcy_years: 4
@@ -83,17 +84,20 @@ pricing:                                  # SPEC §8.10 - the Pricing section an
   borrower_coc_target: 0.20               # PLACEHOLDER: the flip's cash-on-cash target (SPEC §8.4); below
                                           #   it, BORROWER_COC_BELOW_TARGET
 
-rental:                                   # SPEC §8.5 rental analysis
+rental:                                   # SPEC §8.5 rental analysis: the takeout
   expenses_pct_of_rent: 0.35              # operating expenses as a share of the monthly rent
+  takeout_ltv: 0.75                       # PLACEHOLDER: the takeout loan is the exit value x this
   takeout_rate: 0.065                     # the rate a takeout lender would amortize at
   amortization_years: 30
-  dscr_floor: 1.20                        # flag DSCR_BELOW_FLOOR below this
+  target_dscr: 1.20                       # required NOI = amortizing debt service x this
 
-take_back:                                # SPEC §8.6 take-back analysis; replaces the REO downside
-  lost_interest_months: 3                 # months of interest GLENWOOD stops collecting
+take_back:                                # SPEC §8.6 take-back analysis: the lender's downside
+  lost_interest_months: 3                 # months the lender collects nothing after the default
   legal_costs_usd: 5000.00
-  amortization_years: 30                  # debt service is at the deal's OWN interest rate
-  dscr_floor: 1.00                        # flag TAKE_BACK_DSCR_BELOW_FLOOR below this
+  foreclosure_months:                     # PLACEHOLDER: months to take the property back, by
+    OK: 6                                 #   state, each carried at the deal's monthly holding
+    CO: 4                                 #   cost; every served state needs an entry
+  hold_months: [12, 24, 36]               # the hold-and-rent periods, ascending
 
 states:                                   # SPEC §10
   served: [OK, CO]

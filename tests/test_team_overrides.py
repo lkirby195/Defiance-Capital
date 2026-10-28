@@ -364,7 +364,7 @@ def test_an_underwrite_falls_back_to_the_team_valuation_on_the_deal(
     assert result.sizing.estimated_sale_price_source is ValueSource.TEAM
     # the flip sells at the team's own price, and the rent they entered carries both DSCRs
     assert result.flip.estimated_sale_price == D("200000.00")
-    assert result.rental.monthly_rent == D("2400.00")
+    assert result.rental.market_rent == D("2400.00")
 
 
 @requires_db

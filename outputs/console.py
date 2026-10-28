@@ -22,7 +22,11 @@ from schema.models import (
     SPLIT_PRODUCTS,
     AnalysisStatus,
     BorrowerSensitivityTable,
+    BoundHit,
+    ExitValueSource,
     FlipAnalysis,
+    LegacyRentalAnalysis,
+    LegacyTakeBackAnalysis,
     LeverageMetric,
     PricingMatrix,
     RentalAnalysis,
@@ -31,6 +35,8 @@ from schema.models import (
     ScreenResult,
     SensitivityTable,
     SizingResult,
+    Solve,
+    SolveStatus,
     SourcesAndUses,
     TakeBackAnalysis,
     UnderwriteInputs,
@@ -443,62 +449,181 @@ def _passed(passed: bool | None) -> str:
     return "PASS" if passed else "FAIL"
 
 
-def render_rental(rental: RentalAnalysis) -> list[str]:
-    """Whether the rent carries a takeout loan on the commitment.  # SPEC §8.5"""
+def _solve_text(solve: Solve) -> str:
+    """A solved figure as the report prints it, or why there is none.  # SPEC §8.6"""
+    if solve.status is SolveStatus.SOLVED:
+        return money(solve.value)
+    if solve.status is SolveStatus.NOT_EVALUATED:
+        return "not evaluated"
+    if solve.bound_hit is BoundHit.LOWER:
+        return f"none needed ({money(solve.lower)} already reaches the target)"
+    return f"no solution (none up to {money(solve.upper)})"
+
+
+def render_rental(rental: RentalAnalysis | LegacyRentalAnalysis) -> list[str]:
+    """The takeout: what the property has to let for to refinance us out.  # SPEC §8.5"""
     lines = heading("RENTAL ANALYSIS", rental.status.value)
-    note = _status_note(
-        rental.status,
-        "  OFF: the toggle was off (a run before engine 2.0.0).",
-        "  NOT EVALUATED: no monthly rent, so there is no net monthly income.",
-    )
-    if note:
-        lines.append(note)
+    if isinstance(rental, LegacyRentalAnalysis):
+        return [
+            *lines,
+            "  (a run before engine 2.1.0: it recorded the DSCR test, which this report no "
+            "longer prints; run the analysis again)",
+        ]
+    if rental.status is AnalysisStatus.NOT_EVALUATED:
+        lines.append(
+            "  NOT EVALUATED: no exit value - no estimated sale price and none entered - so "
+            "there is no takeout to size."
+        )
+    elif rental.market_rent_status is AnalysisStatus.NOT_EVALUATED:
+        lines.append(
+            "  No market rent: the gap, the two DSCRs and the rent test are not evaluated."
+        )
+    source = ""
+    if rental.exit_value_source is ExitValueSource.SALE_PRICE:
+        source = "the estimated sale price (default)"
+    elif rental.exit_value_source is ExitValueSource.ENTERED:
+        source = "entered on the deal"
+    gap_note = "market - required"
+    if rental.rent_passed is not None:
+        gap_note = f"{gap_note}; {_passed(rental.rent_passed)}"
     lines += [
-        row("Monthly rent", money(rental.monthly_rent)),
-        row("Expenses", money(rental.expenses), f"{pct1(rental.expenses_pct)} of rent"),
-        row("Monthly holding costs", money(rental.holding_costs_monthly)),
-        row("Net monthly income", money(rental.net_monthly_income)),
+        row("Exit value", money(rental.exit_value), source),
         row(
-            "Debt service (monthly)",
-            money(rental.debt_service_monthly),
-            f"{money(rental.loan_amount)} at {pct1(rental.takeout_rate)}, "
-            f"{rental.amortization_years}-yr",
+            "Takeout loan",
+            money(rental.takeout_loan),
+            f"{pct1(rental.takeout_ltv)} of the exit value",
         ),
         row(
-            "DSCR",
-            ratio2(rental.dscr),
-            f"floor {ratio2(rental.dscr_floor)}; {_passed(rental.passed)}",
+            "Takeout rate",
+            pct1(rental.takeout_rate),
+            f"{rental.amortization_years}-yr amortization",
+        ),
+        row("Debt service, amortizing", money(rental.debt_service_amortizing), "monthly, level"),
+        row("Debt service, interest-only", money(rental.debt_service_interest_only), "monthly"),
+        row(
+            "Required NOI",
+            money(rental.required_noi),
+            f"amortizing debt service x {ratio2(rental.target_dscr)} target DSCR",
+        ),
+        row(
+            "Required rent",
+            money(rental.required_rent),
+            f"required NOI / (1 - {pct1(rental.expenses_pct)} expenses)",
+        ),
+        row("Market rent", money(rental.market_rent)),
+        row("Gap", money(rental.rent_gap), gap_note),
+        row("DSCR at market, amortizing", ratio2(rental.dscr_amortizing)),
+        row("DSCR at market, interest-only", ratio2(rental.dscr_interest_only)),
+        row("Our payoff due", money(rental.payoff_due), "commitment + the fee's payoff half"),
+        row(
+            "Spread to loan",
+            money(rental.spread_to_loan),
+            "takeout loan - payoff due"
+            + ("" if rental.spread_passed is None else f"; {_passed(rental.spread_passed)}"),
         ),
     ]
     return lines
 
 
-def render_take_back(take_back: TakeBackAnalysis) -> list[str]:
-    """Whether the rent carries what the loan cost GLENWOOD.  # SPEC §8.6"""
+def render_take_back(take_back: TakeBackAnalysis | LegacyTakeBackAnalysis) -> list[str]:
+    """The lender's own downside: what the property has to sell or let for.  # SPEC §8.6"""
     lines = heading("TAKE-BACK ANALYSIS", take_back.status.value)
-    if take_back.status is AnalysisStatus.NOT_EVALUATED:
-        lines.append("  NOT EVALUATED: no monthly rent, so there is no DSCR to test.")
+    if isinstance(take_back, LegacyTakeBackAnalysis):
+        return [
+            *lines,
+            "  (a run before engine 2.1.0: it recorded the DSCR test, which this report no "
+            "longer prints; run the analysis again)",
+        ]
+    if take_back.foreclosure_months is None:
+        lines.append(
+            f"  NOT EVALUATED: no foreclosure months in config for {take_back.state.value}."
+        )
+    elif take_back.status is AnalysisStatus.NOT_EVALUATED:
+        lines.append(
+            "  NOT EVALUATED: no projected sale price to set the haircut and the bounds against."
+        )
+    elif take_back.market_rent_status is AnalysisStatus.NOT_EVALUATED:
+        lines.append("  No market rent: the sale price at the market rent is not evaluated.")
+    carry = (
+        "n/a"
+        if take_back.foreclosure_months is None
+        else f"{take_back.foreclosure_months} mo x {money(take_back.holding_costs_monthly)}"
+    )
     lines += [
         row("Loan amount", money(take_back.loan_amount), "the commitment"),
         row(
+            "Default month",
+            str(take_back.default_month),
+            f"{take_back.term_months}-month term less the listing period, floored at 1",
+        ),
+        row(
+            "Interest received",
+            money(take_back.interest_received),
+            f"months 1-{take_back.default_month} at {pct1(take_back.interest_rate)}",
+        ),
+        row(
             "Lost interest",
             money(take_back.lost_interest),
-            f"{take_back.lost_interest_months} mo at {pct1(take_back.interest_rate)}",
+            f"{take_back.lost_interest_months} mo of nothing after the default",
         ),
         row("Legal costs", money(take_back.legal_costs)),
-        row("Total cost", money(take_back.total_cost)),
+        row("Foreclosure carry", money(take_back.foreclosure_carry), carry),
         row(
-            "Debt service (monthly)",
-            money(take_back.debt_service_monthly),
-            f"on the total cost, {take_back.amortization_years}-yr",
+            "REO sale month",
+            "n/a" if take_back.sale_month is None else str(take_back.sale_month),
+            f"net of {pct1(take_back.broker_selling_pct)} broker",
         ),
-        row("Net monthly income", money(take_back.net_monthly_income)),
-        row(
-            "DSCR at loan cost",
-            ratio2(take_back.dscr),
-            f"floor {ratio2(take_back.dscr_floor)}; {_passed(take_back.passed)}",
-        ),
+        row("Target lender IRR", pct1(take_back.target_irr), "bisection on the XIRR"),
+        "",
+        "  Haircut to target",
+        row("Projected sale price", money(take_back.projected_sale_price)),
     ]
+    solve = take_back.haircut_price
+    lines.append(
+        row(
+            "Sale price needed",
+            "not evaluated" if solve is None else _solve_text(solve),
+            "" if solve is None else f"searched {money(solve.lower)} to {money(solve.upper)}",
+        )
+    )
+    if take_back.haircut_amount is not None:
+        lines += [
+            row(
+                "Haircut",
+                money(take_back.haircut_amount),
+                f"{pct1(take_back.haircut_pct)} of the projected sale price",
+            ),
+            row(
+                "vs purchase price",
+                pct1(take_back.price_pct_of_purchase),
+                f"of {money(take_back.purchase_price)}; "
+                + ("ABOVE the purchase price" if take_back.price_above_purchase else "under it"),
+            ),
+        ]
+        if take_back.as_is_value is not None:
+            lines.append(
+                row(
+                    "vs as-is value",
+                    money(take_back.price_vs_as_is),
+                    f"{pct1(take_back.price_pct_of_as_is)} of {money(take_back.as_is_value)}",
+                )
+            )
+    elif take_back.as_is_value is not None:
+        lines.append(row("As-is value", money(take_back.as_is_value)))
+    lines += ["", "  Hold and rent"]
+    for hold in take_back.holds:
+        lines += [
+            row(
+                f"{hold.hold_months}-month hold",
+                _solve_text(hold.required_rent),
+                "rent needed at the projected sale price",
+            ),
+            row(
+                "",
+                _solve_text(hold.required_sale_price),
+                "sale price needed at the market rent",
+            ),
+        ]
     return lines
 
 
@@ -513,7 +638,7 @@ def render_flags(result: UnderwriteResult) -> list[str]:
 
 
 def render_rent_provenance(inputs: UnderwriteInputs | None) -> list[str]:
-    """Where the rent the two DSCRs rest on came from.  # SPEC §4.2, §6.1
+    """Where the market rent the two analyses read came from.  # SPEC §4.2, §6.1
 
     A borrower's own figure for what their property lets for is the one number on the deal
     that nobody at GLENWOOD has looked at, so the report says when that is what it ran on.
