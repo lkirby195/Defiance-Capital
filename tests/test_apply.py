@@ -413,6 +413,7 @@ def test_a_full_submission_lands_in_the_queue_as_a_web_deal(
         Decimal("40000"),
     )
     assert set(deal.defaulted_fields) == {
+        "rental_exit_value",  # NULL, standing in with the borrower's sale price (SPEC §8.5)
         "interest_rate",
         "contingency_pct",
         "closing_costs_usd",

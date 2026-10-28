@@ -304,7 +304,15 @@ class Deal(Base):
     rental_takeout_rate: Mapped[Decimal | None] = mapped_column(RATE)
     take_back_legal_costs_usd: Mapped[Decimal | None] = mapped_column(MONEY)
     take_back_lost_interest_months: Mapped[int | None] = mapped_column(Integer)
-    # The monthly rent the Rental and Take-Back analyses run on (SPEC §8.5, §8.6). No
+    # The rental's exit value (SPEC §8.5): what the takeout lends against. A number is one
+    # the team typed; NULL means the estimated sale price in force stands in, read where it
+    # is needed rather than copied here, so a sale price edited later moves it
+    # (``services/defaults.py``). A typed value equal to the sale price is stored as NULL.
+    rental_exit_value: Mapped[Decimal | None] = mapped_column(MONEY)
+    # The team's as-is valuation (SPEC §8.6): optional, and nothing in the screen reads it;
+    # the take-back sets its haircut price beside it.
+    as_is_value: Mapped[Decimal | None] = mapped_column(MONEY)
+    # The market rent the Rental and Take-Back analyses read (SPEC §8.5, §8.6). No
     # config default and no adapter behind it, so the queue collects it once on the deal
     # rather than asking again on every run; an UnderwriteRequest still outranks it.
     monthly_rent: Mapped[Decimal | None] = mapped_column(MONEY)

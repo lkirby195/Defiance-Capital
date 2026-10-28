@@ -76,8 +76,12 @@ FLAT: tuple[str, ...] = (*ECONOMICS, *ASSUMPTIONS)
 SPLIT: tuple[str, str] = ("loan_purchase_portion", "loan_rehab_portion")
 # The closing date (SPEC §8.1): a month end counted from the day the deal came in.
 CLOSING = "closing_date"
+# The rental's exit value (SPEC §8.5): the estimated sale price in force stands in. Never
+# written - a copy would go stale when the sale price is edited - so the column is NULL while
+# it is the default and ``defaulted_fields`` names it then.
+EXIT_VALUE = "rental_exit_value"
 # Everything ``defaulted_fields`` may name.
-DEFAULTABLE: tuple[str, ...] = (*FLAT, *SPLIT, CLOSING)
+DEFAULTABLE: tuple[str, ...] = (*FLAT, *SPLIT, CLOSING, EXIT_VALUE)
 
 # What a default is: a number for the economics, the assumptions and the split (the
 # lost-interest months are a whole number), a date for the closing.
@@ -161,20 +165,35 @@ def deal_loan_split_default(deal: Deal, config: Config) -> tuple[Decimal, Decima
     )
 
 
+def exit_value_default(deal: Deal) -> Decimal | None:
+    """The sale price the rental's exit value falls back to: the team's, else the borrower's.
+
+    # SPEC §8.5. The same order the assembly resolves the sale price in (adapter over team
+    # over borrower, ``services/assemble.resolve_valuation``); no adapter produces one yet.
+    None when the deal has no sale price at all, and then there is no default to show.
+    """
+    if deal.estimated_sale_price_team is not None:
+        return deal.estimated_sale_price_team
+    return deal.estimated_sale_price_borrower
+
+
 def defaults_for(deal: Deal, config: Config) -> dict[str, DefaultValue]:
     """Every defaultable column and the stand-in it would get on this deal.
 
-    The split is only here on a split product with its loan amount and rehab known; the
-    five economics, the five assumptions and the closing date are always here. Read by the
-    page to pre-fill and tag the boxes, by the readiness checklist to say DEFAULT, by the
-    assembly to price a row nobody has populated yet, and by ``populate`` to decide what to
-    write.
+    The split is only here on a split product with its loan amount and rehab known, and the
+    exit value only where the deal has a sale price to fall back to; the five economics, the
+    five assumptions and the closing date are always here. Read by the page to pre-fill and
+    tag the boxes, by the readiness checklist to say DEFAULT, by the assembly to price a row
+    nobody has populated yet, and by ``populate`` to decide what to write.
     """
     out: dict[str, DefaultValue] = dict(flat_defaults(config))
     split = deal_loan_split_default(deal, config)
     if split is not None:
         out[SPLIT[0]], out[SPLIT[1]] = split
     out[CLOSING] = default_closing_date(submitted_on(deal), config)
+    exit_value = exit_value_default(deal)
+    if exit_value is not None:
+        out[EXIT_VALUE] = exit_value
     return out
 
 
@@ -188,7 +207,9 @@ def populate(deal: Deal, config: Config | None = None) -> dict[str, Any]:
     no session, no audit row, no commit.
 
     The split is filled only when both halves are blank. One half without the other is a
-    state the model and the database both refuse, so it never reaches here.
+    state the model and the database both refuse, so it never reaches here. The exit value
+    is never filled: NULL is how the column says the sale price stands in, and it is marked
+    as a default while it is NULL or equal to that sale price.
     """
     settings = config if config is not None else get_config()
     wanted = defaults_for(deal, settings)
@@ -208,7 +229,11 @@ def populate(deal: Deal, config: Config | None = None) -> dict[str, Any]:
     marked = [
         column
         for column in DEFAULTABLE
-        if column in wanted and getattr(deal, column) == wanted[column]
+        if column in wanted
+        and (
+            getattr(deal, column) == wanted[column]
+            or (column == EXIT_VALUE and getattr(deal, column) is None)
+        )
     ]
     if list(deal.defaulted_fields or []) != marked:
         deal.defaulted_fields = marked

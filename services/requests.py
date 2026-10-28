@@ -16,7 +16,7 @@ engine default:
     contingency / closing costs   request -> deal -> the config default (§8.1)
     holding costs / origination   request -> deal -> the config default (§8.1)
     the five analysis assumptions request -> deal -> the config value (§8.4, §8.5, §8.6)
-    monthly_rent                  request -> deal.monthly_rent -> no DSCR at all (§8.5, §8.6)
+    monthly_rent                  request -> deal.monthly_rent -> no market-rent lines (§8.5, §8.6)
     loan purpose                  request -> deal -> unstated
 
 ``UnderwritingAssumptions`` is the deal page's Underwriting Assumptions panel: the boxes
@@ -98,6 +98,10 @@ class UnderwriteRequest(BaseModel):
     take_back_legal_costs_usd: Decimal | None = Field(
         default=None, ge=0, max_digits=14, decimal_places=2
     )
+    # The rental's exit value and the as-is value (SPEC §8.5, §8.6, engine 2.1.0): a blank
+    # exit value is the estimated sale price; a blank as-is value is no value.
+    rental_exit_value: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    as_is_value: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     take_back_lost_interest_months: int | None = Field(default=None, ge=0, le=60)
     # The Rental and Take-Back analyses (SPEC §8.5, §8.6).
     monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
@@ -174,6 +178,10 @@ class TeamOverrides(BaseModel):
         default=None, ge=0, max_digits=14, decimal_places=2
     )
     take_back_lost_interest_months: int | None = Field(default=None, ge=0, le=60)
+    # The rental's exit value and the as-is value (SPEC §8.5, §8.6, engine 2.1.0): a blank
+    # exit value is the estimated sale price; a blank as-is value is no value.
+    rental_exit_value: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    as_is_value: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     # The team's own court search (SPEC §7.2), one typed matter per entry.
     court_records_status: CourtRecordsStatus | None = None
     court_records_as_of: date | None = None
@@ -231,6 +239,11 @@ class UnderwritingAssumptions(BaseModel):
     estimated_sale_price_team: Decimal | None = Field(
         default=None, gt=0, max_digits=14, decimal_places=2
     )
+    # The as-is value and the rental's exit value (SPEC §8.5, §8.6): a blank exit value is
+    # the estimated sale price again, and so is one typed equal to it
+    # (``services/actions._settle_exit_value``); a blank as-is value is no value.
+    as_is_value: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    rental_exit_value: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     broker_selling_pct: Decimal | None = Field(default=None, ge=0, le=1)
     rental_expenses_pct_of_rent: Decimal | None = Field(default=None, ge=0, le=1)

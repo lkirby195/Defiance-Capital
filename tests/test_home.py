@@ -682,7 +682,7 @@ def test_the_deal_page_renders_a_screen_and_an_underwrite(
     assert "Future Draws" in body
     assert "Project yield" in body and "Total deal cost" in body
     assert "Yield (Profit / Costs)" not in body
-    assert "DSCR at loan cost" in body
+    assert "Sale price needed" in body and "Required rent" in body
     assert AuditAction.UNDERWRITE_RUN.value in body
     # the payoff date is the month end, derived and read-only (SPEC §8.1)
     payoff = re.search(r"<dt>Payoff Date.*?</dt>\s*<dd>([^<]*)</dd>", body, re.S)

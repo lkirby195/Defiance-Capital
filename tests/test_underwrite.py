@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from config.config import Config
 from engine.underwrite import underwrite
 from schema.models import (
+    RETIRED_UNDERWRITE_FLAGS,
     AnalysisStatus,
     BorrowerInputs,
     CourtFlag,
@@ -237,62 +238,96 @@ def test_no_rehab_period_is_not_raised_on_a_product_with_no_rehab_portion() -> N
     assert UnderwriteFlag.NO_REHAB_PERIOD.value not in codes(result.flags)
 
 
-# --- the DSCR flags (SPEC §8.5, §8.6, §8.8) ------------------------------------------------------
+# --- the rental's and the take-back's flags (SPEC §8.5, §8.6, §8.8) ---------------------------
 
 
-def test_a_rental_under_the_floor_is_flagged_with_the_threshold_it_missed() -> None:
+def test_a_market_rent_below_the_required_rent_is_flagged_with_the_takeout_it_missed() -> None:
     result = underwrite(inputs(monthly_rent="2000"), CONFIG)
-    flag = find(result.flags, UnderwriteFlag.DSCR_BELOW_FLOOR)
-    assert flag.severity is CONFIG.flags.underwrite_severities[UnderwriteFlag.DSCR_BELOW_FLOOR]
-    assert "1.20x floor" in flag.message
+    flag = find(result.flags, UnderwriteFlag.MARKET_RENT_BELOW_REQUIRED)
+    assert flag.severity is CONFIG.flags.underwrite_severities[flag.code]
+    assert "$2,000.00 is below the $2,275.44" in flag.message
+    assert "1.20x target DSCR" in flag.message
     assert "6.5%" in flag.message and "30 years" in flag.message
-    assert result.rental.passed is False
+    assert "$195,000.00 takeout" in flag.message
+    assert result.rental.rent_passed is False
 
 
-def test_a_rental_over_the_floor_is_not_flagged() -> None:
+def test_a_market_rent_over_the_required_rent_is_not_flagged() -> None:
     result = underwrite(inputs(monthly_rent="8000"), CONFIG)
-    assert result.rental.passed is True
-    assert UnderwriteFlag.DSCR_BELOW_FLOOR.value not in codes(result.flags)
+    assert result.rental.rent_passed is True
+    assert UnderwriteFlag.MARKET_RENT_BELOW_REQUIRED.value not in codes(result.flags)
 
 
-def test_a_take_back_under_the_floor_is_hard_and_names_what_it_cost() -> None:
-    result = underwrite(inputs(monthly_rent="2000"), CONFIG)
-    flag = find(result.flags, UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR)
+def test_a_takeout_short_of_the_payoff_is_flagged() -> None:
+    result = underwrite(inputs(rental_exit_value=D("150000")), CONFIG)
+    flag = find(result.flags, UnderwriteFlag.TAKEOUT_BELOW_PAYOFF)
+    assert flag.severity is CONFIG.flags.underwrite_severities[flag.code]
+    assert "$112,500.00 takeout loan is $39,000.00 short of the $151,500.00 payoff" in flag.message
+    assert result.rental.spread_passed is False
+    # the default exit value (the 260,000 sale price) clears it
+    cleared = underwrite(inputs(), CONFIG)
+    assert UnderwriteFlag.TAKEOUT_BELOW_PAYOFF.value not in codes(cleared.flags)
+
+
+def test_a_take_back_price_above_the_purchase_price_is_hard_and_names_the_haircut() -> None:
+    """A 150,000 loan on a 150,000 house: the lender needs about 198,000 to come out whole."""
+    result = underwrite(inputs(deal(purchase_price="150000")), CONFIG)
+    flag = find(result.flags, UnderwriteFlag.TAKE_BACK_PRICE_ABOVE_PURCHASE)
     assert flag.severity is Severity.HARD
-    assert "1.00x floor" in flag.message
-    assert "3 months' lost interest" in flag.message
-    assert "$5,000.00" in flag.message  # the legal bill
-    assert result.take_back.passed is False
+    assert "of the $150,000.00 purchase price" in flag.message
+    assert "haircut from the $260,000.00 projected sale price" in flag.message
+    assert "default in month 9, 3 months' lost interest, $5,000.00 of legal costs" in flag.message
+    assert "6 months' foreclosure carry" in flag.message
+    assert result.take_back.price_above_purchase is True
 
 
-def test_a_take_back_over_the_floor_is_not_flagged() -> None:
-    result = underwrite(inputs(monthly_rent="8000"), CONFIG)
-    assert result.take_back.passed is True
-    assert UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR.value not in codes(result.flags)
+def test_a_take_back_price_under_the_purchase_price_is_not_flagged() -> None:
+    result = underwrite(inputs(), CONFIG)
+    assert result.take_back.price_above_purchase is False
+    assert UnderwriteFlag.TAKE_BACK_PRICE_ABOVE_PURCHASE.value not in codes(result.flags)
+
+
+def test_the_retired_dscr_codes_are_never_raised() -> None:
+    for rent in ("500", "2000", None):
+        result = underwrite(inputs(monthly_rent=rent), CONFIG)
+        assert codes(result.flags).isdisjoint({code.value for code in RETIRED_UNDERWRITE_FLAGS})
 
 
 # --- MONTHLY_RENT_MISSING (SPEC §8.5, §8.6, §8.8) ------------------------------------------------
 
 
-def test_no_rent_replaces_both_dscr_tests_with_one_informational_flag() -> None:
-    # with no rent neither analysis has anything to run on, and the one flag says so for both
+def test_no_rent_leaves_the_market_rent_lines_unevaluated_under_one_informational_flag() -> None:
     result = underwrite(inputs(monthly_rent=None), CONFIG)
     flag = find(result.flags, UnderwriteFlag.MONTHLY_RENT_MISSING)
     assert flag.severity is Severity.INFO
     assert "nothing stands in for what a property lets for" in flag.message
-    assert "neither the Rental nor the Take-Back analysis was evaluated" in flag.message
-    # the take-back's own cost does not depend on the rent, so it is still reported
-    assert "$159,500.00 take-back cost" in flag.message
-    assert result.rental.status is AnalysisStatus.NOT_EVALUATED
-    assert result.take_back.status is AnalysisStatus.NOT_EVALUATED
+    assert "market-rent lines" in flag.message
+    # the takeout and the spread do not read the rent, so they are still reported
+    assert "$2,275.44 required rent" in flag.message and "$43,500.00 spread" in flag.message
+    assert result.rental.status is AnalysisStatus.EVALUATED
+    assert result.rental.market_rent_status is AnalysisStatus.NOT_EVALUATED
+    assert result.take_back.status is AnalysisStatus.EVALUATED
+    assert result.take_back.market_rent_status is AnalysisStatus.NOT_EVALUATED
     assert codes(result.flags).isdisjoint(
-        {UnderwriteFlag.DSCR_BELOW_FLOOR.value, UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR.value}
+        {UnderwriteFlag.MARKET_RENT_BELOW_REQUIRED.value, UnderwriteFlag.DSCR_BELOW_FLOOR.value}
     )
 
 
 def test_a_rent_on_the_deal_leaves_the_flag_unraised() -> None:
     result = underwrite(inputs(monthly_rent="2000"), CONFIG)
     assert UnderwriteFlag.MONTHLY_RENT_MISSING.value not in codes(result.flags)
+
+
+def test_no_foreclosure_months_for_the_state_is_informational() -> None:
+    """A state outside the footprint has no timeline, so the take-back stands down."""
+    elsewhere = inputs().model_copy(update={"state": State.OTHER})
+    result = underwrite(elsewhere, CONFIG)
+    flag = find(result.flags, UnderwriteFlag.FORECLOSURE_MONTHS_MISSING)
+    assert flag.severity is Severity.INFO
+    assert "No foreclosure months in config for Other" in flag.message
+    assert result.take_back.status is AnalysisStatus.NOT_EVALUATED
+    assert result.take_back.foreclosure_months is None
+    assert result.take_back.lost_interest == D("4500.00")  # reported regardless
 
 
 # --- BORROWER_COC_BELOW_TARGET (SPEC §8.4, §8.8) -------------------------------------------------
@@ -342,12 +377,16 @@ def test_a_run_with_no_sale_price_prices_the_deal_and_says_what_it_lost() -> Non
     # ...and everything that does not read a sale price is there in full
     assert result.flip.total_costs > 0
     assert result.return_overview.irr is not None
-    assert result.take_back.status is AnalysisStatus.EVALUATED
+    # the take-back's solves and the rental's takeout are set against the sale price too
+    assert result.take_back.status is AnalysisStatus.NOT_EVALUATED
+    assert result.rental.status is AnalysisStatus.NOT_EVALUATED
 
     flag = find(result.flags, UnderwriteFlag.SALE_PRICE_MISSING)
     assert flag.severity is Severity.INFO
     assert "the Flip analysis was not evaluated" in flag.message
     assert "LTV is not computed" in flag.message
+    assert "Take-Back's haircut and hold-and-rent solves" in flag.message
+    assert "exit value defaults to it" in flag.message
     # the leverage side of the same absence keeps its own Soft flag (SPEC §7.4)
     assert ScreenFlag.ESTIMATED_SALE_PRICE_MISSING.value in codes(result.flags)
 
@@ -439,7 +478,7 @@ def test_a_borrower_rent_is_named_and_a_team_sale_price_beside_it_is_named_too()
     team = find(result.flags, ScreenFlag.TEAM_SOURCED_VALUES)
     assert team.message.startswith("Estimated sale price came from the team")
     # the DSCRs ran on the borrower's rent exactly as they would on anyone's
-    assert result.rental.monthly_rent == D("1800")
+    assert result.rental.market_rent == D("1800")
 
 
 def test_a_rent_source_needs_a_rent() -> None:

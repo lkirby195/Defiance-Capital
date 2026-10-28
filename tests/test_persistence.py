@@ -18,7 +18,17 @@ from sqlalchemy.orm import Session
 from config.config import Config
 from db.models import Deal, Screen
 from engine.version import ENGINE_VERSION
-from schema.models import AnalysisStatus, Product, TermBucket, UnderwriteResult, Verdict
+from schema.models import (
+    AnalysisStatus,
+    LegacyRentalAnalysis,
+    LegacyTakeBackAnalysis,
+    Product,
+    RentalAnalysis,
+    TermBucket,
+    UnderwriteFlag,
+    UnderwriteResult,
+    Verdict,
+)
 from services import (
     DealNotFound,
     DealNotReady,
@@ -214,6 +224,40 @@ def test_a_stored_result_from_before_2_0_0_still_loads(
     }
     stored["sizing"]["product"] = "WHOLETAIL"
     del stored["sources_and_uses"]
+    # the two DSCR tests a run before engine 2.1.0 recorded (SPEC §8.5, §8.6 then)
+    stored["rental"] = {
+        "status": "EVALUATED",
+        "expenses_pct": "0.35",
+        "holding_costs_monthly": "516.67",
+        "loan_amount": "120000.00",
+        "takeout_rate": "0.065",
+        "amortization_years": 30,
+        "debt_service_monthly": "758.48",
+        "dscr_floor": "1.20",
+        "monthly_rent": "1800.00",
+        "expenses": "630.00",
+        "net_monthly_income": "653.33",
+        "dscr": "0.861",
+        "passed": False,
+    }
+    stored["take_back"] = {
+        "status": "EVALUATED",
+        "loan_amount": "120000.00",
+        "interest_rate": "0.13",
+        "lost_interest_months": 3,
+        "lost_interest": "3900.00",
+        "legal_costs": "5000.00",
+        "total_cost": "128900.00",
+        "amortization_years": 30,
+        "debt_service_monthly": "1426.03",
+        "dscr_floor": "1.00",
+        "net_monthly_income": "653.33",
+        "dscr": "0.458",
+        "passed": False,
+    }
+    stored["flags"].append(
+        {"code": "DSCR_BELOW_FLOOR", "severity": "SOFT", "message": "Rental DSCR 0.86x ..."}
+    )
     flip = stored["flip"]
     for name in ("interest", "origination", "loan_amount", "borrower_equity", "cash_on_cash"):
         del flip[name]
@@ -226,6 +270,11 @@ def test_a_stored_result_from_before_2_0_0_still_loads(
         profit_yield=None,
     )
     old = UnderwriteResult.model_validate(stored)
+    assert isinstance(old.rental, LegacyRentalAnalysis) and old.rental.dscr == D("0.861")
+    assert isinstance(old.take_back, LegacyTakeBackAnalysis)
+    assert old.take_back.total_cost == D("128900.00")
+    assert old.flags[-1].code is UnderwriteFlag.DSCR_BELOW_FLOOR
+    assert isinstance(result.rental, RentalAnalysis), "a 2.1.0 run reads as itself"
     assert old.analyses is not None and old.analyses.flip_analysis is False
     assert old.flip.status is AnalysisStatus.OFF and old.flip.project_yield is None
     assert old.sizing.product is Product.ACQUISITION

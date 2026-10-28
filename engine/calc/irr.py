@@ -128,20 +128,37 @@ def _bisect(flows: list[tuple[date, Decimal]], low: Decimal, high: Decimal) -> D
     return (low + high) / 2
 
 
-def xirr(flows: list[tuple[date, Decimal]]) -> Decimal | None:
+def _value_and_slope(
+    rate: Decimal, timed: list[tuple[Decimal, Decimal]]
+) -> tuple[Decimal, Decimal]:
+    """xnpv and its derivative at ``rate`` in one pass: each flow's discount factor is raised
+    once and serves both, since d/dr of a / (1 + r)^t is -t x a / (1 + r)^t / (1 + r)."""
+    base = ONE + rate
+    value = slope = ZERO
+    for years, amount in timed:
+        discounted = amount / base**years
+        value += discounted
+        slope -= years * discounted / base
+    return value, slope
+
+
+def xirr(flows: list[tuple[date, Decimal]], guess: Decimal = INITIAL_GUESS) -> Decimal | None:
     """The annualized, compounded rate that discounts ``flows`` to zero on their own dates.
 
     ``None`` when no such rate exists: the flows have to go both ways for there to be one.
+    ``guess`` is where Newton starts; a caller solving many nearby ledgers hands in the last
+    root and saves most of the steps, and the answer does not depend on it.
     """
     if len(flows) < 2 or not has_a_rate(flows):
         return None
     ordered = sorted(flows, key=lambda flow: flow[0])
-    rate = INITIAL_GUESS
+    start = ordered[0][0]
+    timed = [(_years(start, when), amount) for when, amount in ordered]
+    rate = guess if RATE_FLOOR < guess <= RATE_CEILING else INITIAL_GUESS
     for _ in range(NEWTON_ITERATIONS):
-        value = xnpv(rate, ordered)
+        value, slope = _value_and_slope(rate, timed)
         if abs(value) < NPV_TOLERANCE:
             return rate
-        slope = xnpv_derivative(rate, ordered)
         if slope == ZERO:
             break
         step = rate - value / slope

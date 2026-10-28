@@ -3,6 +3,36 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**2.1.0 (10a-scenarios, 2026-10-28) replaces the two DSCR tests with the takeout and the
+lender's downside.** The **Rental analysis** (SPEC §8.5) is sized from the exit value down:
+the takeout loan is the exit value - the deal's own ``rental_exit_value`` when the team typed
+one, else the estimated sale price - times ``rental.takeout_ltv`` (placeholder 75%); the debt
+service is shown amortizing (level, over ``rental.amortization_years``) and interest-only;
+the required NOI is the amortizing debt service times ``rental.target_dscr`` (placeholder
+1.20, the renamed ``dscr_floor``); the required rent is that NOI grossed up by the expense
+ratio; the market rent, the gap, the two DSCRs at the market rent and the spread to loan
+(the takeout loan less our payoff due, the commitment plus the fee's payoff half) are set
+beside it. Holding costs are no longer in it. ``MARKET_RENT_BELOW_REQUIRED`` and
+``TAKEOUT_BELOW_PAYOFF`` (both config, placeholder Soft) replace ``DSCR_BELOW_FLOOR``; without
+a market rent the required rent and the spread still compute and the market-rent lines are
+NOT_EVALUATED under ``MONTHLY_RENT_MISSING``. The **Take-Back analysis** (SPEC §8.6,
+``engine/calc/take_back.py``) is the lender's own downside solved on its XIRR: a default in
+month ``max(1, term - listing months)``, ``lost_interest_months`` of nothing, the legal bill,
+``take_back.foreclosure_months[state]`` of carry at the deal's monthly holding cost, then the
+sale net of the broker. Block A bisects the sale price in [0, 3 x projected sale] at which
+the lender's XIRR reaches ``pricing.target_lender_irr`` and reports it as a haircut from the
+projected sale price, a share of the purchase price and against the as-is value when the
+team typed one (new ``as_is_value``); ``TAKE_BACK_PRICE_ABOVE_PURCHASE`` (config, placeholder
+Hard) when it is above the purchase price. Block B, per ``take_back.hold_months`` (12, 24,
+36), bisects the rent at the projected sale price, in [0, 10 x market rent] or [0, $20,000],
+and the sale price at the market rent, for the same XIRR after a hold collecting rent net of
+the expense ratio. A solve that hits a bound says so rather than reporting the bound.
+``TAKE_BACK_DSCR_BELOW_FLOOR``, ``take_back.amortization_years`` and ``take_back.dscr_floor``
+are gone; a stored 2.0 row's two blocks read back as ``LegacyRentalAnalysis`` and
+``LegacyTakeBackAnalysis``. Every underwrite fixture's two blocks were recomputed by an
+independent script before they were recorded (``tests/test_fixtures.py``,
+``tests/test_take_back.py``).
+
 **2.0.1 (10a-fix, 2026-10-27) makes the de-risk line's X the plain loan reduction.**
 ``PricingRow.equity_added`` is the request less the row's loan amount (``-step``), not the
 difference in borrower equity, which netted off the interest and fee the smaller loan saves:
@@ -218,4 +248,4 @@ REHAB_PORTION_EXCEEDS_BUDGET.
 
 from __future__ import annotations
 
-ENGINE_VERSION = "2.0.1"
+ENGINE_VERSION = "2.1.0"

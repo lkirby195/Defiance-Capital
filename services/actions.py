@@ -32,6 +32,7 @@ dates and the term - kept for the CLI fixtures and the services that still speak
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -48,7 +49,7 @@ from schema.models import (
     validate_loan_split,
 )
 from services.audit import DEALS, jsonable, last_action_at, record_audit
-from services.defaults import FLAT, populate
+from services.defaults import EXIT_VALUE, FLAT, exit_value_default, populate
 from services.errors import ActionNotAllowed, ReasonRequired
 from services.requests import CourtSearch, TeamOverrides, UnderwritingAssumptions
 from services.runner import load_deal
@@ -86,6 +87,8 @@ OVERRIDE_FIELDS: tuple[str, ...] = (
     "holding_costs_pct_of_cost",
     "origination_fee_pct",
     "estimated_sale_price_team",
+    "as_is_value",
+    "rental_exit_value",
     "monthly_rent",
     "broker_selling_pct",
     "rental_expenses_pct_of_rent",
@@ -107,6 +110,8 @@ ASSUMPTION_FIELDS: tuple[str, ...] = (
     "closing_costs_usd",
     "holding_costs_pct_of_cost",
     "estimated_sale_price_team",
+    "as_is_value",
+    "rental_exit_value",
     "monthly_rent",
     "broker_selling_pct",
     "rental_expenses_pct_of_rent",
@@ -123,7 +128,9 @@ COURT_FIELDS: tuple[str, ...] = (
 # What Reset all to defaults puts back: every panel column with a default - the ten flat
 # config values and the loan split on a holdback. The estimated sale price and the monthly
 # rent have no default and are left exactly as they are.
-RESETTABLE: tuple[str, ...] = (*FLAT, *SPLIT_COLUMNS)
+# ... and the exit value, which goes back to the sale price (SPEC §8.5); the as-is value has
+# no default either.
+RESETTABLE: tuple[str, ...] = (*FLAT, *SPLIT_COLUMNS, EXIT_VALUE)
 
 
 def _check(deal: Deal, action: str, allowed_from: frozenset[Status]) -> None:
@@ -459,10 +466,12 @@ def apply_overrides(
     before: dict[str, Any] = {}
     after: dict[str, Any] = {}
     original = {field: getattr(deal, field) for field in (*OVERRIDE_FIELDS, *SPLIT_COLUMNS)}
+    stood_in = exit_value_default(deal)
     _apply_fields(deal, overrides, OVERRIDE_FIELDS, before, after)
     _apply_product(deal, overrides, before, after)
     _apply_split(deal, overrides, before, after)
     _apply_term(deal, overrides, before, after)
+    _settle_exit_value(deal, stood_in, after)
     _settle(deal, original, before, after, config)
     return before, after
 
@@ -502,12 +511,31 @@ def apply_assumptions(
     before: dict[str, Any] = {}
     after: dict[str, Any] = {}
     original = {field: getattr(deal, field) for field in (*ASSUMPTION_FIELDS, *SPLIT_COLUMNS)}
+    stood_in = exit_value_default(deal)
     _apply_fields(deal, assumptions, ASSUMPTION_FIELDS, before, after)
     # The Loan Structure radio (v0.18), then the split against the structure it leaves.
     _apply_product(deal, assumptions, before, after)
     _apply_split(deal, assumptions, before, after)
+    _settle_exit_value(deal, stood_in, after)
     _settle(deal, original, before, after, config)
     return before, after
+
+
+def _settle_exit_value(deal: Deal, stood_in: Decimal | None, after: dict[str, Any]) -> None:
+    """An exit value equal to the sale price it stands beside is the default: NULL.
+
+    # SPEC §8.5. Against the sale price that stood in before the save as well as the one in
+    force after it: the panel pre-fills the box with the default, so a box left alone posts
+    the old sale price, and a person who changed the sale price beside it has not chosen to
+    keep the old one as the exit value.
+    """
+    value = deal.rental_exit_value
+    if value is None:
+        return
+    if value in (stood_in, exit_value_default(deal)):
+        deal.rental_exit_value = None
+        if EXIT_VALUE in after:
+            after[EXIT_VALUE] = None
 
 
 def reset_assumptions(
@@ -515,8 +543,9 @@ def reset_assumptions(
 ) -> Deal:
     """Reset all to defaults: every panel column with a default back to it.  # SPEC §8.1
 
-    The ten config values and the formula split on a holdback; the sale price and the rent
-    have no default and are not touched. One
+    The ten config values, the formula split on a holdback and the exit value, which goes
+    back to the sale price; the sale price, the as-is value and the rent have no default and
+    are not touched. One
     ``ASSUMPTIONS_RESET`` row names what moved, with the default each landed on in
     ``after``; a deal already on its defaults writes no row. The route runs the analysis
     afterwards.

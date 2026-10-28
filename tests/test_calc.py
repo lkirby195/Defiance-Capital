@@ -24,12 +24,15 @@ from engine.calc.ledger import (
     return_overview,
 )
 from engine.calc.rental import (
+    exit_value,
+    interest_only_payment,
     monthly_payment,
-    net_monthly_income,
+    payoff_due,
     rental_analysis,
-    take_back_analysis,
+    required_rent,
 )
 from engine.calc.sources_uses import sources_and_uses
+from engine.calc.take_back import take_back_analysis
 from engine.calc.terms import (
     LoanTerms,
     holding_costs_total,
@@ -41,6 +44,7 @@ from engine.sizing import size_deal
 from schema.models import (
     AnalysisStatus,
     BorrowerInputs,
+    ExitValueSource,
     ExperienceBucket,
     ExperienceTier,
     FlipAnalysis,
@@ -523,7 +527,7 @@ def test_100_pct_at_close_has_no_holdback_and_the_same_uses_as_the_flip() -> Non
     assert table.total_uses == flip.total_costs
 
 
-# --- rental and take-back (SPEC §8.5, §8.6) ------------------------------------------------------
+# --- rental: the takeout (SPEC §8.5) -----------------------------------------------------------
 
 
 def test_a_level_payment_amortizes_the_loan() -> None:
@@ -535,54 +539,101 @@ def test_a_level_payment_amortizes_the_loan() -> None:
         monthly_payment(D("100"), D("0.05"), 0)
 
 
-def test_net_monthly_income_is_rent_less_expenses_less_the_monthly_carry() -> None:
-    deal = inputs(monthly_rent="2000", holding_costs_pct_of_cost=D("0.024"))
-    loan = terms(deal)
-    # 2,000 - 35% of 2,000 - 4,800/12 = 2,000 - 700 - 400
-    assert net_monthly_income(D("2000"), CONFIG.rental.expenses_pct_of_rent, loan) == D("900.00")
-    # the ratio is handed in, so a deal's own 40% is 2,000 - 800 - 400
-    assert net_monthly_income(D("2000"), D("0.40"), loan) == D("800.00")
+def test_interest_only_is_a_month_of_interest() -> None:
+    assert interest_only_payment(D("195000"), D("0.065")) == D("1056.25")
 
 
-def test_the_rental_dscr_is_income_over_a_takeout_payment_on_the_commitment() -> None:
-    deal = inputs(monthly_rent="2000", holding_costs_pct_of_cost=D("0.024"))
-    loan = terms(deal)
-    rental = rental_analysis(deal, loan, CONFIG)
-    assert rental.status is AnalysisStatus.EVALUATED
-    assert rental.loan_amount == D("150000")
-    assert rental.takeout_rate == CONFIG.rental.takeout_rate
-    assert rental.expenses == D("700.00")
-    assert rental.net_monthly_income == D("900.00")
-    assert rental.dscr == D("900.00") / rental.debt_service_monthly
-    assert rental.passed is False  # 0.95x, under the 1.20 floor
-
-
-def test_a_rental_that_clears_the_floor_passes() -> None:
-    deal = inputs(monthly_rent="6000", holding_costs_pct_of_cost=D("0.024"))
+def test_the_takeout_is_sized_from_the_exit_value_down_to_the_rent() -> None:
+    """260,000 x 75% = 195,000; the required rent grosses the target NOI up by the expenses."""
+    deal = inputs(monthly_rent="2000")
     rental = rental_analysis(deal, terms(deal), CONFIG)
-    assert rental.dscr is not None and rental.dscr > CONFIG.rental.dscr_floor
-    assert rental.passed is True
+    assert rental.status is AnalysisStatus.EVALUATED
+    assert rental.market_rent_status is AnalysisStatus.EVALUATED
+    assert (rental.exit_value, rental.exit_value_source) == (
+        D("260000"),
+        ExitValueSource.SALE_PRICE,
+    )
+    assert rental.takeout_loan == D("195000.00")
+    amortizing = monthly_payment(D("195000"), CONFIG.rental.takeout_rate, 30)
+    assert rental.debt_service_amortizing == amortizing
+    assert rental.debt_service_interest_only == D("1056.25")
+    assert rental.required_noi == amortizing * CONFIG.rental.target_dscr
+    assert rental.required_rent == rental.required_noi / D("0.65")
+    assert D("2275.44") < rental.required_rent < D("2275.45")
+    # the market side: 2,000 nets 1,300 after 35% expenses, short of the required rent
+    assert rental.market_rent == D("2000")
+    assert rental.market_noi == D("1300.00")
+    assert rental.rent_gap == D("2000") - rental.required_rent
+    assert rental.dscr_amortizing == D("1300.00") / amortizing
+    assert rental.dscr_interest_only == D("1300.00") / D("1056.25")
+    assert rental.rent_passed is False
+    # the spread: the takeout takes out the commitment and the fee's payoff half
+    assert rental.payoff_due == D("151500.00")
+    assert rental.spread_to_loan == D("43500.00")
+    assert rental.spread_passed is True
 
 
-def test_a_rental_with_no_rent_is_not_evaluated_and_still_reports_the_debt_service() -> None:
-    deal = inputs(monthly_rent=None)
+def test_a_rent_over_the_required_rent_passes() -> None:
+    deal = inputs(monthly_rent="6000")
+    rental = rental_analysis(deal, terms(deal), CONFIG)
+    assert rental.rent_passed is True and rental.rent_gap is not None and rental.rent_gap > 0
+
+
+def test_an_entered_exit_value_wins_over_the_sale_price() -> None:
+    deal = inputs(rental_exit_value=D("300000"))
+    rental = rental_analysis(deal, terms(deal), CONFIG)
+    assert (rental.exit_value, rental.exit_value_source) == (D("300000"), ExitValueSource.ENTERED)
+    assert rental.takeout_loan == D("225000.00")
+    assert exit_value(deal) == (D("300000"), ExitValueSource.ENTERED)
+
+
+def test_a_takeout_short_of_the_payoff_fails_the_spread() -> None:
+    deal = inputs(rental_exit_value=D("150000"))
+    rental = rental_analysis(deal, terms(deal), CONFIG)
+    assert rental.takeout_loan == D("112500.00")
+    assert rental.spread_to_loan == D("-39000.00")
+    assert rental.spread_passed is False
+
+
+def test_no_exit_value_leaves_the_rental_not_evaluated_but_keeps_the_market_rent() -> None:
+    deal = inputs(estimated_sale_price=None)
+    assert exit_value(deal) is None
     rental = rental_analysis(deal, terms(deal), CONFIG)
     assert rental.status is AnalysisStatus.NOT_EVALUATED
-    assert rental.debt_service_monthly > 0
-    assert rental.monthly_rent is None and rental.dscr is None and rental.passed is None
+    assert rental.market_rent_status is AnalysisStatus.NOT_EVALUATED
+    assert rental.market_rent == D("2000")
+    assert rental.required_rent is None and rental.spread_to_loan is None
+    assert rental.takeout_ltv == CONFIG.rental.takeout_ltv
 
 
-def test_the_take_back_costs_the_loan_plus_lost_interest_plus_the_legal_bill() -> None:
-    deal = inputs(monthly_rent="2000", holding_costs_pct_of_cost=D("0.024"))
-    loan = terms(deal)
-    take_back = take_back_analysis(deal, loan, CONFIG)
-    assert take_back.loan_amount == D("150000")
-    # three months of 12% on 150,000 is 4,500
-    assert take_back.lost_interest == D("4500.00")
-    assert take_back.legal_costs == D("5000.00")
-    assert take_back.total_cost == D("159500.00")
-    assert take_back.interest_rate == D("0.12")  # the deal's own rate, not a takeout rate
-    assert take_back.dscr == D("900.00") / take_back.debt_service_monthly
+def test_no_market_rent_still_sizes_the_takeout_and_the_spread() -> None:
+    deal = inputs(monthly_rent=None)
+    rental = rental_analysis(deal, terms(deal), CONFIG)
+    assert rental.status is AnalysisStatus.EVALUATED
+    assert rental.market_rent_status is AnalysisStatus.NOT_EVALUATED
+    assert rental.required_rent is not None and rental.spread_to_loan == D("43500.00")
+    assert rental.market_rent is None and rental.rent_gap is None
+    assert rental.dscr_amortizing is None and rental.rent_passed is None
+
+
+def test_holding_costs_are_not_in_the_rental() -> None:
+    """A takeout lender underwrites the rent against its own debt service (SPEC §8.5)."""
+    lean = inputs(monthly_rent="2000")
+    heavy = inputs(monthly_rent="2000", holding_costs_pct_of_cost=D("0.10"))
+    assert terms(heavy).holding_costs_monthly > terms(lean).holding_costs_monthly
+    assert rental_analysis(lean, terms(lean), CONFIG) == rental_analysis(
+        heavy, terms(heavy), CONFIG
+    )
+
+
+def test_the_required_rent_refuses_a_total_expense_ratio() -> None:
+    assert required_rent(D("650"), D("0.35")) == D("1000")
+    with pytest.raises(ValueError, match="no rent is enough"):
+        required_rent(D("650"), D("1"))
+
+
+def test_our_payoff_due_is_the_commitment_and_the_fees_payoff_half() -> None:
+    assert payoff_due(terms(inputs())) == D("151500.00")
 
 
 def test_all_three_analyses_run_on_a_deal_with_a_price_and_a_rent() -> None:
@@ -592,23 +643,6 @@ def test_all_three_analyses_run_on_a_deal_with_a_price_and_a_rent() -> None:
     assert flip_for(deal).status is AnalysisStatus.EVALUATED
     assert rental_analysis(deal, loan, CONFIG).status is AnalysisStatus.EVALUATED
     assert take_back_analysis(deal, loan, CONFIG).status is AnalysisStatus.EVALUATED
-
-
-def test_a_take_back_with_no_rent_is_not_evaluated_but_still_costs_what_it_costs() -> None:
-    deal = inputs(monthly_rent=None)
-    take_back = take_back_analysis(deal, terms(deal), CONFIG)
-    assert take_back.status is AnalysisStatus.NOT_EVALUATED
-    assert take_back.total_cost == D("159500.00")
-    assert take_back.debt_service_monthly > 0
-    assert take_back.net_monthly_income is None and take_back.dscr is None
-
-
-def test_both_analyses_share_one_net_monthly_income() -> None:
-    deal = inputs(monthly_rent="2000", holding_costs_pct_of_cost=D("0.024"))
-    loan = terms(deal)
-    rental = rental_analysis(deal, loan, CONFIG)
-    take_back = take_back_analysis(deal, loan, CONFIG)
-    assert rental.net_monthly_income == take_back.net_monthly_income
 
 
 # --- the stub period: a payoff date between two anchors (SPEC §8.1, §8.3) -----------------------

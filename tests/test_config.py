@@ -31,10 +31,12 @@ def test_placeholder_yaml_loads() -> None:
     assert cfg.rental.expenses_pct_of_rent == Decimal("0.35")
     assert cfg.rental.takeout_rate == Decimal("0.065")
     assert cfg.rental.amortization_years == 30
-    assert cfg.rental.dscr_floor == Decimal("1.20")
+    assert cfg.rental.target_dscr == Decimal("1.20")
+    assert cfg.rental.takeout_ltv == Decimal("0.75")
     assert cfg.take_back.lost_interest_months == 3
     assert cfg.take_back.legal_costs_usd == Decimal("5000.00")
-    assert cfg.take_back.dscr_floor == Decimal("1.00")
+    assert cfg.take_back.foreclosure_months[State.OK] == 6
+    assert cfg.take_back.hold_months == [12, 24, 36]
     assert cfg.states.served == [State.OK, State.CO]
     assert list(cfg.leverage_caps) == [Product.ACQUISITION, Product.ACQUISITION_REHAB]
     cell = cfg.leverage_caps[Product.ACQUISITION_REHAB][Tranche.T5][ExperienceTier.E3]
@@ -90,11 +92,13 @@ def test_unknown_key_fails(data: dict[str, Any]) -> None:
         (("screen", "tolerance_band"), Decimal("-0.01")),
         (("credit", "tranche_cutoffs", "T1"), 900),
         (("rental", "amortization_years"), 0),
-        (("rental", "dscr_floor"), Decimal("0")),
+        (("rental", "target_dscr"), Decimal("0")),
+        (("rental", "takeout_ltv"), Decimal("0")),
         (("rental", "expenses_pct_of_rent"), Decimal("1.01")),
         (("take_back", "legal_costs_usd"), Decimal("-5")),
         (("take_back", "lost_interest_months"), 61),
-        (("take_back", "dscr_floor"), Decimal("0")),
+        (("take_back", "hold_months"), []),
+        (("take_back", "hold_months"), [0]),
         (("fees", "broker_selling_pct"), Decimal("1.5")),
         (("fees", "closing_costs_default_usd"), Decimal("-1")),
         (("flags", "thresholds", "unsatisfied_judgments_aggregate_usd"), Decimal("-0.01")),
@@ -201,7 +205,8 @@ def test_config_is_immutable() -> None:
 
 
 def test_the_take_back_replaced_the_reo_downside_entirely(data: dict[str, Any]) -> None:
-    """No haircut, no foreclosure cost, no foreclosure months by state, no cover floor."""
+    """No REO haircut, no foreclosure cost, no cover floor; the foreclosure months by state
+    came back with engine 2.1.0 as ``take_back.foreclosure_months``."""
     assert "downside" not in data
     for key, value in (
         ("reo_haircut", Decimal("0.15")),
@@ -216,10 +221,13 @@ def test_the_take_back_replaced_the_reo_downside_entirely(data: dict[str, Any]) 
 
 def test_underwrite_severities_required_and_complete(data: dict[str, Any]) -> None:
     severities = Config.load().flags.underwrite_severities
-    assert severities[UnderwriteFlag.DSCR_BELOW_FLOOR] is Severity.SOFT
-    assert severities[UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR] is Severity.HARD
-    del data["flags"]["underwrite_severities"]["DSCR_BELOW_FLOOR"]
-    with pytest.raises(ConfigError, match="underwrite_severities is missing: DSCR_BELOW_FLOOR"):
+    assert severities[UnderwriteFlag.MARKET_RENT_BELOW_REQUIRED] is Severity.SOFT
+    assert severities[UnderwriteFlag.TAKEOUT_BELOW_PAYOFF] is Severity.SOFT
+    assert severities[UnderwriteFlag.TAKE_BACK_PRICE_ABOVE_PURCHASE] is Severity.HARD
+    del data["flags"]["underwrite_severities"]["MARKET_RENT_BELOW_REQUIRED"]
+    with pytest.raises(
+        ConfigError, match="underwrite_severities is missing: MARKET_RENT_BELOW_REQUIRED"
+    ):
         Config.from_dict(data)
 
 
@@ -321,8 +329,9 @@ def test_one_holding_cost_replaced_the_three_itemized_opex_lines(data: dict[str,
 
 def test_underwrite_severities_cover_the_graded_codes_only(data: dict[str, Any]) -> None:
     graded = {
-        UnderwriteFlag.DSCR_BELOW_FLOOR,
-        UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR,
+        UnderwriteFlag.MARKET_RENT_BELOW_REQUIRED,
+        UnderwriteFlag.TAKEOUT_BELOW_PAYOFF,
+        UnderwriteFlag.TAKE_BACK_PRICE_ABOVE_PURCHASE,
         UnderwriteFlag.BORROWER_COC_BELOW_TARGET,
     }
     severities = Config.from_dict(data).flags.underwrite_severities
@@ -341,6 +350,59 @@ def test_config_cannot_grade_an_informational_underwrite_flag(data: dict[str, An
 
 
 def test_missing_graded_severity_still_fails(data: dict[str, Any]) -> None:
-    del data["flags"]["underwrite_severities"]["TAKE_BACK_DSCR_BELOW_FLOOR"]
-    with pytest.raises(ConfigError, match="TAKE_BACK_DSCR_BELOW_FLOOR"):
+    del data["flags"]["underwrite_severities"]["TAKE_BACK_PRICE_ABOVE_PURCHASE"]
+    with pytest.raises(ConfigError, match="TAKE_BACK_PRICE_ABOVE_PURCHASE"):
+        Config.from_dict(data)
+
+
+# --- engine 2.1.0: the DSCR tests are gone (SPEC §8.5, §8.6, §10) -------------------------------
+
+
+@pytest.mark.parametrize(
+    "section, key, value",
+    [
+        ("rental", "dscr_floor", Decimal("1.20")),
+        ("take_back", "amortization_years", 30),
+        ("take_back", "dscr_floor", Decimal("1.00")),
+    ],
+)
+def test_the_dscr_tests_keys_are_refused_by_name(
+    data: dict[str, Any], section: str, key: str, value: Any
+) -> None:
+    data[section][key] = value
+    with pytest.raises(ConfigError, match=f"{section}.{key}"):
+        Config.from_dict(data)
+
+
+@pytest.mark.parametrize("code", ["DSCR_BELOW_FLOOR", "TAKE_BACK_DSCR_BELOW_FLOOR"])
+def test_the_retired_dscr_codes_cannot_be_graded(data: dict[str, Any], code: str) -> None:
+    data["flags"]["underwrite_severities"][code] = "SOFT"
+    with pytest.raises(ConfigError, match=f"retired codes.*{code}"):
+        Config.from_dict(data)
+
+
+def test_the_placeholder_scenario_values_load() -> None:
+    cfg = Config.load()
+    assert cfg.rental.takeout_ltv == Decimal("0.75")
+    assert cfg.rental.target_dscr == Decimal("1.20")
+    assert cfg.take_back.foreclosure_months == {State.OK: 6, State.CO: 4}
+    assert cfg.take_back.hold_months == [12, 24, 36]
+
+
+def test_foreclosure_months_cover_every_served_state(data: dict[str, Any]) -> None:
+    del data["take_back"]["foreclosure_months"]["CO"]
+    with pytest.raises(ConfigError, match="foreclosure_months is missing a served state: CO"):
+        Config.from_dict(data)
+    data["take_back"]["foreclosure_months"]["CO"] = 4
+    data["take_back"]["foreclosure_months"]["OTHER"] = 6
+    with pytest.raises(ConfigError, match="cannot name OTHER"):
+        Config.from_dict(data)
+
+
+def test_hold_months_are_distinct_and_ascending(data: dict[str, Any]) -> None:
+    data["take_back"]["hold_months"] = [24, 12]
+    with pytest.raises(ConfigError, match="distinct and ascending"):
+        Config.from_dict(data)
+    data["take_back"]["hold_months"] = [12, 12]
+    with pytest.raises(ConfigError, match="distinct and ascending"):
         Config.from_dict(data)

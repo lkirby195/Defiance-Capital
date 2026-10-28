@@ -410,7 +410,7 @@ def test_restoring_a_version_after_every_input_changed_reproduces_it_exactly(
     edited = client.post(f"/queue/deals/{deal_id}/intake", data=intake, follow_redirects=False)
     assert edited.status_code == 303, edited.text
 
-    # all fourteen boxes on the panel (v3)
+    # every box on the panel (v3)
     saved = save_and_run(
         client,
         deal_id,
@@ -422,6 +422,8 @@ def test_restoring_a_version_after_every_input_changed_reproduces_it_exactly(
         loan_purchase_portion="$115,000",
         loan_rehab_portion="$25,000",
         estimated_sale_price_team="$260,000",
+        as_is_value="$180,000",
+        rental_exit_value="$270,000",
         monthly_rent="$2,100",
         broker_selling_pct="5%",
         rental_expenses_pct_of_rent="40%",

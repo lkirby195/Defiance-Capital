@@ -65,9 +65,10 @@ _PERCENT_ENDINGS = (
     "tolerance_band",
     ".ltc",
     ".ltv",
+    "takeout_ltv",
 )
 _MONEY_ENDINGS = ("_usd", "loan_amount_rounding")
-_RATIO_ENDINGS = ("dscr_floor",)
+_RATIO_ENDINGS = ("target_dscr",)
 
 
 @dataclass(frozen=True)

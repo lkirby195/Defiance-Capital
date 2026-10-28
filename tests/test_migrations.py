@@ -602,3 +602,52 @@ def test_0021_maps_four_products_to_two_drops_the_toggles_and_moves_the_broker_d
     command.downgrade(alembic_cfg, "base")
     with test_engine.begin() as conn:
         conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
+
+
+# A deal written against 0021, before the exit value and the as-is value (SPEC §8.5, §8.6).
+BEFORE_0022 = text(
+    """
+    INSERT INTO deals (id, channel, status, missing_fields, court_records_team,
+                       credit_authorization_signed, created_at, updated_at, defaulted_fields,
+                       interest_rate, estimated_sale_price_team)
+    VALUES (:id, 'TEAM', 'NEW', '[]', '[]', false, now(), now(), '["interest_rate"]', 0.12,
+            260000.00)
+    """
+)
+
+
+def test_0022_adds_the_exit_value_and_the_as_is_value_empty(
+    alembic_cfg: AlembicConfig, test_engine: Engine
+) -> None:
+    """NULL on every existing deal: the sale price stands in for the exit value where it is
+    needed, and nobody has an as-is value until they type one."""
+    command.upgrade(alembic_cfg, "0021")
+    deal_id = uuid.uuid4()
+    with test_engine.begin() as conn:
+        conn.execute(BEFORE_0022, {"id": deal_id})
+
+    command.upgrade(alembic_cfg, "0022")
+
+    with test_engine.connect() as conn:
+        columns = {column["name"] for column in inspect(conn).get_columns("deals")}
+        assert {"rental_exit_value", "as_is_value"} <= columns
+        row = conn.execute(
+            text(
+                "SELECT rental_exit_value, as_is_value, estimated_sale_price_team, "
+                "defaulted_fields FROM deals WHERE id = :id"
+            ),
+            {"id": deal_id},
+        ).one()
+    assert row[0] is None and row[1] is None
+    assert row[2] == Decimal("260000.00")
+    assert row.defaulted_fields == ["interest_rate"]
+
+    command.downgrade(alembic_cfg, "0021")
+    with test_engine.connect() as conn:
+        columns = {column["name"] for column in inspect(conn).get_columns("deals")}
+        assert not ({"rental_exit_value", "as_is_value"} & columns)
+        assert conn.execute(text("SELECT count(*) FROM deals")).scalar() == 1
+
+    command.downgrade(alembic_cfg, "base")
+    with test_engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")

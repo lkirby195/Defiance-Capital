@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.18
+# GLENWOOD Underwriting Platform — SPEC v0.19
 
-Status: **v0.18**, 2026-10-27, engine `2.0.1`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.19**, 2026-10-28, engine `2.1.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.19** replaces the two DSCR tests with the takeout and the lender's downside (engine `2.1.0`). The **Rental analysis** is sized from the exit value down (§8.5): the takeout loan is the **exit value** - a new per-deal input on the Underwriting Assumptions panel, the estimated sale price by default - times `rental.takeout_ltv` (placeholder 75%); its debt service is shown amortizing over `rental.amortization_years` and interest-only; the **required NOI** is the amortizing debt service times `rental.target_dscr` (placeholder 1.20, the renamed `dscr_floor`); the **required rent** is that NOI grossed up by the expense ratio; and beside it the market rent, the gap, the DSCR at the market rent on both bases and the **spread to loan** (the takeout loan less our payoff due). Holding costs are out of it. `MARKET_RENT_BELOW_REQUIRED` and `TAKEOUT_BELOW_PAYOFF` (both config, placeholder Soft) replace `DSCR_BELOW_FLOOR`; without a market rent the required rent and the spread still compute and only the market-rent lines are `NOT_EVALUATED`. The **Take-Back analysis** is the lender's own downside solved on its XIRR (§8.6): a default at the end of the rehab period, `lost_interest_months` of nothing, the legal bill, `take_back.foreclosure_months[state]` of carry at the deal's monthly holding cost, then a sale net of the broker. **Block A** bisects the sale price at which the lender's XIRR over the whole loan reaches `pricing.target_lender_irr` and reports it as a haircut from the projected sale price, a share of the purchase price and against the new optional **as-is value**; `TAKE_BACK_PRICE_ABOVE_PURCHASE` (config, placeholder Hard) when it is above the purchase price. **Block B**, per `take_back.hold_months` (12, 24, 36), solves the rent at the projected sale price and the sale price at the market rent for the same XIRR after a hold. Every solve carries its bounds and says "no solution" when it hits one. `TAKE_BACK_DSCR_BELOW_FLOOR`, `take_back.amortization_years` and `take_back.dscr_floor` are gone; a stored 2.0 row's two blocks still read. Migration `0022` adds `deals.rental_exit_value` and `deals.as_is_value`. The deal page cards, the workbook sheets and the CLI blocks follow; 10b moves the cards into the Scenarios tab.
 
 **v0.18** settles three of the v0.17 questions. The pricing de-risk line's X is the **plain loan reduction** against the requested row - "Adding $19,000 of equity brings the rate to 13.63%" on a row $19,000 below the request - rather than the difference in borrower equity (§8.10, engine `2.0.1`). The borrower's thank-you page lists the **requested row first**, then each smaller loan from largest to smallest; the team's Pricing section keeps most equity first (§4.2). And the deal page's Underwriting Assumptions panel loses its Advance at Closing and Rehab Portion boxes for the team form's own two controls - the **Loan Structure** radio and the **Rehab portion** box it reveals - so the structure is edited there too and the advance is always the rest of the loan (§8.1, §9).
 
@@ -599,7 +601,7 @@ Runs on Conditional/Go deals when a team member advances them. Paid pulls happen
 
 §8 is a **dated monthly cash-flow ledger**. The lender's flows are laid out month by month from `closing_date`, and the headline number is their XIRR on the actual dates. There is no rate solve, no sensitivity grid, no target IRR, no minimum-interest or extension arithmetic, and no average-utilization constant: the ledger states the balances directly rather than summarizing them.
 
-Three analyses sit beside the ledger, each asking a different question about the same deal. **Flip** (§8.4): does the project make money if it is sold, and what does the borrower make on the money they put in? **Rental** (§8.5): does it carry a takeout loan if it is held? **Take-Back** (§8.6): does it carry GLENWOOD's own cost if the lender ends up owning it? All three run on every deal (v0.17; Flip and Rental were toggles before it), and the Take-Back replaces the liquidation downside entirely. **Sources & Uses** (§8.11) lays the money out beside them.
+Three analyses sit beside the ledger, each asking a different question about the same deal. **Flip** (§8.4): does the project make money if it is sold, and what does the borrower make on the money they put in? **Rental** (§8.5): what does it have to let for to refinance us out, and how far is the market rent from that? **Take-Back** (§8.6): what does it have to sell or let for, after a default, for the lender to still earn its target? All three run on every deal (v0.17; Flip and Rental were toggles before it), and the Take-Back is the lender's downside (v0.19; a DSCR test on the lender's own cost from v0.4 to v0.18). **Sources & Uses** (§8.11) lays the money out beside them.
 
 ### 8.1 Inputs
 
@@ -689,12 +691,12 @@ the economics above.
 | Input | Default | Notes |
 |---|---|---|
 | `broker_selling_pct` | `fees.broker_selling_pct` (6%; 4% before v0.17) | Of the sale price: the flip's cost of selling (§8.4). Labelled **Broker Selling Costs %** |
-| `rental_expenses_pct_of_rent` | `rental.expenses_pct_of_rent` (35%) | Operating expenses as a share of the monthly rent, in both DSCRs' net monthly income (§8.5). **Rental Expense %** |
+| `rental_expenses_pct_of_rent` | `rental.expenses_pct_of_rent` (35%) | Operating expenses as a share of the rent: the required rent grosses the required NOI up by it, the market rent nets down by it, and the take-back's hold collects rent net of it (§8.5, §8.6). **Rental Expense %** |
 | `rental_takeout_rate` | `rental.takeout_rate` (6.5%) | The rate a takeout lender amortizes the commitment at (§8.5). **Rental Takeout Rate** |
 | `take_back_legal_costs_usd` | `take_back.legal_costs_usd` (5,000) | The legal bill in the take-back's total cost (§8.6). **Take-Back Legal Costs** |
 | `take_back_lost_interest_months` | `take_back.lost_interest_months` (3) | Months of interest GLENWOOD stops collecting, at the deal's own rate (§8.6). **Take-Back Lost Interest Months**, a whole number |
 
-The amortization years and the two DSCR floors stay config alone.
+The takeout LTV, the amortization years, the target DSCR, the foreclosure months by state and the hold periods are config alone (§10).
 
 **Every deal is populated with its defaults** (`services/defaults.py`). The five economics
 with a config default — the interest rate, the contingency, the closing costs, the holding
@@ -706,7 +708,7 @@ pre-fills each with its default, tags it "default", and offers a reset link, and
 page tags the value. **A value equal to the default is the default**: a box left holding the
 number it was pre-filled with has not been chosen. A box typed over is the team's; a box left
 blank gets the default back; **Reset all to defaults** puts every one back at once, after a
-confirmation page - the sale price and the rent have no default and stay. A deal stored before this existed is populated the first time it is opened, once, with a
+confirmation page - the sale price, the as-is value and the rent have no default and stay, and the exit value goes back to the sale price. A deal stored before this existed is populated the first time it is opened, once, with a
 team value already on it never touched; until then the engine and the checklist read a blank
 as the default it would be given. The readiness checklist (§9.2) says `DEFAULT` for each and
 counts it as present.
@@ -716,14 +718,18 @@ counts it as present.
 | Input | Notes |
 |---|---|
 | `estimated_sale_price` | The ARV. LTV is computed on it (§7.4, §8.2) and the Flip analysis sells at it. Optional: without one, LTV is `NOT_AVAILABLE` with `ESTIMATED_SALE_PRICE_MISSING` (Soft) and the Flip analysis is `NOT_EVALUATED` with `SALE_PRICE_MISSING` (Info) — the run itself goes ahead |
-| `monthly_rent` | Optional. Rental and Take-Back are computed on it; without it both report `NOT_EVALUATED` and the underwrite raises `MONTHLY_RENT_MISSING` (Info) rather than running either on a zero |
+| `monthly_rent` | Optional. The **market rent** (labelled Monthly Rent): the Rental analysis sets it against the required rent and the Take-Back solves the sale price at it; without it those lines report `NOT_EVALUATED` under `MONTHLY_RENT_MISSING` (Info) rather than running on a zero, and everything that does not read it still computes (§8.5, §8.6) |
+| `as_is_value` | Optional (v0.19). The team's as-is valuation, typed on the Underwriting Assumptions panel as **As-Is Value**; nothing in the screen reads it. The Take-Back sets its haircut price beside it when there is one (§8.6) |
+| `rental_exit_value` | Default: the estimated sale price in force (v0.19). What the takeout lends against (§8.5), typed on the panel as **Exit Value**. Nothing is written for the default - the column is `NULL` and the sale price is read where it is needed, so a sale price edited later moves it - and a typed value equal to the sale price is stored as `NULL` again; the box carries the "default" tag while it holds the sale price and Reset all puts it back. Without a sale price or a typed value the Rental analysis is `NOT_EVALUATED` |
 
 The as-is value is gone from the engine, from the form and from `deals` (migration `0011`).
 With one value ratio there is nothing left for it to feed.
 
 **No analysis toggles** (v0.17). The Flip, Rental and Take-Back analyses all run on every
 deal. One whose input is missing is `NOT_EVALUATED` - the flip without a sale price, the rental
-and the take-back without a rent - and reports everything that does not depend on it. The two
+without an exit value, the take-back without a projected sale price or foreclosure months for its
+state, and the market-rent lines of both without a rent - and reports everything that does not
+depend on it. The two
 toggles that used to turn the Flip and the Rental on and off (`flip_analysis`,
 `rental_analysis`, Default / On / Off on the panel) are gone from the form, the deal and the
 engine (migration `0021`); a run stored before v0.17 still says what it ran under.
@@ -899,47 +905,111 @@ placeholder Soft, §8.8) is raised when it falls short. It is not tested without
 
 ### 8.5 Rental analysis
 
-Runs on every deal (§8.1); without a `monthly_rent` it is `NOT_EVALUATED`.
+Runs on every deal (§8.1); the takeout, sized from the exit value down (v0.19, engine `2.1.0`).
 
 ```
-expenses           = monthly_rent × rental_expenses_pct_of_rent      # the deal's own, else config 35%
-holding_costs_total = (purchase_price + rehab_costs) × holding_costs_pct_of_cost
-holding_monthly    = holding_costs_total / (term_months + term_stub_days / day_count_basis)
-net_monthly_income = monthly_rent − expenses − holding_monthly
+exit value                  = rental_exit_value, else estimated_sale_price     # §8.1
+takeout loan                = exit value × rental.takeout_ltv                   # config 75%
+debt service, amortizing    = level monthly payment on the takeout loan
+                              at rental_takeout_rate (the deal's own, else config 6.5%)
+                              over rental.amortization_years (30)
+debt service, interest-only = takeout loan × takeout rate / 12
+required NOI                = amortizing debt service × rental.target_dscr      # config 1.20
+required rent               = required NOI / (1 − rental_expenses_pct_of_rent)  # deal's own, else 35%
 
-debt_service       = level monthly payment on the commitment
-                     at rental_takeout_rate (the deal's own, else config 6.5%),
-                     rental.amortization_years (30)
-dscr               = net_monthly_income / debt_service
+market NOI                  = market rent × (1 − expenses)
+gap                         = market rent − required rent
+DSCR at market, amortizing  = market NOI / amortizing debt service
+DSCR at market, IO          = market NOI / interest-only debt service
+our payoff due              = commitment + the origination fee's payoff half    # §8.3
+spread to loan              = takeout loan − our payoff due
 ```
 
-The expense ratio and the takeout rate are §8.1 analysis assumptions since v0.9: the deal's
-own number where the team typed one on the Underwriting Assumptions panel, the config value
-otherwise, and the result reports the one it ran on.
+The expense ratio and the takeout rate are §8.1 analysis assumptions (the deal's own where the
+team typed one, config otherwise); the LTV, the amortization and the target DSCR are config
+alone. **Holding costs are not in this analysis** (they were, in the DSCR test up to v0.18): a
+takeout lender underwrites the rent against its own debt service, and the carry over our term is
+the flip's cost. The result says where the exit value came from (the sale price, or entered).
 
-Flag `DSCR_BELOW_FLOOR` (severity config, placeholder Soft) when `dscr < rental.dscr_floor` (placeholder 1.20).
+Flags: `MARKET_RENT_BELOW_REQUIRED` (severity config, placeholder Soft) when the market rent is
+below the required rent; `TAKEOUT_BELOW_PAYOFF` (config, placeholder Soft) when the spread is
+negative - a refinance would not take us out.
 
-With no `monthly_rent` the analysis is `NOT_EVALUATED`: `expenses`, `net_monthly_income` and `dscr` are all null, `DSCR_BELOW_FLOOR` is not tested, and `MONTHLY_RENT_MISSING` (Info, fixed in code) is raised instead. The loan amount, the takeout rate and the debt service do not depend on the rent and are reported regardless.
+Without an **exit value** - no estimated sale price and none typed - the analysis is
+`NOT_EVALUATED`: nothing above can be sized, the five assumptions are still reported, and so is
+the market rent when there is one. Without a **market rent** the takeout, the required rent, the
+payoff due and the spread still compute - none of them reads the rent - and only the market-rent
+lines (`market_rent_status`: the market NOI, the gap, the two DSCRs, the rent test) are
+`NOT_EVALUATED`, with `MONTHLY_RENT_MISSING` (Info, fixed in code) saying so. Nothing stands in
+for what a property lets for, so a missing rent is never a rent of zero.
 
 ### 8.6 Take-Back analysis
 
-Always on. It replaces the liquidation downside entirely: there is no REO haircut, no foreclosure cost, no foreclosure months by state, and no recovery-over-exposure cover. The question is no longer "what would a forced sale return" but "if GLENWOOD takes the property back and rents it, does the rent carry what the loan cost GLENWOOD".
+Runs on every deal (§8.1); the lender's own downside, solved on its XIRR (v0.19, engine
+`2.1.0`, `engine/calc/take_back.py`). The question is what the property has to **sell** or
+**let** for, after a default, for the lender to still earn `pricing.target_lender_irr` (20%)
+over the whole loan. Every figure is bisected on one dated timeline laid out from the ledger's
+own month-end anchors (§8.3):
 
 ```
-loan_amount   = commitment
-lost_interest = commitment × interest_rate / 12 × take_back_lost_interest_months
-                                                  # the deal's own, else config 3
-legal_costs   = take_back_legal_costs_usd         # the deal's own, else config 5,000
-total_cost    = loan_amount + lost_interest + legal_costs
+D = default month = max(1, term_months − draws.listing_months)
+L = take_back_lost_interest_months      (the deal's own, else config 3)
+F = take_back.foreclosure_months[state] (config, by state; placeholders OK 6, CO 4)
+S = REO sale month = D + L + F
 
-debt_service  = level monthly payment on total_cost
-                at the deal's own interest_rate, take_back.amortization_years (30)
-dscr_at_loan_cost = net_monthly_income / debt_service      # net_monthly_income as in §8.5
+month 0             −funded at close, +the origination fee's close half
+months 1..rehab     −the draws, as the ledger schedules them (they finish by D)
+months 1..D         +interest on the commitment at the deal's own rate
+months D+1..D+L     nothing: the lost interest
+month D+L           −take_back_legal_costs_usd (the deal's own, else config 5,000)
+months D+L+1..S     −the deal's monthly holding cost, one per foreclosure month
+month S             +P × (1 − broker_selling_pct)                       # the REO sale
 ```
 
-Flag `TAKE_BACK_DSCR_BELOW_FLOOR` (severity config, placeholder Hard) when `dscr_at_loan_cost < take_back.dscr_floor` (placeholder 1.00).
+The payoff half of the origination fee is never collected, and the stub days of a term that
+has them are not a period the lender gets to. The timeline and its costs - the default month,
+the interest received through it, the lost interest in dollars, the legal bill, the foreclosure
+carry, the sale month - are reported on every run.
 
-Like the Rental analysis it is `NOT_EVALUATED` without a `monthly_rent`, and shares the one `MONTHLY_RENT_MISSING` flag with it. `loan_amount`, `lost_interest`, `legal_costs`, `total_cost` and `debt_service` stand on their own and are reported regardless. It runs on every deal, as the other two do.
+**Block A - haircut to target.** The sale price `P` at which the XIRR of the flows above equals
+the target, bisected over whole dollars in **[0, 3 × projected sale price]**: the lowest dollar
+that reaches it. Reported as `P`, the **haircut** from the projected sale price in dollars and as
+a share of it, `P` as a share of the **purchase price**, and `P` against the **as-is value** when
+the team gave one (§8.1). Flag `TAKE_BACK_PRICE_ABOVE_PURCHASE` (severity config, placeholder
+Hard) when `P` is above the purchase price: the lender needs more than the house cost to come
+out whole. The lender's flows at `P` are recorded with the result, so the workbook can XIRR them
+itself.
+
+**Block B - hold and rent.** For each `take_back.hold_months` entry `H` (12, 24, 36): after the
+REO sale month the lender instead collects **rent × (1 − expenses)** in months `S+1..S+H` and
+sells net of the broker at month `S+H`. Two solves per row, each for the lender's XIRR to reach
+the target: (1) the **required monthly rent at the projected sale price**, bisected over
+**[0, 10 × market rent]**, or **[0, $20,000]** when there is no market rent; (2) the **required
+sale price at the market rent**, over the same price bounds as block A, `NOT_EVALUATED` without
+a market rent.
+
+**Every solve carries its bounds, and "no solution" is an answer**: when the upper bound does
+not reach the target, or the lower bound already does (a year's hold at the full projected
+price needs no rent at all), nothing inside the bounds is the answer and the solve says which
+bound it hit rather than reporting the bound as a price. The lender's XIRR only rises with the
+sale price and with the rent, which is what makes the bisection valid. The answer is defined on
+the XIRR itself (`engine/calc/irr.py`, the function the Return Overview is solved with); the
+engine's probes ask the same question more cheaply - the sign of the NPV at the target rate, its
+discount factors worked out once per solve - and the dollar it lands on and the one below it are
+then confirmed on the XIRR, with a fall-back to bisection on the XIRR alone should they disagree.
+
+The analysis is `NOT_EVALUATED` without a **projected sale price** (the haircut and the bounds
+are set against it; `SALE_PRICE_MISSING` says so) or without **foreclosure months for the deal's
+state** (`FORECLOSURE_MONTHS_MISSING`, Info, fixed in code); the timeline is reported either
+way. Without a market rent only column (2) stands down, under the shared `MONTHLY_RENT_MISSING`.
+
+Every output of both analyses was checked against an independent script - its own float XIRR,
+its own month ends, its own whole-dollar bisection, no code shared with the engine - on every
+underwrite fixture before the figures were recorded (`tests/test_fixtures.py`,
+`tests/test_take_back.py`): Wichita needs $198,132 (a 23.8% haircut from $260,000, 99.1% of the
+purchase price) and Denver $241,852 (26.7% from $330,000, 120.9% of the purchase price, $11,852
+over its $230,000 as-is value); Wichita's required rent is $2,275.44 against a $2,000 market
+rent, Denver's $2,888.06 against $2,800.
 
 ### 8.7 Underwrite result
 
@@ -978,12 +1048,28 @@ UnderwriteResult
          rehab_costs, contingency, holding_costs_total, interest, origination,
          financing_costs, total_costs, net_profit, project_yield, loan_amount,
          borrower_equity, cash_on_cash, cash_on_cash_target, cash_on_cash_passed}  # §8.4
-  rental: {status, monthly_rent, expenses, holding_costs_monthly, net_monthly_income,
-           loan_amount, debt_service_monthly, dscr, dscr_floor, passed}     # §8.5
-  take_back: {status, loan_amount, lost_interest, legal_costs, total_cost,
-              debt_service_monthly, net_monthly_income, dscr, dscr_floor, passed}   # §8.6
+  rental: {status, market_rent_status, expenses_pct, takeout_ltv, takeout_rate,
+           amortization_years, target_dscr, exit_value, exit_value_source, takeout_loan,
+           debt_service_amortizing, debt_service_interest_only, required_noi, required_rent,
+           payoff_due, spread_to_loan, spread_passed, market_rent, market_noi, rent_gap,
+           dscr_amortizing, dscr_interest_only, rent_passed}                 # §8.5
+  take_back: {status, market_rent_status, loan_amount, interest_rate, term_months,
+              default_month, interest_received, lost_interest_months, lost_interest,
+              legal_costs, state, foreclosure_months, holding_costs_monthly,
+              foreclosure_carry, sale_month, broker_selling_pct, expenses_pct, target_irr,
+              hold_months, projected_sale_price, purchase_price, as_is_value,
+              haircut_price: {status, value, irr, lower, upper, bound_hit},
+              haircut_amount, haircut_pct, price_pct_of_purchase, price_above_purchase,
+              price_vs_as_is, price_pct_of_as_is, haircut_flows: [{month, date, amount}],
+              holds: [{hold_months, sale_month, required_rent: {...}, required_sale_price: {...}}]}
+                                                                              # §8.6
   flags: [ {code, severity, message} ]
 ```
+
+A run before engine `2.1.0` carries the two DSCR tests it ran instead (`LegacyRentalAnalysis`,
+`LegacyTakeBackAnalysis`: the net monthly income, the debt service, the DSCR and its floor);
+it still loads, the deal page and the workbook say the version predates the analyses, and
+Run Analysis replaces it.
 
 All three analyses are always present, and `status` says what happened to each:
 
@@ -991,24 +1077,26 @@ All three analyses are always present, and `status` says what happened to each:
 |---|---|
 | `EVALUATED` | it ran; every figure is there |
 | `OFF` | a run before v0.17 only, when the Flip and Rental had toggles and one was off |
-| `NOT_EVALUATED` | the input it runs on is missing - the monthly rent, or the estimated sale price. The flag that names it is `MONTHLY_RENT_MISSING` or `SALE_PRICE_MISSING` (§8.8) |
+| `NOT_EVALUATED` | the input it runs on is missing - the estimated sale price (the flip, the take-back and, by default, the rental's exit value) or the foreclosure months for the deal's state. The flag that names it is `SALE_PRICE_MISSING` or `FORECLOSURE_MONTHS_MISSING` (§8.8). The Rental and the Take-Back carry a second status, `market_rent_status`, for the lines that read the market rent (`MONTHLY_RENT_MISSING`) |
 
 An analysis that did not run still reports everything that does not depend on the missing
-input: the Flip's whole cost stack and the borrower's equity, the Rental's debt service, the
-Take-Back's cost. What the input feeds is `null`, `passed` included - a DSCR nobody could
-compute has not failed.
+input: the Flip's whole cost stack and the borrower's equity, the Rental's assumptions and
+market rent, the Take-Back's timeline and costs. What the input feeds is `null`, the tests
+included - a rent nobody could compare has not fallen short.
 
 ### 8.8 Underwrite flags
 
-The §7.2 court codes and the credit, experience and leverage codes the screen raises appear here too, on the underwrite's own inputs and with the same severities. The six below are the underwrite's own: the two DSCR codes and the borrower's cash-on-cash take their severity from config; the other three are fixed `Info` in code and config must not grade them.
+The §7.2 court codes and the credit, experience and leverage codes the screen raises appear here too, on the underwrite's own inputs and with the same severities. The eight below are the underwrite's own: the rental's two codes, the take-back's price code and the borrower's cash-on-cash take their severity from config; the other four are fixed `Info` in code and config must not grade them. `DSCR_BELOW_FLOOR` and `TAKE_BACK_DSCR_BELOW_FLOOR` (v0.4 to v0.18) are retired: a stored row still names one, nothing raises them, and the loader refuses a yaml that grades them.
 
 | Code | Severity | Raised when |
 |---|---|---|
-| `DSCR_BELOW_FLOOR` | config | §8.5, the Rental DSCR is below `rental.dscr_floor` |
-| `TAKE_BACK_DSCR_BELOW_FLOOR` | config | §8.6, the Take-Back DSCR is below `take_back.dscr_floor` |
+| `MARKET_RENT_BELOW_REQUIRED` | config (placeholder Soft) | §8.5, the market rent is below the rent the takeout requires; not tested without a market rent or an exit value |
+| `TAKEOUT_BELOW_PAYOFF` | config (placeholder Soft) | §8.5, the takeout loan is short of our payoff due; not tested without an exit value |
+| `TAKE_BACK_PRICE_ABOVE_PURCHASE` | config (placeholder Hard) | §8.6, the sale price the lender needs is above the purchase price; tested only when it was solved |
 | `BORROWER_COC_BELOW_TARGET` | config (placeholder Soft) | §8.4, the Flip's cash-on-cash is below `pricing.borrower_coc_target`; not tested without a sale price or with no equity |
-| `MONTHLY_RENT_MISSING` | Info (fixed) | §8.5, §8.6: no `monthly_rent` on the deal, so neither DSCR is tested |
-| `SALE_PRICE_MISSING` | Info (fixed) | §8.4: there is no `estimated_sale_price`, so the Flip analysis is `NOT_EVALUATED`; the screen's own `ESTIMATED_SALE_PRICE_MISSING` (Soft) reports the same absence on the leverage side |
+| `MONTHLY_RENT_MISSING` | Info (fixed) | §8.5, §8.6: no `monthly_rent` on the deal, so the market-rent lines of both analyses are not evaluated |
+| `FORECLOSURE_MONTHS_MISSING` | Info (fixed) | §8.6: config names no foreclosure months for the deal's state, so the Take-Back is not evaluated |
+| `SALE_PRICE_MISSING` | Info (fixed) | §8.4: there is no `estimated_sale_price`, so the Flip analysis is `NOT_EVALUATED`, and so are the Take-Back's solves and, unless an exit value was typed, the Rental's takeout; the screen's own `ESTIMATED_SALE_PRICE_MISSING` (Soft) reports the same absence on the leverage side |
 | `NO_REHAB_PERIOD` | Info (fixed) | §8.3: a holdback whose term leaves `rehab_months = 0`, so the rehab portion is advanced at close instead of drawn |
 
 ### 8.9 Lender and Borrower Sensitivity
@@ -1174,18 +1262,23 @@ in view's verdict, a dash before any), above Progress / Pause / Kill (v0.16); wh
 ran, who ran it and on which engine are in the History. Then Pricing, full width, with each
 row's borrower equity and, under its sentence, its de-risk line (§8.10); the Lender and
 Borrower Sensitivity side by side; Flip, Rental and Take-Back as three cards, each led by its
-headline figure (net profit, DSCR, DSCR at loan cost; "Not evaluated" is a state, not an
-error) - the Flip card prints the profit line by line, the cost stack to the total deal cost,
-and the borrower's equity, cash-on-cash against its target and project yield (§8.4); then
+headline figure (net profit, required rent, sale price needed; "Not evaluated" is a state, not
+an error) - the Flip card prints the profit line by line, the cost stack to the total deal cost,
+and the borrower's equity, cash-on-cash against its target and project yield (§8.4); the Rental
+card the takeout from the exit value down to the required rent, the market rent with its gap and
+two DSCRs, and the spread to loan (§8.5); the Take-Back card the timeline, the haircut block and
+the hold-and-rent table, a solve with no solution reading "None needed" or "No solution" (§8.6);
+10b moves the three into the Scenarios tab; then
 **Sources & Uses**, the sources beside the uses (§8.11); and the Return Overview as one line
 (IRR, total interest, total fees, total profit, payoff date) with the ledger collapsed under
 it as **Cash Flows**. Under the outputs, open, sits the **Underwriting Assumptions** panel:
 two columns of editable boxes - Interest Rate, Origination Fee, Contingency, Closing Costs,
 Holding Costs %, the Loan Structure radio and the Rehab portion box it reveals on Holdback
 (the team form's own two controls, v0.18; the advance at closing is the rest of the loan),
-Estimated Sale Price, Monthly Rent, Broker Selling Costs %, Rental Expense %, Rental Takeout
-Rate, Take-Back Legal Costs, Take-Back Lost Interest Months (the two analysis toggles that
-ended the list went with v0.17) -
+Estimated Sale Price, As-Is Value, Exit Value (tagged "default" while it holds the sale price,
+v0.19), Monthly Rent, Broker Selling Costs %, Rental Expense %, Rental Takeout Rate, Take-Back
+Legal Costs, Take-Back Lost Interest Months (the two analysis toggles that ended the list went
+with v0.17) -
 each showing what the deal carries, masked as everywhere else, tagged "default" while it
 holds its default and with a reset of its own; one **Save & Run** at the bottom that saves
 the panel and runs the analysis as the person who pressed it, and **Reset all to defaults**
@@ -1261,7 +1354,7 @@ flag's severity. The stored value is untouched — an `<option>` still posts `BA
 and a flag tag is still styled by its code — only the words change.
 
 ### 9.2 Readiness checklist
-One row per §8.1 input - the five analysis assumptions included - with the value in force, where it came from (`ADAPTER` / `TEAM` / `BORROWER` / `DEFAULT` / `MISSING`), whether the run needs it and what the run does with or without it (`services/readiness.py`). The deal page no longer prints it as a section (v0.15): the Underwriting Assumptions panel is the one list of what the ledger runs on, and the banner over the outputs names what is missing while the ledger is off. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months`, shown as months and, where there is one, the stub days after them), and the loan split on a holdback. **A `DEFAULT` counts as present**: the rate, the closing date and the split always have one (§8.1, §8.2), so the one that can turn the ledger off is the term; readiness never blocks on the closing date. `monthly_rent` is listed as optional, noted "without it the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
+One row per §8.1 input - the five analysis assumptions included - with the value in force, where it came from (`ADAPTER` / `TEAM` / `BORROWER` / `DEFAULT` / `MISSING`), whether the run needs it and what the run does with or without it (`services/readiness.py`). The deal page no longer prints it as a section (v0.15): the Underwriting Assumptions panel is the one list of what the ledger runs on, and the banner over the outputs names what is missing while the ledger is off. The required set is four things and no more: `interest_rate`, `closing_date`, the term (`term_months`, shown as months and, where there is one, the stub days after them), and the loan split on a holdback. **A `DEFAULT` counts as present**: the rate, the closing date and the split always have one (§8.1, §8.2), so the one that can turn the ledger off is the term; readiness never blocks on the closing date. `monthly_rent` is listed as optional, noted "without it the market-rent lines of the Rental and Take-Back analyses are not evaluated"; `estimated_sale_price` is optional too, noted for the LTV and the flip that go without it (§7.4, §8.4); `rental_exit_value` reads `DEFAULT` with the sale price while nobody has typed one, and `as_is_value` is optional (v0.19). It is derived from the same rules `services/assemble.py` refuses a run on, so the disabled button and the refusal behind it cannot name different things.
 
 ### 9.3 Credit memo
 Generated from `UnderwriteResult` into GLENWOOD's template (to be supplied; docx). Sections: borrower, property, deal structure, sizing vs caps, the return overview (ledger and IRR), flip, rental, take-back, flags with pass/fail, recommendation. Every flag shows the threshold it was tested against.
@@ -1285,7 +1378,9 @@ flip line by line, the rental, the take-back, Sources & Uses, and the flags.
 under a currency, percent or date format — never preformatted text — so the cells add up and
 compare. The `Return Overview` sheet carries the ledger with its dates and its `net` column
 and an **`XIRR` formula over them**, so the workbook recomputes the IRR itself and a reader
-can see the engine's number and Excel's agree rather than taking the engine's word for it.
+can see the engine's number and Excel's agree rather than taking the engine's word for it. The
+`Take-Back` sheet does the same for the haircut (v0.19): the lender's flows at the sale price
+needed, dated, with an `XIRR` formula over them beside the engine's, which is the target.
 
 Both read a fixture off disk and call the pure engine: no database, no network. They exist
 so the math can be checked by hand against a spreadsheet; neither is shown to a borrower.
@@ -1320,9 +1415,9 @@ workbook to export.
 - `closing.default_lead_days` (14): the **default for `closing_date`** (§8.1) is the last day of the month this many days after the deal came in
 - sensitivity (§8.9): `loan_step_usd` (5,000), `loan_steps` (4), `rate_min` (12.5%), `rate_max` (17.5%), `rate_step` (1%) - the shape of the IRR grid; every cell is a ledger re-run
 - pricing (§8.10): `borrower_coc_target` (20%, placeholder, v0.17; the Flip's cash-on-cash target, §8.4), `target_lender_irr` (20%, placeholder), `max_quoted_rate` (18%, placeholder; above 0, at most 100%), `loan_amount_pct_steps` (`[0, -0.05, -0.10]`, placeholder; each between -1 and 0, no duplicates, at least one) and `loan_amount_rounding` ($1,000, placeholder; above 0). The old `loan_amount_steps` is refused by name
-- rental takeout: `expenses_pct_of_rent` (35%), `takeout_rate` (6.5%), `amortization_years` (30), `dscr_floor` (1.20)
-- take-back: `lost_interest_months` (3), `legal_costs_usd` (5,000), `amortization_years` (30), `dscr_floor` (1.00)
-- underwrite flag severities: `DSCR_BELOW_FLOOR`, `TAKE_BACK_DSCR_BELOW_FLOOR`, `BORROWER_COC_BELOW_TARGET` (placeholder Soft, v0.17). The informational codes (§8.8) are fixed `Info` in code and the loader refuses to grade them
+- rental takeout (§8.5): `expenses_pct_of_rent` (35%) and `takeout_rate` (6.5%), the defaults for the two per-deal assumptions; `takeout_ltv` (75%, placeholder, v0.19; above 0), `amortization_years` (30) and `target_dscr` (1.20, placeholder; the renamed `dscr_floor`, which is refused by name)
+- take-back (§8.6): `lost_interest_months` (3) and `legal_costs_usd` (5,000), the defaults for the two per-deal assumptions; `foreclosure_months` by state (placeholders OK 6, CO 4; every served state needs an entry and `OTHER` cannot have one) and `hold_months` (`[12, 24, 36]`; distinct, ascending, 1 to 120). The DSCR test's `amortization_years` and `dscr_floor` are refused by name
+- underwrite flag severities: `MARKET_RENT_BELOW_REQUIRED` and `TAKEOUT_BELOW_PAYOFF` (placeholder Soft), `TAKE_BACK_PRICE_ABOVE_PURCHASE` (placeholder Hard), `BORROWER_COC_BELOW_TARGET` (placeholder Soft, v0.17). The informational codes (§8.8) are fixed `Info` in code and the loader refuses to grade them, as it refuses the retired `DSCR_BELOW_FLOOR` and `TAKE_BACK_DSCR_BELOW_FLOOR`
 - states served and court-record adapter per state
 - `web_intake.submissions_per_hour_per_ip` (placeholder 5): posts to the public form from one address in a sliding hour before the next is turned away (§4.2)
 - `web_intake.thanks_token_hours` (placeholder 24): how long a submission's thank-you link, with the borrower's indicative terms on it, stays live (§4.2)
@@ -1484,6 +1579,37 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
 
 ## 13. Open items
 
+- 10a-scenarios' open questions (v0.19):
+  - **Our payoff due** is the commitment plus the origination fee's payoff half - what the
+    ledger's last row collects - and not the last month's interest with it
+  - The take-back's **legal bill lands in the month the lost-interest period ends** (D+L) and
+    the carry runs one month at a time after it; an alternative puts both at the sale. The
+    **stub days** of a stub term are ignored on the take-back timeline, and the payoff half of
+    the fee is never collected
+  - The **default month floors at 1** on a term inside the listing period, so the lender
+    always collects one month of interest; a term of 0 whole months (all stub) defaults in
+    month 1 as well
+  - The solves are to the **whole dollar**, rounded up like the pricing matrix's 0.01%; the
+    engine probes the NPV at the target rate and confirms the answer on the XIRR (§8.6).
+    Confirm bisection on the XIRR alone is not wanted for its own sake - it is 7x the cost
+    of the rest of the underwrite
+  - A solve whose **lower bound already clears** reads "None needed" on the page and in the
+    report (the brief said "no solution" for any bound; it is recorded as `NO_SOLUTION` with
+    `bound_hit: LOWER`)
+  - The **exit value is never stored as a default**: `NULL` means the sale price, and a typed
+    value equal to the sale price - before or after the save - becomes `NULL`. It is the one
+    defaultable column `populate` does not write
+  - The **as-is value** came back as a plain optional input (dropped with the as-is LTV in
+    v0.5); nothing in the screen reads it and no adapter supplies it
+  - `foreclosure_months` has **no entry for `OTHER`**: a deal in a state outside the footprint
+    has no take-back, with `FORECLOSURE_MONTHS_MISSING`
+  - The market rent keeps its column and flag names (`monthly_rent`, `MONTHLY_RENT_MISSING`)
+    and its Monthly Rent caption; the analyses call it the market rent
+  - The take-back's hold collects **rent net of the rental's expense ratio** and nothing
+    else: no holding cost over the hold, no vacancy
+  - The Rental card's headline is the **required rent** and the Take-Back card's the **sale
+    price needed**; 10b moves both cards into the Scenarios tab
+
 - 10a's open questions (v0.17):
   - The requested row has no de-risk line (it adds nothing); every other row with a solved
     rate has one, an over-the-maximum row included ("..., above the 18% max quoted rate")
@@ -1521,7 +1647,8 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
   default reads as the default, and a stored default keeps its number if the config default
   later changes (the deal says `DEFAULT` with the old number; the reset link offers the new)
 - The config placeholders the mechanics walkthrough left open: the contingency, holding-cost
-  and broker percentages, the rental expense ratio and takeout rate, the two DSCR floors, the
+  and broker percentages, the rental expense ratio, takeout LTV, takeout rate and target DSCR, the
+  take-back's foreclosure months and hold periods, the
   take-back's lost-interest months and legal costs, and the stub period's day-count basis
   (`interest.day_count_basis`, placeholder 30 — 30/360; a lender who accrues actual/365 sets 365)
 - Home's second section is every deal that did not come in on the public form, not only
@@ -1566,7 +1693,8 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
   costs not (§8.4). Confirm that is the cash GLENWOOD means; its 20% target
   (`pricing.borrower_coc_target`) is a placeholder
 - The Underwriting Assumptions panel (v0.9) gave per-deal columns to the five analysis
-  assumptions that had none; the amortization years and the two DSCR floors are still config
+  assumptions that had none; the takeout LTV, the amortization years, the target DSCR, the
+  foreclosure months and the hold periods are still config
   alone. Confirm nothing else from §8.5/§8.6 should be per-deal. Save & Run and Reset all run
   as the person who pressed them, like Run Analysis; the court search's Save runs as `system`,
   like every other edit. Reset all leaves the sale price and the rent alone, since neither has

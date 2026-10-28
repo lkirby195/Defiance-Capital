@@ -33,7 +33,10 @@ from schema.models import (
     CapStatus,
     LeverageMetric,
     Product,
+    RentalAnalysis,
     ScreenResult,
+    Solve,
+    TakeBackAnalysis,
     UnderwriteResult,
     ValueSource,
     Verdict,
@@ -289,21 +292,91 @@ def test_fixture_underwrite_flip_rental_and_take_back(path: Path) -> None:
     assert flip.borrower_equity == flip.total_costs - result.sizing.commitment
 
     rental, want = result.rental, expected["rental"]
+    assert isinstance(rental, RentalAnalysis)
     assert rental.status.value == want["status"]
-    assert cents(rental.debt_service_monthly) == D(want["debt_service_monthly"])
-    assert maybe_cents(rental.expenses) == want_money(want["expenses"])
-    assert maybe_cents(rental.net_monthly_income) == want_money(want["net_monthly_income"])
-    assert maybe_rate(rental.dscr) == want_money(want["dscr"])
-    assert rental.passed is want["passed"]
+    assert rental.market_rent_status.value == want["market_rent_status"]
+    assert maybe_cents(rental.market_rent) == want_money(want["market_rent"])
+    for name in (
+        "exit_value",
+        "takeout_loan",
+        "debt_service_amortizing",
+        "debt_service_interest_only",
+        "required_noi",
+        "required_rent",
+        "payoff_due",
+        "spread_to_loan",
+        "market_noi",
+        "rent_gap",
+    ):
+        assert maybe_cents(getattr(rental, name)) == want_money(want.get(name)), name
+    for name in ("dscr_amortizing", "dscr_interest_only"):
+        assert maybe_rate(getattr(rental, name)) == want_money(want.get(name)), name
+    assert rental.spread_passed is want.get("spread_passed")
+    assert rental.rent_passed is want.get("rent_passed")
 
     take_back, want = result.take_back, expected["take_back"]
+    assert isinstance(take_back, TakeBackAnalysis)
     assert take_back.status.value == want["status"]
-    assert cents(take_back.lost_interest) == D(want["lost_interest"])
-    assert cents(take_back.total_cost) == D(want["total_cost"])
-    assert cents(take_back.debt_service_monthly) == D(want["debt_service_monthly"])
-    assert maybe_cents(take_back.net_monthly_income) == want_money(want["net_monthly_income"])
-    assert maybe_rate(take_back.dscr) == want_money(want["dscr"])
-    assert take_back.passed is want["passed"]
+    assert take_back.market_rent_status.value == want["market_rent_status"]
+    for name in ("default_month", "sale_month", "foreclosure_months"):
+        assert getattr(take_back, name) == want[name], name
+    for name in (
+        "interest_received",
+        "lost_interest",
+        "legal_costs",
+        "foreclosure_carry",
+        "projected_sale_price",
+        "as_is_value",
+        "haircut_amount",
+        "price_vs_as_is",
+    ):
+        assert maybe_cents(getattr(take_back, name)) == want_money(want.get(name)), name
+    for name in ("haircut_pct", "price_pct_of_purchase", "price_pct_of_as_is"):
+        assert maybe_rate(getattr(take_back, name)) == want_money(want.get(name)), name
+    assert take_back.price_above_purchase is want.get("price_above_purchase")
+    if take_back.status is AnalysisStatus.EVALUATED:
+        assert take_back.haircut_price is not None
+        solved_like(
+            take_back.haircut_price,
+            want["haircut_status"],
+            want["haircut_bound_hit"],
+            want["haircut_price"],
+        )
+        assert [hold.hold_months for hold in take_back.holds] == CONFIG.take_back.hold_months
+        for hold, want_hold in zip(take_back.holds, want["holds"], strict=True):
+            assert hold.sale_month == want_hold["sale_month"]
+            solved_like(
+                hold.required_rent,
+                want_hold["required_rent_status"],
+                want_hold["required_rent_bound_hit"],
+                want_hold["required_rent"],
+            )
+            solved_like(
+                hold.required_sale_price,
+                want_hold["required_sale_price_status"],
+                want_hold["required_sale_price_bound_hit"],
+                want_hold["required_sale_price"],
+            )
+        # the flows at the solved price discount to within a dollar's worth at the target
+        flows = [(flow.date, flow.amount) for flow in take_back.haircut_flows]
+        if take_back.haircut_price.value is not None:
+            assert abs(xnpv(take_back.target_irr, flows)) < D(1)
+    else:
+        assert take_back.haircut_price is None and not take_back.haircut_flows
+        assert all(hold.required_rent.value is None for hold in take_back.holds)
+
+
+def solved_like(solve: Solve, status: str, bound: str | None, value: int | None) -> None:
+    """A solve as the independent script recorded it: the same status, the same bound, and
+    the same whole dollar, give or take one - the script's float XIRR and the engine's
+    Decimal one may disagree about which of two adjacent dollars first clears the target."""
+    assert solve.status.value == status
+    assert (None if solve.bound_hit is None else solve.bound_hit.value) == bound
+    if value is None:
+        assert solve.value is None
+    else:
+        assert solve.value is not None and abs(solve.value - D(value)) <= 1
+        assert solve.irr is not None and solve.irr >= CONFIG.pricing.target_lender_irr
 
 
 @pytest.mark.parametrize("path", UNDERWRITE_FILES, ids=[p.stem for p in UNDERWRITE_FILES])
