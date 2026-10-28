@@ -82,7 +82,7 @@ def test_the_page_has_one_button_and_names_no_stage(
     assert '<section class="panel" id="assumptions">' in body
     assert '<details class="panel" id="court">' in body
     assert 'id="readiness"' not in body
-    assert '<details class="panel" id="history">' in body
+    assert '<section class="panel chart" id="history">' in body
     assert 'id="inputs"' not in body
     assert "<script" not in body.split("</header>", 1)[1].split("<!-- masks", 1)[0] or True
 
@@ -108,7 +108,7 @@ def test_run_analysis_runs_both_as_the_person_and_reloads_on_the_result(
     assert body.index("<h2>Pricing") < body.index("<h2>Lender Sensitivity")
     assert body.index("<h2>Lender Sensitivity") < body.index("<h2>Borrower Sensitivity")
     assert body.index("<h2>Borrower Sensitivity") < body.index("<h2>Flip Analysis")
-    assert body.index("<h2>Take-Back Analysis") < body.index("<h2>Return Overview")
+    assert body.index("<h2>Return Overview") < body.index("<h2>Pricing")  # the Summary tab
     assert "IRR <strong>—</strong>" not in body
 
 

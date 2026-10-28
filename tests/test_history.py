@@ -246,10 +246,11 @@ def test_the_history_section_is_collapsed_and_offers_restore_on_an_edit(
     deal = store_deal(db_session, team_entry)
     (version,) = submissions(db_session, deal)
     body = client.get(f"/queue/deals/{deal.id}").text
-    assert '<details class="panel" id="history">' in body
-    assert '<details class="panel" id="history" open>' not in body
+    # the versions are a card on the Assumptions tab, open (v0.20)
+    assert '<section class="panel chart" id="history">' in body
+    assert '<details class="panel" id="history"' not in body
     section = body[body.index('id="history"') :]
-    assert "<h2>History" in section
+    assert "<h2>Versions</h2>" in section
     assert f'action="/queue/deals/{deal.id}/intake/{version.id}/restore"' in section
     assert ">Restore</button>" in section
     assert "<th>When</th><th>Version</th><th>Who</th><th>Working</th><th>Engine</th>" in section

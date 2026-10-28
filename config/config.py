@@ -342,8 +342,11 @@ class TakeBackConfig(_Section):
     carries the property for ``foreclosure_months`` in the deal's state at the deal's monthly
     holding cost, and then sells it - or holds and rents it for each of ``hold_months`` first.
     ``lost_interest_months`` and ``legal_costs_usd`` are the **defaults for per-deal inputs**
-    since Phase 7c; the foreclosure months and the hold periods are config alone. The DSCR
-    test's ``amortization_years`` and ``dscr_floor`` are refused by name.
+    since Phase 7c; the foreclosure months and the hold periods are config alone.
+    ``foreclosure_months`` names every served state (``Config`` checks) and may name
+    ``OTHER``: the entry that stands in for a state outside the footprint, under
+    ``FORECLOSURE_MONTHS_MISSING`` (placeholder 8, v0.20). The DSCR test's
+    ``amortization_years`` and ``dscr_floor`` are refused by name.
     """
 
     lost_interest_months: Months
@@ -373,11 +376,6 @@ class TakeBackConfig(_Section):
     def _holds_run_upwards(self) -> TakeBackConfig:
         if list(self.hold_months) != sorted(set(self.hold_months)):
             raise ValueError("take_back.hold_months must be distinct and ascending")
-        if State.OTHER in self.foreclosure_months:
-            raise ValueError(
-                "take_back.foreclosure_months cannot name OTHER: a state outside the footprint "
-                "has no foreclosure timeline and its take-back is not evaluated"
-            )
         return self
 
 

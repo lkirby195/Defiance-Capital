@@ -354,6 +354,50 @@
        which the better bots skip. */
     .hp { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
 
+    /* --- tabs: the deal page's six panels (v0.20) ------------------------------------
+       A row of in-page links under the header; the script in _tabs.html hides every panel
+       but the one the URL hash names and marks its link. Without script the row is links
+       and every panel is on the page in order. */
+    nav.tabs { display: flex; flex-wrap: wrap; gap: 2px; margin: 0 0 var(--s3);
+               border-bottom: 1px solid var(--line-strong); }
+    nav.tabs a { display: inline-block; padding: 8px 14px; margin-bottom: -1px; font-size: 14px;
+                 font-weight: 600; line-height: 20px; color: var(--muted); text-decoration: none;
+                 border: 1px solid transparent; border-bottom: 0;
+                 border-radius: var(--radius) var(--radius) 0 0; white-space: nowrap; }
+    nav.tabs a:hover { color: var(--ink); background: var(--gray-bg); }
+    nav.tabs a.on { color: var(--primary); background: var(--panel); border-color: var(--line-strong);
+                    box-shadow: 0 1px 0 var(--panel); }
+    .tab-panel[hidden] { display: none; }
+
+    /* --- a label/value grid under section rules (Deal Overview) -----------------------
+       Two label/value pairs across on a desktop, one on a phone; a .kv-section row is the
+       tinted subheader every table on the site has, and every row is ruled across. */
+    dl.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr);
+            margin: 0; font-size: 14px; }
+    dl.kv dt, dl.kv dd { margin: 0; padding: 7px var(--s3); border-bottom: 1px solid var(--line); min-width: 0; }
+    dl.kv dt { color: var(--muted); white-space: nowrap; }
+    dl.kv dd { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+    dl.kv .kv-section { grid-column: 1 / -1; padding: 7px var(--s3); background: var(--primary-tint);
+                        color: var(--primary); font-size: 12px; font-weight: 600; text-transform: uppercase;
+                        letter-spacing: .06em; border-bottom: 1px solid var(--line-strong); }
+    .chart > dl.kv { margin: 0; }
+    /* The Underwriting Assumptions panel's rows: the caption on the left, the box on the
+       right with its reset link beside it and the "default" tag at the right edge. */
+    .kv-grid { display: grid; border-top: 1px solid var(--line); }
+    .kv-row { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: var(--s1) var(--s3);
+              align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+    .kv-row > label { margin: 0; font-size: 14px; color: var(--ink); }
+    .kv-row > .v { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); min-width: 0; }
+    .kv-row > .v > input, .kv-row > .v > .toggle { flex: 1 1 200px; max-width: 320px; }
+    .kv-row > .v > .dflt { margin-left: auto; }
+    .kv-row > .v > .small, .kv-row > .v > .err { flex-basis: 100%; margin: 0; }
+    .borrower-head { grid-template-columns: 1fr; }
+    /* Home's search box: one box, Search, and Clear once something is typed. */
+    form.search { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; margin: 0 0 var(--s3); }
+    form.search input[type="search"] { flex: 1 1 260px; max-width: 420px; }
+    form.search .chips { margin: 0; flex-basis: 100%; }
+    form.search .chips:empty { display: none; }
+
     /* --- a phone: one column, every section in the same order ------------------------ */
     @media (max-width: 900px) {
       .deal-head { grid-template-columns: 1fr; }
@@ -377,6 +421,14 @@
       .trio dl.facts.small { grid-template-columns: minmax(0, 1fr) max-content; gap: 2px var(--s3); }
       .trio dl.facts.small dt { margin-top: 0; }
       .deal-tools .switcher select { flex-basis: 100%; }
+      /* the label over its value, one pair per row: a long caption must not squeeze the value */
+      dl.kv { grid-template-columns: 1fr; }
+      dl.kv dt { border-bottom: 0; padding: 8px 12px 0; white-space: normal; font-size: 12px; }
+      dl.kv dd { padding: 2px 12px 8px; }
+      dl.kv .kv-section { padding-left: 12px; padding-right: 12px; }
+      .kv-row { grid-template-columns: 1fr; gap: 4px; }
+      .kv-row > .v > input, .kv-row > .v > .toggle { flex-basis: 100%; max-width: none; }
+      nav.tabs a { padding: 7px 10px; font-size: 13px; }
       .summary { gap: var(--s2) var(--s4); }
       .summary .v { font-size: 18px; }
       .headline { font-size: 26px; }

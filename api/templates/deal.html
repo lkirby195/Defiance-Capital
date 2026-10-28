@@ -6,20 +6,30 @@
 {% import "_fields.html" as fields with context %}
 {% block title %}Deal — Defiance Capital{% endblock %}
 
-{# Outputs on top, inputs below. The header is the address, one row of chips (borrower,
-   entity, loan request in whole dollars, IRR), the phone under them and, on the right, the
-   version switcher with Download Excel, Run Analysis with its optional name, and Edit
-   Intake; when and by whom a version ran, and on which engine, are in the History; the
-   status and the verdict are one small line atop the Actions card. Then the results of the
-   version shown: Pricing full width; Lender and Borrower Sensitivity side by side; Flip,
-   Rental and Take-Back as three stat cards; Sources & Uses; the Return Overview as one line
-   of figures with the Cash Flows folded under it. Then what the run read: the Underwriting Assumptions
-   panel, open, Save & Run and Reset all at its foot - the one list of what the ledger runs
-   on; the read-only intake summary (Deal Economics and Property) with the sizing table and
-   the score components; and the collapsed furniture: the actions, the court search, the
-   History. The CLI report and the workbook keep the SPEC §9 order; the page puts the answer
-   first. The flags, the reasons and the suggested reply are on the stored results, the CLI
-   report and the workbook, not here.
+{# The header, then six tabs (v0.20, SPEC §9). The header is the address, one row of chips
+   (borrower - a link to the borrower's page - entity, loan request in whole dollars, IRR),
+   the phone under them and, on the right, the version switcher with Download Excel, Run
+   Analysis with its optional name, and Edit Intake; when and by whom a version ran, and on
+   which engine, are in the History; the status and the verdict are one small line atop the
+   Actions card. Under the header a row of tabs, one panel each, in this order:
+
+     1. Summary        the Return Overview's figures, Pricing, the Lender and Borrower
+                       Sensitivity side by side, the leverage against the caps, the Actions
+     2. Deal Overview  Deal Economics and Property as one label/value grid under section
+                       rules, what is still needed from the borrower, Scored as, the court
+                       and filing search
+     3. Cash Flows     the ledger, the whole table, open
+     4. Sources & Uses
+     5. Scenarios      Flip, Rental and Take-Back as three cards, each led by its headline
+     6. Assumptions    the Underwriting Assumptions panel as a label/value grid - the box on
+                       the value side, its "default" tag at the right edge - with Save & Run
+                       and Reset all under it, then the versions: a selector and the history
+
+   The tabs are the one script on the page beside the input masks (_tabs.html): the active
+   tab is the URL hash, so a reload lands on the same tab, and a browser running no script
+   sees every panel in the order above with the tab row as in-page links. The CLI report and
+   the workbook keep the SPEC §9 order. The flags, the reasons and the suggested reply are on
+   the stored results, the CLI report and the workbook, not here.
 
    Every result on the page is one version's (SPEC §5, §9): the Working one, unless the
    switcher asked for another, which the header then marks Draft. A shown version is
@@ -35,10 +45,41 @@
 {% macro less(value) -%}{% if value is none %}—{% else %}-{{ value | money }}{% endif %}{%- endmacro %}
 {# A take-back solve (SPEC §8.6): the dollars, or why there are none. #}
 {% macro solved(solve) -%}{% if solve.status | plain == "SOLVED" %}{{ solve.value | money }}{% elif solve.status | plain == "NOT_EVALUATED" %}Not evaluated{% elif solve.bound_hit | plain == "LOWER" %}None needed{% else %}No solution{% endif %}{%- endmacro %}
+{# A section rule in a label/value grid: the tinted subheader every table on the site has. #}
+{% macro rule(text) -%}<div class="kv-section">{{ text }}</div>{%- endmacro %}
+
+{# --- the Underwriting Assumptions panel's rows (SPEC §8.1): a label, then the box --------
+   The same box _fields.html renders on the team form - the same id, name, mask, default
+   and reset link, so the masks script and every test of the markup read it the same - laid
+   out as one row of the grid: the caption on the left, the box on the right with the reset
+   link beside it and the "default" tag at the right edge. ``errors`` prints under the box. #}
+{% macro kv_box(name, text, value, mask="", mode="decimal", default="", note="", id="") %}
+  {% set box = id or name %}
+  <div class="kv-row" data-box="{{ name }}">
+    <label for="{{ box }}">{{ text }} {{ fields.badge(false) }}</label>
+    <div class="v">
+      <input id="{{ box }}" name="{{ name }}"
+             {%- if mode %} inputmode="{{ mode }}"{% endif %}
+             {%- if mask %} data-mask="{{ mask }}"{% endif %}
+             {%- if default %} data-default="{{ default }}"{% endif %}
+             value="{{ value }}"{{ fields.described_by(name) }}>
+      {%- if default %}
+      <button class="linky" type="button" data-reset="{{ box }}">reset to default</button>
+      <span class="dflt" data-default-tag="{{ box }}"{% if value != default %} hidden{% endif %}>default</span>
+      {%- endif %}
+      {{ fields.note_line(note) }}
+      {{ fields.field_error(name) }}
+    </div>
+  </div>
+{% endmacro %}
+{% macro kv_money(name, text, value, default="", note="") %}{{ kv_box(name, text, value, mask="money", default=default, note=note) }}{% endmacro %}
+{% macro kv_pct(name, text, value, default="", note="") %}{{ kv_box(name, text, value, mask="pct", default=default, note=note) }}{% endmacro %}
+{% macro kv_months(name, text, value, default="", note="") %}{{ kv_box(name, text, value, mode="numeric", default=default, note=note) }}{% endmacro %}
 
 {% block content %}
 {% set result = underwrite.result if underwrite else none %}
 {% set values = economics.shown %}
+{% set borrower_url = "/borrowers/" ~ deal.borrower.id if deal.borrower else none %}
 
 {# --- 1. the header: who and what, the IRR, the controls (SPEC §5, §9) --------------------- #}
 <header class="deal-head">
@@ -49,7 +90,8 @@
       {%- else %}Deal {{ deal.id }}{% endif -%}
     </h1>
     <div class="chips" id="deal-chips">
-      <span class="tag fact" data-chip="borrower">{{ deal.borrower.name if deal.borrower and deal.borrower.name else "(no guarantor name)" }}</span>
+      {% if deal.borrower %}<a class="tag fact" data-chip="borrower" href="{{ borrower_url }}" title="Every deal this borrower has brought">{{ deal.borrower.name if deal.borrower.name else "(no guarantor name)" }}</a>
+      {% else %}<span class="tag fact" data-chip="borrower">(no guarantor name)</span>{% endif %}
       {% if deal.borrower and deal.borrower.entities %}<span class="tag fact" data-chip="entity">{{ deal.borrower.entities | map(attribute="name") | join(", ") }}</span>{% endif %}
       <span class="tag fact" data-chip="loan-amount">Loan Request: {{ deal.loan_requested | dollars }}</span>
       <span class="tag fact" data-chip="irr">IRR <strong>{{ result.return_overview.irr | quoted if result else "—" }}</strong></span>
@@ -122,7 +164,37 @@
   </div>
 {% endif %}
 
-{# --- 2. Pricing (SPEC §8.10) --------------------------------------------------------------- #}
+{# --- the tabs (v0.20): six panels, the active one named by the URL hash ------------------- #}
+<nav class="tabs" id="deal-tabs" aria-label="Deal sections">
+  <a class="tab" href="#tab-summary" data-tab="tab-summary">Summary</a>
+  <a class="tab" href="#tab-overview" data-tab="tab-overview">Deal Overview</a>
+  <a class="tab" href="#tab-cash-flows" data-tab="tab-cash-flows">Cash Flows</a>
+  <a class="tab" href="#tab-sources-uses" data-tab="tab-sources-uses">Sources &amp; Uses</a>
+  <a class="tab" href="#tab-scenarios" data-tab="tab-scenarios">Scenarios</a>
+  <a class="tab" href="#tab-assumptions" data-tab="tab-assumptions">Assumptions</a>
+</nav>
+
+{# ======== 1. Summary ======================================================================= #}
+<div class="tab-panel" id="tab-summary" data-tab="tab-summary">
+
+{# --- the Return Overview (SPEC §8.3): one line of figures; the ledger is the Cash Flows tab #}
+<section class="panel" id="return-overview">
+  <h2>Return Overview</h2>
+  {% if result %}
+    {% set overview = result.return_overview %}
+    <ul class="summary">
+      <li><span class="k">IRR</span><span class="v">{{ overview.irr | quoted }}</span></li>
+      <li><span class="k">Total interest</span><span class="v">{{ overview.total_interest | money }}</span></li>
+      <li><span class="k">Total fees</span><span class="v">{{ overview.total_fees | money }}</span></li>
+      <li><span class="k">Total profit</span><span class="v">{{ overview.total_profit | money }}</span></li>
+      <li><span class="k">Payoff date</span><span class="v">{{ result.payoff_date | when }}</span></li>
+    </ul>
+  {% else %}
+    <p class="small muted">No analysis yet.</p>
+  {% endif %}
+</section>
+
+{# --- Pricing (SPEC §8.10) ------------------------------------------------------------------ #}
 <section class="panel chart" id="pricing">
   <h2>Pricing</h2>
   {% if result and result.pricing %}
@@ -220,7 +292,7 @@
   {% endif %}
 </section>
 
-{# --- 3. the two sensitivities, side by side (SPEC §8.9) ------------------------------------ #}
+{# --- the two sensitivities, side by side (SPEC §8.9) --------------------------------------- #}
 <div class="pair">
 <section class="panel chart" id="lender-sensitivity">
   <h2>Lender Sensitivity</h2>
@@ -295,7 +367,303 @@
 </section>
 </div>
 
-{# --- 4. Flip · Rental · Take-Back as three stat cards (SPEC §8.4-§8.6) --------------------- #}
+{# --- the leverage against the caps (SPEC §7.4, §8.2): the sizing table --------------------- #}
+<section class="panel chart" id="leverage">
+  <h2>Leverage against caps</h2>
+  {% if result or screen %}
+    {{ parts.sizing_table(result.sizing if result else screen.result.sizing) }}
+  {% else %}
+    <p class="small muted">No analysis yet.</p>
+  {% endif %}
+</section>
+
+{# --- team actions (SPEC §4.6): where the deal stands, then what can be done with it -------- #}
+<section class="panel" id="actions">
+  <h2>Actions</h2>
+  <p class="small muted" id="deal-standing">Status: {{ deal.status | label }} · Verdict: {{ screen.result.verdict | label if screen else "—" }}</p>
+  <div class="grid3">
+    <div class="actions">
+      <form method="post" action="/queue/deals/{{ deal.id }}/advance">
+        {{ csrf.field(csrf_token) }}
+        <button class="quiet" type="submit" title="A scored deal goes into review; a paused deal goes back where it was" {% if not allowed.progress %}disabled{% endif %}>Progress</button>
+      </form>
+      <form method="post" action="/queue/deals/{{ deal.id }}/pause">
+        {{ csrf.field(csrf_token) }}
+        <button class="quiet" type="submit" title="Sets the deal aside; nothing runs on it until Progress" {% if not allowed.pause %}disabled{% endif %}>Pause</button>
+      </form>
+      {% if allowed.kill %}
+        <a class="btn danger" href="/queue/deals/{{ deal.id }}/kill" title="Marks the deal dead, after a confirmation">Kill</a>
+      {% else %}
+        <span class="btn danger off" title="A dead deal is already dead">Kill</span>
+      {% endif %}
+    </div>
+
+    <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/decline">
+      {{ csrf.field(csrf_token) }}
+      {{ fields.text_box("reason", "Decline — reason", "", required=true, maxlength=500,
+                         disabled=not allowed.decline, id="decline_reason") }}
+      <div class="actions"><button class="danger" type="submit" {% if not allowed.decline %}disabled{% endif %}>Decline</button></div>
+    </form>
+
+    <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/reopen">
+      {{ csrf.field(csrf_token) }}
+      {{ fields.text_box("reason", "Re-open — reason", "", required=true, maxlength=500,
+                         disabled=not allowed.reopen, id="reopen_reason") }}
+      <div class="actions"><button class="quiet" type="submit" title="From DECLINED only" {% if not allowed.reopen %}disabled{% endif %}>Re-open</button></div>
+    </form>
+  </div>
+
+  <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/note" style="margin-top:16px">
+    {{ csrf.field(csrf_token) }}
+    {{ fields.text_area("note", "Note", required=true, maxlength=4000) }}
+    <div class="actions"><button class="quiet" type="submit">Add note</button></div>
+  </form>
+</section>
+</div>
+
+{# ======== 2. Deal Overview ================================================================= #}
+<div class="tab-panel" id="tab-overview" data-tab="tab-overview">
+
+{# --- Deal Economics and Property (SPEC §8.1): the intake, read-only, one grid ------------- #}
+<section class="panel chart" id="economics">
+  <div class="row">
+    <h2>Deal Economics and Property</h2>
+    {% if allowed.edit_intake %}
+      <a class="btn small" href="/queue/deals/{{ deal.id }}/intake">Edit Intake</a>
+    {% else %}
+      <span class="btn small off" title="The intake is locked on a {{ deal.status | plain }} deal">Edit Intake</span>
+    {% endif %}
+  </div>
+  <dl class="kv" id="intake-facts">
+    {% if deal.channel | plain == "WEB" %}
+      {{ rule("From the public form") }}
+      <dt>Source</dt><dd>{{ deal.intake_source | plain }}</dd>
+      <dt>How they heard of us</dt><dd>{{ deal.referral_note | plain }}</dd>
+      <dt>Submitted in</dt>
+      <dd>{% if submitted_language == "es" %}Spanish{% elif submitted_language == "en" %}English
+          {%- else %}—{% endif %}</dd>
+      <dt>Their sale price after rehab</dt><dd>{{ deal.estimated_sale_price_borrower | money }}</dd>
+      <dt>Their monthly rent</dt><dd>{{ deal.monthly_rent_borrower | money }}</dd>
+    {% endif %}
+
+    {{ rule("Overview") }}
+    <dt>Entity Name</dt>
+    <dd>{% if deal.borrower and deal.borrower.entities
+        %}{{ deal.borrower.entities | map(attribute="name") | join(", ") }}
+        {%- else %}—{% endif %}</dd>
+    <dt>Guarantor Name</dt>
+    <dd>{% if deal.borrower %}<a href="{{ borrower_url }}">{{ deal.borrower.name | plain }}</a>{% else %}—{% endif %}</dd>
+    <dt>Phone</dt><dd>{{ deal.borrower.phone | phone if deal.borrower else "—" }}</dd>
+    <dt>Email</dt><dd>{{ deal.borrower.email | plain if deal.borrower else "—" }}</dd>
+    <dt>Credit Range (self-reported)</dt><dd>{{ deal.credit_range_self_reported | tranche }}</dd>
+    <dt>Deals in last 36 months (self-reported)</dt><dd>{{ deal.experience_bucket_self_reported | experience }}</dd>
+    <dt>Repeat borrower</dt><dd>{{ deal.repeat_borrower_self_reported | yes_no }}</dd>
+    <dt>Credit authorization</dt><dd>{{ deal.credit_authorization_signed | yes_no }}</dd>
+
+    {{ rule("Property Overview") }}
+    <dt>Address</dt><dd>{{ deal.property.address_raw | plain if deal.property else "—" }}</dd>
+    <dt>City</dt><dd>{{ deal.property.city | plain if deal.property else "—" }}</dd>
+    <dt>State</dt>
+    <dd{% if deal.property %} title="{{ deal.property.state_source | plain }}"{% endif %}>{{ deal.property.state | plain if deal.property else "—" }}</dd>
+    <dt>Units</dt><dd>{{ deal.property.units | plain if deal.property else "—" }}</dd>
+    <dt>Structures</dt><dd>{{ deal.property.structures | plain if deal.property else "—" }}</dd>
+    <dt>SF</dt><dd>{{ deal.property.sf | whole if deal.property else "—" }}</dd>
+    <dt>Year Built</dt><dd>{{ deal.property.year_built | plain if deal.property else "—" }}</dd>
+    <dt>Year Renovated</dt><dd>{{ deal.property.year_renovated | plain if deal.property else "—" }}</dd>
+    <dt>Beds</dt><dd>{{ deal.property.beds | plain if deal.property else "—" }}</dd>
+    <dt>Baths</dt><dd>{{ deal.property.baths | plain if deal.property else "—" }}</dd>
+    <dt>Garage Spaces</dt><dd>{{ deal.property.garage_spaces | plain if deal.property else "—" }}</dd>
+
+    {{ rule("Deal Economics") }}
+    <dt>Loan Purpose</dt><dd>{{ deal.loan_purpose | label }}</dd>
+    <dt>Loan Structure</dt><dd title="{{ deal.product_source | plain }}">{{ deal.product | label }}</dd>
+    <dt>Closing Date</dt><dd>{{ deal.closing_date | when }}{{ dflt("closing_date") }}</dd>
+    <dt>Term</dt>
+    <dd>{{ deal.term_months | plain }}{% if deal.term_months is not none %} month(s){% endif %}
+      {%- if deal.term_stub_days %} and {{ deal.term_stub_days }} day(s){% endif %}</dd>
+    {% if deal.term_bucket %}
+      <dt>Requested term</dt><dd>{{ deal.term_bucket | bucket }}</dd>
+    {% endif %}
+    <dt>Payoff Date</dt><dd>{{ payoff_date | when }}</dd>
+    <dt>Purchase Price</dt><dd>{{ deal.purchase_price | money }}</dd>
+    <dt>Rehab Costs</dt><dd>{{ deal.rehab_costs | money }}</dd>
+    <dt>Contingency</dt><dd>{{ values.contingency_pct | pct }}{{ dflt("contingency_pct") }}</dd>
+    {% if result %}
+      <dt>Contingency amount</dt><dd>{{ result.economics.contingency | money }}</dd>
+      <dt>Rehab + contingency</dt><dd>{{ result.economics.rehab_adj | money }}</dd>
+    {% endif %}
+    <dt>Closing Costs</dt><dd>{{ values.closing_costs_usd | money }}{{ dflt("closing_costs_usd") }}</dd>
+    <dt>Holding Costs</dt><dd>{{ values.holding_costs_pct_of_cost | pct }}{{ dflt("holding_costs_pct_of_cost") }}</dd>
+    <dt>Holding Costs (total)</dt>
+    <dd>{% if result %}{{ result.economics.holding_costs_total | money }}{% else %}{{ holding_costs_entered | money }}{% endif %}</dd>
+    {% if result %}
+      <dt>Holding Costs (monthly)</dt><dd>{{ result.economics.holding_costs_monthly | money }}</dd>
+    {% endif %}
+    <dt>Origination Fee</dt><dd>{{ values.origination_fee_pct | pct }}{{ dflt("origination_fee_pct") }}</dd>
+    {% if result %}
+      <dt>Origination at close</dt><dd>{{ result.economics.origination_at_close | money }}</dd>
+      <dt>Origination at payoff</dt><dd>{{ result.economics.origination_at_payoff | money }}</dd>
+    {% endif %}
+    <dt>Interest Rate</dt><dd>{{ values.interest_rate | pct }}{{ dflt("interest_rate") }}</dd>
+    <dt>Loan Amount</dt><dd>{{ deal.loan_requested | money }}</dd>
+    {% if result %}
+      <dt>Commitment</dt><dd>{{ result.economics.commitment | money }}</dd>
+      <dt>Funded at close</dt><dd>{{ result.economics.funded_at_close | money }}</dd>
+    {% endif %}
+    <dt>Advance at closing</dt><dd>{{ values.loan_purchase_portion | money }}{{ dflt("loan_purchase_portion") }}</dd>
+    <dt>Rehab portion</dt><dd>{{ values.loan_rehab_portion | money }}{{ dflt("loan_rehab_portion") }}</dd>
+  </dl>
+
+  <div class="pad" id="still-needed">
+    <h3>Still needed from the borrower</h3>
+    {% if deal.missing_fields %}
+      <ul class="plain small">
+        {% for field in deal.missing_fields %}<li>{{ field }}</li>{% endfor %}
+      </ul>
+    {% else %}
+      <p class="small">None</p>
+    {% endif %}
+  </div>
+</section>
+
+{# --- the score components (SPEC §7) ------------------------------------------------------- #}
+<section class="panel chart" id="scored-as">
+  <h2>Scored as</h2>
+  {% if screen %}
+    <dl class="facts small">
+      <dt>Credit tranche</dt>
+      <dd>{{ screen.result.components.credit_tranche | tranche }}</dd>
+      <dt>Credit tranche basis</dt>
+      <dd>{{ "Verified" if screen.result.components.credit_tranche_verified else "Self-reported" }}</dd>
+      <dt>Floor tranche</dt>
+      <dd>{{ screen.result.components.floor_tranche | tranche }}</dd>
+      <dt>Meets the floor</dt>
+      <dd>{{ screen.result.components.credit_meets_floor | yes_no }}</dd>
+      <dt>Experience tier</dt>
+      <dd>{{ screen.result.components.experience_tier | plain }}</dd>
+      <dt>Experience tier (self-reported)</dt>
+      <dd>{{ screen.result.components.experience_tier_self_reported | plain }}</dd>
+      <dt>Experience tier (verified)</dt>
+      <dd>{{ screen.result.components.experience_tier_verified | plain }}</dd>
+      <dt>Repeat-borrower override</dt>
+      <dd>{{ screen.result.components.repeat_borrower_override_applied | yes_no }}</dd>
+      <dt>Court records from</dt>
+      <dd>{{ screen.result.components.court_records_source | label }}</dd>
+    </dl>
+  {% else %}
+    <p class="small muted">No analysis yet.</p>
+  {% endif %}
+</section>
+
+{# --- the court and filing search (SPEC §6.1, §7.2), collapsed ------------------------------ #}
+<details class="panel" id="court"{% if court_open %} open{% endif %}>
+  <summary><h2>Court and filing search</h2></summary>
+  <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/court">
+    {{ csrf.field(csrf_token) }}
+    <div class="grid3">
+      {{ fields.enum_box("court_records_status", "Outcome",
+                         enums.court_records_status, court.court_records_status) }}
+      {{ fields.text_box("court_records_as_of", "Searched on",
+                         court.court_records_as_of, kind="date") }}
+    </div>
+    {{ fields.matter_table(enums, matters) }}
+    <div class="actions"><button type="submit">Save</button></div>
+  </form>
+</details>
+</div>
+
+{# ======== 3. Cash Flows ==================================================================== #}
+<div class="tab-panel" id="tab-cash-flows" data-tab="tab-cash-flows">
+<section class="panel chart" id="cash-flows">
+  <h2>Cash Flows</h2>
+  {% if result %}
+    {% set overview = result.return_overview %}
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th><th class="num">Month</th><th class="num">Funding</th>
+            <th class="num">Future Draws</th><th class="num">Interest</th>
+            <th class="num">Fees</th><th class="num">Payoff</th><th class="num">Net</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in overview.entries %}
+            <tr>
+              <td>{{ entry.date | when }}</td>
+              <td class="num">{{ entry.month }}{% if entry.stub_days %} <span class="unit">({{ entry.stub_days }}-day stub)</span>{% endif %}</td>
+              <td class="num">{{ entry.funding | money }}</td>
+              <td class="num">{{ entry.draws | money }}</td>
+              <td class="num">{{ entry.interest | money }}</td>
+              <td class="num">{{ entry.fees | money }}</td>
+              <td class="num">{{ entry.payoff | money }}</td>
+              <td class="num"><strong>{{ entry.net | money }}</strong></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <th>Total</th><th></th>
+            <th class="num">{{ overview.total_funding | money }}</th>
+            <th class="num">{{ overview.total_draws | money }}</th>
+            <th class="num">{{ overview.total_interest | money }}</th>
+            <th class="num">{{ overview.total_fees | money }}</th>
+            <th class="num">{{ overview.total_payoff | money }}</th>
+            <th class="num">{{ overview.total_profit | money }}</th>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  {% else %}
+    <p class="small muted">No analysis yet.</p>
+  {% endif %}
+</section>
+</div>
+
+{# ======== 4. Sources & Uses (SPEC §8.11) =================================================== #}
+<div class="tab-panel" id="tab-sources-uses" data-tab="tab-sources-uses">
+<section class="panel chart" id="sources-uses">
+  <h2>Sources &amp; Uses</h2>
+  {% if result and result.sources_and_uses %}
+    {% set su = result.sources_and_uses %}
+    <div class="pair su">
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Sources</th><th class="num">Amount</th></tr></thead>
+          <tbody>
+            <tr><td>Advance at closing</td><td class="num">{{ su.advance_at_closing | money }}</td></tr>
+            <tr><td>Rehab holdback</td><td class="num">{{ su.rehab_holdback | money }}</td></tr>
+            <tr><td>Borrower equity</td><td class="num">{{ su.borrower_equity | money }}</td></tr>
+          </tbody>
+          <tfoot><tr><th>Total sources</th><th class="num">{{ su.total_sources | money }}</th></tr></tfoot>
+        </table>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Uses</th><th class="num">Amount</th></tr></thead>
+          <tbody>
+            <tr><td>Purchase</td><td class="num">{{ su.purchase_price | money }}</td></tr>
+            <tr><td>Closing</td><td class="num">{{ su.closing_costs | money }}</td></tr>
+            <tr><td>Rehab</td><td class="num">{{ su.rehab_costs | money }}</td></tr>
+            <tr><td>Contingency</td><td class="num">{{ su.contingency | money }}</td></tr>
+            <tr><td>Holding</td><td class="num">{{ su.holding_costs | money }}</td></tr>
+            <tr><td>Interest</td><td class="num">{{ su.interest | money }}</td></tr>
+            <tr><td>Origination</td><td class="num">{{ su.origination | money }}</td></tr>
+          </tbody>
+          <tfoot><tr><th>Total uses</th><th class="num">{{ su.total_uses | money }}</th></tr></tfoot>
+        </table>
+      </div>
+    </div>
+  {% elif result %}
+    <p class="small muted">Not on this ledger; run the analysis again for the table.</p>
+  {% else %}
+    <p class="small muted">No analysis yet.</p>
+  {% endif %}
+</section>
+</div>
+
+{# ======== 5. Scenarios: Flip · Rental · Take-Back as three cards (SPEC §8.4-§8.6) ========== #}
+<div class="tab-panel" id="tab-scenarios" data-tab="tab-scenarios">
 <div class="trio">
 <section class="panel stat" id="flip">
   <div class="row">
@@ -432,7 +800,7 @@
       <dt>Lost interest (months)</dt><dd>{{ take_back.lost_interest_months | plain }}{{ dflt("take_back_lost_interest_months") }}</dd>
       <dt>Lost interest</dt><dd>{{ take_back.lost_interest | money }}</dd>
       <dt>Legal costs</dt><dd>{{ take_back.legal_costs | money }}{{ dflt("take_back_legal_costs_usd") }}</dd>
-      <dt>Foreclosure months</dt><dd>{{ take_back.foreclosure_months | plain }}</dd>
+      <dt>Foreclosure months</dt><dd>{{ take_back.foreclosure_months | plain }}{% if take_back.foreclosure_months_from is defined and take_back.foreclosure_months_from | plain == "OTHER" %} <span class="dflt">OTHER</span>{% endif %}</dd>
       <dt>Foreclosure carry</dt><dd>{{ take_back.foreclosure_carry | money }}</dd>
       <dt>REO sale month</dt><dd>{{ take_back.sale_month | plain }}</dd>
       <dt>Broker selling %</dt><dd>{{ take_back.broker_selling_pct | pct }}{{ dflt("broker_selling_pct") }}</dd>
@@ -475,151 +843,60 @@
   {% endif %}
 </section>
 </div>
+</div>
 
-{# --- 5. Sources & Uses (SPEC §8.11): the two advances and the equity against the costs --- #}
-<section class="panel chart" id="sources-uses">
-  <h2>Sources &amp; Uses</h2>
-  {% if result and result.sources_and_uses %}
-    {% set su = result.sources_and_uses %}
-    <div class="pair su">
-      <div class="scroll">
-        <table>
-          <thead><tr><th>Sources</th><th class="num">Amount</th></tr></thead>
-          <tbody>
-            <tr><td>Advance at closing</td><td class="num">{{ su.advance_at_closing | money }}</td></tr>
-            <tr><td>Rehab holdback</td><td class="num">{{ su.rehab_holdback | money }}</td></tr>
-            <tr><td>Borrower equity</td><td class="num">{{ su.borrower_equity | money }}</td></tr>
-          </tbody>
-          <tfoot><tr><th>Total sources</th><th class="num">{{ su.total_sources | money }}</th></tr></tfoot>
-        </table>
-      </div>
-      <div class="scroll">
-        <table>
-          <thead><tr><th>Uses</th><th class="num">Amount</th></tr></thead>
-          <tbody>
-            <tr><td>Purchase</td><td class="num">{{ su.purchase_price | money }}</td></tr>
-            <tr><td>Closing</td><td class="num">{{ su.closing_costs | money }}</td></tr>
-            <tr><td>Rehab</td><td class="num">{{ su.rehab_costs | money }}</td></tr>
-            <tr><td>Contingency</td><td class="num">{{ su.contingency | money }}</td></tr>
-            <tr><td>Holding</td><td class="num">{{ su.holding_costs | money }}</td></tr>
-            <tr><td>Interest</td><td class="num">{{ su.interest | money }}</td></tr>
-            <tr><td>Origination</td><td class="num">{{ su.origination | money }}</td></tr>
-          </tbody>
-          <tfoot><tr><th>Total uses</th><th class="num">{{ su.total_uses | money }}</th></tr></tfoot>
-        </table>
-      </div>
-    </div>
-  {% elif result %}
-    <p class="small muted">Not on this ledger; run the analysis again for the table.</p>
-  {% else %}
-    <p class="small muted">No analysis yet.</p>
-  {% endif %}
-</section>
+{# ======== 6. Assumptions: the panel as a grid, then the versions ============================ #}
+<div class="tab-panel" id="tab-assumptions" data-tab="tab-assumptions">
 
-{# --- 6. Return Overview (SPEC §8.3): one line of figures, the Cash Flows folded under it --- #}
-<section class="panel" id="return-overview">
-  <h2>Return Overview</h2>
-  {% if result %}
-    {% set overview = result.return_overview %}
-    <ul class="summary">
-      <li><span class="k">IRR</span><span class="v">{{ overview.irr | quoted }}</span></li>
-      <li><span class="k">Total interest</span><span class="v">{{ overview.total_interest | money }}</span></li>
-      <li><span class="k">Total fees</span><span class="v">{{ overview.total_fees | money }}</span></li>
-      <li><span class="k">Total profit</span><span class="v">{{ overview.total_profit | money }}</span></li>
-      <li><span class="k">Payoff date</span><span class="v">{{ result.payoff_date | when }}</span></li>
-    </ul>
-    <details class="ledger chart">
-      <summary>Cash Flows</summary>
-      <div class="scroll">
-        <table>
-          <thead>
-            <tr>
-              <th>Date</th><th class="num">Month</th><th class="num">Funding</th>
-              <th class="num">Future Draws</th><th class="num">Interest</th>
-              <th class="num">Fees</th><th class="num">Payoff</th><th class="num">Net</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for entry in overview.entries %}
-              <tr>
-                <td>{{ entry.date | when }}</td>
-                <td class="num">{{ entry.month }}{% if entry.stub_days %} <span class="unit">({{ entry.stub_days }}-day stub)</span>{% endif %}</td>
-                <td class="num">{{ entry.funding | money }}</td>
-                <td class="num">{{ entry.draws | money }}</td>
-                <td class="num">{{ entry.interest | money }}</td>
-                <td class="num">{{ entry.fees | money }}</td>
-                <td class="num">{{ entry.payoff | money }}</td>
-                <td class="num"><strong>{{ entry.net | money }}</strong></td>
-              </tr>
-            {% endfor %}
-          </tbody>
-          <tfoot>
-            <tr>
-              <th>Total</th><th></th>
-              <th class="num">{{ overview.total_funding | money }}</th>
-              <th class="num">{{ overview.total_draws | money }}</th>
-              <th class="num">{{ overview.total_interest | money }}</th>
-              <th class="num">{{ overview.total_fees | money }}</th>
-              <th class="num">{{ overview.total_payoff | money }}</th>
-              <th class="num">{{ overview.total_profit | money }}</th>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    </details>
-  {% else %}
-    <p class="small muted">No analysis yet.</p>
-  {% endif %}
-</section>
-
-{# --- 7. Underwriting Assumptions (SPEC §8.1, §8.4-§8.6): editable, open, Save & Run ------- #}
+{# --- Underwriting Assumptions (SPEC §8.1, §8.4-§8.6): editable, open, Save & Run ---------- #}
 <section class="panel" id="assumptions">
   <h2>Underwriting Assumptions</h2>
   <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/assumptions">
     {{ csrf.field(csrf_token) }}
-    <div class="grid2 structure">
-      {{ fields.pct_box("interest_rate", "Interest Rate", form.interest_rate,
-                        default=defaults.interest_rate) }}
-      {{ fields.pct_box("origination_fee_pct", "Origination Fee", form.origination_fee_pct,
-                        default=defaults.origination_fee_pct) }}
-      {{ fields.pct_box("contingency_pct", "Contingency", form.contingency_pct,
-                        default=defaults.contingency_pct) }}
-      {{ fields.money_box("closing_costs_usd", "Closing Costs", form.closing_costs_usd,
-                          default=defaults.closing_costs_usd) }}
-      {{ fields.pct_box("holding_costs_pct_of_cost", "Holding Costs %",
-                        form.holding_costs_pct_of_cost,
-                        default=defaults.holding_costs_pct_of_cost,
-                        note=holding_costs_hint) }}
+    <div class="kv-grid structure" id="assumption-rows">
+      {{ kv_pct("interest_rate", "Interest Rate", form.interest_rate, default=defaults.interest_rate) }}
+      {{ kv_pct("origination_fee_pct", "Origination Fee", form.origination_fee_pct, default=defaults.origination_fee_pct) }}
+      {{ kv_pct("contingency_pct", "Contingency", form.contingency_pct, default=defaults.contingency_pct) }}
+      {{ kv_money("closing_costs_usd", "Closing Costs", form.closing_costs_usd, default=defaults.closing_costs_usd) }}
+      {{ kv_pct("holding_costs_pct_of_cost", "Holding Costs %", form.holding_costs_pct_of_cost,
+                default=defaults.holding_costs_pct_of_cost, note=holding_costs_hint) }}
       {# The team form's own two controls (v0.18): the structure, and on a holdback the rehab
          portion held back - the advance at closing is the rest of the loan, worked out on
-         the server (api/intake_form.with_advance). #}
-      {{ fields.product_radio("product", "Loan Structure", enums.product, form.product) }}
-      {{ fields.holdback_box("loan_rehab_portion", "Rehab portion", form.loan_rehab_portion,
-                             default=defaults.get("loan_rehab_portion", ""), pin=false) }}
-      {{ fields.money_box("estimated_sale_price_team", "Estimated Sale Price",
-                          form.estimated_sale_price_team) }}
-      {{ fields.money_box("as_is_value", "As-Is Value", form.as_is_value) }}
+         the server (api/intake_form.with_advance). The Rehab portion row is hidden by the
+         stylesheet unless Holdback is checked (``.structure`` in _style.html), and shown
+         regardless while it carries a complaint. #}
+      <div class="kv-row" data-box="product">
+        <label for="product">Loan Structure {{ fields.badge(false) }}</label>
+        <div class="v">
+          <div class="toggle" role="radiogroup" aria-label="Loan Structure">
+            {%- for choice in enums.product %}
+            <label><input {% if loop.first %}id="product" {% endif %}type="radio" name="product" value="{{ choice }}"
+                          {%- if form.product == choice %} checked{% endif %}> {{ choice | label }}</label>
+            {%- endfor %}
+          </div>
+          {{ fields.field_error("product") }}
+        </div>
+      </div>
+      <div class="holdback-only{% if errors.get('loan_rehab_portion') %} shown{% endif %}">
+        {{ kv_money("loan_rehab_portion", "Rehab portion", form.loan_rehab_portion,
+                    default=defaults.get("loan_rehab_portion", "")) }}
+      </div>
+      {{ kv_money("estimated_sale_price_team", "Estimated Sale Price", form.estimated_sale_price_team) }}
+      {{ kv_money("as_is_value", "As-Is Value", form.as_is_value) }}
       {# The rental's exit value (SPEC §8.5): the sale price stands in, tagged as a default
          while the box holds it; the server stores a box equal to it as nothing. #}
-      {{ fields.money_box("rental_exit_value", "Exit Value", form.rental_exit_value,
-                          default=defaults.get("rental_exit_value", "")) }}
-      {{ fields.money_box("monthly_rent", "Monthly Rent", form.monthly_rent) }}
-      {{ fields.pct_box("broker_selling_pct", "Broker Selling Costs %", form.broker_selling_pct,
-                        default=defaults.broker_selling_pct) }}
-      {{ fields.pct_box("rental_expenses_pct_of_rent", "Rental Expense %",
-                        form.rental_expenses_pct_of_rent,
-                        default=defaults.rental_expenses_pct_of_rent) }}
-      {{ fields.pct_box("rental_takeout_rate", "Rental Takeout Rate", form.rental_takeout_rate,
-                        default=defaults.rental_takeout_rate) }}
-      {{ fields.money_box("take_back_legal_costs_usd", "Take-Back Legal Costs",
-                          form.take_back_legal_costs_usd,
-                          default=defaults.take_back_legal_costs_usd) }}
-      {{ fields.months_box("take_back_lost_interest_months", "Take-Back Lost Interest Months",
-                           form.take_back_lost_interest_months,
-                           default=defaults.take_back_lost_interest_months, note="months") }}
-    </div>
-    <div class="grid2">
-      {{ fields.text_box("version_name", "Version name", "", maxlength=100, id="save_version_name") }}
+      {{ kv_money("rental_exit_value", "Exit Value", form.rental_exit_value,
+                  default=defaults.get("rental_exit_value", "")) }}
+      {{ kv_money("monthly_rent", "Monthly Rent", form.monthly_rent) }}
+      {{ kv_pct("broker_selling_pct", "Broker Selling Costs %", form.broker_selling_pct, default=defaults.broker_selling_pct) }}
+      {{ kv_pct("rental_expenses_pct_of_rent", "Rental Expense %", form.rental_expenses_pct_of_rent,
+                default=defaults.rental_expenses_pct_of_rent) }}
+      {{ kv_pct("rental_takeout_rate", "Rental Takeout Rate", form.rental_takeout_rate, default=defaults.rental_takeout_rate) }}
+      {{ kv_money("take_back_legal_costs_usd", "Take-Back Legal Costs", form.take_back_legal_costs_usd,
+                  default=defaults.take_back_legal_costs_usd) }}
+      {{ kv_months("take_back_lost_interest_months", "Take-Back Lost Interest Months", form.take_back_lost_interest_months,
+                   default=defaults.take_back_lost_interest_months, note="months") }}
+      {{ kv_box("version_name", "Version name", "", mode="", id="save_version_name") }}
     </div>
     <div class="actions">
       <button type="submit" title="Saves every box on this panel and runs the analysis on it">Save &amp; Run</button>
@@ -628,234 +905,22 @@
   </form>
 </section>
 
-{# --- 8. Deal Economics and Property (SPEC §8.1): the intake, read-only, with the sizing ---- #}
-<section class="panel" id="economics">
-  <div class="row">
-    <h2>Deal Economics and Property</h2>
-    {% if allowed.edit_intake %}
-      <a class="btn small" href="/queue/deals/{{ deal.id }}/intake">Edit Intake</a>
-    {% else %}
-      <span class="btn small off" title="The intake is locked on a {{ deal.status | plain }} deal">Edit Intake</span>
-    {% endif %}
-  </div>
-
-  {% if deal.channel | plain == "WEB" %}
-    <h3>From the public form <span class="tag INFO">Web</span></h3>
-    <p class="small">Source: {{ deal.intake_source | plain }}</p>
-    <p class="small">How they heard of us: {{ deal.referral_note | plain }}</p>
-    <dl class="facts small" style="margin-bottom:16px">
-      <dt>Submitted in</dt>
-      <dd>{% if submitted_language == "es" %}Spanish{% elif submitted_language == "en" %}English
-          {%- else %}—{% endif %}</dd>
-      <dt>Their sale price after rehab</dt>
-      <dd>{{ deal.estimated_sale_price_borrower | money }}</dd>
-      <dt>Their monthly rent</dt>
-      <dd>{{ deal.monthly_rent_borrower | money }}</dd>
-    </dl>
-  {% endif %}
-
-  <div class="facts-grid">
-    <div>
-      <h3>Overview</h3>
-      <dl class="facts small">
-        <dt>Entity Name</dt>
-        <dd>{% if deal.borrower and deal.borrower.entities
-            %}{{ deal.borrower.entities | map(attribute="name") | join(", ") }}
-            {%- else %}—{% endif %}</dd>
-        <dt>Guarantor Name</dt>
-        <dd>{{ deal.borrower.name | plain if deal.borrower else "—" }}</dd>
-        <dt>Phone</dt>
-        <dd>{{ deal.borrower.phone | phone if deal.borrower else "—" }}</dd>
-        <dt>Email</dt>
-        <dd>{{ deal.borrower.email | plain if deal.borrower else "—" }}</dd>
-        <dt>Credit Range (self-reported)</dt>
-        <dd>{{ deal.credit_range_self_reported | tranche }}</dd>
-        <dt>Deals in last 36 months (self-reported)</dt>
-        <dd>{{ deal.experience_bucket_self_reported | experience }}</dd>
-        <dt>Repeat borrower</dt><dd>{{ deal.repeat_borrower_self_reported | yes_no }}</dd>
-        <dt>Credit authorization</dt><dd>{{ deal.credit_authorization_signed | yes_no }}</dd>
-      </dl>
-      <h3>Still needed from the borrower</h3>
-      {% if deal.missing_fields %}
-        <ul class="plain small">
-          {% for field in deal.missing_fields %}<li>{{ field }}</li>{% endfor %}
-        </ul>
-      {% else %}
-        <p class="small">None</p>
-      {% endif %}
-    </div>
-
-    <div>
-      <h3>Property Overview</h3>
-      <dl class="facts small">
-        <dt>Address</dt>
-        <dd>{{ deal.property.address_raw | plain if deal.property else "—" }}</dd>
-        <dt>City</dt><dd>{{ deal.property.city | plain if deal.property else "—" }}</dd>
-        <dt>State</dt>
-        <dd{% if deal.property %} title="{{ deal.property.state_source | plain }}"{% endif %}>{{ deal.property.state | plain if deal.property else "—" }}</dd>
-        <dt>Units</dt><dd>{{ deal.property.units | plain if deal.property else "—" }}</dd>
-        <dt>Structures</dt><dd>{{ deal.property.structures | plain if deal.property else "—" }}</dd>
-        <dt>SF</dt><dd>{{ deal.property.sf | whole if deal.property else "—" }}</dd>
-        <dt>Year Built</dt><dd>{{ deal.property.year_built | plain if deal.property else "—" }}</dd>
-        <dt>Year Renovated</dt>
-        <dd>{{ deal.property.year_renovated | plain if deal.property else "—" }}</dd>
-        <dt>Beds</dt><dd>{{ deal.property.beds | plain if deal.property else "—" }}</dd>
-        <dt>Baths</dt><dd>{{ deal.property.baths | plain if deal.property else "—" }}</dd>
-        <dt>Garage Spaces</dt>
-        <dd>{{ deal.property.garage_spaces | plain if deal.property else "—" }}</dd>
-      </dl>
-    </div>
-
-    <div>
-      <h3>Deal Economics</h3>
-      <dl class="facts small">
-        <dt>Loan Purpose</dt><dd>{{ deal.loan_purpose | label }}</dd>
-        <dt>Loan Structure</dt>
-        <dd title="{{ deal.product_source | plain }}">{{ deal.product | label }}</dd>
-        <dt>Closing Date</dt>
-        <dd>{{ deal.closing_date | when }}{{ dflt("closing_date") }}</dd>
-        <dt>Term</dt>
-        <dd>{{ deal.term_months | plain }}{% if deal.term_months is not none %} month(s){% endif %}
-          {%- if deal.term_stub_days %} and {{ deal.term_stub_days }} day(s){% endif %}</dd>
-        {% if deal.term_bucket %}
-          <dt>Requested term</dt>
-          <dd>{{ deal.term_bucket | bucket }}</dd>
-        {% endif %}
-        <dt>Payoff Date</dt>
-        <dd>{{ payoff_date | when }}</dd>
-        <dt>Purchase Price</dt><dd>{{ deal.purchase_price | money }}</dd>
-        <dt>Rehab Costs</dt><dd>{{ deal.rehab_costs | money }}</dd>
-        <dt>Contingency</dt>
-        <dd>{{ values.contingency_pct | pct }}{{ dflt("contingency_pct") }}</dd>
-        {% if result %}
-          <dt>Contingency amount</dt><dd>{{ result.economics.contingency | money }}</dd>
-          <dt>Rehab + contingency</dt><dd>{{ result.economics.rehab_adj | money }}</dd>
-        {% endif %}
-        <dt>Closing Costs</dt>
-        <dd>{{ values.closing_costs_usd | money }}{{ dflt("closing_costs_usd") }}</dd>
-        <dt>Holding Costs</dt>
-        <dd>{{ values.holding_costs_pct_of_cost | pct }}{{ dflt("holding_costs_pct_of_cost") }}</dd>
-        <dt>Holding Costs (total)</dt>
-        <dd>{% if result %}{{ result.economics.holding_costs_total | money }}{% else %}{{ holding_costs_entered | money }}{% endif %}</dd>
-        {% if result %}
-          <dt>Holding Costs (monthly)</dt><dd>{{ result.economics.holding_costs_monthly | money }}</dd>
-        {% endif %}
-        <dt>Origination Fee</dt>
-        <dd>{{ values.origination_fee_pct | pct }}{{ dflt("origination_fee_pct") }}</dd>
-        {% if result %}
-          <dt>Origination at close</dt><dd>{{ result.economics.origination_at_close | money }}</dd>
-          <dt>Origination at payoff</dt><dd>{{ result.economics.origination_at_payoff | money }}</dd>
-        {% endif %}
-        <dt>Interest Rate</dt>
-        <dd>{{ values.interest_rate | pct }}{{ dflt("interest_rate") }}</dd>
-        <dt>Loan Amount</dt><dd>{{ deal.loan_requested | money }}</dd>
-        {% if result %}
-          <dt>Commitment</dt><dd>{{ result.economics.commitment | money }}</dd>
-          <dt>Funded at close</dt><dd>{{ result.economics.funded_at_close | money }}</dd>
-        {% endif %}
-        <dt>Advance at closing</dt>
-        <dd>{{ values.loan_purchase_portion | money }}{{ dflt("loan_purchase_portion") }}</dd>
-        <dt>Rehab portion</dt>
-        <dd>{{ values.loan_rehab_portion | money }}{{ dflt("loan_rehab_portion") }}</dd>
-      </dl>
-    </div>
-  </div>
-
-  {% if result or screen %}
-    <div class="chart">
-    <h3>Leverage against caps</h3>
-    {{ parts.sizing_table(result.sizing if result else screen.result.sizing) }}
-    </div>
-  {% endif %}
-  {% if screen %}
-    <h3>Scored as</h3>
-    <dl class="facts small">
-      <dt>Credit tranche</dt>
-      <dd>{{ screen.result.components.credit_tranche | tranche }}</dd>
-      <dt>Credit tranche basis</dt>
-      <dd>{{ "Verified" if screen.result.components.credit_tranche_verified else "Self-reported" }}</dd>
-      <dt>Floor tranche</dt>
-      <dd>{{ screen.result.components.floor_tranche | tranche }}</dd>
-      <dt>Meets the floor</dt>
-      <dd>{{ screen.result.components.credit_meets_floor | yes_no }}</dd>
-      <dt>Experience tier</dt>
-      <dd>{{ screen.result.components.experience_tier | plain }}</dd>
-      <dt>Experience tier (self-reported)</dt>
-      <dd>{{ screen.result.components.experience_tier_self_reported | plain }}</dd>
-      <dt>Experience tier (verified)</dt>
-      <dd>{{ screen.result.components.experience_tier_verified | plain }}</dd>
-      <dt>Repeat-borrower override</dt>
-      <dd>{{ screen.result.components.repeat_borrower_override_applied | yes_no }}</dd>
-      <dt>Court records from</dt>
-      <dd>{{ screen.result.components.court_records_source | label }}</dd>
-    </dl>
-  {% endif %}
-</section>
-
-{# --- team actions (SPEC §4.6): where the deal stands, then what can be done with it -------- #}
-<section class="panel" id="actions">
-  <h2>Actions</h2>
-  <p class="small muted" id="deal-standing">Status: {{ deal.status | label }} · Verdict: {{ screen.result.verdict | label if screen else "—" }}</p>
-  <div class="grid3">
-    <div class="actions">
-      <form method="post" action="/queue/deals/{{ deal.id }}/advance">
-        {{ csrf.field(csrf_token) }}
-        <button class="quiet" type="submit" title="A scored deal goes into review; a paused deal goes back where it was" {% if not allowed.progress %}disabled{% endif %}>Progress</button>
-      </form>
-      <form method="post" action="/queue/deals/{{ deal.id }}/pause">
-        {{ csrf.field(csrf_token) }}
-        <button class="quiet" type="submit" title="Sets the deal aside; nothing runs on it until Progress" {% if not allowed.pause %}disabled{% endif %}>Pause</button>
-      </form>
-      {% if allowed.kill %}
-        <a class="btn danger" href="/queue/deals/{{ deal.id }}/kill" title="Marks the deal dead, after a confirmation">Kill</a>
-      {% else %}
-        <span class="btn danger off" title="A dead deal is already dead">Kill</span>
-      {% endif %}
-    </div>
-
-    <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/decline">
-      {{ csrf.field(csrf_token) }}
-      {{ fields.text_box("reason", "Decline — reason", "", required=true, maxlength=500,
-                         disabled=not allowed.decline, id="decline_reason") }}
-      <div class="actions"><button class="danger" type="submit" {% if not allowed.decline %}disabled{% endif %}>Decline</button></div>
+{# --- the versions (SPEC §5, §9, §11): pick one to show, and the history ------------------- #}
+<section class="panel chart" id="history">
+  <h2>Versions</h2>
+  {% if versions and shown %}
+    <form class="actions switcher pad" id="version-picker" method="get" action="/queue/deals/{{ deal.id }}">
+      <label for="version-pick">Show version</label>
+      <select id="version-pick" name="version">
+        {% for each in versions %}
+          <option value="{{ each.number }}"{% if shown and each.number == shown.number %} selected{% endif %}>{{ each.name }} · {{ "Working" if each.is_working else "Draft" }} · {{ each.created_at | when }} · {{ each.actor }}</option>
+        {% endfor %}
+      </select>
+      <button class="quiet" type="submit">Show</button>
     </form>
-
-    <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/reopen">
-      {{ csrf.field(csrf_token) }}
-      {{ fields.text_box("reason", "Re-open — reason", "", required=true, maxlength=500,
-                         disabled=not allowed.reopen, id="reopen_reason") }}
-      <div class="actions"><button class="quiet" type="submit" title="From DECLINED only" {% if not allowed.reopen %}disabled{% endif %}>Re-open</button></div>
-    </form>
-  </div>
-
-  <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/note" style="margin-top:16px">
-    {{ csrf.field(csrf_token) }}
-    {{ fields.text_area("note", "Note", required=true, maxlength=4000) }}
-    <div class="actions"><button class="quiet" type="submit">Add note</button></div>
-  </form>
-</section>
-
-{# --- 8. the court and filing search (SPEC §6.1, §7.2), collapsed --------------------------- #}
-<details class="panel" id="court"{% if court_open %} open{% endif %}>
-  <summary><h2>Court and filing search</h2></summary>
-  <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/court">
-    {{ csrf.field(csrf_token) }}
-    <div class="grid3">
-      {{ fields.enum_box("court_records_status", "Outcome",
-                         enums.court_records_status, court.court_records_status) }}
-      {{ fields.text_box("court_records_as_of", "Searched on",
-                         court.court_records_as_of, kind="date") }}
-    </div>
-    {{ fields.matter_table(enums, matters) }}
-    <div class="actions"><button type="submit">Save</button></div>
-  </form>
-</details>
-
-{# --- 9. the history (SPEC §5, §11), collapsed ----------------------------------------------- #}
-<details class="panel" id="history">
-  <summary><h2>History</h2></summary>
+  {% endif %}
   <div class="chart">
-  <h3>Versions</h3>
+  <h3>Versions and edits</h3>
   {% if history %}
     <div class="scroll">
       <table>
@@ -933,5 +998,9 @@
     <p class="small muted">Nothing recorded yet.</p>
   {% endif %}
   </div>
-</details>
+</section>
+</div>
+
+{# The tabs: the one script on this page beside the input masks. #}
+{% include "_tabs.html" %}
 {% endblock %}

@@ -490,8 +490,8 @@ def test_the_queue_and_the_deal_page_say_it_came_from_the_web(
 
     deal_body = client.get(f"/queue/deals/{deal.id}").text
     assert "From the public form" in deal_body
-    assert "Source: tulsa-reia" in deal_body
-    assert "How they heard of us: A friend at the Tulsa REIA" in deal_body
+    assert "<dt>Source</dt><dd>tulsa-reia</dd>" in deal_body
+    assert "<dt>How they heard of us</dt><dd>A friend at the Tulsa REIA</dd>" in deal_body
     assert "<dd>Spanish" in deal_body
     assert re.search(r"<dt>Requested term.*?</dt>\s*<dd>12\+ months</dd>", deal_body, re.S)
     assert ">12_PLUS<" not in deal_body

@@ -1,0 +1,223 @@
+{
+  "name": "conditional_acquisition_other_state",
+  "description": "Wichita's note (go_acquisition_wichita) in a state outside the footprint: the screen is Conditional on STATE_NOT_SERVED and nothing else moves. Underwrite: the ledger, the flip, the rental and Sources & Uses are Wichita's to the cent (none of them reads the state). Take-back: with no foreclosure months for the state, config's OTHER entry (8 months) stands in under FORECLOSURE_MONTHS_MISSING, so the REO sale is month 20 rather than 18 and the lender needs more to come out whole - over the $200,000 purchase price, which raises TAKE_BACK_PRICE_ABOVE_PURCHASE. Every take-back figure was worked out by the independent script before it was recorded.",
+  "inputs": {
+    "deal": {
+      "product": "ACQUISITION",
+      "purchase_price": "200000.00",
+      "rehab_costs": "0.00",
+      "loan_requested": "150000.00",
+      "estimated_sale_price": "260000.00"
+    },
+    "state": "OTHER",
+    "borrower": {
+      "credit_range_self_reported": "T1",
+      "experience_bucket_self_reported": "6_PLUS",
+      "repeat_borrower_self_reported": false
+    },
+    "court_records": {
+      "as_of": "2026-09-09"
+    }
+  },
+  "expected": {
+    "verdict": "CONDITIONAL",
+    "flags": [
+      {
+        "code": "STATE_NOT_SERVED",
+        "severity": "SOFT"
+      }
+    ],
+    "credit_tranche": "T1",
+    "experience_tier": "E3",
+    "repeat_borrower_override_applied": false,
+    "all_pass": true,
+    "commitment": "150000.00",
+    "funded_at_close": "150000.00",
+    "total_cost": "201000.00",
+    "rehab_adj": "0.00",
+    "metrics": {
+      "LTC": "PASS",
+      "LTV": "PASS"
+    },
+    "reasons_contain": [
+      "Property state OTHER is outside the served states (OK, CO)"
+    ],
+    "reply_contains": [
+      "full property address (we lend in OK, CO)"
+    ]
+  },
+  "underwrite": {
+    "inputs": {
+      "deal": {
+        "product": "ACQUISITION",
+        "purchase_price": "200000.00",
+        "rehab_costs": "0.00",
+        "loan_requested": "150000.00",
+        "estimated_sale_price": "260000.00"
+      },
+      "state": "OTHER",
+      "borrower": {
+        "credit_range_self_reported": "T1",
+        "experience_bucket_self_reported": "6_PLUS",
+        "repeat_borrower_self_reported": false,
+        "verified_credit_score": 760,
+        "verified_deals_36mo": 7
+      },
+      "closing_date": "2027-01-01",
+      "term_months": 12,
+      "interest_rate": "0.12",
+      "court_records": {
+        "as_of": "2026-09-09"
+      },
+      "monthly_rent": "2000.00",
+      "loan_purpose": "PURCHASE"
+    },
+    "expected": {
+      "payoff_date": "2028-01-31",
+      "rehab_months": 9,
+      "commitment": "150000.00",
+      "funded_at_close": "150000.00",
+      "economics": {
+        "rehab_adj": "0.00",
+        "contingency": "0.00",
+        "closing_costs": "1000.00",
+        "holding_costs_total": "4000.00",
+        "holding_costs_monthly": "333.33",
+        "origination_at_close": "1500.00",
+        "origination_at_payoff": "1500.00",
+        "holding_costs_pct_of_cost": "0.020000",
+        "holding_costs_basis": "200000.00"
+      },
+      "ledger": {
+        "rows": 13,
+        "first_net": "-148500.00",
+        "last_net": "153000.00",
+        "total_funding": "-150000.00",
+        "total_draws": "0.00",
+        "total_interest": "18000.00",
+        "total_fees": "3000.00",
+        "total_payoff": "150000.00",
+        "total_profit": "21000.00",
+        "irr": "0.14958448"
+      },
+      "flip": {
+        "status": "EVALUATED",
+        "total_costs": "226000.00",
+        "interest": "18000.00",
+        "origination": "3000.00",
+        "borrower_equity": "76000.00",
+        "broker_costs": "15600.00",
+        "net_profit": "18400.00",
+        "project_yield": "0.081416",
+        "cash_on_cash": "0.242105",
+        "cash_on_cash_passed": true
+      },
+      "rental": {
+        "market_rent": "2000.00",
+        "status": "EVALUATED",
+        "exit_value": "260000.00",
+        "takeout_loan": "195000.00",
+        "debt_service_amortizing": "1232.53",
+        "debt_service_interest_only": "1056.25",
+        "required_noi": "1479.04",
+        "required_rent": "2275.44",
+        "payoff_due": "151500.00",
+        "spread_to_loan": "43500.00",
+        "spread_passed": true,
+        "market_rent_status": "EVALUATED",
+        "market_noi": "1300.00",
+        "rent_gap": "-275.44",
+        "dscr_amortizing": "1.054739",
+        "dscr_interest_only": "1.230769",
+        "rent_passed": false
+      },
+      "take_back": {
+        "default_month": 9,
+        "interest_received": "13500.00",
+        "lost_interest": "4500.00",
+        "legal_costs": "5000.00",
+        "foreclosure_months": 8,
+        "foreclosure_months_from": "OTHER",
+        "foreclosure_carry": "2666.67",
+        "sale_month": 20,
+        "projected_sale_price": "260000.00",
+        "as_is_value": null,
+        "status": "EVALUATED",
+        "market_rent_status": "EVALUATED",
+        "haircut_status": "SOLVED",
+        "haircut_bound_hit": null,
+        "haircut_price": 204977,
+        "haircut_irr": 0.200002,
+        "haircut_amount": "55023.00",
+        "haircut_pct": "0.211627",
+        "price_pct_of_purchase": "1.024885",
+        "price_above_purchase": true,
+        "price_vs_as_is": null,
+        "price_pct_of_as_is": null,
+        "holds": [
+          {
+            "hold_months": 12,
+            "sale_month": 32,
+            "required_rent_status": "NO_SOLUTION",
+            "required_rent_bound_hit": "LOWER",
+            "required_rent": null,
+            "required_sale_price_status": "SOLVED",
+            "required_sale_price_bound_hit": null,
+            "required_sale_price": 227905
+          },
+          {
+            "hold_months": 24,
+            "sale_month": 44,
+            "required_rent_status": "SOLVED",
+            "required_rent_bound_hit": null,
+            "required_rent": 1770,
+            "required_sale_price_status": "SOLVED",
+            "required_sale_price_bound_hit": null,
+            "required_sale_price": 255419
+          },
+          {
+            "hold_months": 36,
+            "sale_month": 56,
+            "required_rent_status": "SOLVED",
+            "required_rent_bound_hit": null,
+            "required_rent": 2865,
+            "required_sale_price_status": "SOLVED",
+            "required_sale_price_bound_hit": null,
+            "required_sale_price": 288435
+          }
+        ]
+      },
+      "flags": [
+        {
+          "code": "MARKET_RENT_BELOW_REQUIRED",
+          "severity": "SOFT"
+        },
+        {
+          "code": "TAKE_BACK_PRICE_ABOVE_PURCHASE",
+          "severity": "HARD"
+        },
+        {
+          "code": "FORECLOSURE_MONTHS_MISSING",
+          "severity": "INFO"
+        }
+      ],
+      "term_months": 12,
+      "term_stub_days": 0,
+      "term_months_decimal": "12.000000",
+      "sources_and_uses": {
+        "advance_at_closing": "150000.00",
+        "rehab_holdback": "0.00",
+        "borrower_equity": "76000.00",
+        "total_sources": "226000.00",
+        "purchase_price": "200000.00",
+        "closing_costs": "1000.00",
+        "rehab_costs": "0.00",
+        "contingency": "0.00",
+        "holding_costs": "4000.00",
+        "interest": "18000.00",
+        "origination": "3000.00",
+        "total_uses": "226000.00"
+      }
+    }
+  }
+}

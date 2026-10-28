@@ -96,7 +96,8 @@ take_back:                                # SPEC §8.6 take-back analysis: the l
   legal_costs_usd: 5000.00
   foreclosure_months:                     # PLACEHOLDER: months to take the property back, by
     OK: 6                                 #   state, each carried at the deal's monthly holding
-    CO: 4                                 #   cost; every served state needs an entry
+    CO: 4                                 #   cost; every served state needs an entry, and
+    OTHER: 8                              #   OTHER stands in for a state outside the footprint
   hold_months: [12, 24, 36]               # the hold-and-rent periods, ascending
 
 states:                                   # SPEC §10

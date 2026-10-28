@@ -49,6 +49,7 @@ from services.autorun import (
     auto_run,
     run_analysis,
 )
+from services.borrowers import BorrowerNotFound, BorrowerView, borrower_view, load_borrower
 from services.defaults import (
     ASSUMPTIONS,
     DEFAULTABLE,
@@ -82,6 +83,7 @@ from services.history import HistoryEntry, HistoryKind, deal_history
 from services.home import (
     SECTION_TITLES,
     HomeEntry,
+    HomeFilter,
     HomeSection,
     HomeView,
     Section,
@@ -196,6 +198,8 @@ __all__ = [
     "AdapterValues",
     "AutoRun",
     "CourtSearch",
+    "BorrowerNotFound",
+    "BorrowerView",
     "DealNotFound",
     "DealNotPriceable",
     "DealNotReady",
@@ -203,6 +207,7 @@ __all__ = [
     "HistoryEntry",
     "HistoryKind",
     "HomeEntry",
+    "HomeFilter",
     "HomeSection",
     "HomeView",
     "IndicativeRow",
@@ -258,7 +263,9 @@ __all__ = [
     "get_user",
     "get_version",
     "hash_password",
+    "borrower_view",
     "home_view",
+    "load_borrower",
     "indicative_terms",
     "is_defaulted",
     "issue_thanks_token",

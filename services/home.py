@@ -28,6 +28,12 @@ latest run's: a draft somebody ran to try a number does not change what the list
 deal is until they mark it Working. A deal with runs and no version at all - one priced
 only through the JSON stage routes - shows its latest screen and underwrite instead, so a
 result is never hidden for want of a version. The runs still count as activity either way.
+
+**The search box** (v0.20) narrows every section to the deals whose borrower matches: the
+guarantor's name, an entity's name, or the phone by its digits. ``HomeFilter`` carries
+the query, and the profile-field chips 10c adds - credit range, experience, structure -
+go on it beside the query and are applied in ``matches``. The borrower's own page
+(``services/borrowers.py``) lists the same rows for one borrower.
 """
 
 from __future__ import annotations
@@ -65,6 +71,66 @@ SECTION_TITLES: dict[Section, str] = {
 
 # The statuses that put a deal in the Dead section, whichever channel it came in on.
 DEAD_STATUSES: frozenset[Status] = frozenset({Status.DEAD, Status.DECLINED})
+
+# A phone is searched by its digits once the query holds this many of them; fewer and a
+# query like "3rd" is a name, not a number.
+PHONE_SEARCH_DIGITS = 3
+
+
+@dataclass(frozen=True)
+class HomeFilter:
+    """What narrows the list: the search box's query, and the chips 10c adds.
+
+    ``chips`` is the hook for the profile-field filters: ``(field, value)`` pairs such as
+    ``("credit_range_self_reported", "T2")``, rendered as chips under the search box and
+    applied in ``matches``. Empty today.
+    """
+
+    query: str = ""
+    chips: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def active(self) -> bool:
+        return bool(self.query.strip()) or bool(self.chips)
+
+
+NO_FILTER = HomeFilter()
+
+
+def digits(text: str) -> str:
+    return "".join(ch for ch in text if ch.isdigit())
+
+
+def query_matches(deal: Deal, query: str) -> bool:
+    """Whether the deal's borrower answers to ``query``: name, entity or phone.  # SPEC §9.1
+
+    Names and entities by case-blind substring; the phone by its digits, so ``555-0147``
+    and ``5550147`` find the same person, once the query carries enough digits to be one.
+    A blank query matches everything. A deal with no borrower row matches nothing but a
+    blank query.
+    """
+    needle = query.strip().casefold()
+    if not needle:
+        return True
+    borrower = deal.borrower
+    if borrower is None:
+        return False
+    haystacks = [borrower.name or "", *(entity.name for entity in borrower.entities)]
+    if any(needle in text.casefold() for text in haystacks):
+        return True
+    wanted = digits(needle)
+    return len(wanted) >= PHONE_SEARCH_DIGITS and wanted in digits(borrower.phone or "")
+
+
+def matches(entry: HomeEntry, filter: HomeFilter) -> bool:
+    """Whether a row stays on the list under ``filter``.
+
+    The query first; the chips (10c) will each narrow it further here, by the deal column
+    the field names.
+    """
+    if not query_matches(entry.deal, filter.query):
+        return False
+    return all(str(getattr(entry.deal, field, None)) == value for field, value in filter.chips)
 
 
 def section_of(deal: Deal) -> Section:
@@ -147,12 +213,16 @@ class HomeSection:
 
 @dataclass(frozen=True)
 class HomeView:
-    """The whole page: the four sections, every one of them present even when empty."""
+    """The whole page: the four sections, every one of them present even when empty,
+    the filter they were narrowed by, and how many deals there were before it."""
 
     sections: list[HomeSection]
+    filter: HomeFilter = NO_FILTER
+    unfiltered_total: int = 0
 
     @property
     def total(self) -> int:
+        """How many deals are on the page: after the filter, when there is one."""
         return sum(len(section.entries) for section in self.sections)
 
     def section(self, key: Section) -> HomeSection:
@@ -261,20 +331,15 @@ def last_activity(
     return max(moment for moment in moments if moment is not None)
 
 
-def home_view(session: Session) -> HomeView:
-    """Every deal, in its section, most recently touched first.  # SPEC §9.1
+def entries_for(session: Session, deals: list[Deal]) -> list[HomeEntry]:
+    """The given deals as rows, most recently touched first.  # SPEC §9.1
 
     ``id`` breaks a tie, so the order is stable across page loads and two deals touched in
     the same transaction do not swap. The sort is done here rather than in the ``ORDER BY``
-    because the value being sorted on comes from four tables and the deal's own column; one
-    query per source and a max in Python is both clearer and, on a list this size, not
-    slower.
+    because the value being sorted on comes from four tables and the deal's own column;
+    one query per source and a max in Python is both clearer and, on a list this size, not
+    slower. Home and the borrower's page (``services/borrowers.py``) both build on it.
     """
-    deals = list(
-        session.scalars(
-            select(Deal).options(selectinload(Deal.borrower), selectinload(Deal.property))
-        )
-    )
     deal_ids = [deal.id for deal in deals]
     screens = _latest_screens(session, deal_ids)
     underwrites = _latest_underwrites(session, deal_ids)
@@ -299,8 +364,23 @@ def home_view(session: Session) -> HomeView:
         for deal in deals
     ]
     entries.sort(key=lambda entry: (entry.last_activity, entry.deal.id), reverse=True)
+    return entries
 
+
+def home_view(session: Session, filter: HomeFilter = NO_FILTER) -> HomeView:
+    """Every deal, in its section, most recently touched first; narrowed by ``filter``."""
+    deals = list(
+        session.scalars(
+            select(Deal).options(selectinload(Deal.borrower), selectinload(Deal.property))
+        )
+    )
+    entries = entries_for(session, deals)
     by_section: dict[Section, list[HomeEntry]] = {key: [] for key in Section}
     for entry in entries:
-        by_section[section_of(entry.deal)].append(entry)
-    return HomeView(sections=[HomeSection(key, by_section[key]) for key in Section])
+        if matches(entry, filter):
+            by_section[section_of(entry.deal)].append(entry)
+    return HomeView(
+        sections=[HomeSection(key, by_section[key]) for key in Section],
+        filter=filter,
+        unfiltered_total=len(entries),
+    )

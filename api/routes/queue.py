@@ -106,14 +106,17 @@ from services import (
     REOPEN_FROM,
     SYSTEM_ACTOR,
     ActionNotAllowed,
+    BorrowerNotFound,
     CourtSearch,
     DealNotFound,
+    HomeFilter,
     ReasonRequired,
     UnderwritingAssumptions,
     VersionNotFound,
     add_note,
     apply_defaults,
     auto_run,
+    borrower_view,
     clean_name,
     deal_history,
     deal_trail,
@@ -539,9 +542,26 @@ def home() -> RedirectResponse:
 
 
 @router.get("/queue", response_class=HTMLResponse, response_model=None)
-def home_page(request: Request, session: SessionDep, user: PageUser) -> HTMLResponse:
-    """Home: every deal in one of four sections, most recently touched first.  # SPEC §9.1"""
-    return page(request, "home.html", {"view": home_view(session)}, user=user)
+def home_page(request: Request, session: SessionDep, user: PageUser, q: str = "") -> HTMLResponse:
+    """Home: every deal in one of four sections, most recently touched first.  # SPEC §9.1
+
+    ``?q=`` is the search box: the sections narrow to the deals whose borrower's name,
+    entity or phone matches (``services/home.py``), and the box keeps what was typed.
+    """
+    view = home_view(session, HomeFilter(query=q.strip()))
+    return page(request, "home.html", {"view": view}, user=user)
+
+
+@router.get("/borrowers/{borrower_id}", response_class=HTMLResponse, response_model=None)
+def borrower_page(
+    request: Request, borrower_id: UUID, session: SessionDep, user: PageUser
+) -> HTMLResponse | RedirectResponse:
+    """One borrower and every deal they have brought, with the totals.  # SPEC §9.1"""
+    try:
+        view = borrower_view(session, borrower_id)
+    except BorrowerNotFound:
+        return redirect(HOME_PATH, "That borrower does not exist.")
+    return page(request, "borrower.html", {"view": view}, user=user)
 
 
 def team_entry_page(

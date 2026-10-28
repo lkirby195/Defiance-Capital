@@ -57,6 +57,7 @@ from schema.models import (
     FlipAnalysis,
     RentalAnalysis,
     Severity,
+    State,
     TakeBackAnalysis,
     UnderwriteFlag,
     UnderwriteInputs,
@@ -184,13 +185,31 @@ def sale_price_flags(flip: FlipAnalysis, rental: RentalAnalysis) -> list[Flag]:
 
 
 def foreclosure_flags(take_back: TakeBackAnalysis) -> list[Flag]:
-    """FORECLOSURE_MONTHS_MISSING when config has no timeline for the deal's state.
+    """FORECLOSURE_MONTHS_MISSING when config has no timeline for the deal's own state.
 
-    # SPEC §8.6, §8.8. Fixed INFO: the take-back's solves need to know how long the lender
-    carries the property, and a state outside the footprint has no entry.
+    # SPEC §8.6, §8.8. Fixed INFO. A state outside the footprint has no entry of its own:
+    config's ``OTHER`` entry stands in and the analysis runs on it, and the flag says so
+    (v0.20); without an ``OTHER`` entry either, the take-back is not evaluated. A deal in a
+    served state raises nothing.
     """
-    if take_back.foreclosure_months is not None:
+    months = take_back.foreclosure_months
+    if months is not None and take_back.foreclosure_months_from is not State.OTHER:
         return []
+    if months is not None and take_back.state is not State.OTHER:  # pragma: no cover
+        return []  # a served state read its own entry (the key is the state itself)
+    if months is not None:
+        return [
+            Flag(
+                code=UnderwriteFlag.FORECLOSURE_MONTHS_MISSING,
+                severity=Severity.INFO,
+                message=(
+                    f"No foreclosure months in config for {enum_label(take_back.state)}, so the "
+                    f"OTHER placeholder stood in: the Take-Back analysis ran on {months} "
+                    "months of foreclosure carry (take_back.foreclosure_months.OTHER). Confirm "
+                    "the timeline for this state before relying on it."
+                ),
+            )
+        ]
     return [
         Flag(
             code=UnderwriteFlag.FORECLOSURE_MONTHS_MISSING,

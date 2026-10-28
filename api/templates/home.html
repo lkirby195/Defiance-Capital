@@ -5,13 +5,19 @@
 {# Four sections, always in this order and always present (services/home.py): the
    borrower's own submissions, the deals the team entered, the ones on pause, the dead. Each
    is a chart card: the section title and its count on the accent bar, the column labels on
-   the tinted row under it, the deals ruled across. A row is who, where - the address is the
-   link to the deal - how much, which product, the Working version's verdict as a chip and
-   its IRR to two decimals, where it came from and the day it last moved, then the Action
-   column: Progress, Pause and Kill as small secondary buttons. Each control is a plain form
-   post carrying ``return_to=home`` so the action lands back here; Kill is a link to its
-   confirmation page rather than a one-click post. A control the deal's status rules out is
-   off, with the reason on its hover. An empty section says so in one line. #}
+   the tinted row under it, the deals ruled across. A row is who - the borrower's name is the
+   link to their page - where - the address is the link to the deal - how much, which
+   product, the Working version's verdict as a chip and its IRR to two decimals, where it
+   came from and the day it last moved, then the Action column: Progress, Pause and Kill as
+   small secondary buttons. Each control is a plain form post carrying ``return_to=home`` so
+   the action lands back here; Kill is a link to its confirmation page rather than a
+   one-click post. A control the deal's status rules out is off, with the reason on its
+   hover. An empty section says so in one line.
+
+   Above the sections sits the search box (v0.20): a plain GET form whose one box narrows
+   every section to the deals whose borrower's name, entity or phone matches; the counts
+   are of what is shown. The chips row under it is empty today and is where the
+   profile-field filter chips land (10c): ``view.filter.chips`` is their hook. #}
 
 {% macro control_button(entry, action, label, live, why) %}
   <form method="post" action="/queue/deals/{{ entry.deal.id }}/{{ action }}">
@@ -24,7 +30,7 @@
 {% macro deal_row(entry) %}
   {% set deal = entry.deal %}
   <tr>
-    <td>{{ deal.borrower.name if deal.borrower and deal.borrower.name else "—" }}</td>
+    <td>{% if deal.borrower %}<a href="/borrowers/{{ deal.borrower.id }}" title="Every deal this borrower has brought">{{ deal.borrower.name if deal.borrower.name else "(no guarantor name)" }}</a>{% else %}—{% endif %}</td>
     <td class="deal">
       <a href="/queue/deals/{{ deal.id }}" title="The deal page">
         {% if deal.property and deal.property.address_raw %}{{ deal.property.address_raw }}
@@ -58,6 +64,19 @@
 {% block content %}
 <h1>Home</h1>
 
+<form class="search" id="deal-search" method="get" action="/queue" role="search">
+  <input type="search" id="q" name="q" value="{{ view.filter.query }}" placeholder="Borrower, entity or phone" aria-label="Search deals by borrower name, entity or phone">
+  <button class="quiet" type="submit">Search</button>
+  {% if view.filter.active %}<a class="small" href="/queue">Clear</a>{% endif %}
+  {# 10c: the profile-field filter chips go here, one per (field, value) on the filter. #}
+  <div class="chips" id="filter-chips" data-hook="profile-filters">
+    {% for field, value in view.filter.chips %}<span class="tag fact" data-filter="{{ field }}">{{ field | label }}: {{ value }}</span>{% endfor %}
+  </div>
+</form>
+{% if view.filter.active %}
+  <p class="lede small" id="search-result">{{ view.total }} of {{ view.unfiltered_total }} deals match "{{ view.filter.query }}".</p>
+{% endif %}
+
 {% for section in view.sections %}
   <section class="panel chart">
     <div class="row">
@@ -90,7 +109,7 @@
   </section>
 {% endfor %}
 
-{% if not view.total %}
+{% if not view.unfiltered_total %}
   <p class="lede">No deals yet. <a href="/queue/new">Enter a deal</a>.</p>
 {% endif %}
 {% endblock %}

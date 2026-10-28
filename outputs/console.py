@@ -38,6 +38,7 @@ from schema.models import (
     Solve,
     SolveStatus,
     SourcesAndUses,
+    State,
     TakeBackAnalysis,
     UnderwriteInputs,
     UnderwriteResult,
@@ -544,6 +545,11 @@ def render_take_back(take_back: TakeBackAnalysis | LegacyTakeBackAnalysis) -> li
         )
     elif take_back.market_rent_status is AnalysisStatus.NOT_EVALUATED:
         lines.append("  No market rent: the sale price at the market rent is not evaluated.")
+    if take_back.foreclosure_months_from is State.OTHER:
+        lines.append(
+            f"  OTHER stood in: no foreclosure months in config for {take_back.state.value}; "
+            f"the placeholder of {take_back.foreclosure_months} months was used."
+        )
     carry = (
         "n/a"
         if take_back.foreclosure_months is None

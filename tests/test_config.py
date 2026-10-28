@@ -385,7 +385,7 @@ def test_the_placeholder_scenario_values_load() -> None:
     cfg = Config.load()
     assert cfg.rental.takeout_ltv == Decimal("0.75")
     assert cfg.rental.target_dscr == Decimal("1.20")
-    assert cfg.take_back.foreclosure_months == {State.OK: 6, State.CO: 4}
+    assert cfg.take_back.foreclosure_months == {State.OK: 6, State.CO: 4, State.OTHER: 8}
     assert cfg.take_back.hold_months == [12, 24, 36]
 
 
@@ -394,8 +394,15 @@ def test_foreclosure_months_cover_every_served_state(data: dict[str, Any]) -> No
     with pytest.raises(ConfigError, match="foreclosure_months is missing a served state: CO"):
         Config.from_dict(data)
     data["take_back"]["foreclosure_months"]["CO"] = 4
+    # OTHER is welcome (v0.20): it stands in for a state outside the footprint...
     data["take_back"]["foreclosure_months"]["OTHER"] = 6
-    with pytest.raises(ConfigError, match="cannot name OTHER"):
+    assert Config.from_dict(data).take_back.foreclosure_months[State.OTHER] == 6
+    # ...and optional: without it such a deal's take-back is simply not evaluated
+    del data["take_back"]["foreclosure_months"]["OTHER"]
+    assert State.OTHER not in Config.from_dict(data).take_back.foreclosure_months
+    # the served states still need their own entry; OTHER is not a stand-in for them
+    data["take_back"]["foreclosure_months"] = {"OK": 6, "OTHER": 8}
+    with pytest.raises(ConfigError, match="foreclosure_months is missing a served state: CO"):
         Config.from_dict(data)
 
 

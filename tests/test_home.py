@@ -32,6 +32,7 @@ from schema.models import AuditAction, Channel, Status
 from services import (
     DEALS,
     ActionNotAllowed,
+    HomeFilter,
     Section,
     TeamOverrides,
     add_note,
@@ -52,7 +53,7 @@ from services import (
     section_of,
     underwrite_result,
 )
-from services.home import RunSummary
+from services.home import RunSummary, query_matches
 from services.requests import UnderwriteRequest
 from tests.conftest import ACTOR, DECLINING_SALE_PRICE, QueueClient, requires_db, store_deal
 from tests.test_apply import VALID
@@ -677,8 +678,10 @@ def test_the_deal_page_renders_a_screen_and_an_underwrite(
     assert body.index("<h2>Borrower Sensitivity") < body.index("<h2>Flip Analysis")
     assert body.index("<h2>Flip Analysis") < body.index("<h2>Rental Analysis")
     assert body.index("<h2>Rental Analysis") < body.index("<h2>Take-Back Analysis")
-    assert body.index("<h2>Take-Back Analysis") < body.index("<h2>Sources &amp; Uses")
-    assert body.index("<h2>Sources &amp; Uses") < body.index("<h2>Return Overview")
+    # the tabs' order (v0.20): Summary, Deal Overview, Cash Flows, Sources & Uses, Scenarios
+    assert body.index("<h2>Return Overview") < body.index("<h2>Pricing")
+    assert body.index("<h2>Cash Flows</h2>") < body.index("<h2>Sources &amp; Uses")
+    assert body.index("<h2>Sources &amp; Uses") < body.index("<h2>Flip Analysis")
     assert "Future Draws" in body
     assert "Project yield" in body and "Total deal cost" in body
     assert "Yield (Profit / Costs)" not in body
@@ -785,3 +788,80 @@ def test_every_team_entry_fixture_renders_its_screen_and_underwrite(
     assert "Return Overview" in response.text and "<h2>Lender Sensitivity" in response.text
     assert "Take-Back Analysis" in response.text
     assert client.get("/queue").status_code == 200
+
+
+# --- the search box (SPEC §9.1, v0.20) ------------------------------------------------------------
+
+
+def test_the_query_matches_the_name_the_entity_and_the_phone_by_digits(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    deal = deal_with_overrides  # Dana Whitlock, Whitlock Homes LLC, 918-555-0147
+    for query in ("", "   ", "whit", "DANA", "homes llc", "555-0147", "9185550147", "(918) 555"):
+        assert query_matches(deal, query), query
+    for query in ("ortiz", "ridgeline", "555-0199", "14"):
+        assert not query_matches(deal, query), query
+    # three digits is a phone search; fewer is a name, and no name holds them
+    assert query_matches(deal, "147") and not query_matches(deal, "14")
+    # a deal with no borrower row answers only a blank query
+    deal.borrower = None
+    assert query_matches(deal, "") and not query_matches(deal, "whit")
+
+
+def test_the_filter_narrows_every_section_and_keeps_the_whole_count(
+    anon_client: QueueClient, client: QueueClient, db_session: Session
+) -> None:
+    web = a_web_deal(anon_client, db_session)
+    team = a_deal(db_session, borrower_name="Rafael Ortiz", borrower_phone="7205550144")
+    paused = at(db_session, a_deal(db_session, borrower_name="Priya Natarajan"), Status.PAUSED)
+    everything = home_view(db_session)
+    assert (
+        everything.total == 3 and everything.unfiltered_total == 3 and not everything.filter.active
+    )
+    narrowed = home_view(db_session, HomeFilter(query="rafael"))
+    assert narrowed.filter.active and narrowed.total == 1 and narrowed.unfiltered_total == 3
+    assert [entry.deal.id for entry in narrowed.section(Section.DCF).entries] == [team.id]
+    assert narrowed.section(Section.PAUSED).entries == []
+    by_phone = home_view(db_session, HomeFilter(query="720-555"))
+    assert [entry.deal.id for entry in by_phone.section(Section.DCF).entries] == [team.id]
+    # the paused deal is found in its own section; the web deal in its
+    assert [
+        e.deal.id
+        for e in home_view(db_session, HomeFilter(query="priya")).section(Section.PAUSED).entries
+    ] == [paused.id]
+    found_web = home_view(db_session, HomeFilter(query="elena"))
+    assert [e.deal.id for e in found_web.section(Section.BORROWER).entries] == [web.id]
+    # every section is still there, empty or not
+    assert [section.key for section in narrowed.sections] == list(Section)
+    # the chips hook: a chip narrows by the deal column it names (10c will render them)
+    chipped = home_view(db_session, HomeFilter(chips=(("status", Status.PAUSED.value),)))
+    assert chipped.filter.active and chipped.total == 1
+    assert [entry.deal.id for entry in chipped.section(Section.PAUSED).entries] == [paused.id]
+
+
+def test_the_search_box_renders_narrows_the_page_and_keeps_what_was_typed(
+    client: QueueClient, db_session: Session
+) -> None:
+    a_deal(db_session, borrower_name="Rafael Ortiz", borrower_phone="7205550144")
+    other = a_deal(db_session, borrower_name="Priya Natarajan", borrower_phone="9185550102")
+    body = client.get("/queue").text
+    assert (
+        '<form class="search" id="deal-search" method="get" action="/queue" role="search">' in body
+    )
+    assert 'type="search" id="q" name="q" value=""' in body
+    assert '<div class="chips" id="filter-chips" data-hook="profile-filters">' in body
+    assert "Clear</a>" not in body and 'id="search-result"' not in body
+    assert "Rafael Ortiz" in body and "Priya Natarajan" in body
+    found = client.get("/queue", params={"q": "  rafael "}).text
+    assert 'name="q" value="rafael"' in found
+    assert '<a class="small" href="/queue">Clear</a>' in found
+    assert '<p class="lede small" id="search-result">1 of 2 deals match "rafael".</p>' in found
+    assert "Rafael Ortiz" in found and "Priya Natarajan" not in found and str(other.id) not in found
+    assert (
+        found.count('<span class="count">') == 4
+        and 'DCF New Deals <span class="count">1</span>' in found
+    )
+    # nothing matches: the four sections stand empty and the page says so by the count
+    none = client.get("/queue", params={"q": "nobody"}).text
+    assert '0 of 2 deals match "nobody".' in none and "No deals yet" not in none
+    assert none.count('<p class="small muted" style="margin:0">None.</p>') == 4

@@ -1437,9 +1437,11 @@ class TakeBackAnalysis(BaseModel):
     # SPEC §8.6 (engine 2.1.0). The timeline and the costs - the default month, the lost
     interest, the legal bill, the foreclosure carry - are reported on every run. ``status`` is
     EVALUATED when the two things the solves need are there: a projected sale price (the
-    haircut and the bounds are set against it) and foreclosure months for the deal's state;
-    ``market_rent_status`` is EVALUATED when there is a market rent beside them. The haircut
-    block is ``haircut_price``; the hold-and-rent block is ``holds``.
+    haircut and the bounds are set against it) and foreclosure months - the deal's state's
+    own, else config's ``OTHER`` entry standing in (``foreclosure_months_from`` says which;
+    None on a row recorded before 2.2.0); ``market_rent_status`` is EVALUATED when there is
+    a market rent beside them. The haircut block is ``haircut_price``; the hold-and-rent
+    block is ``holds``.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1456,7 +1458,10 @@ class TakeBackAnalysis(BaseModel):
     lost_interest: Decimal  # what those months would have paid
     legal_costs: Decimal
     state: State
-    foreclosure_months: int | None  # config, by state; None when the state has none
+    foreclosure_months: int | None  # config, by state; None when nothing in config applies
+    # The config key the months came from: the deal's state, or OTHER standing in for it
+    # (SPEC §8.6, v0.20); None when there are none, and on a row from before 2.2.0.
+    foreclosure_months_from: State | None = None
     holding_costs_monthly: Decimal
     foreclosure_carry: Decimal | None  # foreclosure months x the monthly holding cost
     sale_month: int | None  # default + lost + foreclosure months; the REO sale

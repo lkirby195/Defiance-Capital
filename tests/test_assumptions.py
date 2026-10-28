@@ -147,13 +147,13 @@ def test_the_panel_is_open_under_the_outputs_with_every_box_and_the_right_tag(
     formula, so the tags say the different things they have to say."""
     deal = store_deal(db_session, team_entry)
     body = client.get(f"/queue/deals/{deal.id}").text
-    # the panel sits under the outputs and above the read-only intake summary
+    # the panel is the last tab, under every output and the read-only intake summary (v0.20)
     assert body.index("<h2>Return Overview</h2>") < body.index('id="assumptions"')
-    assert body.index('id="assumptions"') < body.index("<h2>Deal Economics and Property</h2>")
+    assert body.index("<h2>Deal Economics and Property</h2>") < body.index('id="assumptions"')
     assert 'id="inputs"' not in body
     section = panel(client, deal)
     assert "<h2>Underwriting Assumptions" in section
-    assert '<div class="grid2">' in section
+    assert '<div class="kv-grid structure" id="assumption-rows">' in section
     for name in ASSUMPTION_NAMES:
         assert f'name="{name}"' in section, name
     # the ten config defaults and the formula split carry the tag, shown while untouched;
@@ -538,7 +538,7 @@ def test_the_panel_carries_the_team_form_s_structure_radio_and_rehab_portion(
     portion pre-filled with its default, tagged and resettable."""
     deal = store_deal(db_session, team_entry)  # an inferred holdback, 147,000 / 48,000
     section = panel(client, deal)
-    assert '<div class="grid2 structure">' in section
+    assert '<div class="kv-grid structure" id="assumption-rows">' in section
     assert 'role="radiogroup" aria-label="Loan Structure"' in section
     assert re.search(r'name="product" value="ACQUISITION_REHAB"\s+checked', section)
     assert not re.search(r'name="product" value="ACQUISITION"\s+checked', section)

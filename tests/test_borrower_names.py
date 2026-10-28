@@ -150,7 +150,8 @@ def overview_value(page: str, label: str) -> str:
     """The ``<dd>`` after a ``<dt>`` in the deal page's Overview, whitespace collapsed."""
     match = re.search(rf"<dt>{re.escape(label)}</dt>\s*<dd>(.*?)</dd>", page, re.S)
     assert match, f"no {label} on the deal page"
-    return " ".join(match.group(1).split())
+    # the guarantor's name is a link to the borrower's page (v0.20): the words, not the tag
+    return " ".join(re.sub(r"<[^>]+>", "", match.group(1)).split())
 
 
 def create(client: QueueClient, db_session: Session, **changes: str) -> tuple[Deal, str]:

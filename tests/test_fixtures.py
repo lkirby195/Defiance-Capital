@@ -320,6 +320,8 @@ def test_fixture_underwrite_flip_rental_and_take_back(path: Path) -> None:
     assert take_back.market_rent_status.value == want["market_rent_status"]
     for name in ("default_month", "sale_month", "foreclosure_months"):
         assert getattr(take_back, name) == want[name], name
+    came_from = take_back.foreclosure_months_from
+    assert (None if came_from is None else came_from.value) == want["foreclosure_months_from"]
     for name in (
         "interest_received",
         "lost_interest",
