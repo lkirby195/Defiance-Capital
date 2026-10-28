@@ -1,0 +1,38 @@
+{# The deal page's tabs (v0.20, SPEC §9). Showing only: nothing here validates, fetches or
+   decides. Each link in #deal-tabs names a panel by data-tab; the active one is the URL
+   hash, so a reload - or a link somebody pastes - lands on the same tab, and the first tab
+   is the page's default. Without script every panel is on the page in order and the tab
+   row is a row of in-page links, which is also what a browser with it off gets. #}
+  <script>
+    (function () {
+      var links = document.querySelectorAll("#deal-tabs a[data-tab]");
+      var panels = document.querySelectorAll(".tab-panel[data-tab]");
+      if (!links.length || !panels.length) return;
+      function known(name) {
+        for (var i = 0; i < links.length; i++) if (links[i].dataset.tab === name) return true;
+        return false;
+      }
+      function show(name) {
+        if (!known(name)) name = links[0].dataset.tab;
+        panels.forEach(function (panel) { panel.hidden = panel.dataset.tab !== name; });
+        links.forEach(function (link) {
+          var on = link.dataset.tab === name;
+          link.classList.toggle("on", on);
+          link.setAttribute("aria-current", on ? "page" : "false");
+        });
+        return name;
+      }
+      function fromHash() { return (window.location.hash || "").replace(/^#/, ""); }
+      links.forEach(function (link) {
+        link.addEventListener("click", function (event) {
+          event.preventDefault();
+          var name = show(link.dataset.tab);
+          if (window.history.replaceState) window.history.replaceState(null, "", "#" + name);
+          else window.location.hash = name;
+        });
+      });
+      window.addEventListener("hashchange", function () { show(fromHash()); });
+      show(fromHash());
+      if (fromHash()) window.scrollTo(0, 0);
+    })();
+  </script>

@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.19
+# GLENWOOD Underwriting Platform — SPEC v0.20
 
-Status: **v0.19**, 2026-10-28, engine `2.1.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.20**, 2026-10-28, engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.20** puts the deal page on six tabs and gives the borrower a page (engine `2.2.0`, no migration). The deal page keeps its header and puts everything under it on **Summary**, **Deal Overview**, **Cash Flows**, **Sources & Uses**, **Scenarios** and **Assumptions** (§9); the active tab is the URL hash, so a reload lands on the same one, and the tabs are the one script on the page beside the input masks. Deal Economics and Property is one label/value grid under section rules; the Underwriting Assumptions panel is a grid of rows with the box on the value side and its "default" tag at the right edge; the Cash Flows are open; the versions - a selector and the history - sit under the panel. Home gains a **search box** (borrower name, entity, phone) with the hook for the 10c profile-field filter chips, and the borrower's name on a Home row and in the deal header links to `/borrowers/{id}`: who they are and every deal they brought, with the totals (§9.1). `take_back.foreclosure_months.OTHER` (placeholder 8) now stands in for a state outside the footprint, so such a deal gets a take-back; `FORECLOSURE_MONTHS_MISSING` (Info) is raised on that fallback alone and names the placeholder (§8.6, §8.8, §10).
 
 **v0.19** replaces the two DSCR tests with the takeout and the lender's downside (engine `2.1.0`). The **Rental analysis** is sized from the exit value down (§8.5): the takeout loan is the **exit value** - a new per-deal input on the Underwriting Assumptions panel, the estimated sale price by default - times `rental.takeout_ltv` (placeholder 75%); its debt service is shown amortizing over `rental.amortization_years` and interest-only; the **required NOI** is the amortizing debt service times `rental.target_dscr` (placeholder 1.20, the renamed `dscr_floor`); the **required rent** is that NOI grossed up by the expense ratio; and beside it the market rent, the gap, the DSCR at the market rent on both bases and the **spread to loan** (the takeout loan less our payoff due). Holding costs are out of it. `MARKET_RENT_BELOW_REQUIRED` and `TAKEOUT_BELOW_PAYOFF` (both config, placeholder Soft) replace `DSCR_BELOW_FLOOR`; without a market rent the required rent and the spread still compute and only the market-rent lines are `NOT_EVALUATED`. The **Take-Back analysis** is the lender's own downside solved on its XIRR (§8.6): a default at the end of the rehab period, `lost_interest_months` of nothing, the legal bill, `take_back.foreclosure_months[state]` of carry at the deal's monthly holding cost, then a sale net of the broker. **Block A** bisects the sale price at which the lender's XIRR over the whole loan reaches `pricing.target_lender_irr` and reports it as a haircut from the projected sale price, a share of the purchase price and against the new optional **as-is value**; `TAKE_BACK_PRICE_ABOVE_PURCHASE` (config, placeholder Hard) when it is above the purchase price. **Block B**, per `take_back.hold_months` (12, 24, 36), solves the rent at the projected sale price and the sale price at the market rent for the same XIRR after a hold. Every solve carries its bounds and says "no solution" when it hits one. `TAKE_BACK_DSCR_BELOW_FLOOR`, `take_back.amortization_years` and `take_back.dscr_floor` are gone; a stored 2.0 row's two blocks still read. Migration `0022` adds `deals.rental_exit_value` and `deals.as_is_value`. The deal page cards, the workbook sheets and the CLI blocks follow; 10b moves the cards into the Scenarios tab.
 
@@ -954,7 +956,8 @@ own month-end anchors (§8.3):
 ```
 D = default month = max(1, term_months − draws.listing_months)
 L = take_back_lost_interest_months      (the deal's own, else config 3)
-F = take_back.foreclosure_months[state] (config, by state; placeholders OK 6, CO 4)
+F = take_back.foreclosure_months[state] (config, by state; placeholders OK 6, CO 4), or
+    take_back.foreclosure_months.OTHER (placeholder 8) where the state has no entry (v0.20)
 S = REO sale month = D + L + F
 
 month 0             −funded at close, +the origination fee's close half
@@ -999,9 +1002,12 @@ discount factors worked out once per solve - and the dollar it lands on and the 
 then confirmed on the XIRR, with a fall-back to bisection on the XIRR alone should they disagree.
 
 The analysis is `NOT_EVALUATED` without a **projected sale price** (the haircut and the bounds
-are set against it; `SALE_PRICE_MISSING` says so) or without **foreclosure months for the deal's
-state** (`FORECLOSURE_MONTHS_MISSING`, Info, fixed in code); the timeline is reported either
-way. Without a market rent only column (2) stands down, under the shared `MONTHLY_RENT_MISSING`.
+are set against it; `SALE_PRICE_MISSING` says so) or without **foreclosure months**: the deal's
+state's own entry, else config's `OTHER` entry standing in - on which the analysis runs, under
+`FORECLOSURE_MONTHS_MISSING` (Info, fixed in code) naming the placeholder (v0.20) - and with
+neither the analysis is not evaluated under the same flag. `foreclosure_months_from` on the
+result records which key the months came from. The timeline is reported either way. Without a
+market rent only column (2) stands down, under the shared `MONTHLY_RENT_MISSING`.
 
 Every output of both analyses was checked against an independent script - its own float XIRR,
 its own month ends, its own whole-dollar bisection, no code shared with the engine - on every
@@ -1077,7 +1083,7 @@ All three analyses are always present, and `status` says what happened to each:
 |---|---|
 | `EVALUATED` | it ran; every figure is there |
 | `OFF` | a run before v0.17 only, when the Flip and Rental had toggles and one was off |
-| `NOT_EVALUATED` | the input it runs on is missing - the estimated sale price (the flip, the take-back and, by default, the rental's exit value) or the foreclosure months for the deal's state. The flag that names it is `SALE_PRICE_MISSING` or `FORECLOSURE_MONTHS_MISSING` (§8.8). The Rental and the Take-Back carry a second status, `market_rent_status`, for the lines that read the market rent (`MONTHLY_RENT_MISSING`) |
+| `NOT_EVALUATED` | the input it runs on is missing - the estimated sale price (the flip, the take-back and, by default, the rental's exit value) or foreclosure months (none for the deal's state and no `OTHER` entry to stand in, v0.20). The flag that names it is `SALE_PRICE_MISSING` or `FORECLOSURE_MONTHS_MISSING` (§8.8). The Rental and the Take-Back carry a second status, `market_rent_status`, for the lines that read the market rent (`MONTHLY_RENT_MISSING`) |
 
 An analysis that did not run still reports everything that does not depend on the missing
 input: the Flip's whole cost stack and the borrower's equity, the Rental's assumptions and
@@ -1095,7 +1101,7 @@ The §7.2 court codes and the credit, experience and leverage codes the screen r
 | `TAKE_BACK_PRICE_ABOVE_PURCHASE` | config (placeholder Hard) | §8.6, the sale price the lender needs is above the purchase price; tested only when it was solved |
 | `BORROWER_COC_BELOW_TARGET` | config (placeholder Soft) | §8.4, the Flip's cash-on-cash is below `pricing.borrower_coc_target`; not tested without a sale price or with no equity |
 | `MONTHLY_RENT_MISSING` | Info (fixed) | §8.5, §8.6: no `monthly_rent` on the deal, so the market-rent lines of both analyses are not evaluated |
-| `FORECLOSURE_MONTHS_MISSING` | Info (fixed) | §8.6: config names no foreclosure months for the deal's state, so the Take-Back is not evaluated |
+| `FORECLOSURE_MONTHS_MISSING` | Info (fixed) | §8.6: config names no foreclosure months for the deal's state; the `OTHER` entry stood in (placeholder 8, v0.20) or, without one, the Take-Back is not evaluated |
 | `SALE_PRICE_MISSING` | Info (fixed) | §8.4: there is no `estimated_sale_price`, so the Flip analysis is `NOT_EVALUATED`, and so are the Take-Back's solves and, unless an exit value was typed, the Rental's takeout; the screen's own `ESTIMATED_SALE_PRICE_MISSING` (Soft) reports the same absence on the leverage side |
 | `NO_REHAB_PERIOD` | Info (fixed) | §8.3: a holdback whose term leaves `rehab_months = 0`, so the rehab portion is advanced at close instead of drawn |
 
@@ -1252,45 +1258,57 @@ One order wherever a run is printed — the CLI report and the workbook:
 The first three are the §8.1 input groups, shown back as the run read them; the rest are the
 result. The CLI report and the workbook show all of it. The deal page shows every section but
 the Flags - the flags, the screen's reasons and the suggested reply stay on the stored rows,
-the CLI and the workbook - and puts the outputs first. Its header is the address, one row of
-chips - the borrower, the entity (when there is one), "Loan Request: $X" in whole dollars and
-the IRR to two decimals - and the phone under them, with the controls on the right: the version switcher,
-the one **Run Analysis** button with its optional name, Download Excel and Edit Intake. The
-loan structure and the term are in the intake summary below; the status and the verdict are one
-line of small text atop the Actions card ("Status: Underwriting · Verdict: Go", the version
-in view's verdict, a dash before any), above Progress / Pause / Kill (v0.16); when a version
-ran, who ran it and on which engine are in the History. Then Pricing, full width, with each
-row's borrower equity and, under its sentence, its de-risk line (§8.10); the Lender and
-Borrower Sensitivity side by side; Flip, Rental and Take-Back as three cards, each led by its
-headline figure (net profit, required rent, sale price needed; "Not evaluated" is a state, not
-an error) - the Flip card prints the profit line by line, the cost stack to the total deal cost,
-and the borrower's equity, cash-on-cash against its target and project yield (§8.4); the Rental
-card the takeout from the exit value down to the required rent, the market rent with its gap and
-two DSCRs, and the spread to loan (§8.5); the Take-Back card the timeline, the haircut block and
-the hold-and-rent table, a solve with no solution reading "None needed" or "No solution" (§8.6);
-10b moves the three into the Scenarios tab; then
-**Sources & Uses**, the sources beside the uses (§8.11); and the Return Overview as one line
-(IRR, total interest, total fees, total profit, payoff date) with the ledger collapsed under
-it as **Cash Flows**. Under the outputs, open, sits the **Underwriting Assumptions** panel:
-two columns of editable boxes - Interest Rate, Origination Fee, Contingency, Closing Costs,
-Holding Costs %, the Loan Structure radio and the Rehab portion box it reveals on Holdback
-(the team form's own two controls, v0.18; the advance at closing is the rest of the loan),
-Estimated Sale Price, As-Is Value, Exit Value (tagged "default" while it holds the sale price,
-v0.19), Monthly Rent, Broker Selling Costs %, Rental Expense %, Rental Takeout Rate, Take-Back
-Legal Costs, Take-Back Lost Interest Months (the two analysis toggles that ended the list went
-with v0.17) -
-each showing what the deal carries, masked as everywhere else, tagged "default" while it
-holds its default and with a reset of its own; one **Save & Run** at the bottom that saves
-the panel and runs the analysis as the person who pressed it, and **Reset all to defaults**
-beside it, which confirms on a page of its own, puts every box with a default back to it and
-runs again. Under the panel the intake is a read-only summary - **Deal Economics and
-Property**: Overview, Property Overview and Deal Economics side by side with an Edit Intake
-link, the sizing table against the caps and the score components - and below it the rest:
-**Actions**, the **court and filing search** (collapsed; the outcome, the date and the typed matters, its own Save), and
-**History** (collapsed;
-every version with its name, timestamp, actor, Working or Draft and engine version, a View on
-each; every intake edit no version has run on as an "edit" row with a Restore; and the audit
-trail under it). The page names no engine stage; the two it runs are an implementation.
+the CLI and the workbook - and puts the outputs first, on **six tabs** (v0.20). Its header is
+the address, one row of chips - the borrower (a link to the borrower's page, §9.1), the entity
+(when there is one), "Loan Request: $X" in whole dollars and the IRR to two decimals - and
+the phone under them, with the controls on the right: the version switcher, the one **Run
+Analysis** button with its optional name, Download Excel and Edit Intake; when a version ran,
+who ran it and on which engine are in the versions table. Under the header a row of tabs,
+the active one named by the URL hash so a reload - or a pasted link - lands on the same tab;
+the tabs are the one script on the page beside the input masks, and without it every panel
+is on the page in this order with the tab row as in-page links:
+
+1. **Summary** - the Return Overview as one line (IRR, total interest, total fees, total
+   profit, payoff date); Pricing, full width, with each row's borrower equity and, under its
+   sentence, its de-risk line (§8.10); the Lender and Borrower Sensitivity side by side; the
+   **leverage against the caps** (the sizing table, §7.4, §8.2); and the **Actions** card,
+   opening on one line of small text ("Status: Underwriting · Verdict: Go", the version in
+   view's verdict, a dash before any) above Progress / Pause / Kill, Decline, Re-open and
+   Add note.
+2. **Deal Overview** - **Deal Economics and Property** as one label/value grid, two pairs
+   across on a desktop and one on a phone, under section rules (From the public form on a
+   web deal, Overview, Property Overview, Deal Economics), with an Edit Intake link on its
+   bar and what is still needed from the borrower under it; **Scored as** (the score
+   components); the **court and filing search** (collapsed; the outcome, the date and the
+   typed matters, its own Save).
+3. **Cash Flows** - the ledger, the whole table, open.
+4. **Sources & Uses** - the sources beside the uses (§8.11).
+5. **Scenarios** - Flip, Rental and Take-Back as three cards, each led by its headline figure
+   (net profit, required rent, sale price needed; "Not evaluated" is a state, not an error):
+   the Flip card prints the profit line by line, the cost stack to the total deal cost, and
+   the borrower's equity, cash-on-cash against its target and project yield (§8.4); the
+   Rental card the takeout from the exit value down to the required rent, the market rent
+   with its gap and two DSCRs, and the spread to loan (§8.5); the Take-Back card the timeline,
+   the haircut block and the hold-and-rent table, a solve with no solution reading "None
+   needed" or "No solution" (§8.6).
+6. **Assumptions** - the **Underwriting Assumptions** panel as a grid of rows, one per box:
+   Interest Rate, Origination Fee, Contingency, Closing Costs, Holding Costs %, the Loan
+   Structure radio and the Rehab portion row it reveals on Holdback (the team form's own two
+   controls, v0.18; the advance at closing is the rest of the loan), Estimated Sale Price,
+   As-Is Value, Exit Value (tagged "default" while it holds the sale price, v0.19), Monthly
+   Rent, Broker Selling Costs %, Rental Expense %, Rental Takeout Rate, Take-Back Legal Costs,
+   Take-Back Lost Interest Months and the Version name - the caption on the left, the box on
+   the right showing what the deal carries, masked as everywhere else, with its reset link
+   beside it and the "default" tag at the right edge while it holds its default; one **Save &
+   Run** under the rows that saves the panel and runs the analysis as the person who pressed
+   it, and **Reset all to defaults** beside it, which confirms on a page of its own, puts
+   every box with a default back to it and runs again. Under the panel the **Versions** card:
+   a version selector (the header's switcher, repeated where the versions live), the
+   versions-and-edits table (every version with its name, timestamp, actor, Working or Draft
+   and engine version, a View on each; every intake edit no version has run on as an "edit"
+   row with a Restore) and the audit trail under it.
+
+The page names no engine stage; the two it runs are an implementation.
 
 **Versions on the page** (§5). Every result on the page - the verdict line, the score
 components, and every output section - is one version's: the
@@ -1329,6 +1347,21 @@ they heard of us: <text>" (§4.2).
 One page in the review queue: intake facts, enrichment hits, score components, verdict and
 missing fields on the deal page; the reasons and the suggested reply on the stored `screens`
 row, the CLI report and the workbook, where a person drafting a message reads them.
+
+**Home and the borrower's page** (v0.20). Home's four sections (§12) sit under a **search
+box**: one GET box that narrows every section to the deals whose borrower matches - the
+guarantor's name or an entity's by case-blind substring, the phone by its digits once the
+query holds three of them - with the counts of what is shown, a line saying how many of how
+many match, and Clear. The chips row under the box is empty and is where the 10c
+**profile-field filter chips** land (`services/home.HomeFilter.chips`, applied in
+`matches`). The borrower's name on a Home row and in the deal header links to
+`/borrowers/{id}`: the guarantor's name with their entities, phone and email as chips, and
+every deal on their row - the address linking to the deal, its status, the Working version's
+verdict and IRR, the loan amount, the loan structure and the day it last moved, most recently
+touched first - with the totals at the foot: how many deals, how many of them live (neither
+dead nor declined), the mean IRR of the deals that have one, and the loan amounts added up.
+A dead deal stays on the list and in the totals; the page answers how much business the
+person has brought and how it went.
 
 **Restore** on an edit row saves that intake as a new `intake_submissions` row - read back
 through the parser for the channel it arrived on, applied exactly as Edit Intake applies a
@@ -1416,7 +1449,7 @@ workbook to export.
 - sensitivity (§8.9): `loan_step_usd` (5,000), `loan_steps` (4), `rate_min` (12.5%), `rate_max` (17.5%), `rate_step` (1%) - the shape of the IRR grid; every cell is a ledger re-run
 - pricing (§8.10): `borrower_coc_target` (20%, placeholder, v0.17; the Flip's cash-on-cash target, §8.4), `target_lender_irr` (20%, placeholder), `max_quoted_rate` (18%, placeholder; above 0, at most 100%), `loan_amount_pct_steps` (`[0, -0.05, -0.10]`, placeholder; each between -1 and 0, no duplicates, at least one) and `loan_amount_rounding` ($1,000, placeholder; above 0). The old `loan_amount_steps` is refused by name
 - rental takeout (§8.5): `expenses_pct_of_rent` (35%) and `takeout_rate` (6.5%), the defaults for the two per-deal assumptions; `takeout_ltv` (75%, placeholder, v0.19; above 0), `amortization_years` (30) and `target_dscr` (1.20, placeholder; the renamed `dscr_floor`, which is refused by name)
-- take-back (§8.6): `lost_interest_months` (3) and `legal_costs_usd` (5,000), the defaults for the two per-deal assumptions; `foreclosure_months` by state (placeholders OK 6, CO 4; every served state needs an entry and `OTHER` cannot have one) and `hold_months` (`[12, 24, 36]`; distinct, ascending, 1 to 120). The DSCR test's `amortization_years` and `dscr_floor` are refused by name
+- take-back (§8.6): `lost_interest_months` (3) and `legal_costs_usd` (5,000), the defaults for the two per-deal assumptions; `foreclosure_months` by state (placeholders OK 6, CO 4, OTHER 8; every served state needs an entry, and `OTHER` stands in for any other state, v0.20) and `hold_months` (`[12, 24, 36]`; distinct, ascending, 1 to 120). The DSCR test's `amortization_years` and `dscr_floor` are refused by name
 - underwrite flag severities: `MARKET_RENT_BELOW_REQUIRED` and `TAKEOUT_BELOW_PAYOFF` (placeholder Soft), `TAKE_BACK_PRICE_ABOVE_PURCHASE` (placeholder Hard), `BORROWER_COC_BELOW_TARGET` (placeholder Soft, v0.17). The informational codes (§8.8) are fixed `Info` in code and the loader refuses to grade them, as it refuses the retired `DSCR_BELOW_FLOOR` and `TAKE_BACK_DSCR_BELOW_FLOOR`
 - states served and court-record adapter per state
 - `web_intake.submissions_per_hour_per_ip` (placeholder 5): posts to the public form from one address in a sliding hour before the next is turned away (§4.2)
@@ -1569,6 +1602,12 @@ guarantor's name, the email and the entity live on the `borrowers` row, which wa
 when there was a phone; a phoneless intake that names anybody now gets one, and an edit reuses
 the deal's own phoneless row rather than minting another.
 
+Phase 10b (engine `2.2.0`, no migration, v0.20) puts the deal page on six tabs - Summary, Deal
+Overview, Cash Flows, Sources & Uses, Scenarios, Assumptions - the active one kept in the URL
+hash; reformats Deal Economics and Property and the Underwriting Assumptions panel as
+label/value grids; adds Home's search box and the borrower's page (§9, §9.1); and lets
+`take_back.foreclosure_months.OTHER` stand in for a state outside the footprint (§8.6).
+
 Phase 10a (engine `2.0.0`, migration `0021`, v0.17) collapses the four products to two loan
 structures - 100% at close and Holdback - and takes the analysis toggles out; the Flip
 Analysis prints its profit and its cost stack line by line with the borrower's equity,
@@ -1578,6 +1617,22 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
 ---
 
 ## 13. Open items
+
+- 10b-tabs' open questions (v0.20):
+  - The **Assumptions tab repeats the version selector** under the panel, beside the
+    history, while the header keeps its switcher ("fixed header, as now"); one of the two
+    could go
+  - A **run, a save or a restore lands on the Summary tab**: the hash is not carried through
+    the redirect, and Show on either selector drops it too
+  - The **tabs are script**, the queue's second beside the input masks; a browser without it
+    sees every panel in order under a row of in-page links
+  - The **borrower page's totals** are the count, the live count, the mean IRR of the deals
+    that have one and the loan amounts added up, over every deal dead or alive; the brief
+    said "totals" and no more
+  - **`foreclosure_months.OTHER` is 8 months**, a placeholder to confirm; it stands in for
+    every state outside OK and CO alike, because `State` folds them all into `OTHER`
+  - The **screenshots** are a new set under `docs/screenshots/10b-tabs/`; the phase-8c-ui set
+    is left as it was and no longer shows the current deal page or Home
 
 - 10a-scenarios' open questions (v0.19):
   - **Our payoff due** is the commitment plus the origination fee's payoff half - what the
@@ -1601,14 +1656,14 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
     defaultable column `populate` does not write
   - The **as-is value** came back as a plain optional input (dropped with the as-is LTV in
     v0.5); nothing in the screen reads it and no adapter supplies it
-  - `foreclosure_months` has **no entry for `OTHER`**: a deal in a state outside the footprint
-    has no take-back, with `FORECLOSURE_MONTHS_MISSING`
+  - (settled in v0.20) `foreclosure_months.OTHER` (placeholder 8) stands in for a state
+    outside the footprint, and `FORECLOSURE_MONTHS_MISSING` is raised on that fallback alone
   - The market rent keeps its column and flag names (`monthly_rent`, `MONTHLY_RENT_MISSING`)
     and its Monthly Rent caption; the analyses call it the market rent
   - The take-back's hold collects **rent net of the rental's expense ratio** and nothing
     else: no holding cost over the hold, no vacancy
   - The Rental card's headline is the **required rent** and the Take-Back card's the **sale
-    price needed**; 10b moves both cards into the Scenarios tab
+    price needed**; both cards are on the Scenarios tab since v0.20
 
 - 10a's open questions (v0.17):
   - The requested row has no de-risk line (it adds nothing); every other row with a solved

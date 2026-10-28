@@ -3,6 +3,18 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**2.2.0 (10b-tabs, 2026-10-28) lets config's ``take_back.foreclosure_months.OTHER`` stand in
+for a state outside the footprint.** A deal whose state has no entry of its own - which is
+every deal outside OK and CO, since ``State`` folds the rest into ``OTHER`` - used to have no
+take-back at all. Now the ``OTHER`` entry (placeholder 8 months) is its foreclosure
+timeline: the carry, the sale month and every solve run on it, ``TakeBackAnalysis`` records
+which key the months came from (``foreclosure_months_from``), and
+``FORECLOSURE_MONTHS_MISSING`` (Info) is raised on that fallback alone, naming the
+placeholder; a served state raises nothing. Without an ``OTHER`` entry the analysis is
+NOT_EVALUATED as before. A new fixture, ``conditional_acquisition_other_state`` (Wichita's
+note in a state outside the footprint), pins the figures the independent script worked
+out: a sale in month 20 and a haircut price of $204,977. Nothing moves on a deal in OK or CO.
+
 **2.1.0 (10a-scenarios, 2026-10-28) replaces the two DSCR tests with the takeout and the
 lender's downside.** The **Rental analysis** (SPEC §8.5) is sized from the exit value down:
 the takeout loan is the exit value - the deal's own ``rental_exit_value`` when the team typed
@@ -248,4 +260,4 @@ REHAB_PORTION_EXCEEDS_BUDGET.
 
 from __future__ import annotations
 
-ENGINE_VERSION = "2.1.0"
+ENGINE_VERSION = "2.2.0"

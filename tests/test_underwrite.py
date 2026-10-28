@@ -34,6 +34,7 @@ from schema.models import (
     Severity,
     SizingInputs,
     State,
+    TakeBackAnalysis,
     Tranche,
     UnderwriteFlag,
     UnderwriteInputs,
@@ -318,14 +319,40 @@ def test_a_rent_on_the_deal_leaves_the_flag_unraised() -> None:
     assert UnderwriteFlag.MONTHLY_RENT_MISSING.value not in codes(result.flags)
 
 
-def test_no_foreclosure_months_for_the_state_is_informational() -> None:
-    """A state outside the footprint has no timeline, so the take-back stands down."""
+def test_the_other_entry_standing_in_for_a_state_is_informational() -> None:
+    """A state outside the footprint has no timeline of its own: config's OTHER entry
+    stands in, the take-back runs on it, and the flag names the placeholder (v0.20)."""
     elsewhere = inputs().model_copy(update={"state": State.OTHER})
     result = underwrite(elsewhere, CONFIG)
     flag = find(result.flags, UnderwriteFlag.FORECLOSURE_MONTHS_MISSING)
     assert flag.severity is Severity.INFO
     assert "No foreclosure months in config for Other" in flag.message
+    assert "OTHER placeholder stood in" in flag.message and "8 months" in flag.message
+    assert "take_back.foreclosure_months.OTHER" in flag.message
+    take_back = result.take_back
+    assert isinstance(take_back, TakeBackAnalysis)
+    assert take_back.status is AnalysisStatus.EVALUATED
+    assert (take_back.foreclosure_months, take_back.foreclosure_months_from) == (8, State.OTHER)
+    assert take_back.lost_interest == D("4500.00")
+    # a served state is clean
+    clean = underwrite(inputs(), CONFIG)
+    assert UnderwriteFlag.FORECLOSURE_MONTHS_MISSING.value not in codes(clean.flags)
+
+
+def test_no_foreclosure_months_at_all_leaves_the_take_back_unevaluated() -> None:
+    config = CONFIG.model_copy(
+        update={
+            "take_back": CONFIG.take_back.model_copy(
+                update={"foreclosure_months": {State.OK: 6, State.CO: 4}}
+            )
+        }
+    )
+    elsewhere = inputs().model_copy(update={"state": State.OTHER})
+    result = underwrite(elsewhere, config)
+    flag = find(result.flags, UnderwriteFlag.FORECLOSURE_MONTHS_MISSING)
+    assert flag.severity is Severity.INFO and "was not evaluated" in flag.message
     assert result.take_back.status is AnalysisStatus.NOT_EVALUATED
+    assert isinstance(result.take_back, TakeBackAnalysis)
     assert result.take_back.foreclosure_months is None
     assert result.take_back.lost_interest == D("4500.00")  # reported regardless
 

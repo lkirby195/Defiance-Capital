@@ -14,7 +14,8 @@ anchors (``LoanTerms.anchor``):
     months D+1 .. D+L         nothing: L = take_back_lost_interest_months of lost interest
     month D+L                 -the legal bill (take_back_legal_costs_usd)
     months D+L+1 .. S         -the deal's monthly holding cost, one per foreclosure month;
-                              S = D + L + F, F = take_back.foreclosure_months[state]
+                              S = D + L + F, F = take_back.foreclosure_months[state], or
+                              the OTHER entry where the state has none (``foreclosure_months_for``)
     month S                   the lender owns the property
 
 Then either the REO sale - ``+P x (1 - broker_selling_pct)`` at month S - or a hold: for each
@@ -52,8 +53,9 @@ target and the dollar below it does not. On a flow pattern where the two questio
 XIRR alone, so the figure reported is the XIRR's in every case.
 
 The analysis is ``NOT_EVALUATED`` without a projected sale price - the haircut and the
-bounds are set against it - or without foreclosure months for the deal's state
-(``FORECLOSURE_MONTHS_MISSING``); the timeline and the costs are reported either way.
+bounds are set against it - or without foreclosure months: config's entry for the deal's
+state, else its ``OTHER`` entry standing in (``FORECLOSURE_MONTHS_MISSING`` says so either
+way); the timeline and the costs are reported regardless.
 Pure: ``UnderwriteInputs``, ``LoanTerms`` and a ``Config`` in, a ``TakeBackAnalysis`` out.
 """
 
@@ -64,7 +66,7 @@ from datetime import date
 from decimal import Decimal
 from typing import NamedTuple
 
-from config.config import Config
+from config.config import Config, TakeBackConfig
 from engine.calc.irr import xirr
 from engine.calc.ledger import draw_schedule
 from engine.calc.terms import (
@@ -81,6 +83,7 @@ from schema.models import (
     HoldRow,
     Solve,
     SolveStatus,
+    State,
     TakeBackAnalysis,
     UnderwriteInputs,
 )
@@ -307,6 +310,23 @@ def solve_flows(
     return Solve(status=SolveStatus.SOLVED, value=Decimal(clear), irr=at, lower=lower, upper=upper)
 
 
+def foreclosure_months_for(
+    state: State, settings: TakeBackConfig
+) -> tuple[int | None, State | None]:
+    """The foreclosure months config names for ``state``, and under which key.  # SPEC §8.6
+
+    The state's own entry when there is one; else the ``OTHER`` entry, the placeholder that
+    stands in for a state outside the footprint (``FORECLOSURE_MONTHS_MISSING`` names it);
+    else nothing, and the take-back is NOT_EVALUATED.
+    """
+    months = settings.foreclosure_months
+    if state in months:
+        return months[state], state
+    if State.OTHER in months:
+        return months[State.OTHER], State.OTHER
+    return None, None
+
+
 def take_back_analysis(
     inputs: UnderwriteInputs, loan: LoanTerms, config: Config
 ) -> TakeBackAnalysis:
@@ -314,7 +334,7 @@ def take_back_analysis(
     settings = config.take_back
     lost_months = take_back_lost_interest_months(inputs, config)
     legal = take_back_legal_costs(inputs, config)
-    foreclosure = settings.foreclosure_months.get(inputs.state)
+    foreclosure, foreclosure_from = foreclosure_months_for(inputs.state, settings)
     carry = loan.holding_costs_monthly
     broker = broker_selling_pct(inputs, config)
     expenses_pct = rental_expenses_pct(inputs, config)
@@ -335,6 +355,7 @@ def take_back_analysis(
         "legal_costs": legal,
         "state": inputs.state,
         "foreclosure_months": foreclosure,
+        "foreclosure_months_from": foreclosure_from,
         "holding_costs_monthly": carry,
         "foreclosure_carry": None if foreclosure is None else carry * Decimal(foreclosure),
         "broker_selling_pct": broker,

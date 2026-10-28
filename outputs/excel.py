@@ -51,6 +51,7 @@ from schema.models import (
     SizingResult,
     Solve,
     SolveStatus,
+    State,
     UnderwriteInputs,
     UnderwriteResult,
     ValueSource,
@@ -796,7 +797,11 @@ def _sheet_take_back(book: Workbook, result: UnderwriteResult) -> None:
             "Foreclosure months",
             take_back.foreclosure_months,
             INTEGER,
-            f"config, {take_back.state.value}",
+            (
+                f"config, OTHER standing in for {take_back.state.value}"
+                if take_back.foreclosure_months_from is State.OTHER
+                else f"config, {take_back.state.value}"
+            ),
         ),
         ("Holding cost (monthly)", take_back.holding_costs_monthly, MONEY, "the deal's own"),
         ("Foreclosure carry", take_back.foreclosure_carry, MONEY, "months x monthly holding cost"),

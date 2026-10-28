@@ -67,6 +67,7 @@ glenwood-uw/
     assemble.py            # deals row -> ScreenInputs / UnderwriteInputs; adapter-over-team
     audit.py               # append audit_log rows; read one deal's trail
     autorun.py             # the analysis: screen then underwrite, behind Run Analysis and on arrival / edit as `system`
+    borrowers.py           # the borrower's page: every deal on their row, with the totals
     defaults.py            # the SPEC 8.1 defaults every deal is populated with, and which are defaults
     enrichment.py          # what the adapters produced (Phase 3); the precedence rule
     history.py             # a deal's versions, and the intake edits no version ran on
@@ -74,7 +75,7 @@ glenwood-uw/
     lifecycle.py           # the two automatic status transitions (SPEC 4.6)
     passwords.py           # PBKDF2 hash / verify; pure
     persistence.py         # append screens / underwrites rows; rebuild results from them
-    home.py                # the Home page: the four sections, their membership, the ordering
+    home.py                # the Home page: the four sections, their membership, the ordering, the search filter
     indicative.py          # the thank-you link's token and the indicative terms it shows a web borrower
     purge.py               # the one-time `glenwood deals purge`; every deal table, users kept
     readiness.py           # the SPEC 8.1 checklist: every input, its value, where it came from
@@ -140,38 +141,46 @@ zero would manufacture a shortfall on every deal whose rent nobody looked up. Th
 ledger cannot run without at all - the term - is named by the readiness checklist and refused
 by name.
 
-**The runs are automatic, the page has one button, and the page is labels and values.** A
-complete intake is screened and priced on arrival on every channel and again after every
-team edit, as the actor `system` (`services/autorun.py`, SPEC §4.6); a route that stores,
-edits or restores a deal calls it. A paused deal is left out until Progress brings it back.
-The one button is **Run Analysis**, which runs both stages as the person who pressed it; the
-page never names a stage - it shows the IRR and the ledger - and the Flags, the Reasons
-and the Suggested Reply are on the stored rows, the CLI and the workbook, not on it. The
-hand-entered numbers are the **Underwriting Assumptions** panel, open, under the outputs and
-above the read-only intake summary: two columns of boxes - the §8.1 economics with their
-config defaults, the team form's Loan Structure radio and the Rehab portion box it reveals
-(the advance at closing is the rest of the loan), the valuation, the as-is value, the exit value (the sale price by default, never stored as one), the rent, the five §8.4-§8.6 analysis assumptions (which carry their
-own `deals` columns since migration `0017`, config value as default, engine reads the deal's
-when present) - each tagged "default" while it holds its default and
-resettable one at a time, with one **Save & Run** at the bottom and a **Reset all to
-defaults** beside it that goes through a confirmation page. The court search is its own
-collapsed section with its own Save; the versions (History) are collapsed too, a plain
-`<details>`; History lists the versions and the intake edits no
-version ran on, and an edit row restores that intake as a new submission
-(`services/intake.restore_intake`). The deal page prints no explanatory prose and no
-definitions: no sub-line, no parenthetical, no (?) hover; every IRR on it is two decimals.
-Its header is the address, four chips (borrower, entity, "Loan Request: $X" in whole
-dollars, IRR) and the phone; the status and the verdict are a small line atop the Actions
-card; the version facts (when, who, engine) are in the History. The Underwriting Assumptions
-panel is the one list of what the ledger runs on - there is no separate checklist section;
-the banner names what is missing while the ledger is off. The team form prints nothing but
-labels and boxes, each marked Required or Optional in plain text, and asks only for the
-Overview, the Property Overview and the Deal Economics - the loan structure among them as a
-radio, "100% at close" / "Holdback", whose Holdback reveals a Rehab portion box by a
-stylesheet rule - plus, on New Deal only, an optional Version name for the arrival version;
-everything with a default populates from config and is edited on the deal page, and Edit
-Intake writes only the columns the form has a box for (`db/repository.form_columns`, the loan
-split among them).
+**The runs are automatic, the page has one button, and the page is labels and values on six
+tabs.** A complete intake is screened and priced on arrival on every channel and again after
+every team edit, as the actor `system` (`services/autorun.py`, SPEC §4.6); a route that
+stores, edits or restores a deal calls it. A paused deal is left out until Progress brings it
+back. The one button is **Run Analysis**, which runs both stages as the person who pressed
+it; the page never names a stage - it shows the IRR and the ledger - and the Flags, the
+Reasons and the Suggested Reply are on the stored rows, the CLI and the workbook, not on it.
+Its header is the address, four chips (borrower - a link to the borrower's page - entity,
+"Loan Request: $X" in whole dollars, IRR) and the phone; the status and the verdict are a
+small line atop the Actions card; the version facts (when, who, engine) are in the versions
+table. Under the header six tabs (v0.20, SPEC §9), the active one the URL hash: **Summary**
+(the Return Overview's figures, Pricing, the two sensitivities, the leverage against the
+caps, the Actions), **Deal Overview** (Deal Economics and Property as one label/value grid
+under section rules, what is still needed, Scored as, the court search collapsed), **Cash
+Flows** (the ledger, open), **Sources & Uses**, **Scenarios** (the three cards) and
+**Assumptions**: the **Underwriting Assumptions** panel as a grid of rows - the caption, then
+the box on the value side with its reset link and the "default" tag at the right edge -
+holding the §8.1 economics with their config defaults, the team form's Loan Structure radio
+and the Rehab portion row it reveals (the advance at closing is the rest of the loan), the
+valuation, the as-is value, the exit value (the sale price by default, never stored as one),
+the rent, the five §8.4-§8.6 analysis assumptions (which carry their own `deals` columns
+since migration `0017`, config value as default, engine reads the deal's when present) and
+the Version name, each tagged "default" while it holds its default and resettable one at a
+time, with one **Save & Run** at the bottom and a **Reset all to defaults** beside it that
+goes through a confirmation page; under the panel the versions card, with a version selector,
+the versions-and-edits table (an edit row restores that intake as a new submission,
+`services/intake.restore_intake`) and the audit trail. The deal page prints no explanatory
+prose and no definitions: no sub-line, no parenthetical, no (?) hover; every IRR on it is two
+decimals. The Underwriting Assumptions panel is the one list of what the ledger runs on -
+there is no separate checklist section; the banner names what is missing while the ledger is
+off. The team form prints nothing but labels and boxes, each marked Required or Optional in
+plain text, and asks only for the Overview, the Property Overview and the Deal Economics -
+the loan structure among them as a radio, "100% at close" / "Holdback", whose Holdback
+reveals a Rehab portion box by a stylesheet rule - plus, on New Deal only, an optional
+Version name for the arrival version; everything with a default populates from config and is
+edited on the deal page, and Edit Intake writes only the columns the form has a box for
+(`db/repository.form_columns`, the loan split among them). Home carries a search box
+(borrower name, entity, phone: `services/home.HomeFilter`, whose `chips` is the hook for the
+10c profile-field filters), and the borrower's name on a row links to `/borrowers/{id}`:
+every deal on their row, with the totals (`services/borrowers.py`).
 
 **Two loan structures, three analyses, no toggles** (SPEC §3, §8, engine `2.0.0`). `Product`
 is `ACQUISITION` ("100% at close") or `ACQUISITION_REHAB` ("Holdback"), both on the full
@@ -240,9 +249,11 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
   conversion happens at the HTML boundary and nowhere else - the models, the database and the
   engine never see 12 - so the JSON half of `POST /intake/team` still speaks in what is
   stored.
-- **No client-side JS in the queue beyond the input masks.**
-  Server-rendered Jinja, plain form posts, POST-redirect-GET. The one exception is a
-  convenience and not load-bearing: the masks in `base.html` that format a price, a percent
+- **No client-side JS in the queue beyond the input masks and the deal page's tabs.**
+  Server-rendered Jinja, plain form posts, POST-redirect-GET. The two exceptions are
+  conveniences and not load-bearing. The tabs (`_tabs.html`, v0.20) hide every deal-page
+  panel but the one the URL hash names and write the hash back on a click; without them every
+  panel is on the page in order under a row of in-page links. The masks in `base.html` that format a price, a percent
   and a phone as they are typed and toggle the "default" tag on the §8.1 inputs that have
   one. The server parses `$425,000`, `425000`, `12%` and
   `12` alike, and renders the tag hidden or shown itself, so a browser that runs none of it

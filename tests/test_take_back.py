@@ -305,13 +305,48 @@ def test_without_a_projected_sale_price_the_take_back_reports_the_timeline_only(
     assert all(hold.required_rent == NOT_SOLVED for hold in result.holds)
 
 
-def test_a_state_with_no_foreclosure_months_has_no_timeline_to_sell_on() -> None:
+def test_a_state_outside_the_footprint_sells_on_the_other_entry() -> None:
+    """No entry of its own, so config's OTHER (8 months) stands in: two more months of
+    carry, a sale in month 20, and a higher price needed - checked on the engine's own XIRR
+    over a timeline laid out here (SPEC §8.6, v0.20)."""
     deal = inputs().model_copy(update={"state": State.OTHER})
-    result = take_back_analysis(deal, terms(deal), CONFIG)
+    loan = terms(deal)
+    result = take_back_analysis(deal, loan, CONFIG)
+    assert result.status is AnalysisStatus.EVALUATED
+    assert (result.foreclosure_months, result.foreclosure_months_from) == (8, State.OTHER)
+    assert (result.default_month, result.sale_month) == (9, 20)
+    assert result.foreclosure_carry == loan.holding_costs_monthly * 8
+    assert [hold.sale_month for hold in result.holds] == [32, 44, 56]
+    haircut = result.haircut_price
+    assert haircut is not None and haircut.status is SolveStatus.SOLVED
+    assert haircut.value is not None
+    timeline = wichita_timeline()._replace(foreclosure_months=8)
+    at = xirr(lender_flows(loan, timeline, haircut.value))
+    below = xirr(lender_flows(loan, timeline, haircut.value - DOLLAR))
+    assert at is not None and below is not None and below < TARGET <= at
+    # more carry, later sale: more needed than in Oklahoma, and over the purchase price
+    oklahoma = take_back_analysis(inputs(), loan, CONFIG).haircut_price
+    assert oklahoma is not None and oklahoma.value is not None
+    assert haircut.value > oklahoma.value and result.price_above_purchase is True
+
+
+def test_without_an_other_entry_such_a_state_has_no_timeline_to_sell_on() -> None:
+    config = CONFIG.model_copy(
+        update={
+            "take_back": CONFIG.take_back.model_copy(
+                update={"foreclosure_months": {State.OK: 6, State.CO: 4}}
+            )
+        }
+    )
+    deal = inputs().model_copy(update={"state": State.OTHER})
+    result = take_back_analysis(deal, terms(deal), config)
     assert result.status is AnalysisStatus.NOT_EVALUATED
-    assert result.foreclosure_months is None and result.sale_month is None
-    assert result.foreclosure_carry is None
+    assert result.foreclosure_months is None and result.foreclosure_months_from is None
+    assert result.sale_month is None and result.foreclosure_carry is None
     assert result.projected_sale_price == D("260000")  # reported, just not solved against
+    # a served state reads its own entry, and says so
+    home = take_back_analysis(inputs(), terms(inputs()), config)
+    assert (home.foreclosure_months, home.foreclosure_months_from) == (6, State.OK)
 
 
 def test_the_haircut_is_set_beside_the_as_is_value_when_there_is_one() -> None:

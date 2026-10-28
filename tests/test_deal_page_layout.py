@@ -1,11 +1,12 @@
-"""The deal page's layout: outputs on top, inputs below, and the header chips.  # SPEC §9
+"""The deal page's layout: the header, then six tabs in order, and the header chips.  # SPEC §9
 
-The partners' complaint was that the useful information was buried. The page now opens on
-the answer - the header's chips and the Pricing table - and puts what the run read
-underneath; the CLI report and the workbook keep the SPEC §9 order. These tests hold the
-page to its own order, analyzed or not, and to the header: one row of chips (borrower,
-entity, loan request, IRR) and the phone, with the controls on the right. No (?) anywhere,
-every IRR to two decimals. The same top bar is on every queue page; the borrower's has the
+The partners' complaint was that the useful information was buried. The page opens on the
+answer - the header's chips and the Summary tab - and puts what the run read under the
+Deal Overview and Assumptions tabs (v0.20; ``tests/test_deal_tabs.py`` holds each tab to its
+members); the CLI report and the workbook keep the SPEC §9 order. These tests hold the page
+to its own order, analyzed or not, and to the header: one row of chips (borrower, entity,
+loan request, IRR) and the phone, with the controls on the right. No (?) anywhere, every
+IRR to two decimals. The same top bar is on every queue page; the borrower's has the
 wordmark and the language toggle and nothing else.
 """
 
@@ -27,22 +28,32 @@ ORDER = (
     '<div class="chips" id="deal-chips">',
     '<section class="panel" id="versions">',
     '<form class="run" method="post"',
+    '<nav class="tabs" id="deal-tabs"',
+    '<div class="tab-panel" id="tab-summary"',
+    "<h2>Return Overview</h2>",
     '<section class="panel chart" id="pricing">',
     '<div class="pair">',
     '<section class="panel chart" id="lender-sensitivity">',
     '<section class="panel chart" id="borrower-sensitivity">',
+    '<section class="panel chart" id="leverage">',
+    '<section class="panel" id="actions">',
+    '<div class="tab-panel" id="tab-overview"',
+    '<section class="panel chart" id="economics">',
+    "<h2>Deal Economics and Property</h2>",
+    '<section class="panel chart" id="scored-as">',
+    '<details class="panel" id="court">',
+    '<div class="tab-panel" id="tab-cash-flows"',
+    '<section class="panel chart" id="cash-flows">',
+    '<div class="tab-panel" id="tab-sources-uses"',
+    '<section class="panel chart" id="sources-uses">',
+    '<div class="tab-panel" id="tab-scenarios"',
     '<div class="trio">',
     "<h2>Flip Analysis</h2>",
     "<h2>Rental Analysis</h2>",
     "<h2>Take-Back Analysis",
-    '<section class="panel chart" id="sources-uses">',
-    "<h2>Return Overview</h2>",
+    '<div class="tab-panel" id="tab-assumptions"',
     '<section class="panel" id="assumptions">',
-    '<section class="panel" id="economics">',
-    "<h2>Deal Economics and Property</h2>",
-    '<section class="panel" id="actions">',
-    '<details class="panel" id="court">',
-    '<details class="panel" id="history">',
+    '<section class="panel chart" id="history">',
 )
 
 CHIPS = '<div class="chips" id="deal-chips">'
@@ -86,10 +97,11 @@ def test_the_sections_come_in_the_same_order_analyzed_or_not(
     assert after == sorted(after)
     for marker in ORDER:
         assert body.count(marker) == 1, marker
-    # every output is above the first input: the panel and the intake summary come after
-    # the ledger, and the collapsed furniture after those
+    # the Summary tab is first and the Assumptions tab last: every output is above the
+    # panel, and the intake summary, the court search and the versions follow in that order
     assert body.index("<h2>Return Overview</h2>") < body.index('id="assumptions"')
     assert body.index('id="economics"') < body.index('id="court"') < body.index('id="history"')
+    assert body.count('<div class="tab-panel"') == 6
 
 
 def test_the_sensitivities_share_a_row_and_the_analyses_another(
@@ -97,7 +109,7 @@ def test_the_sensitivities_share_a_row_and_the_analyses_another(
 ) -> None:
     run(client, deal_with_overrides)
     body = page(client, deal_with_overrides)
-    pair = between(body, '<div class="pair">', '<div class="trio">')
+    pair = between(body, '<div class="pair">', '<section class="panel chart" id="leverage">')
     assert pair.count('<section class="panel chart"') == 2
     assert 'id="lender-sensitivity"' in pair and 'id="borrower-sensitivity"' in pair
     # the columns are the grid, 12.5% to 17.5%; this deal is priced at 13%, off it
@@ -108,7 +120,7 @@ def test_the_sensitivities_share_a_row_and_the_analyses_another(
     assert "13.0%" not in pair and "hit" not in pair
     # a row is its loan amount, with no step under it
     assert "(\u2212$" not in pair and 'class="unit sub"' not in pair
-    trio = between(body, '<div class="trio">', "<h2>Return Overview</h2>")
+    trio = between(body, '<div class="trio">', '<div class="tab-panel" id="tab-assumptions"')
     assert trio.count('<section class="panel stat"') == 3
     # this deal has a sale price and a rent, so all three carry a figure
     assert trio.count('<p class="headline">') == 3
@@ -129,7 +141,7 @@ def test_an_unevaluated_analysis_is_a_state_not_an_error(
     )
     assert saved.status_code == 303, saved.text
     body = page(client, deal_with_overrides)
-    trio = between(body, '<div class="trio">', "<h2>Return Overview</h2>")
+    trio = between(body, '<div class="trio">', '<div class="tab-panel" id="tab-assumptions"')
     flip = between(trio, 'id="flip"', 'id="rental"')
     rental = between(trio, 'id="rental"', 'id="take-back"')
     take_back = trio[trio.index('id="take-back"') :]
@@ -160,7 +172,7 @@ def test_a_deal_on_the_grid_has_its_cell_marked_on_both_tables(
         assert bottom.index('class="num grid-cell hit"') < bottom.index('class="num grid-cell"')
 
 
-def test_the_cash_flows_are_folded_under_one_line_of_figures(
+def test_the_figures_are_one_line_and_the_cash_flows_their_own_open_tab(
     client: QueueClient, deal_with_overrides: Deal
 ) -> None:
     run(client, deal_with_overrides)
@@ -168,15 +180,14 @@ def test_the_cash_flows_are_folded_under_one_line_of_figures(
     overview = between(body, "<h2>Return Overview</h2>", "</section>")
     keys = [key.strip() for key in re.findall(r'<span class="k">([^<]*)', overview)]
     assert keys == ["IRR", "Total interest", "Total fees", "Total profit", "Payoff date"]
-    assert overview.index('<ul class="summary">') < overview.index('<details class="ledger chart">')
-    # nothing between the figures and the fold: the run line is gone
-    gap = between(overview, "</ul>", '<details class="ledger chart">')
-    assert gap.strip() == "</ul>"
+    # nothing after the figures: no fold, no run line
+    assert overview.strip().endswith("</ul>")
     assert "engine" not in overview and "rehab month(s)" not in overview
-    ledger = overview[overview.index('<details class="ledger chart">') :]
-    assert "<summary>Cash Flows</summary>" in ledger and "Ledger" not in ledger
+    assert '<details class="ledger' not in body and "<summary>Cash Flows</summary>" not in body
+    ledger = between(body, '<section class="panel chart" id="cash-flows">', "</section>")
+    assert "<h2>Cash Flows</h2>" in ledger and "Ledger" not in ledger
     assert "Future Draws" in ledger and "<tfoot>" in ledger
-    assert '<details class="ledger chart" open>' not in overview
+    assert "<details" not in ledger  # the whole table, open
 
 
 def test_no_definitions_and_every_irr_to_two_decimals(
@@ -190,7 +201,7 @@ def test_no_definitions_and_every_irr_to_two_decimals(
     assert not re.search(r"\d\.\d{3,}%", content), re.findall(r"[\d.]+\d{3}%", content)
     pricing = between(body, 'id="pricing"', "</section>")
     assert re.search(r'<td class="num">\d+\.\d{2}%</td>', pricing)
-    history = between(body, 'id="history"', "</details>")
+    history = between(body, 'id="history"', "</section>")
     assert re.search(r"IRR \d+\.\d{2}%", history)
     # the checklist section is gone: the panel is the one list of what the ledger runs on
     assert "What the ledger runs on" not in body and 'id="readiness"' not in body
@@ -203,7 +214,10 @@ def test_the_header_carries_the_chips(client: QueueClient, deal_with_overrides: 
     run(client, deal_with_overrides)
     body = page(client, deal_with_overrides)
     chips = between(body, CHIPS, "</div>")
-    assert '<span class="tag fact" data-chip="borrower">Dana Whitlock</span>' in chips
+    # the borrower's chip is the link to their page (v0.20)
+    borrower_id = deal_with_overrides.borrower_id
+    assert f'<a class="tag fact" data-chip="borrower" href="/borrowers/{borrower_id}"' in chips
+    assert ">Dana Whitlock</a>" in chips
     assert '<span class="tag fact" data-chip="entity">Whitlock Homes LLC</span>' in chips
     # the request in whole dollars
     assert '<span class="tag fact" data-chip="loan-amount">Loan Request: $120,000</span>' in chips
@@ -211,7 +225,7 @@ def test_the_header_carries_the_chips(client: QueueClient, deal_with_overrides: 
     assert irr is not None
     # those four, in the brief's order, and nothing else: no loan type, term, verdict, status
     assert re.findall(r'data-chip="([^"]+)"', chips) == ["borrower", "entity", "loan-amount", "irr"]
-    assert chips.count('<span class="tag') == 4
+    assert chips.count('class="tag') == 4
     assert "100% at close" not in chips and "month(s)" not in chips
     assert '<span class="tag GO">' not in chips and "UNDERWRITING" not in chips
     assert 'id="working-version"' not in body and 'id="draft-badge"' not in chips
@@ -285,7 +299,7 @@ def test_the_header_holds_the_controls(client: QueueClient, deal_with_overrides:
     assert head.index('id="versions"') < head.index(">Run Analysis</button>")
     assert head.index(">Run Analysis</button>") < head.index(">Edit Intake</a>")
     # the intake summary offers the same link, beside its title
-    economics = between(body, '<section class="panel" id="economics">', "</section>")
+    economics = between(body, '<section class="panel chart" id="economics">', "</section>")
     assert f'href="/queue/deals/{deal_with_overrides.id}/intake">Edit Intake</a>' in economics
 
 

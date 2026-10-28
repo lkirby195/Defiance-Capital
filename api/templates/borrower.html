@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Borrower — Defiance Capital{% endblock %}
+
+{# One borrower and every deal they have brought (v0.20, SPEC §9.1). The header is the
+   guarantor's name with their entities, phone and email as chips; under it one chart card
+   listing every deal - the address is the link - with its status, the Working version's
+   verdict and IRR, the loan amount and the day it last moved, and the totals at the foot:
+   how many deals, and how much they asked for together. The Home page and the deal header
+   link here from the borrower's name. #}
+
+{% block content %}
+<header class="deal-head borrower-head">
+  <div class="deal-id">
+    <h1>{{ view.borrower.name if view.borrower.name else "(no guarantor name)" }}</h1>
+    <div class="chips" id="borrower-chips">
+      {% if view.entities %}<span class="tag fact" data-chip="entity">{{ view.entities | join(", ") }}</span>{% endif %}
+      {% if view.borrower.phone %}<span class="tag fact" data-chip="phone">{{ view.borrower.phone | phone }}</span>{% endif %}
+      {% if view.borrower.email %}<span class="tag fact" data-chip="email">{{ view.borrower.email }}</span>{% endif %}
+      <span class="tag fact" data-chip="deals">{{ view.count }} deal{% if view.count != 1 %}s{% endif %}</span>
+    </div>
+  </div>
+</header>
+
+<section class="panel chart" id="borrower-deals">
+  <div class="row">
+    <h2>Deals <span class="count">{{ view.count }}</span></h2>
+  </div>
+  {% if view.entries %}
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Address</th>
+            <th>Status</th>
+            <th>Verdict</th>
+            <th class="num">IRR</th>
+            <th class="num">Loan amount</th>
+            <th>Loan structure</th>
+            <th>Last activity</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in view.entries %}
+            {% set deal = entry.deal %}
+            <tr data-deal="{{ deal.id }}">
+              <td class="deal">
+                <a href="/queue/deals/{{ deal.id }}" title="The deal page">
+                  {% if deal.property and deal.property.address_raw %}{{ deal.property.address_raw }}
+                  {% elif deal.property and deal.property.listing_url %}{{ deal.property.listing_url }}
+                  {% else %}(no address yet){% endif %}
+                </a>
+              </td>
+              <td>{{ deal.status | label }}</td>
+              <td>
+                {% if entry.verdict %}<span class="tag {{ entry.verdict | plain }}">{{ entry.verdict | label }}</span>
+                {% else %}<span class="muted">—</span>{% endif %}
+              </td>
+              <td class="num">{% if entry.irr is not none %}<span class="tag fact">{{ entry.irr | quoted }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+              <td class="num">{{ deal.loan_requested | money }}</td>
+              <td>{{ deal.product | label }}</td>
+              <td class="small muted">{{ entry.last_activity | day }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr id="borrower-totals">
+            <th>Total</th>
+            <th>{{ view.count }} deal{% if view.count != 1 %}s{% endif %}</th>
+            <th>{% if view.live %}{{ view.live }} live{% else %}—{% endif %}</th>
+            <th class="num">{% if view.average_irr is not none %}{{ view.average_irr | quoted }}{% else %}—{% endif %}</th>
+            <th class="num">{{ view.total_loan | money }}</th>
+            <th></th>
+            <th></th>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  {% else %}
+    <p class="small muted" style="margin:0">No deals yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

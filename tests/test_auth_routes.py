@@ -31,6 +31,7 @@ pytestmark = requires_db
 PAGE_ROUTES = [
     ("GET", "/account/password"),
     ("POST", "/account/password"),
+    ("GET", "/borrowers/00000000-0000-0000-0000-000000000000"),
     ("GET", "/defaults"),
     ("GET", "/queue"),
     ("GET", "/queue/new"),
@@ -108,6 +109,7 @@ def test_every_route_is_accounted_for() -> None:
             ("POST", "/logout"),
             ("GET", "/account/password"),
             ("POST", "/account/password"),
+            ("GET", "/borrowers/{borrower_id}"),
             ("GET", "/defaults"),
             ("POST", "/intake/team"),
             ("GET", "/queue"),

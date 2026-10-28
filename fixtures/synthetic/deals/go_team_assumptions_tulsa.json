@@ -153,6 +153,7 @@
         "lost_interest": "5200.00",
         "legal_costs": "7500.00",
         "foreclosure_months": 6,
+        "foreclosure_months_from": "OK",
         "foreclosure_carry": "3100.00",
         "sale_month": 13,
         "projected_sale_price": "200000.00",
