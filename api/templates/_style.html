@@ -395,8 +395,11 @@
     /* Home's search box: one box, Search, and Clear once something is typed. */
     form.search { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; margin: 0 0 var(--s3); }
     form.search input[type="search"] { flex: 1 1 260px; max-width: 420px; }
+    form.search .filters { display: flex; flex-wrap: wrap; gap: var(--s2); flex: 1 1 100%; }
+    form.search .filters select { flex: 1 1 150px; max-width: 220px; min-height: 36px; font-size: 14px; }
     form.search .chips { margin: 0; flex-basis: 100%; }
     form.search .chips:empty { display: none; }
+    form.search .chips a.tag { text-decoration: none; }
 
     /* --- a phone: one column, every section in the same order ------------------------ */
     @media (max-width: 900px) {

@@ -16,8 +16,10 @@
 
    Above the sections sits the search box (v0.20): a plain GET form whose one box narrows
    every section to the deals whose borrower's name, entity or phone matches; the counts
-   are of what is shown. The chips row under it is empty today and is where the
-   profile-field filter chips land (10c): ``view.filter.chips`` is their hook. #}
+   are of what is shown. Beside the box, five selects (10c, SPEC §4.1) - one per "About your
+   investing" question, "Any" by default - narrow by the borrower's profile; each answer
+   picked is a chip in the row under the box, and the chip is a link that removes itself.
+   Everything is the query string, so a narrowed Home can be bookmarked. #}
 
 {% macro control_button(entry, action, label, live, why) %}
   <form method="post" action="/queue/deals/{{ entry.deal.id }}/{{ action }}">
@@ -66,15 +68,26 @@
 
 <form class="search" id="deal-search" method="get" action="/queue" role="search">
   <input type="search" id="q" name="q" value="{{ view.filter.query }}" placeholder="Borrower, entity or phone" aria-label="Search deals by borrower name, entity or phone">
+  {# the profile filters (10c): a select per question, its caption as the "any" option #}
+  <div class="filters" id="profile-filters">
+    {% for field, caption, choices in profile_filters %}
+      <select name="{{ field }}" aria-label="{{ caption }}">
+        <option value="">{{ caption }}</option>
+        {%- for value, text in choices %}
+        <option value="{{ value }}"{% if (field, value) in view.filter.chips %} selected{% endif %}>{{ text }}</option>
+        {%- endfor %}
+      </select>
+    {% endfor %}
+  </div>
   <button class="quiet" type="submit">Search</button>
   {% if view.filter.active %}<a class="small" href="/queue">Clear</a>{% endif %}
-  {# 10c: the profile-field filter chips go here, one per (field, value) on the filter. #}
+  {# one chip per answer picked; the chip is the link that takes it off #}
   <div class="chips" id="filter-chips" data-hook="profile-filters">
-    {% for field, value in view.filter.chips %}<span class="tag fact" data-filter="{{ field }}">{{ field | label }}: {{ value }}</span>{% endfor %}
+    {% for field, value in view.filter.chips %}{% set rest = view.filter.without(field).query_string %}<a class="tag fact" data-filter="{{ field }}" href="/queue{% if rest %}?{{ rest }}{% endif %}" title="Remove this filter">{{ field | caption }}: {{ value | profile }} ×</a>{% endfor %}
   </div>
 </form>
 {% if view.filter.active %}
-  <p class="lede small" id="search-result">{{ view.total }} of {{ view.unfiltered_total }} deals match "{{ view.filter.query }}".</p>
+  <p class="lede small" id="search-result">{{ view.total }} of {{ view.unfiltered_total }} deals match {% if view.filter.query.strip() %}"{{ view.filter.query.strip() }}"{% if view.filter.chips %}, {% endif %}{% endif %}{{ view.filter.chip_summary }}.</p>
 {% endif %}
 
 {% for section in view.sections %}

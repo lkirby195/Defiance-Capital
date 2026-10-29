@@ -31,24 +31,29 @@ result is never hidden for want of a version. The runs still count as activity e
 
 **The search box** (v0.20) narrows every section to the deals whose borrower matches: the
 guarantor's name, an entity's name, or the phone by its digits. ``HomeFilter`` carries
-the query, and the profile-field chips 10c adds - credit range, experience, structure -
-go on it beside the query and are applied in ``matches``. The borrower's own page
-(``services/borrowers.py``) lists the same rows for one borrower.
+the query and, beside it, the **profile-field chips** (10c, SPEC §4.1): one ``(field, value)``
+per "About your investing" answer picked in the selects under the box, each read off the
+borrower's row and applied in ``matches``; a chip naming a ``deals`` column narrows by that
+column instead. The borrower's own page (``services/borrowers.py``) lists the same rows for
+one borrower.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+from urllib.parse import urlencode
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from db.models import AuditLog, Deal, IntakeSubmission, Screen, Underwrite, Version
-from schema.models import Channel, Status, Verdict
+from schema.labels import enum_label, profile_caption, profile_label
+from schema.models import BORROWER_PROFILE_FIELDS, PROFILE_ENUMS, Channel, Status, Verdict
 from services.actions import MARK_DEAD_FROM, PAUSE_FROM, PROGRESS_FROM
 from services.audit import DEALS
 
@@ -79,11 +84,12 @@ PHONE_SEARCH_DIGITS = 3
 
 @dataclass(frozen=True)
 class HomeFilter:
-    """What narrows the list: the search box's query, and the chips 10c adds.
+    """What narrows the list: the search box's query, and the profile chips.  # SPEC §4.1, §9.1
 
-    ``chips`` is the hook for the profile-field filters: ``(field, value)`` pairs such as
-    ``("credit_range_self_reported", "T2")``, rendered as chips under the search box and
-    applied in ``matches``. Empty today.
+    ``chips`` is ``(field, value)`` pairs, one per "About your investing" select set under
+    the search box - ``("years_investing", "2_5")`` - read off the borrower's row in
+    ``matches``; a pair naming a ``deals`` column (``("status", "PAUSED")``) narrows by that
+    column instead. Each is rendered as a chip under the box that removes itself.
     """
 
     query: str = ""
@@ -93,8 +99,68 @@ class HomeFilter:
     def active(self) -> bool:
         return bool(self.query.strip()) or bool(self.chips)
 
+    @property
+    def chip_summary(self) -> str:
+        """The chips as words: each one's caption and answer, comma-separated."""
+        return ", ".join(
+            f"{chip_caption(field)}: {chip_label(field, value)}" for field, value in self.chips
+        )
+
+    @property
+    def summary(self) -> str:
+        """What the result line says the list was narrowed by: the query in quotes, then the
+        chips. The page composes the same line itself so the query is escaped on its own."""
+        parts = [f'"{self.query.strip()}"'] if self.query.strip() else []
+        if self.chips:
+            parts.append(self.chip_summary)
+        return ", ".join(parts)
+
+    def without(self, field: str) -> HomeFilter:
+        """The same filter less every chip on ``field``: the link a chip removes itself with."""
+        return replace(self, chips=tuple(chip for chip in self.chips if chip[0] != field))
+
+    @property
+    def query_string(self) -> str:
+        """The filter as Home's own query string, ``q`` first, empty when nothing narrows."""
+        params = [("q", self.query.strip())] if self.query.strip() else []
+        return urlencode([*params, *self.chips])
+
 
 NO_FILTER = HomeFilter()
+
+
+def chips_from(params: Mapping[str, str]) -> tuple[tuple[str, str], ...]:
+    """The profile chips a query string carries: each profile field named with one of its
+    answers, in field order. An unknown answer is dropped rather than refused - the page
+    still works, it just does not narrow by it.  # SPEC §4.1 (10c)"""
+    chips: list[tuple[str, str]] = []
+    for field in BORROWER_PROFILE_FIELDS:
+        value = (params.get(field) or "").strip()
+        if value and value in {member.value for member in PROFILE_ENUMS[field]}:
+            chips.append((field, value))
+    return tuple(chips)
+
+
+def chip_caption(field: str) -> str:
+    """The words a chip leads with: the profile question's caption, else the column's name."""
+    return profile_caption(field) if field in BORROWER_PROFILE_FIELDS else enum_label(field)
+
+
+def chip_label(field: str, value: str) -> str:
+    """The words a chip's answer reads as: the profile label, else the value title-cased."""
+    return profile_label(value) if field in BORROWER_PROFILE_FIELDS else enum_label(value)
+
+
+def profile_filter_choices() -> list[tuple[str, str, list[tuple[str, str]]]]:
+    """The five selects under Home's search box: ``(field, caption, [(value, label), ...])``."""
+    return [
+        (
+            field,
+            profile_caption(field),
+            [(member.value, profile_label(member)) for member in PROFILE_ENUMS[field]],
+        )
+        for field in BORROWER_PROFILE_FIELDS
+    ]
 
 
 def digits(text: str) -> str:
@@ -122,15 +188,24 @@ def query_matches(deal: Deal, query: str) -> bool:
     return len(wanted) >= PHONE_SEARCH_DIGITS and wanted in digits(borrower.phone or "")
 
 
-def matches(entry: HomeEntry, filter: HomeFilter) -> bool:
-    """Whether a row stays on the list under ``filter``.
+def chip_matches(deal: Deal, field: str, value: str) -> bool:
+    """One chip against one deal: a profile field is the borrower's row's answer (SPEC §4.1),
+    anything else the deal's own column. A deal with no borrower row matches no profile chip,
+    and an unanswered question matches nothing."""
+    if field in BORROWER_PROFILE_FIELDS:
+        if deal.borrower is None:
+            return False
+        held = getattr(deal.borrower, field)
+    else:
+        held = getattr(deal, field, None)
+    return held is not None and str(held) == value
 
-    The query first; the chips (10c) will each narrow it further here, by the deal column
-    the field names.
-    """
+
+def matches(entry: HomeEntry, filter: HomeFilter) -> bool:
+    """Whether a row stays on the list under ``filter``: the query, then every chip."""
     if not query_matches(entry.deal, filter.query):
         return False
-    return all(str(getattr(entry.deal, field, None)) == value for field, value in filter.chips)
+    return all(chip_matches(entry.deal, field, value) for field, value in filter.chips)
 
 
 def section_of(deal: Deal) -> Section:

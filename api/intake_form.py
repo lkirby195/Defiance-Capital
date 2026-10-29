@@ -5,11 +5,13 @@ of them: ``GET /queue/new`` renders the blank form, ``GET /queue/deals/{id}/inta
 the same form filled in from the deal, and ``POST`` of either decides whether what came back
 is complete.
 
-**The form is labels and boxes**, three groups (SPEC §8.1): the Overview, the Property
-Overview, and the Deal Economics - Purchase Price, Rehab Costs, Loan Amount, the loan
-structure as a radio ("100% at close" / "Holdback"), Loan Purpose, Closing Date, Term
-(months), in that order. Holdback reveals one more box, **Rehab portion**: the amount held
-back, the advance at closing being the rest of the loan (``with_advance``). The reveal is a
+**The form is labels and boxes**, four groups (SPEC §4.1, §8.1): the Overview, About your
+investing - the borrower's five profile answers, every one optional, stored on the borrower's
+row (10c) - the Property Overview, and the Deal Economics - Purchase Price, Rehab Costs, Loan
+Amount, the loan structure as a radio ("100% at close" / "Holdback"), Loan Purpose, Closing
+Date, Term (months), in that order. Holdback reveals one more box, **Rehab portion**: the
+amount held back, the advance at closing being the rest of the loan (``with_advance``). The
+reveal is a
 stylesheet rule on the checked radio, not script; the box is always in the page, and the
 server ignores it unless the deal is a holdback. Left blank, the rehab portion is the §8.2
 default - the rehab budget times one plus the contingency, capped at the loan amount - which
@@ -67,6 +69,7 @@ from intake.normalize import normalize
 from intake.parsers.team_form import TeamEntryForm, parse_team_form
 from schema.masks import money_parse
 from schema.models import (
+    BORROWER_PROFILE_FIELDS,
     SPLIT_PRODUCTS,
     Channel,
     IntakeRecord,
@@ -87,6 +90,12 @@ TEAM_ENTRY_FIELDS: tuple[str, ...] = (
     "credit_range",
     "experience_bucket",
     "repeat_borrower",
+    # About your investing (SPEC §4.1, 10c): the borrower's profile, every box optional
+    "work_status",
+    "years_investing",
+    "projects_in_progress",
+    "strategy",
+    "work_crew",
     # Property Overview
     "address",
     "listing_url",
@@ -267,6 +276,11 @@ def intake_form_values(deal: Deal) -> dict[str, str]:
         "credit_range": deal.credit_range_self_reported,
         "experience_bucket": deal.experience_bucket_self_reported,
         "repeat_borrower": deal.repeat_borrower_self_reported,
+        # the profile is the borrower's row's (SPEC §4.1, 10c); a deal with no row shows blanks
+        **{
+            field: getattr(borrower, field) if borrower is not None else None
+            for field in BORROWER_PROFILE_FIELDS
+        },
         "address": prop.address_raw if prop is not None else None,
         "listing_url": prop.listing_url if prop is not None else None,
         "city": prop.city if prop is not None else None,

@@ -48,12 +48,17 @@ from schema.models import (
     LoanPurpose,
     Product,
     ProductSource,
+    ProjectsInProgress,
     State,
     StateSource,
     Status,
+    Strategy,
     TermBucket,
     Tranche,
     Verdict,
+    WorkCrew,
+    WorkStatus,
+    YearsInvesting,
 )
 
 MONEY = Numeric(14, 2)  # SPEC §5
@@ -113,6 +118,10 @@ class Borrower(Base):
     person taking a deal off an email has the guarantor's name and no number, and losing the
     name to keep the key tidy would be the wrong trade. A borrower with no phone simply
     matches nothing, and the next inquiry under the same name creates another row.
+
+    The five profile columns (migration ``0023``, SPEC §4.1) are the "About your investing"
+    answers: the person's, not the deal's, so a repeat borrower's latest answers are what the
+    row holds and every deal of theirs reads. All nullable: nothing asks for them.
     """
 
     __tablename__ = "borrowers"
@@ -122,6 +131,15 @@ class Borrower(Base):
     phone: Mapped[str | None] = mapped_column(String(32), unique=True)
     email: Mapped[str | None] = mapped_column(String(254))
     ma_borrower_id: Mapped[str | None] = mapped_column(String(64))
+    work_status: Mapped[WorkStatus | None] = mapped_column(_enum(WorkStatus, "work_status"))
+    years_investing: Mapped[YearsInvesting | None] = mapped_column(
+        _enum(YearsInvesting, "years_investing")
+    )
+    projects_in_progress: Mapped[ProjectsInProgress | None] = mapped_column(
+        _enum(ProjectsInProgress, "projects_in_progress")
+    )
+    strategy: Mapped[Strategy | None] = mapped_column(_enum(Strategy, "investing_strategy"))
+    work_crew: Mapped[WorkCrew | None] = mapped_column(_enum(WorkCrew, "work_crew"))
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 

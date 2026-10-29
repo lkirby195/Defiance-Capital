@@ -46,11 +46,16 @@ from schema.models import (
     LoanPurpose,
     Product,
     ProductSource,
+    ProjectsInProgress,
     PropertyInfo,
     State,
     StateSource,
+    Strategy,
     TeamCourtRecord,
     Tranche,
+    WorkCrew,
+    WorkStatus,
+    YearsInvesting,
     validate_court_records,
     validate_loan_split,
 )
@@ -70,6 +75,13 @@ class TeamEntryForm(BaseModel):
     credit_range: Tranche | None = None
     experience_bucket: ExperienceBucket | None = None
     repeat_borrower: bool | None = None
+    # About your investing (SPEC §4.1, 10c): the borrower's profile, every answer optional,
+    # stored on the borrower's row. A blank box leaves the stored answer alone.
+    work_status: WorkStatus | None = None
+    years_investing: YearsInvesting | None = None
+    projects_in_progress: ProjectsInProgress | None = None
+    strategy: Strategy | None = None
+    work_crew: WorkCrew | None = None
     # Property Overview (SPEC §8.1)
     address: str | None = None
     listing_url: str | None = None
@@ -175,6 +187,11 @@ def parse_team_form(form: TeamEntryForm) -> ParsedIntake:
             credit_range=form.credit_range,
             experience_bucket=form.experience_bucket,
             repeat_borrower=form.repeat_borrower,
+            work_status=form.work_status,
+            years_investing=form.years_investing,
+            projects_in_progress=form.projects_in_progress,
+            strategy=form.strategy,
+            work_crew=form.work_crew,
         ),
         property=PropertyInfo(
             address_raw=form.address,

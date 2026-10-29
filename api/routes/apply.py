@@ -46,6 +46,7 @@ from api.apply_form import (
     credit_choices,
     experience_choices,
     intake_record,
+    profile_choices,
     read_form,
     redisplay_values,
     state_choices,
@@ -117,6 +118,7 @@ def apply_page(
         "experience_choices": experience_choices(),
         "term_choices": term_choices(t),
         "state_choices": state_choices(t),
+        "profile_choices": profile_choices(t),
         "problems": complaints,
     }
     return page(request, "apply.html", context, status_code=status_code)

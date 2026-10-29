@@ -40,6 +40,8 @@ from intake.parsers.web_form import WebApplyForm, parse_web_form
 from schema.labels import experience_label, tranche_label
 from schema.masks import money_display, money_parse, phone_digits
 from schema.models import (
+    BORROWER_PROFILE_FIELDS,
+    PROFILE_ENUMS,
     Channel,
     ExperienceBucket,
     IntakeRecord,
@@ -59,21 +61,23 @@ APPLY_FIELDS: tuple[str, ...] = (
     "credit_range",
     "experience_bucket",
     "repeat_borrower",
-    # 2. the property
+    # 2. about your investing (SPEC §4.1, 10c): the borrower's profile, every one optional
+    *BORROWER_PROFILE_FIELDS,
+    # 3. the property
     "address",
     "city",
     "state",
     "listing_url",
-    # 3. the deal
+    # 4. the deal
     "purchase_price",
     "rehab_costs",
     "loan_requested",
     "estimated_sale_price",
     "monthly_rent",
-    # 4. timing
+    # 5. timing
     "term_bucket",
     "closing_date",
-    # 5. how you heard
+    # 6. how you heard
     "referral_note",
 )
 # What the page marks Required and the browser's ``required`` attribute is set on - the
@@ -218,6 +222,10 @@ def complaints(submitted: Mapping[str, str], t: Mapping[str, str]) -> FormProble
         complain("experience_bucket", "err_choice")
     if submitted.get("repeat_borrower") not in ("", None, "true", "false"):
         complain("repeat_borrower", "err_choice")
+    for name in BORROWER_PROFILE_FIELDS:
+        answer = submitted.get(name)
+        if answer and answer not in {member.value for member in PROFILE_ENUMS[name]}:
+            complain(name, "err_choice")
     if submitted.get("state") and submitted["state"] not in State.__members__:
         complain("state", "err_choice")
     link = submitted.get("listing_url", "")
@@ -361,6 +369,19 @@ def experience_choices() -> list[tuple[str, str]]:
 
 def term_choices(t: Mapping[str, str]) -> list[tuple[str, str]]:
     return [(member.value, t[f"term_{member.value}"]) for member in TermBucket]
+
+
+def profile_choices(t: Mapping[str, str]) -> dict[str, list[tuple[str, str]]]:
+    """The five "About your investing" questions' answers, in the borrower's language.
+
+    Keyed by field, in the order the page asks (SPEC §4.1, 10c); each answer's label is the
+    ``profile_<value>`` string, so "FIRST_PROJECT" reads "This is my first project" or "Este
+    es mi primer proyecto" and the stored value is the same in either.
+    """
+    return {
+        field: [(member.value, t[f"profile_{member.value}"]) for member in PROFILE_ENUMS[field]]
+        for field in BORROWER_PROFILE_FIELDS
+    }
 
 
 def state_choices(t: Mapping[str, str]) -> list[tuple[str, str]]:

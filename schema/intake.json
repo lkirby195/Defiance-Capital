@@ -2,7 +2,7 @@
   "$defs": {
     "BorrowerInfo": {
       "additionalProperties": false,
-      "description": "Who the borrower is; credit and experience are self-reported here.  # SPEC \u00a74.5",
+      "description": "Who the borrower is; credit and experience are self-reported here.  # SPEC \u00a74.5\n\nThe five profile fields after ``repeat_borrower`` are the \"About your investing\" group\n(SPEC \u00a74.1, 10c): optional on every channel, stored on the borrower's own row, and the\nlatest answer given on any deal is the one kept (``db/repository.apply_profile``). A\nNone here is \"not asked\" or \"not answered\" and leaves the stored answer alone.",
       "properties": {
         "credit_range": {
           "anyOf": [
@@ -74,6 +74,17 @@
           "default": null,
           "title": "Phone"
         },
+        "projects_in_progress": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProjectsInProgress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "repeat_borrower": {
           "anyOf": [
             {
@@ -85,6 +96,50 @@
           ],
           "default": null,
           "title": "Repeat Borrower"
+        },
+        "strategy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Strategy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "work_crew": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkCrew"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "work_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "years_investing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/YearsInvesting"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "title": "BorrowerInfo",
@@ -542,6 +597,17 @@
       "title": "ProductSource",
       "type": "string"
     },
+    "ProjectsInProgress": {
+      "description": "How many projects the borrower has going right now.  # SPEC \u00a74.1 (10c)",
+      "enum": [
+        "0",
+        "1",
+        "2_3",
+        "4_PLUS"
+      ],
+      "title": "ProjectsInProgress",
+      "type": "string"
+    },
     "PropertyInfo": {
       "additionalProperties": false,
       "description": "Subject property; address or listing URL satisfies the minimum.  # SPEC \u00a74.5, \u00a78.1\n\nEverything below ``state`` is the SPEC \u00a78.1 Property Overview: descriptive facts a\nperson reads on the deal page and in the credit memo. No math reads any of them, so none\nis required to screen or to price a deal - they are captured because a reader wants to\nknow what the property is, not because a number depends on it.",
@@ -764,6 +830,16 @@
       "title": "Status",
       "type": "string"
     },
+    "Strategy": {
+      "description": "What the borrower mostly does.  # SPEC \u00a74.1 (10c)",
+      "enum": [
+        "FLIPS",
+        "RENTALS",
+        "MIX"
+      ],
+      "title": "Strategy",
+      "type": "string"
+    },
     "TeamCourtRecord": {
       "additionalProperties": false,
       "description": "One court or filing matter the team found by hand, typed by the flag it feeds.\n\nThe team is the court-record source until the Phase 3 adapters land (SPEC \u00a76). Each\nentry carries the facts the screen's own test for that code needs (SPEC \u00a77.2) - the date\nfor the two lookback codes, the amount for the three threshold codes, the lien facts for\na subject-property encumbrance - so the config thresholds still decide the outcome\nrather than the team asserting a verdict. One matter per entry; a code with no matter is\nsimply absent.",
@@ -877,6 +953,37 @@
         "T5"
       ],
       "title": "Tranche",
+      "type": "string"
+    },
+    "WorkCrew": {
+      "description": "Who does the work on the borrower's projects.  # SPEC \u00a74.1 (10c)",
+      "enum": [
+        "OWN_CREW",
+        "GC",
+        "MYSELF"
+      ],
+      "title": "WorkCrew",
+      "type": "string"
+    },
+    "WorkStatus": {
+      "description": "Whether real estate is the borrower's full-time work.  # SPEC \u00a74.1 (10c)",
+      "enum": [
+        "FULL_TIME",
+        "PART_TIME",
+        "FIRST_PROJECT"
+      ],
+      "title": "WorkStatus",
+      "type": "string"
+    },
+    "YearsInvesting": {
+      "description": "How long the borrower has been investing, in years.  # SPEC \u00a74.1 (10c)",
+      "enum": [
+        "0_1",
+        "2_5",
+        "6_10",
+        "10_PLUS"
+      ],
+      "title": "YearsInvesting",
       "type": "string"
     }
   },

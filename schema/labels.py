@@ -18,6 +18,13 @@ person knows by the words the team form's radio puts on them - "100% at close" a
 "Holdback" (SPEC §3) - rather than by their codes title-cased.
 
 ``PRODUCT_DEFINITIONS`` is the SPEC §3 table in one line each.
+
+``PROFILE_LABELS`` and ``PROFILE_CAPTIONS`` are the borrower's investing profile (SPEC §4.1,
+10c): the five "About your investing" answers as the team reads them - ``FIRST_PROJECT`` is
+"This is my first project", ``2_5`` is "2–5" - and the caption each question carries on the
+team form, the deal page, the borrower's page and Home's filter chips. The public form has
+its own words for both in ``api/i18n.py``, in two languages. The values are unique across
+the five enums, so one flat table serves them all.
 """
 
 from __future__ import annotations
@@ -25,7 +32,19 @@ from __future__ import annotations
 from collections.abc import Mapping
 from enum import StrEnum
 
-from schema.models import ExperienceBucket, Product, TermBucket, Tranche
+from schema.models import (
+    BORROWER_PROFILE_FIELDS,
+    PROFILE_ENUMS,
+    ExperienceBucket,
+    Product,
+    ProjectsInProgress,
+    Strategy,
+    TermBucket,
+    Tranche,
+    WorkCrew,
+    WorkStatus,
+    YearsInvesting,
+)
 
 # En dashes: these are ranges, and the form and the screen summary read as prose.
 EXPERIENCE_BUCKET_LABELS: Mapping[ExperienceBucket, str] = {
@@ -64,6 +83,41 @@ PRODUCT_DEFINITIONS: Mapping[Product, str] = {
     ),
 }
 
+# The investing profile's answers, as the team reads them (SPEC §4.1, 10c). En dashes on the
+# ranges, as on the experience buckets. Keyed by the stored value: the five enums share no
+# value, which ``test_labels`` holds them to.
+PROFILE_LABELS: Mapping[str, str] = {
+    WorkStatus.FULL_TIME.value: "Full-time",
+    WorkStatus.PART_TIME.value: "Part-time",
+    WorkStatus.FIRST_PROJECT.value: "This is my first project",
+    YearsInvesting.ZERO_TO_ONE.value: "0–1",
+    YearsInvesting.TWO_TO_FIVE.value: "2–5",
+    YearsInvesting.SIX_TO_TEN.value: "6–10",
+    YearsInvesting.TEN_PLUS.value: "10+",
+    ProjectsInProgress.ZERO.value: "0",
+    ProjectsInProgress.ONE.value: "1",
+    ProjectsInProgress.TWO_TO_THREE.value: "2–3",
+    ProjectsInProgress.FOUR_PLUS.value: "4+",
+    Strategy.FLIPS.value: "Flips",
+    Strategy.RENTALS.value: "Rentals",
+    Strategy.MIX.value: "Mix",
+    WorkCrew.OWN_CREW.value: "Own crew",
+    WorkCrew.GC.value: "GC",
+    WorkCrew.MYSELF.value: "Mostly myself",
+}
+
+# The caption over each profile question wherever the team reads it; the public form asks
+# the question in the borrower's language (``api/i18n.py``).
+PROFILE_CAPTIONS: Mapping[str, str] = {
+    "work_status": "Full-time in real estate",
+    "years_investing": "Years investing",
+    "projects_in_progress": "Projects in progress",
+    "strategy": "Mostly does",
+    "work_crew": "Who does the work",
+}
+assert tuple(PROFILE_CAPTIONS) == BORROWER_PROFILE_FIELDS
+assert set(PROFILE_LABELS) == {m.value for e in PROFILE_ENUMS.values() for m in e}
+
 _TRANCHE_ORDER: tuple[Tranche, ...] = tuple(Tranche)  # T1 (best) .. T5 (worst)  # SPEC §7.1
 
 DASH = "—"
@@ -96,6 +150,22 @@ def experience_label(bucket: ExperienceBucket | None) -> str:
     if bucket is None:
         return DASH
     return EXPERIENCE_BUCKET_LABELS[bucket]
+
+
+def profile_label(value: StrEnum | str | None) -> str:
+    """A profile answer as the team reads it: ``FIRST_PROJECT`` -> ``This is my first project``.
+
+    An em dash when nobody answered. A value outside the five enums is a bug in the caller
+    and raises rather than title-casing a code onto the page.  # SPEC §4.1 (10c)
+    """
+    if value is None:
+        return DASH
+    return PROFILE_LABELS[str(getattr(value, "value", value))]
+
+
+def profile_caption(field: str) -> str:
+    """The caption a profile question carries on the team's pages: ``Years investing``."""
+    return PROFILE_CAPTIONS[field]
 
 
 def term_bucket_label(bucket: TermBucket | None) -> str:

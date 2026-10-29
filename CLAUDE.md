@@ -154,7 +154,8 @@ small line atop the Actions card; the version facts (when, who, engine) are in t
 table. Under the header six tabs (v0.20, SPEC §9), the active one the URL hash: **Summary**
 (the Return Overview's figures, Pricing, the two sensitivities, the leverage against the
 caps, the Actions), **Deal Overview** (Deal Economics and Property as one label/value grid
-under section rules, what is still needed, Scored as, the court search collapsed), **Cash
+under section rules, the borrower's investing profile under one of them, what is still
+needed, Scored as, the court search collapsed), **Cash
 Flows** (the ledger, open), **Sources & Uses**, **Scenarios** (the three cards) and
 **Assumptions**: the **Underwriting Assumptions** panel as a grid of rows - the caption, then
 the box on the value side with its reset link and the "default" tag at the right edge -
@@ -165,22 +166,28 @@ the rent, the five §8.4-§8.6 analysis assumptions (which carry their own `deal
 since migration `0017`, config value as default, engine reads the deal's when present) and
 the Version name, each tagged "default" while it holds its default and resettable one at a
 time, with one **Save & Run** at the bottom and a **Reset all to defaults** beside it that
-goes through a confirmation page; under the panel the versions card, with a version selector,
-the versions-and-edits table (an edit row restores that intake as a new submission,
-`services/intake.restore_intake`) and the audit trail. The deal page prints no explanatory
-prose and no definitions: no sub-line, no parenthetical, no (?) hover; every IRR on it is two
-decimals. The Underwriting Assumptions panel is the one list of what the ledger runs on -
+goes through a confirmation page; under the panel the versions card: the versions-and-edits
+table (an edit row restores that intake as a new submission, `services/intake.restore_intake`)
+and the audit trail - the header's switcher is the one version selector (10c). The deal page
+prints no explanatory prose and no definitions: no sub-line, no parenthetical, no (?) hover;
+every IRR on it is two decimals. The Underwriting Assumptions panel is the one list of what the ledger runs on -
 there is no separate checklist section; the banner names what is missing while the ledger is
 off. The team form prints nothing but labels and boxes, each marked Required or Optional in
-plain text, and asks only for the Overview, the Property Overview and the Deal Economics -
-the loan structure among them as a radio, "100% at close" / "Holdback", whose Holdback
-reveals a Rehab portion box by a stylesheet rule - plus, on New Deal only, an optional
-Version name for the arrival version; everything with a default populates from config and is
+plain text, and asks only for the Overview, About your investing (the borrower's five
+profile answers, SPEC §4.1 row 7, every one optional, kept on the `borrowers` row by
+`db/repository.apply_profile` - the latest answer on any of their deals wins, a blank leaves
+the stored one - and audited by an edit as `borrower.<field>`), the Property Overview and
+the Deal Economics - the loan structure among them as a radio, "100% at close" / "Holdback",
+whose Holdback reveals a Rehab portion box by a stylesheet rule - plus, on New Deal only, an
+optional Version name for the arrival version; everything with a default populates from config and is
 edited on the deal page, and Edit Intake writes only the columns the form has a box for
 (`db/repository.form_columns`, the loan split among them). Home carries a search box
-(borrower name, entity, phone: `services/home.HomeFilter`, whose `chips` is the hook for the
-10c profile-field filters), and the borrower's name on a row links to `/borrowers/{id}`:
-every deal on their row, with the totals (`services/borrowers.py`).
+(borrower name, entity, phone) and five profile selects whose answers are the filter chips
+(`services/home.HomeFilter`: `query` and `chips`, each chip a `(field, value)` read off the
+borrower's row), and the borrower's name on a row links to `/borrowers/{id}`: who they are,
+their profile, every deal on their row, with the totals (`services/borrowers.py`). The
+profile's codes read as words through `schema/labels.PROFILE_LABELS` on the team's pages and
+through `api/i18n.py` on the public form.
 
 **Two loan structures, three analyses, no toggles** (SPEC §3, §8, engine `2.0.0`). `Product`
 is `ACQUISITION` ("100% at close") or `ACQUISITION_REHAB` ("Holdback"), both on the full

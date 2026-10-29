@@ -1,8 +1,9 @@
 {% extends "public.html" %}
 {% block title %}{{ t.page_title }} — Defiance Capital{% endblock %}
 
-{# The public borrower form (SPEC §4.2). Five groups in the order a person would tell the
-   story: who they are, the property, the numbers, the timing, how they found us - then the
+{# The public borrower form (SPEC §4.2). Six groups in the order a person would tell the
+   story: who they are, how they invest (the five optional profile questions, 10c), the
+   property, the numbers, the timing, how they found us - then the
    line that says sending it is their consent to being contacted, and the button. Every
    string on the page comes from the translation table (api/i18n.py) through `t`; every
    stored value is the same code the team form would store.
@@ -106,6 +107,15 @@
     {{ select_box("credit_range", t.credit_range, credit_choices, help=t.credit_hint) }}
     {{ choice_group("experience_bucket", t.experience, experience_choices) }}
     {{ choice_group("repeat_borrower", t.repeat_borrower, [("true", t.yes), ("false", t.no)]) }}
+  </fieldset>
+
+  <fieldset id="about-investing">
+    <legend>{{ t.about_investing }}</legend>
+    {{ choice_group("work_status", t.work_status, profile_choices.work_status) }}
+    {{ choice_group("years_investing", t.years_investing, profile_choices.years_investing) }}
+    {{ choice_group("projects_in_progress", t.projects_in_progress, profile_choices.projects_in_progress) }}
+    {{ choice_group("strategy", t.strategy, profile_choices.strategy) }}
+    {{ choice_group("work_crew", t.work_crew, profile_choices.work_crew) }}
   </fieldset>
 
   <fieldset>
