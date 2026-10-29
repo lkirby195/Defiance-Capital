@@ -257,6 +257,11 @@
         <dl class="facts small" style="margin-bottom:12px">
           <dt>Shown</dt><dd>{{ deal.indicative_terms_shown_at | when }}</dd>
           <dt>Language</dt><dd>{% if shown_terms.language == "es" %}Spanish{% else %}English{% endif %}</dd>
+          <dt>Version</dt><dd>{{ shown_terms.version | plain }}</dd>
+          <dt>Views</dt><dd>{{ shown_terms.views | join(", ") }}</dd>
+          {% if shown_terms.rate_cushion is not none %}
+            <dt>Rate cushion</dt><dd>{{ shown_terms.rate_cushion | quoted }}, rounded up to {{ shown_terms.rate_rounding | quoted }}</dd>
+          {% endif %}
         </dl>
         <div class="scroll">
           <table>
@@ -264,9 +269,11 @@
               <tr>
                 <th>Step</th>
                 <th class="num">Loan amount</th>
-                <th class="num">Rate</th>
+                <th class="num">Rate shown</th>
+                <th class="num">Solved rate</th>
                 {% if shown_terms.with_profit %}
                   <th class="num">Estimated profit</th>
+                  <th class="num">Project yield</th>
                   <th class="num">Yield (cash-on-cash)</th>
                 {% endif %}
               </tr>
@@ -277,8 +284,10 @@
                   <th scope="row">{{ row.label }}</th>
                   <td class="num">{{ row.loan_amount | dollars }}</td>
                   <td class="num">{{ row.interest_rate | quoted }}</td>
+                  <td class="num">{{ row.solved_rate | quoted }}</td>
                   {% if shown_terms.with_profit %}
                     <td class="num">{{ row.profit | dollars }}</td>
+                    <td class="num">{{ row.project_yield | pct }}</td>
                     <td class="num">{{ row.cash_on_cash | pct }}</td>
                   {% endif %}
                 </tr>

@@ -83,6 +83,10 @@ pricing:                                  # SPEC §8.10 - the Pricing section an
                                           #   multiple of this; the request row is never rounded
   borrower_coc_target: 0.20               # PLACEHOLDER: the flip's cash-on-cash target (SPEC §8.4); below
                                           #   it, BORROWER_COC_BELOW_TARGET
+  borrower_rate_cushion: 0.005            # PLACEHOLDER: added to a row's solved rate before it is shown to
+                                          #   the borrower (SPEC §4.2); the team's pages keep the solve
+  borrower_rate_rounding: 0.0025          # PLACEHOLDER: the cushioned rate is rounded UP to the next
+                                          #   multiple of this (0.25%) before it is shown
 
 rental:                                   # SPEC §8.5 rental analysis: the takeout
   expenses_pct_of_rent: 0.35              # operating expenses as a share of the monthly rent

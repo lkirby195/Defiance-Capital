@@ -275,6 +275,13 @@ class PricingConfig(_Section):
     2.0.0): the cash-on-cash the Flip Analysis is held to, printed beside it as its target
     and flagged ``BORROWER_COC_BELOW_TARGET`` when the deal falls short.
 
+    ``borrower_rate_cushion`` and ``borrower_rate_rounding`` (v0.22, SPEC §4.2) are the
+    borrower's quote: what the thank-you page shows is each quoted row's solved rate plus the
+    cushion (placeholder 0.5%), rounded **up** to the next multiple of the rounding step
+    (placeholder 0.25%), and the profit, project yield and cash-on-cash at that rate
+    (``engine/calc/quote.py``). The team's pages keep the uncushioned solve. The step is a
+    rate, so it is at most 1; a cushion of 0 and a step of 0.0001 show the solve itself.
+
     The dollar steps this replaced (``loan_amount_steps``, phase 8a to 8c) are refused by
     name rather than as an unknown key, so a yaml that still carries them says what to change.
     """
@@ -287,6 +294,8 @@ class PricingConfig(_Section):
     ]
     loan_amount_rounding: Annotated[Decimal, Field(gt=0, max_digits=14, decimal_places=2)]
     borrower_coc_target: Pct
+    borrower_rate_cushion: Pct
+    borrower_rate_rounding: Annotated[Decimal, Field(gt=0, le=1, max_digits=7, decimal_places=6)]
 
     @model_validator(mode="before")
     @classmethod

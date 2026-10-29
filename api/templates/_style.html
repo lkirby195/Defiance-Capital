@@ -350,6 +350,9 @@
     main.apply button[type="submit"] { width: 100%; min-height: 52px; font-size: 17px; }
     main.apply button[type="submit"]:disabled { opacity: .45; cursor: not-allowed; }
     main.apply section.panel { padding: var(--s4); }
+    /* the thank-you page's two view links (v0.22): one row, under the table */
+    main.apply nav.views { display: flex; gap: var(--s2); margin: var(--s3) 0; }
+    main.apply #borrower-advanced .chart { margin-bottom: var(--s3); }
     /* The honeypot: off the page for a person, in the page for a bot. Not display:none,
        which the better bots skip. */
     .hp { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }

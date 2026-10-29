@@ -1849,17 +1849,22 @@ class PricingRow(BaseModel):
     @property
     def label(self) -> str:
         """The row's name: ``Requested``, ``-5%``; ``-$10,000`` on a row from before 1.10.0."""
-        if self.is_request:
-            return REQUESTED_LABEL
-        if self.pct_step is None:
-            sign = "-" if self.step < 0 else "+"
-            return f"{sign}${abs(self.step):,.0f}"
-        text = f"{self.pct_step * 100:.3f}".rstrip("0").rstrip(".")
-        return f"{'+' if self.pct_step > 0 else ''}{text}%"
+        return step_label(self.step, self.pct_step)
 
 
 # The pricing row that is the request itself, as every output names it (SPEC §8.10).
 REQUESTED_LABEL = "Requested"
+
+
+def step_label(step: Decimal, pct_step: Decimal | None) -> str:
+    """``Requested`` on the request, ``-5%`` on a share, ``-$10,000`` on a 1.9.0 dollar step."""
+    if step == 0:
+        return REQUESTED_LABEL
+    if pct_step is None:
+        sign = "-" if step < 0 else "+"
+        return f"{sign}${abs(step):,.0f}"
+    text = f"{pct_step * 100:.3f}".rstrip("0").rstrip(".")
+    return f"{'+' if pct_step > 0 else ''}{text}%"
 
 
 class PricingMatrix(BaseModel):
@@ -1916,6 +1921,76 @@ class SourcesAndUses(BaseModel):
     interest: Decimal
     origination: Decimal
     total_uses: Decimal
+
+
+class QuoteRow(BaseModel):
+    """One quoted pricing row as the borrower is shown it.  # SPEC §4.2
+
+    ``solved_rate`` is the row's ``PricingRow.interest_rate``, the team's number;
+    ``borrower_rate`` is it plus ``pricing.borrower_rate_cushion`` rounded up to the next
+    ``pricing.borrower_rate_rounding`` (``engine/calc/quote.borrower_rate``). The three
+    figures are the Flip Analysis at the row's loan amount and the borrower's rate, None when
+    the borrower side was not evaluated (no sale price); ``cash_invested`` - the borrower's
+    equity there - needs no price and is always carried.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    step: Decimal
+    pct_step: Decimal | None
+    loan_amount: Decimal
+    solved_rate: Decimal
+    borrower_rate: Decimal
+    profit: Decimal | None
+    project_yield: Decimal | None
+    cash_on_cash: Decimal | None
+    cash_invested: Decimal
+
+    @property
+    def is_request(self) -> bool:
+        return self.step == 0
+
+    @property
+    def label(self) -> str:
+        """``Requested``, ``-5%``, as ``PricingRow.label`` names the same row."""
+        return step_label(self.step, self.pct_step)
+
+
+class BorrowerCashFlow(BaseModel):
+    """One period of the borrower's own cash flows (``engine/calc/quote.py``).  # SPEC §4.2
+
+    Costs are negative and the sale positive; ``sale`` is None on every period but the
+    payoff's, and on that one too when there is no sale price. ``net`` is the row's sum.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    month: int
+    date: date
+    purchase: Decimal
+    rehab: Decimal
+    holding: Decimal
+    financing: Decimal
+    sale: Decimal | None
+    net: Decimal
+
+
+class BorrowerQuote(BaseModel):
+    """What the thank-you page shows: the quoted rows at their cushioned rates, and the
+    first row's cash flows and Sources & Uses at its (``engine/calc/quote.py``).  # SPEC §4.2
+
+    ``rows`` run the request first, then each smaller loan largest to smallest; a pricing row
+    that quotes no rate is not here. The two tables are None when no row is.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    rate_cushion: Decimal
+    rate_rounding: Decimal
+    borrower_status: AnalysisStatus
+    rows: list[QuoteRow]
+    cash_flows: list[BorrowerCashFlow] | None
+    sources_and_uses: SourcesAndUses | None
 
 
 class UnderwriteResult(BaseModel):

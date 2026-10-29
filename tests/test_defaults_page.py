@@ -45,6 +45,8 @@ def test_the_page_shows_the_groups_in_order_and_some_values(client: QueueClient)
     assert 'data-key="pricing.target_lender_irr">20%<' in body
     assert 'data-key="pricing.loan_amount_pct_steps">0%, -5%, -10%<' in body
     assert 'data-key="pricing.loan_amount_rounding">$1,000.00<' in body
+    assert 'data-key="pricing.borrower_rate_cushion">0.5%<' in body
+    assert 'data-key="pricing.borrower_rate_rounding">0.25%<' in body
     assert 'data-key="web_intake.thanks_token_hours">24<' in body
     assert 'data-key="rental.target_dscr">1.20x<' in body
     assert 'data-key="rental.takeout_ltv">75%<' in body

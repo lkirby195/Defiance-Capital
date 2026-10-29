@@ -1,0 +1,46 @@
+{% extends "public.html" %}
+{% block title %}{{ t.adjust_title }} — Defiance Capital{% endblock %}
+{% from "_apply_fields.html" import money_box, select_box with context %}
+
+{# Adjust my numbers (SPEC §4.2): five boxes over the request as the borrower sent it - the
+   sale price they expect, the rehab budget, the loan amount, the rent and the term - and
+   nothing else. A save is a new intake submission and a new run, "Borrower edit n", and the
+   thank-you page then shows that run's terms (``services/adjust.py``). The same honeypot
+   and rate limit stand in front of it as in front of /apply, and no CSRF token: there is no
+   session to bind one to. `closed` is a deal an edit is refused on; the page then says so
+   and has no form. #}
+
+{% block content %}
+<h1>{{ t.adjust_title }}</h1>
+<p class="lede">{{ t.adjust_intro }}</p>
+
+{% if closed %}
+  <p class="problem" id="adjust-closed">{{ t.adjust_closed }}</p>
+{% else %}
+<form class="stack" method="post" action="{{ action }}" id="adjust-form">
+  <input type="hidden" name="lang" value="{{ language }}">
+  <div class="hp" aria-hidden="true">
+    <label for="{{ honeypot }}">{{ t.honeypot }}</label>
+    <input id="{{ honeypot }}" name="{{ honeypot }}" type="text" tabindex="-1" autocomplete="off" value="">
+  </div>
+
+  <fieldset>
+    <legend>{{ t.the_deal }}</legend>
+    {{ money_box("estimated_sale_price", t.estimated_sale_price) }}
+    {{ money_box("rehab_costs", t.rehab_costs, help=t.rehab_hint) }}
+    {{ money_box("loan_requested", t.loan_requested) }}
+    {{ money_box("monthly_rent", t.monthly_rent) }}
+  </fieldset>
+
+  <fieldset>
+    <legend>{{ t.timing }}</legend>
+    {{ select_box("term_bucket", t.term_bucket, term_choices) }}
+  </fieldset>
+
+  <p class="fine">{{ t.not_commitment }}</p>
+  <button type="submit">{{ t.adjust_submit }}</button>
+</form>
+{% endif %}
+
+<p><a href="{{ back_href }}">{{ t.adjust_back }}</a></p>
+{% endblock %}

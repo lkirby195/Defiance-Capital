@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.21
+# GLENWOOD Underwriting Platform — SPEC v0.22
 
-Status: **v0.20**, 2026-10-28, engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.22**, 2026-10-29, engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.22** gives the borrower a cushioned quote, two views and five boxes of their own (migration `0024`, no engine change). Every rate on the thank-you page is the row's solved rate plus `pricing.borrower_rate_cushion` (placeholder 0.5%), rounded **up** to the next `pricing.borrower_rate_rounding` (placeholder 0.25%), and the estimated profit, the new **project yield** column and the cash-on-cash beside it are the Flip Analysis at that rate (`engine/calc/quote.py`, computed when the page renders from the version's stored inputs); the team's pages keep the uncushioned solve, both keys are on the Defaults page, and the "Shown to borrower" record stores the cushioned figures with the solve beside each. The page opens on **Simple** - the table - and a toggle opens **Advanced**: the borrower's own cash flows by month (purchase, rehab, holding, financing, sale) and Sources & Uses, both at the first row's cushioned rate, in Spanish too. **Adjust my numbers**, a link live for the token's life, is a form of five boxes - the sale price, the rehab budget, the loan amount, the rent and the term bucket - and each save is a new intake submission as the borrower, a new automatic run named **Borrower edit n** that the page then reads (`deals.borrower_terms_version`), new indicative terms, a new record of what was shown, and a row the team sees in History; it is rate-limited and honeypotted as the form is. A leak-guard test renders every borrower-facing page of a fully analyzed deal and searches it for the lender's side, and every `/apply` response carries `X-Robots-Tag: noindex` (§4.2, §5, §10).
 
 **v0.21** gives the borrower an **investing profile** (migration `0023`, no engine change). Both intake forms ask one more group, **About your investing**, every answer optional: is real estate your full-time work (Full-time / Part-time / This is my first project), years investing (0–1 / 2–5 / 6–10 / 10+), projects in progress right now (0 / 1 / 2–3 / 4+), what you mostly do (Flips / Rentals / Mix), who does the work (Own crew / GC / Mostly myself) (§4.1). The answers live on the `borrowers` row - they describe the person - and the latest answer given on any of their deals is the one kept; a blank box leaves the stored answer. They are shown on the deal page's Deal Overview tab under a rule of their own and on the borrower's page, Edit Intake carries them and audits each move as `borrower.<field>`, the public form asks them in Spanish too, and Home's search box grew five selects whose answers are the **profile filter chips** 10b left the hook for (§9.1). Two pieces of housekeeping: the Assumptions tab's repeated version selector is gone (the header's switcher is the one), and the stale phase-8c-ui screenshot set is deleted.
 
@@ -197,32 +199,78 @@ line above the button says so, in both languages, and the stored submission reco
 unguessable token stored on the deal (`deals.thanks_token`) and live for
 `web_intake.thanks_token_hours` (§10, placeholder 24); an expired or unknown token, and the
 bare `/apply/thanks`, render the plain thank-you. The page says the team will be in touch
-and, when the arrival run allows it, shows one table titled **Indicative terms**, one row per
-pricing step (§8.10) that quotes a rate: Loan amount, Rate, Estimated profit, Yield
-(cash-on-cash). The rows read the **requested row first, then each smaller loan from largest to
-smallest** (v0.18) - what the borrower asked for before what less would cost; the team's
-Pricing section runs the other way, most equity first. The rules:
+and, when the run it reads allows it, shows one table titled **Indicative terms**, one row
+per pricing step (§8.10) that quotes a rate: Loan amount, Rate, Estimated profit, Project
+yield (v0.22), Yield (cash-on-cash). The rows read the **requested row first, then each
+smaller loan from largest to smallest** (v0.18) - what the borrower asked for before what
+less would cost; the team's Pricing section runs the other way, most equity first. The rules:
 
-- shown only when the automatic screen on arrival (version 1) said Go or Conditional, and the
-  ledger ran; a Decline, an incomplete intake and a run that stood down show the plain page
+- shown only when the run the page reads - the arrival run (version 1) until the borrower
+  saves an edit, then that edit's run (below) - was the system's, said Go or Conditional,
+  and its ledger ran; a Decline, an incomplete intake and a run that stood down show the
+  plain page
 - a row whose solved rate is above `pricing.max_quoted_rate` is left out, as is one nothing
   prices; when no row qualifies, the plain page
+- **the rate shown is cushioned** (v0.22): the row's solved rate plus
+  `pricing.borrower_rate_cushion` (placeholder 0.5%), rounded up - never to the nearest - to
+  the next multiple of `pricing.borrower_rate_rounding` (placeholder 0.25%), so 16.34% is
+  quoted at 17.00%; the profit, the project yield and the cash-on-cash beside it are the
+  Flip Analysis (§8.4) at the row's loan amount and that rate (`engine/calc/quote.py`), laid
+  out when the page renders from the version's stored inputs and the config in force. The
+  team's Pricing section, the workbook and the CLI keep the uncushioned solve
 - when the borrower gave no sale price, the table has Loan amount and Rate only and a line
   under it: "Add an estimated sale price for a profit estimate."
-- the results are the arrival run's, not the Working version's: what the team enters
-  afterwards stays on the team's side until a person calls
+- the results are never the Working version's: what the team enters afterwards stays on the
+  team's side until a person calls
 - nothing else of the analysis is shown - no verdict, no IRR, no flags, no sensitivity
+
+**Two views** (v0.22). The page opens on **Simple**, the table alone; **Advanced** (`?view=advanced`,
+a pair of links under the table, no script) adds two tables for the first row shown - the
+request when it is quoted, else the largest quoted loan - at its cushioned rate: the
+borrower's **cash flows** by ledger period (purchase with the closing costs in month 0, the
+rehab and its contingency straight-line over the rehab months, the holding cost every period,
+the financing as each period's interest and fees, the sale net of the broker in the payoff
+period; costs negative, the net column adding to the profit on the table above; the loan's
+own proceeds and payoff not in it) and **Sources & Uses** (§8.11) at that rate. Nothing
+lender-side is on either, and both read in Spanish.
 
 Above the table, in both languages: *"These figures are indicative only, based on the
 information you provided and our standard assumptions. They are not an offer, commitment,
 or guarantee of terms. A member of our team will review your request and contact you."*
-Below it: *"For business-purpose loans only."* The first time the table is shown it is
-recorded on the deal - the rows as rendered and the language (`indicative_terms_shown`,
-JSONB) and when (`indicative_terms_shown_at`) - and in the audit trail
-(`INDICATIVE_TERMS_SHOWN`, actor `web:<email>`); a refresh shows the same rows and records
-nothing new. The deal page prints the record under Pricing as **Shown to borrower**, or
-"Nothing shown to the borrower." on a web deal whose page never showed the table. The link's
-issue is audited too (`THANKS_TOKEN_ISSUED`, the expiry and never the token).
+Below it: *"For business-purpose loans only."* The first time a version's table is shown it
+is recorded on the deal - the rows as rendered (the cushioned rate and figures, the solved
+rate beside each for the team), the language, the version read, the cushion and the views
+opened (`indicative_terms_shown`, JSONB) and when (`indicative_terms_shown_at`) - and in the
+audit trail (`INDICATIVE_TERMS_SHOWN`, actor `web:<email>`); the first opening of the
+Advanced view on that version is recorded again with both views on the record; a refresh of
+a view already recorded shows the same rows and records nothing new. The deal page prints
+the record under Pricing as **Shown to borrower** - the version, the views, the cushion, the
+rate shown and the solved rate - or "Nothing shown to the borrower." on a web deal whose page
+never showed the table. The link's issue is audited too (`THANKS_TOKEN_ISSUED`, the expiry
+and never the token).
+
+**Adjust my numbers** (v0.22). A link on the thank-you page, live for as long as the token
+is and only while the deal is in a status an edit is allowed from (§4.5), opens
+`/apply/thanks/<token>/adjust`: five boxes holding the deal's own numbers - the sale price
+they expect, the rehab budget, the loan amount, the monthly rent and the term bucket - and
+nothing else. A save lays the five over the borrower's latest web submission and applies it
+exactly as Edit Intake applies one: a new immutable `intake_submissions` row, the form's own
+columns moved (the team's economics, valuation and court search untouched; a team-entered
+sale price or rent still in force over the borrower's, §6.1), `INTAKE_EDITED` as
+`web:<email>`, then an automatic run as `system` named **Borrower edit n** (n counting the
+borrower's edits on the deal), which takes the Working mark by the usual rule (§5). The deal
+keeps that run's number (`deals.borrower_terms_version`); the page re-renders the indicative
+terms from it and records what it showed. The team sees the edit and the version in History.
+The post is rate-limited and honeypotted exactly as `/apply` is; a deal declined, dead or
+past an LOI refuses it and the page says the request can no longer be changed online; a
+paused deal takes the edit and runs nothing, as for the team.
+
+**Nothing under `/apply` is for a crawler** (v0.22): every response under the path carries
+`X-Robots-Tag: noindex`. A test renders every borrower-facing page - the form, a rejected
+post put back, the thank-you on both views in both languages, the adjust page and a rejected
+adjust - for a deal the team has worked and asserts none carries the lender IRR, a verdict,
+a flag, the sensitivity, the pricing target, the maximum quoted rate, the cushion, a solved
+rate, an assumption value, a take-back or rental figure, or a team member's name.
 
 What stands between the page and the queue is a honeypot field, which drops a post that
 fills it without a word, and a per-address rate limit
@@ -408,6 +456,12 @@ leaves them be. Engine `1.10.0` adds `pct_step` to a pricing row and no run is d
 `0023` adds the investing profile to `borrowers` (§4.1 row 7, v0.21): `work_status`,
 `years_investing`, `projects_in_progress`, `strategy` (type `investing_strategy`) and
 `work_crew`, each its own enum type persisting the stored values, all nullable, no backfill.
+
+`0024` adds `deals.borrower_terms_version` (§4.2, v0.22): the number of the version the
+thank-you page reads - the arrival run's on a web deal, moved by each Borrower edit -
+nullable, no backfill (NULL reads as version 1), not snapshotted. The record of what was
+shown (`indicative_terms_shown`) gains the version, the cushion, the views and each row's
+solved rate and project yield; a record from before reads with them absent.
 They are the person's, so `db/repository.apply_profile` writes the answers an intake gives
 onto the row whether the row is new or a repeat borrower's, answer by answer, and an edit
 puts each move on its audit row as `borrower.<field>`. None is an engine input: a version
@@ -1479,7 +1533,7 @@ workbook to export.
 - `interest.day_count_basis` (30): the days a whole monthly period counts as, for the final stub period's prorated interest (§8.3)
 - `closing.default_lead_days` (14): the **default for `closing_date`** (§8.1) is the last day of the month this many days after the deal came in
 - sensitivity (§8.9): `loan_step_usd` (5,000), `loan_steps` (4), `rate_min` (12.5%), `rate_max` (17.5%), `rate_step` (1%) - the shape of the IRR grid; every cell is a ledger re-run
-- pricing (§8.10): `borrower_coc_target` (20%, placeholder, v0.17; the Flip's cash-on-cash target, §8.4), `target_lender_irr` (20%, placeholder), `max_quoted_rate` (18%, placeholder; above 0, at most 100%), `loan_amount_pct_steps` (`[0, -0.05, -0.10]`, placeholder; each between -1 and 0, no duplicates, at least one) and `loan_amount_rounding` ($1,000, placeholder; above 0). The old `loan_amount_steps` is refused by name
+- pricing (§8.10): `borrower_coc_target` (20%, placeholder, v0.17; the Flip's cash-on-cash target, §8.4), `target_lender_irr` (20%, placeholder), `max_quoted_rate` (18%, placeholder; above 0, at most 100%), `loan_amount_pct_steps` (`[0, -0.05, -0.10]`, placeholder; each between -1 and 0, no duplicates, at least one) and `loan_amount_rounding` ($1,000, placeholder; above 0). The old `loan_amount_steps` is refused by name. The borrower's quote (§4.2, v0.22): `borrower_rate_cushion` (0.5%, placeholder; 0 to 100%) added to a row's solved rate before it is shown, and `borrower_rate_rounding` (0.25%, placeholder; above 0, at most 100%), the step the cushioned rate is rounded up to
 - rental takeout (§8.5): `expenses_pct_of_rent` (35%) and `takeout_rate` (6.5%), the defaults for the two per-deal assumptions; `takeout_ltv` (75%, placeholder, v0.19; above 0), `amortization_years` (30) and `target_dscr` (1.20, placeholder; the renamed `dscr_floor`, which is refused by name)
 - take-back (§8.6): `lost_interest_months` (3) and `legal_costs_usd` (5,000), the defaults for the two per-deal assumptions; `foreclosure_months` by state (placeholders OK 6, CO 4, OTHER 8; every served state needs an entry, and `OTHER` stands in for any other state, v0.20) and `hold_months` (`[12, 24, 36]`; distinct, ascending, 1 to 120). The DSCR test's `amortization_years` and `dscr_floor` are refused by name
 - underwrite flag severities: `MARKET_RENT_BELOW_REQUIRED` and `TAKEOUT_BELOW_PAYOFF` (placeholder Soft), `TAKE_BACK_PRICE_ABOVE_PURCHASE` (placeholder Hard), `BORROWER_COC_BELOW_TARGET` (placeholder Soft, v0.17). The informational codes (§8.8) are fixed `Info` in code and the loader refuses to grade them, as it refuses the retired `DSCR_BELOW_FLOOR` and `TAKE_BACK_DSCR_BELOW_FLOOR`
@@ -1634,6 +1688,14 @@ guarantor's name, the email and the entity live on the `borrowers` row, which wa
 when there was a phone; a phoneless intake that names anybody now gets one, and an edit reuses
 the deal's own phoneless row rather than minting another.
 
+Phase 10d (no engine change, migration `0024`, v0.22) cushions the borrower's quote
+(`pricing.borrower_rate_cushion`, `pricing.borrower_rate_rounding`; `engine/calc/quote.py`
+runs the Flip at the cushioned rate when the page renders), splits the thank-you page into
+Simple and Advanced views (the borrower's cash flows and Sources & Uses), adds Adjust my
+numbers (five boxes, a new submission and a "Borrower edit n" run per save, the page
+reading that run through `deals.borrower_terms_version`), the leak-guard test and
+`X-Robots-Tag: noindex` on every `/apply` route (§4.2, §5, §10).
+
 Phase 10c (no engine change, migration `0023`, v0.21) gives the borrower an investing
 profile: the "About your investing" group on both intake forms, stored on `borrowers`, shown
 on the deal page and the borrower's page, carried and audited by Edit Intake, asked in
@@ -1657,6 +1719,29 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
 
 ## 13. Open items
 
+- 10d-borrower's open questions (v0.22):
+  - **The cushioned rate is not re-checked against `max_quoted_rate`**: a row is quoted when
+    its solve clears the maximum, and the cushion can carry the rate shown above it (a 17.9%
+    solve shows 18.50% under the placeholders). Dropping such a row, or capping the shown
+    rate at the maximum, are both one-line changes
+  - **The quote is computed when the page renders**, from the version's stored inputs and
+    matrix under the config in force - not stored on the underwrite row, and no engine bump
+    (the underwrite's own result does not change). A cushion changed between two visits
+    shows the new one; the record of what was shown keeps the cushion it was built with
+  - **The Advanced view's basis** is the first row shown: the request when quoted, else the
+    largest quoted loan; the loan's own proceeds and payoff are not in the cash flows, which
+    are the project as the borrower pays for it
+  - **A borrower edit re-applies the latest web submission** with the five boxes laid over
+    it; a team Edit Intake made in between is overwritten by the borrower's copy of the
+    other boxes, as any later edit overwrites an earlier one, and a team-entered sale price
+    or rent still beats the borrower's (§6.1) so the new terms may not move with the box
+  - **The edit's run is the system's** ("Borrower edit n", actor `system`), as every
+    automatic run is, and takes the Working mark unless a person chose the Working version;
+    the `INTAKE_EDITED` row is the borrower's
+  - **Advanced is recorded as a second view** on the same version, not as separate figures:
+    the two tables are a function of the row recorded and the cushion recorded
+  - **The Spanish** for the new strings is pending the same native-speaker review as the
+    rest of `api/i18n.py`
 - 10c-intake's open questions (v0.21):
   - **The latest answer wins.** The profile is the person's, so a repeat borrower's new
     submission - on either form - moves the row's answers for every deal of theirs; "projects
@@ -1783,8 +1868,9 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
   can say what it needs. Rounding is half-up and capped at the request, so a share too small
   to survive the unit prices as the request again; confirm half-up is the rounding wanted
 - The thank-you page's indicative terms (v0.14, §4.2): `web_intake.thanks_token_hours` is a
-  24-hour placeholder; the results shown are the arrival run's (version 1), never a later
-  version's, so a team edit inside the window does not reach the borrower; a Conditional
+  24-hour placeholder; the results shown are the arrival run's (version 1) or the borrower's
+  own edit's (v0.22), never a later team version's, so a team edit inside the window does
+  not reach the borrower; a Conditional
   screen shows the table exactly as a Go does; the yield shown is the borrower's cash-on-cash
   as §8.9 defines it; the Spanish strings are pending the same native-speaker review as the
   rest of `api/i18n.py`; and a GET records the one write (what was shown) and commits it

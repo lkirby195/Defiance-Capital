@@ -40,6 +40,14 @@ from services.actions import (
     save_court_search,
     save_overrides,
 )
+from services.adjust import (
+    ADJUSTABLE_FIELDS,
+    BORROWER_EDIT_PREFIX,
+    apply_borrower_edit,
+    borrower_edit_name,
+    current_values,
+    latest_web_payload,
+)
 from services.audit import DEALS, USERS, deal_trail, jsonable, last_action_at, record_audit
 from services.autorun import (
     NOTHING_RAN,
@@ -94,7 +102,11 @@ from services.home import (
     section_of,
 )
 from services.indicative import (
+    ADVANCED_VIEW,
     SHOWN_ON,
+    SIMPLE_VIEW,
+    VIEWS,
+    BorrowerAdvanced,
     IndicativeRow,
     IndicativeTerms,
     deal_by_thanks_token,
@@ -102,6 +114,7 @@ from services.indicative import (
     issue_thanks_token,
     record_shown,
     shown_terms,
+    terms_version,
 )
 from services.intake import (
     EDIT_INTAKE_FROM,
@@ -111,6 +124,7 @@ from services.intake import (
     restore_intake,
     screen_is_stale,
     update_intake,
+    web_intake_record,
 )
 from services.lifecycle import (
     advance_after_screen,
@@ -173,6 +187,18 @@ from services.versions import (
 )
 
 __all__ = [
+    "ADJUSTABLE_FIELDS",
+    "ADVANCED_VIEW",
+    "BORROWER_EDIT_PREFIX",
+    "SIMPLE_VIEW",
+    "VIEWS",
+    "BorrowerAdvanced",
+    "apply_borrower_edit",
+    "borrower_edit_name",
+    "current_values",
+    "latest_web_payload",
+    "terms_version",
+    "web_intake_record",
     "ADVANCE_TO_REVIEW_FROM",
     "ASSUMPTIONS",
     "ASSUMPTION_FIELDS",

@@ -71,6 +71,9 @@ PUBLIC_ROUTES = [
     ("POST", "/apply", 422),
     ("GET", "/apply/thanks", 200),
     ("GET", "/apply/thanks/no-such-token", 200),
+    # Adjust my numbers (v0.22): an unknown token is the plain thank-you, or a redirect to it
+    ("GET", "/apply/thanks/no-such-token/adjust", 200),
+    ("POST", "/apply/thanks/no-such-token/adjust", 303),
 ]
 
 
@@ -131,6 +134,8 @@ def test_every_route_is_accounted_for() -> None:
             ("POST", "/apply"),
             ("GET", "/apply/thanks"),
             ("GET", "/apply/thanks/{token}"),
+            ("GET", "/apply/thanks/{token}/adjust"),
+            ("POST", "/apply/thanks/{token}/adjust"),
         }
         | {
             ("POST", f"/queue/deals/{{deal_id}}/{action}")
