@@ -87,8 +87,10 @@ from services.home import (
     HomeSection,
     HomeView,
     Section,
+    chips_from,
     home_view,
     last_activity,
+    profile_filter_choices,
     section_of,
 )
 from services.indicative import (
@@ -264,7 +266,9 @@ __all__ = [
     "get_version",
     "hash_password",
     "borrower_view",
+    "chips_from",
     "home_view",
+    "profile_filter_choices",
     "load_borrower",
     "indicative_terms",
     "is_defaulted",

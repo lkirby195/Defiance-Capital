@@ -85,6 +85,7 @@ from db.session import get_session
 from outputs.excel import workbook_bytes
 from schema.dates import payoff_date_for
 from schema.models import (
+    PROFILE_ENUMS,
     SPLIT_PRODUCTS,
     Channel,
     CourtFlag,
@@ -117,6 +118,7 @@ from services import (
     apply_defaults,
     auto_run,
     borrower_view,
+    chips_from,
     clean_name,
     deal_history,
     deal_trail,
@@ -132,6 +134,7 @@ from services import (
     mark_dead,
     mark_working,
     pause,
+    profile_filter_choices,
     progress,
     reopen,
     reset_assumptions,
@@ -191,6 +194,8 @@ def enum_values() -> dict[str, list[str]]:
         "product": [member.value for member in Product],
         "state": [member.value for member in State],
         "tranche": [member.value for member in Tranche],
+        # the five "About your investing" selects (SPEC §4.1, 10c), by their field names
+        **{field: [member.value for member in kind] for field, kind in PROFILE_ENUMS.items()},
     }
 
 
@@ -546,10 +551,15 @@ def home_page(request: Request, session: SessionDep, user: PageUser, q: str = ""
     """Home: every deal in one of four sections, most recently touched first.  # SPEC §9.1
 
     ``?q=`` is the search box: the sections narrow to the deals whose borrower's name,
-    entity or phone matches (``services/home.py``), and the box keeps what was typed.
+    entity or phone matches (``services/home.py``), and the box keeps what was typed. A
+    profile field on the query string - ``?years_investing=2_5`` - is one of the filter
+    chips (10c, SPEC §4.1): the selects under the box post them, and each chip is a link
+    back here without itself.
     """
-    view = home_view(session, HomeFilter(query=q.strip()))
-    return page(request, "home.html", {"view": view}, user=user)
+    chips = chips_from(dict(request.query_params))
+    view = home_view(session, HomeFilter(query=q.strip(), chips=chips))
+    context = {"view": view, "profile_filters": profile_filter_choices()}
+    return page(request, "home.html", context, user=user)
 
 
 @router.get("/borrowers/{borrower_id}", response_class=HTMLResponse, response_model=None)

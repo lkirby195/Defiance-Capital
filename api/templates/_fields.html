@@ -135,6 +135,7 @@
     <option value="{{ choice }}" {% if chosen == choice %}selected{% endif %}>
       {%- if labelled == "tranche" %}{{ choice | tranche }}
       {%- elif labelled == "experience" %}{{ choice | experience }}
+      {%- elif labelled == "profile" %}{{ choice | profile }}
       {%- elif labelled == "label" %}{{ choice | label }}
       {%- else %}{{ choice }}{% endif -%}
     </option>
@@ -170,6 +171,12 @@
 
 {% macro experience_box(name, text, choices, chosen, required=false) %}
   {{ select_box(name, text, choices, chosen, required, "experience") }}
+{% endmacro %}
+
+{% macro profile_box(name, text, choices, chosen) %}
+  {#- One "About your investing" answer (SPEC §4.1, 10c): the stored code is the value,
+      the words are ``schema/labels.PROFILE_LABELS``. Always Optional. -#}
+  {{ select_box(name, text, choices, chosen, false, "profile") }}
 {% endmacro %}
 
 {% macro product_radio(name, text, choices, chosen, required=false) %}

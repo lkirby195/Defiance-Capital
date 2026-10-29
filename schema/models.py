@@ -90,6 +90,68 @@ class ExperienceBucket(StrEnum):
     SIX_PLUS = "6_PLUS"
 
 
+class WorkStatus(StrEnum):
+    """Whether real estate is the borrower's full-time work.  # SPEC §4.1 (10c)"""
+
+    FULL_TIME = "FULL_TIME"
+    PART_TIME = "PART_TIME"
+    FIRST_PROJECT = "FIRST_PROJECT"
+
+
+class YearsInvesting(StrEnum):
+    """How long the borrower has been investing, in years.  # SPEC §4.1 (10c)"""
+
+    ZERO_TO_ONE = "0_1"
+    TWO_TO_FIVE = "2_5"
+    SIX_TO_TEN = "6_10"
+    TEN_PLUS = "10_PLUS"
+
+
+class ProjectsInProgress(StrEnum):
+    """How many projects the borrower has going right now.  # SPEC §4.1 (10c)"""
+
+    ZERO = "0"
+    ONE = "1"
+    TWO_TO_THREE = "2_3"
+    FOUR_PLUS = "4_PLUS"
+
+
+class Strategy(StrEnum):
+    """What the borrower mostly does.  # SPEC §4.1 (10c)"""
+
+    FLIPS = "FLIPS"
+    RENTALS = "RENTALS"
+    MIX = "MIX"
+
+
+class WorkCrew(StrEnum):
+    """Who does the work on the borrower's projects.  # SPEC §4.1 (10c)"""
+
+    OWN_CREW = "OWN_CREW"
+    GC = "GC"
+    MYSELF = "MYSELF"
+
+
+# The borrower's investing profile (SPEC §4.1, 10c): the five questions both intake forms ask
+# under "About your investing", every one optional, stored on the ``borrowers`` row rather
+# than the deal because they describe the person. In the order the forms ask them. The
+# column name is the field name on every model and form that carries them.
+BORROWER_PROFILE_FIELDS: tuple[str, ...] = (
+    "work_status",
+    "years_investing",
+    "projects_in_progress",
+    "strategy",
+    "work_crew",
+)
+PROFILE_ENUMS: dict[str, type[StrEnum]] = {
+    "work_status": WorkStatus,
+    "years_investing": YearsInvesting,
+    "projects_in_progress": ProjectsInProgress,
+    "strategy": Strategy,
+    "work_crew": WorkCrew,
+}
+
+
 class ExperienceTier(StrEnum):
     """Verified experience tier from deed history.  # SPEC §7.3"""
 
@@ -469,7 +531,13 @@ def _now_utc() -> datetime:
 
 
 class BorrowerInfo(BaseModel):
-    """Who the borrower is; credit and experience are self-reported here.  # SPEC §4.5"""
+    """Who the borrower is; credit and experience are self-reported here.  # SPEC §4.5
+
+    The five profile fields after ``repeat_borrower`` are the "About your investing" group
+    (SPEC §4.1, 10c): optional on every channel, stored on the borrower's own row, and the
+    latest answer given on any deal is the one kept (``db/repository.apply_profile``). A
+    None here is "not asked" or "not answered" and leaves the stored answer alone.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -480,6 +548,11 @@ class BorrowerInfo(BaseModel):
     credit_range: Tranche | None = None
     experience_bucket: ExperienceBucket | None = None
     repeat_borrower: bool | None = None
+    work_status: WorkStatus | None = None
+    years_investing: YearsInvesting | None = None
+    projects_in_progress: ProjectsInProgress | None = None
+    strategy: Strategy | None = None
+    work_crew: WorkCrew | None = None
 
 
 class PropertyInfo(BaseModel):

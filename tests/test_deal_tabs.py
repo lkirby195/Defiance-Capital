@@ -46,6 +46,7 @@ MEMBERS: dict[str, tuple[str, ...]] = {
         "<h2>Deal Economics and Property</h2>",
         '<dl class="kv" id="intake-facts">',
         '<div class="kv-section">Overview</div>',
+        '<div class="kv-section">About their investing</div>',
         '<div class="kv-section">Property Overview</div>',
         '<div class="kv-section">Deal Economics</div>',
         "<h3>Still needed from the borrower</h3>",
@@ -68,7 +69,7 @@ MEMBERS: dict[str, tuple[str, ...]] = {
         ">Save &amp; Run</button>",
         ">Reset all to defaults</a>",
         '<section class="panel chart" id="history">',
-        '<form class="actions switcher pad" id="version-picker"',
+        "<h2>Versions</h2>",
         "<h3>Versions and edits</h3>",
         "<h3>Actions and notes</h3>",
     ),
@@ -190,7 +191,7 @@ def test_the_overview_is_one_grid_under_section_rules(
     body = page(client, deal_with_overrides)
     grid = between(body, '<dl class="kv" id="intake-facts">', "</dl>")
     rules = re.findall(r'<div class="kv-section">([^<]+)</div>', grid)
-    assert rules == ["Overview", "Property Overview", "Deal Economics"]
+    assert rules == ["Overview", "About their investing", "Property Overview", "Deal Economics"]
     # label/value pairs, and the three old columns are gone
     assert grid.count("<dt>") == grid.count("<dd") and grid.count("<dt>") > 30
     assert 'class="facts-grid"' not in body and "<h3>Overview</h3>" not in body

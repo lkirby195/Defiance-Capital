@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -39,6 +40,8 @@ from db.models import User
 from schema.labels import (
     enum_label,
     experience_label,
+    profile_caption,
+    profile_label,
     term_bucket_label,
     tranche_label,
 )
@@ -177,6 +180,20 @@ def bucket(value: TermBucket | str | None) -> str:
     return term_bucket_label(None if value is None else TermBucket(value))
 
 
+def profile(value: StrEnum | str | None) -> str:
+    """An "About your investing" answer as the team reads it: ``2_5`` -> ``2–5``.  # SPEC §4.1
+
+    Takes the stored string as well as the enum, so a ``<select>`` labels its own options with
+    the function that labels the value on the deal page and the borrower's page (10c).
+    """
+    return profile_label(value)
+
+
+def caption(field: str) -> str:
+    """The caption over a profile question: ``years_investing`` -> ``Years investing``."""
+    return profile_caption(field)
+
+
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.filters.update(
     money=money,
@@ -196,6 +213,8 @@ templates.env.filters.update(
     tranche=tranche,
     experience=experience,
     bucket=bucket,
+    profile=profile,
+    caption=caption,
 )
 # A missing name in a template is a bug in the template, not an empty string on the page.
 templates.env.undefined = jinja2.StrictUndefined

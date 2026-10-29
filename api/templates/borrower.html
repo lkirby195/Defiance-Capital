@@ -2,7 +2,8 @@
 {% block title %}Borrower — Defiance Capital{% endblock %}
 
 {# One borrower and every deal they have brought (v0.20, SPEC §9.1). The header is the
-   guarantor's name with their entities, phone and email as chips; under it one chart card
+   guarantor's name with their entities, phone and email as chips; under it their investing
+   profile - the five "About your investing" answers (10c) - then one chart card
    listing every deal - the address is the link - with its status, the Working version's
    verdict and IRR, the loan amount and the day it last moved, and the totals at the foot:
    how many deals, and how much they asked for together. The Home page and the deal header
@@ -20,6 +21,17 @@
     </div>
   </div>
 </header>
+
+<section class="panel chart" id="borrower-profile">
+  <h2>About their investing</h2>
+  <dl class="kv">
+    <dt>Full-time in real estate</dt><dd>{{ view.borrower.work_status | profile }}</dd>
+    <dt>Years investing</dt><dd>{{ view.borrower.years_investing | profile }}</dd>
+    <dt>Projects in progress</dt><dd>{{ view.borrower.projects_in_progress | profile }}</dd>
+    <dt>Mostly does</dt><dd>{{ view.borrower.strategy | profile }}</dd>
+    <dt>Who does the work</dt><dd>{{ view.borrower.work_crew | profile }}</dd>
+  </dl>
+</section>
 
 <section class="panel chart" id="borrower-deals">
   <div class="row">

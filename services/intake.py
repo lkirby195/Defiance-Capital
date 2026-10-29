@@ -46,6 +46,7 @@ from sqlalchemy.orm import Session
 from config.config import Config
 from db.models import Deal, IntakeSubmission
 from db.repository import (
+    apply_profile,
     create_deal_from_intake,
     find_or_create_borrower,
     find_or_create_property,
@@ -340,8 +341,11 @@ def _relink(
 
     The borrower's own name and email are corrected in place when the edit supplies a
     different one: the row is the person behind the phone number, and a typed name is the
-    only thing that ever set it. A new entity is linked; an old one is not unlinked, because
-    the link is shared with the borrower's other deals and is not this form's to remove.
+    only thing that ever set it. The investing profile moves the same way, answer by answer
+    (``db/repository.apply_profile``; a blank box leaves the stored answer), each move on the
+    audit row as ``borrower.<field>``. A new entity is linked; an old one is not unlinked,
+    because the link is shared with the borrower's other deals and is not this form's to
+    remove.
     """
     had_phone = deal.borrower.phone if deal.borrower is not None else None
     borrower = find_or_create_borrower(session, record.borrower, current=deal.borrower)
@@ -355,6 +359,9 @@ def _relink(
                 before[f"borrower.{attribute}"] = jsonable(getattr(borrower, attribute))
                 after[f"borrower.{attribute}"] = jsonable(value)
                 setattr(borrower, attribute, value)
+        for field, (was, now) in apply_profile(borrower, record.borrower).items():
+            before[f"borrower.{field}"] = jsonable(was)
+            after[f"borrower.{field}"] = jsonable(now)
         if borrower is not deal.borrower:
             before["borrower_id"] = jsonable(deal.borrower_id)
             after["borrower_id"] = jsonable(borrower.id)

@@ -82,7 +82,38 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     ),
     "yes": ("Yes", "Sí"),
     "no": ("No", "No"),
-    # 2. the property
+    # 2. about your investing (SPEC §4.1, 10c): five questions, every one optional. The
+    # answers are keyed ``profile_<stored value>`` (``api/apply_form.profile_choices``).
+    "about_investing": ("About your investing", "Sobre su experiencia como inversionista"),
+    "work_status": (
+        "Is real estate your full-time work?",
+        "¿Los bienes raíces son su trabajo de tiempo completo?",
+    ),
+    "profile_FULL_TIME": ("Full-time", "Tiempo completo"),
+    "profile_PART_TIME": ("Part-time", "Tiempo parcial"),
+    "profile_FIRST_PROJECT": ("This is my first project", "Este es mi primer proyecto"),
+    "years_investing": ("Years investing", "Años invirtiendo en bienes raíces"),
+    "profile_0_1": ("0–1", "0–1"),
+    "profile_2_5": ("2–5", "2–5"),
+    "profile_6_10": ("6–10", "6–10"),
+    "profile_10_PLUS": ("10+", "10+"),
+    "projects_in_progress": (
+        "Projects in progress right now",
+        "Proyectos en marcha en este momento",
+    ),
+    "profile_0": ("0", "0"),
+    "profile_1": ("1", "1"),
+    "profile_2_3": ("2–3", "2–3"),
+    "profile_4_PLUS": ("4+", "4+"),
+    "strategy": ("What you mostly do", "Lo que hace principalmente"),
+    "profile_FLIPS": ("Flips", "Compra, remodelación y venta (flips)"),
+    "profile_RENTALS": ("Rentals", "Rentas"),
+    "profile_MIX": ("Mix", "Una mezcla de ambos"),
+    "work_crew": ("Who does the work", "¿Quién hace el trabajo?"),
+    "profile_OWN_CREW": ("Own crew", "Mi propio equipo"),
+    "profile_GC": ("GC", "Un contratista general"),
+    "profile_MYSELF": ("Mostly myself", "Principalmente yo"),
+    # 3. the property
     "the_property": ("The property", "La propiedad"),
     "address": ("Street address", "Dirección (calle y número)"),
     "city": ("City", "Ciudad"),
@@ -100,7 +131,7 @@ STRINGS: Mapping[str, tuple[str, str]] = {
         "Si pega un enlace y deja la dirección en blanco, tomamos la dirección del enlace. "
         "Nunca abrimos la página.",
     ),
-    # 3. the deal
+    # 4. the deal
     "the_deal": ("The deal", "El negocio"),
     "purchase_price": ("Purchase price", "Precio de compra"),
     "rehab_costs": ("Rehab budget", "Presupuesto de remodelación"),
@@ -114,7 +145,7 @@ STRINGS: Mapping[str, tuple[str, str]] = {
         "Monthly rent, if you would keep it",
         "Renta mensual, si decide conservarla",
     ),
-    # 4. timing
+    # 5. timing
     "timing": ("Timing", "Plazos"),
     "term_bucket": ("How long do you need the loan?", "¿Por cuánto tiempo necesita el préstamo?"),
     "term_3": ("3 months", "3 meses"),
@@ -123,11 +154,11 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "term_12": ("12 months", "12 meses"),
     "term_12_PLUS": ("12+ months", "12+ meses"),
     "closing_date": ("Closing date, if you have one", "Fecha de cierre, si ya la tiene"),
-    # 5. how you heard
+    # 6. how you heard
     "referral_heading": ("How you found us", "Cómo nos encontró"),
     "referral": ("How did you hear about us?", "¿Cómo supo de nosotros?"),
     "referral_hint": ("A few words is plenty.", "Con unas pocas palabras basta."),
-    # 6. the consent line above the button: sending the form is the consent (SPEC §4.2)
+    # 7. the consent line above the button: sending the form is the consent (SPEC §4.2)
     "consent": (
         "By submitting, you agree we may contact you about this request.",
         "Al enviar, usted acepta que podamos comunicarnos con usted sobre esta solicitud.",

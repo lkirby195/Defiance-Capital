@@ -3,7 +3,10 @@ intake_submissions.  # SPEC §5
 
 Borrowers are matched on the normalized phone (the primary match key) and
 properties on the normalized address, so repeat inquiries reuse existing rows.
-Existing rows are never modified here; the submission row is immutable.
+Existing rows are never modified here but for the borrower's investing profile
+(``apply_profile``): the five "About your investing" answers describe the person, so the
+latest answer given on any of their deals is the one the row keeps. The submission row is
+immutable.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from db.models import Borrower, Deal, Entity, IntakeSubmission, Property
-from schema.models import BorrowerInfo, IntakeRecord, PropertyInfo
+from schema.models import BORROWER_PROFILE_FIELDS, BorrowerInfo, IntakeRecord, PropertyInfo
 
 
 def find_or_create_borrower(
@@ -42,6 +45,7 @@ def find_or_create_borrower(
     if borrower is None:
         borrower = Borrower(phone=info.phone, name=info.name, email=info.email)
         session.add(borrower)
+        apply_profile(borrower, info)
     if info.entity_name:
         entity = session.scalar(
             select(Entity).where(func.lower(Entity.name) == info.entity_name.lower())
@@ -53,6 +57,24 @@ def find_or_create_borrower(
             borrower.entities.append(entity)
     session.flush()
     return borrower
+
+
+def apply_profile(borrower: Borrower, info: BorrowerInfo) -> dict[str, tuple[Any, Any]]:
+    """Put the intake's "About your investing" answers on the borrower's row.  # SPEC §4.1 (10c)
+
+    Only the questions answered: a None on the intake is a box left blank, and the row's
+    answer stands. Returns what moved - ``{field: (before, after)}`` - so an edit can put it
+    on its audit row (``services/intake._relink``); a new deal from a repeat borrower
+    updates the row the same way, because "projects in progress right now" is about now.
+    """
+    moved: dict[str, tuple[Any, Any]] = {}
+    for field in BORROWER_PROFILE_FIELDS:
+        value = getattr(info, field)
+        if value is None or value == getattr(borrower, field):
+            continue
+        moved[field] = (getattr(borrower, field), value)
+        setattr(borrower, field, value)
+    return moved
 
 
 def find_or_create_property(session: Session, info: PropertyInfo) -> Property | None:
@@ -238,11 +260,16 @@ def transient_deal(record: IntakeRecord) -> Deal:
 
 
 def create_deal_from_intake(session: Session, record: IntakeRecord) -> Deal:
-    """Create the deal (id = ``record.id``) and its immutable submission row. Flushes, no commit."""
+    """Create the deal (id = ``record.id``) and its immutable submission row. Flushes, no commit.
+
+    A repeat borrower's row takes the profile answers this intake gave (``apply_profile``);
+    a new row was given them when it was made.
+    """
+    borrower = find_or_create_borrower(session, record.borrower)
+    if borrower is not None:
+        apply_profile(borrower, record.borrower)
     deal = build_deal(
-        record,
-        borrower=find_or_create_borrower(session, record.borrower),
-        prop=find_or_create_property(session, record.property),
+        record, borrower=borrower, prop=find_or_create_property(session, record.property)
     )
     deal.submissions.append(
         IntakeSubmission(channel=record.channel, raw_payload=record.raw_payload)

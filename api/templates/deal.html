@@ -23,7 +23,8 @@
      5. Scenarios      Flip, Rental and Take-Back as three cards, each led by its headline
      6. Assumptions    the Underwriting Assumptions panel as a label/value grid - the box on
                        the value side, its "default" tag at the right edge - with Save & Run
-                       and Reset all under it, then the versions: a selector and the history
+                       and Reset all under it, then the versions card: the history (the
+                       header's switcher is the one version selector, 10c)
 
    The tabs are the one script on the page beside the input masks (_tabs.html): the active
    tab is the URL hash, so a reload lands on the same tab, and a browser running no script
@@ -459,6 +460,14 @@
     <dt>Deals in last 36 months (self-reported)</dt><dd>{{ deal.experience_bucket_self_reported | experience }}</dd>
     <dt>Repeat borrower</dt><dd>{{ deal.repeat_borrower_self_reported | yes_no }}</dd>
     <dt>Credit authorization</dt><dd>{{ deal.credit_authorization_signed | yes_no }}</dd>
+
+    {# the borrower's investing profile (SPEC §4.1, 10c): the row's answers, not the deal's #}
+    {{ rule("About their investing") }}
+    <dt>Full-time in real estate</dt><dd>{{ deal.borrower.work_status | profile if deal.borrower else "—" }}</dd>
+    <dt>Years investing</dt><dd>{{ deal.borrower.years_investing | profile if deal.borrower else "—" }}</dd>
+    <dt>Projects in progress</dt><dd>{{ deal.borrower.projects_in_progress | profile if deal.borrower else "—" }}</dd>
+    <dt>Mostly does</dt><dd>{{ deal.borrower.strategy | profile if deal.borrower else "—" }}</dd>
+    <dt>Who does the work</dt><dd>{{ deal.borrower.work_crew | profile if deal.borrower else "—" }}</dd>
 
     {{ rule("Property Overview") }}
     <dt>Address</dt><dd>{{ deal.property.address_raw | plain if deal.property else "—" }}</dd>
@@ -905,20 +914,9 @@
   </form>
 </section>
 
-{# --- the versions (SPEC §5, §9, §11): pick one to show, and the history ------------------- #}
+{# --- the versions (SPEC §5, §9, §11): the history; the header's switcher picks the one shown #}
 <section class="panel chart" id="history">
   <h2>Versions</h2>
-  {% if versions and shown %}
-    <form class="actions switcher pad" id="version-picker" method="get" action="/queue/deals/{{ deal.id }}">
-      <label for="version-pick">Show version</label>
-      <select id="version-pick" name="version">
-        {% for each in versions %}
-          <option value="{{ each.number }}"{% if shown and each.number == shown.number %} selected{% endif %}>{{ each.name }} · {{ "Working" if each.is_working else "Draft" }} · {{ each.created_at | when }} · {{ each.actor }}</option>
-        {% endfor %}
-      </select>
-      <button class="quiet" type="submit">Show</button>
-    </form>
-  {% endif %}
   <div class="chart">
   <h3>Versions and edits</h3>
   {% if history %}

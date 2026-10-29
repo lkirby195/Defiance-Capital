@@ -5,8 +5,9 @@
 {% import "_fields.html" as fields with context %}
 {% block title %}{{ heading }} — Defiance Capital{% endblock %}
 
-{# Labels and boxes, three groups (SPEC §8.1): Overview, Property Overview, Deal Economics,
-   two columns on a desktop and one on a phone. No helper text: every box says Required or
+{# Labels and boxes, four groups (SPEC §4.1, §8.1): Overview, About your investing - the
+   borrower's five profile answers, all optional, kept on the borrower's row (10c) - Property
+   Overview, Deal Economics, two columns on a desktop and one on a phone. No helper text: every box says Required or
    Optional and nothing else, and a complaint sits in red under the box it is about. The loan
    structure is a radio, "100% at close" / "Holdback" (SPEC §3); Holdback reveals the Rehab
    portion box by a stylesheet rule on the checked radio, not by script (_style.html), and a
@@ -34,6 +35,20 @@
                                enums.experience_bucket, form.experience_bucket, required=true) }}
       {{ fields.yes_no_box("repeat_borrower", "Repeat borrower", form.repeat_borrower,
                            required=true) }}
+    </div>
+  </section>
+
+  <section class="panel" id="about-investing">
+    <h2>About your investing</h2>
+    <div class="grid2">
+      {{ fields.profile_box("work_status", "Full-time in real estate", enums.work_status,
+                            form.work_status) }}
+      {{ fields.profile_box("years_investing", "Years investing", enums.years_investing,
+                            form.years_investing) }}
+      {{ fields.profile_box("projects_in_progress", "Projects in progress",
+                            enums.projects_in_progress, form.projects_in_progress) }}
+      {{ fields.profile_box("strategy", "Mostly does", enums.strategy, form.strategy) }}
+      {{ fields.profile_box("work_crew", "Who does the work", enums.work_crew, form.work_crew) }}
     </div>
   </section>
 

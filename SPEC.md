@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.20
+# GLENWOOD Underwriting Platform — SPEC v0.21
 
 Status: **v0.20**, 2026-10-28, engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.21** gives the borrower an **investing profile** (migration `0023`, no engine change). Both intake forms ask one more group, **About your investing**, every answer optional: is real estate your full-time work (Full-time / Part-time / This is my first project), years investing (0–1 / 2–5 / 6–10 / 10+), projects in progress right now (0 / 1 / 2–3 / 4+), what you mostly do (Flips / Rentals / Mix), who does the work (Own crew / GC / Mostly myself) (§4.1). The answers live on the `borrowers` row - they describe the person - and the latest answer given on any of their deals is the one kept; a blank box leaves the stored answer. They are shown on the deal page's Deal Overview tab under a rule of their own and on the borrower's page, Edit Intake carries them and audits each move as `borrower.<field>`, the public form asks them in Spanish too, and Home's search box grew five selects whose answers are the **profile filter chips** 10b left the hook for (§9.1). Two pieces of housekeeping: the Assumptions tab's repeated version selector is gone (the header's switcher is the one), and the stale phase-8c-ui screenshot set is deleted.
 
 **v0.20** puts the deal page on six tabs and gives the borrower a page (engine `2.2.0`, no migration). The deal page keeps its header and puts everything under it on **Summary**, **Deal Overview**, **Cash Flows**, **Sources & Uses**, **Scenarios** and **Assumptions** (§9); the active tab is the URL hash, so a reload lands on the same one, and the tabs are the one script on the page beside the input masks. Deal Economics and Property is one label/value grid under section rules; the Underwriting Assumptions panel is a grid of rows with the box on the value side and its "default" tag at the right edge; the Cash Flows are open; the versions - a selector and the history - sit under the panel. Home gains a **search box** (borrower name, entity, phone) with the hook for the 10c profile-field filter chips, and the borrower's name on a Home row and in the deal header links to `/borrowers/{id}`: who they are and every deal they brought, with the totals (§9.1). `take_back.foreclosure_months.OTHER` (placeholder 8) now stands in for a state outside the footprint, so such a deal gets a take-back; `FORECLOSURE_MONTHS_MISSING` (Info) is raised on that fallback alone and names the placeholder (§8.6, §8.8, §10).
 
@@ -141,8 +143,10 @@ Five things. Everything else is derived or requested later, only if the deal cle
 | 4 | Loan Amount | Dollars. Borrower-driven — the engine derives leverage from this |
 | 5 | How long do you need the loan? | The term. The borrower channels ask it as a bucket (3 / 6 / 9 / 12 / 12+ months) which seeds `term_months`; 12+ seeds 12 on every channel, the floor of the ask, and the deal page says the borrower asked for more so the team sets the real term. The team form asks for the term in months (§8.1), because a person with the whole deal in front of them knows it; the payoff date derives |
 | 6 | Who you are | Guarantor name, entity (if any), phone (optional); **credit range** (pick one of the five tranches, §7.1); **real estate experience** (deals completed in last 3 years: 0 / 1–2 / 3–5 / 6+); **repeat borrower** yes/no |
+| 7 | About your investing | Optional, every one (v0.21): **full-time?** (Full-time / Part-time / This is my first project), **years investing** (0–1 / 2–5 / 6–10 / 10+), **projects in progress right now** (0 / 1 / 2–3 / 4+), **what you mostly do** (Flips / Rentals / Mix), **who does the work** (Own crew / GC / Mostly myself). Stored on the `borrowers` row (`work_status`, `years_investing`, `projects_in_progress`, `strategy`, `work_crew`, migration `0023`), not the deal: the latest answer given on any of the person's deals is the one kept, and a blank box leaves the stored answer. Nothing in the engine reads them; they are read on the deal page and the borrower's page and filtered on Home (§9.1) |
 
-(Numbered as six rows because "who you are" is one question with sub-fields.)
+(Numbered as seven rows because "who you are" is one question with sub-fields, and the
+profile is not part of the minimum: a deal with none of it answered is complete.)
 
 The phone is the borrower match key when there is one (§5) and is not itself required: a deal
 that arrives by email has a name and no number, and refusing to screen it for want of one
@@ -168,7 +172,9 @@ Self-reported credit and experience are used for the screen only and are verifie
 **The web form** asks the §4.1 minimum in plain language and in the borrower's own
 language - every string on the page is in a translation table with an English and a
 Spanish column, the page defaults from `Accept-Language` and has a toggle, and nothing it
-stores changes with the language. It asks no loan type: the normalizer infers one from the
+stores changes with the language. After "About you" it asks the five **About your
+investing** questions (§4.1 row 7, v0.21), each a row of tappable radios and every one
+optional; the answers are the same codes the team form stores. It asks no loan type: the normalizer infers one from the
 rehab budget as it does on every channel, and the team confirms it. The listing link is
 optional and, when the address boxes are left blank, the address is read off the link's
 slug and never off the page (§4.4). The borrower's own guesses at the sale price after the
@@ -249,6 +255,11 @@ IntakeRecord
     credit_range?: T1..T5        # self-reported; the screen needs one and names it when absent
     experience_bucket: 0 | 1_2 | 3_5 | 6_PLUS   # self-reported
     repeat_borrower: bool
+    work_status?: FULL_TIME | PART_TIME | FIRST_PROJECT       # the investing profile (§4.1
+    years_investing?: 0_1 | 2_5 | 6_10 | 10_PLUS              #   row 7, v0.21): optional on
+    projects_in_progress?: 0 | 1 | 2_3 | 4_PLUS               #   every channel, kept on the
+    strategy?: FLIPS | RENTALS | MIX                          #   borrowers row; None leaves
+    work_crew?: OWN_CREW | GC | MYSELF                        #   the stored answer alone
   property:
     address_raw, address_normalized?, listing_url?
     city?, county?, state: OK | CO | OTHER     # county comes from enrichment; no box asks for it
@@ -339,7 +350,7 @@ killed, and it sits in its own section of the Home page until somebody brings it
 
 Tables (one-line intent each; full DDL via Alembic migrations):
 
-- `borrowers` — person-level; phone is the primary match key; links to MA borrower id when matched
+- `borrowers` — person-level; phone is the primary match key; links to MA borrower id when matched; carries the investing profile (§4.1 row 7), five nullable enum columns
 - `entities` — LLCs etc.; many-to-many with borrowers
 - `intake_submissions` — every inbound message/file/form, immutable, raw
 - `deals` — one per property × borrower inquiry; current `IntakeRecord` state lives here
@@ -393,6 +404,15 @@ four are nullable and no row is backfilled: a deal stored before it was sent to 
 page. None of the four is an input, so a version snapshot leaves them out and a restore
 leaves them be. Engine `1.10.0` adds `pct_step` to a pricing row and no run is deleted: a
 `1.9.0` row loads with it None and is labelled by its dollar step.
+
+`0023` adds the investing profile to `borrowers` (§4.1 row 7, v0.21): `work_status`,
+`years_investing`, `projects_in_progress`, `strategy` (type `investing_strategy`) and
+`work_crew`, each its own enum type persisting the stored values, all nullable, no backfill.
+They are the person's, so `db/repository.apply_profile` writes the answers an intake gives
+onto the row whether the row is new or a repeat borrower's, answer by answer, and an edit
+puts each move on its audit row as `borrower.<field>`. None is an engine input: a version
+snapshot carries the borrower's id, name, phone, email and entities as before, and a restore
+leaves the profile where it is.
 
 **Versions** (`0018`). A version is one analysis run - the screen and the underwrite Run
 Analysis, Save & Run, Reset all, Restore inputs and every automatic run produce together
@@ -624,6 +644,11 @@ form asks and the deal page shows:
 
 The loan's own terms are not here. Its purpose, its type, its closing date and its term are
 Deal Economics, beside the money they describe.
+
+**About your investing** (v0.21) follows the Overview on both forms: the five profile
+questions of §4.1 row 7, every one optional, shown back on the deal page under a rule of
+their own and on the borrower's page. None of them is an input: the engine does not read
+them.
 
 **Property Overview**
 
@@ -1280,7 +1305,9 @@ is on the page in this order with the tab row as in-page links:
    web deal, Overview, Property Overview, Deal Economics), with an Edit Intake link on its
    bar and what is still needed from the borrower under it; **Scored as** (the score
    components); the **court and filing search** (collapsed; the outcome, the date and the
-   typed matters, its own Save).
+   typed matters, its own Save). The grid's Overview is followed by **About their
+   investing** (v0.21): the borrower's five profile answers (§4.1 row 7), read off the
+   borrower's row, an em dash where one was not given.
 3. **Cash Flows** - the ledger, the whole table, open.
 4. **Sources & Uses** - the sources beside the uses (§8.11).
 5. **Scenarios** - Flip, Rental and Take-Back as three cards, each led by its headline figure
@@ -1303,8 +1330,8 @@ is on the page in this order with the tab row as in-page links:
    Run** under the rows that saves the panel and runs the analysis as the person who pressed
    it, and **Reset all to defaults** beside it, which confirms on a page of its own, puts
    every box with a default back to it and runs again. Under the panel the **Versions** card:
-   a version selector (the header's switcher, repeated where the versions live), the
-   versions-and-edits table (every version with its name, timestamp, actor, Working or Draft
+   the versions-and-edits table (the header's switcher is the one version selector, v0.21),
+   the (every version with its name, timestamp, actor, Working or Draft
    and engine version, a View on each; every intake edit no version has run on as an "edit"
    row with a Restore) and the audit trail under it.
 
@@ -1352,10 +1379,15 @@ row, the CLI report and the workbook, where a person drafting a message reads th
 box**: one GET box that narrows every section to the deals whose borrower matches - the
 guarantor's name or an entity's by case-blind substring, the phone by its digits once the
 query holds three of them - with the counts of what is shown, a line saying how many of how
-many match, and Clear. The chips row under the box is empty and is where the 10c
-**profile-field filter chips** land (`services/home.HomeFilter.chips`, applied in
-`matches`). The borrower's name on a Home row and in the deal header links to
-`/borrowers/{id}`: the guarantor's name with their entities, phone and email as chips, and
+many match, and Clear. Beside the box, five **profile selects** (v0.21), one per "About your
+investing" question (§4.1 row 7), its caption as the "any" option; each answer picked is a
+**filter chip** in the row under the box (`services/home.HomeFilter.chips`, one `(field,
+value)` per answer, read off the borrower's row in `matches`), the chip is a link that
+removes itself, and the whole filter is the query string, so a narrowed Home can be
+bookmarked. The result line names the query in quotes and each chip as its caption and
+answer. The borrower's name on a Home row and in the deal header links to
+`/borrowers/{id}`: the guarantor's name with their entities, phone and email as chips, their
+investing profile as a label/value card under the header (v0.21), and
 every deal on their row - the address linking to the deal, its status, the Working version's
 verdict and IRR, the loan amount, the loan structure and the day it last moved, most recently
 touched first - with the totals at the foot: how many deals, how many of them live (neither
@@ -1602,6 +1634,13 @@ guarantor's name, the email and the entity live on the `borrowers` row, which wa
 when there was a phone; a phoneless intake that names anybody now gets one, and an edit reuses
 the deal's own phoneless row rather than minting another.
 
+Phase 10c (no engine change, migration `0023`, v0.21) gives the borrower an investing
+profile: the "About your investing" group on both intake forms, stored on `borrowers`, shown
+on the deal page and the borrower's page, carried and audited by Edit Intake, asked in
+Spanish on the public form, and filtered on Home through the chips 10b left the hook for
+(§4.1, §5, §9.1). It also drops the Assumptions tab's repeated version selector and the
+stale phase-8c-ui screenshots.
+
 Phase 10b (engine `2.2.0`, no migration, v0.20) puts the deal page on six tabs - Summary, Deal
 Overview, Cash Flows, Sources & Uses, Scenarios, Assumptions - the active one kept in the URL
 hash; reformats Deal Economics and Property and the Underwriting Assumptions panel as
@@ -1618,10 +1657,24 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
 
 ## 13. Open items
 
+- 10c-intake's open questions (v0.21):
+  - **The latest answer wins.** The profile is the person's, so a repeat borrower's new
+    submission - on either form - moves the row's answers for every deal of theirs; "projects
+    in progress right now" is about now, which is the argument for it. The alternative, a
+    profile per deal, would make the deal the thing the questions describe
+  - **A blank box cannot clear an answer.** Both forms treat an unanswered question as "not
+    asked", so once a borrower has said Part-time, nobody can put the row back to "no answer";
+    they can only pick a different one
+  - **The captions** the team reads - "Full-time in real estate", "Mostly does", "Who does
+    the work" - are the author's; the public form asks the brief's questions word for word
+  - **The filter is five selects** beside the search box, their captions standing as "Any",
+    with one chip per answer picked under it; the brief said "chips hook" and no more about
+    what sets them
+  - **The Spanish** for the group is in `api/i18n.py` and, like the rest of that column, is
+    pending native-speaker review
 - 10b-tabs' open questions (v0.20):
-  - The **Assumptions tab repeats the version selector** under the panel, beside the
-    history, while the header keeps its switcher ("fixed header, as now"); one of the two
-    could go
+  - (settled in v0.21) the Assumptions tab's repeated version selector is gone; the header's
+    switcher is the one
   - A **run, a save or a restore lands on the Summary tab**: the hash is not carried through
     the redirect, and Show on either selector drops it too
   - The **tabs are script**, the queue's second beside the input masks; a browser without it
@@ -1631,8 +1684,8 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
     said "totals" and no more
   - **`foreclosure_months.OTHER` is 8 months**, a placeholder to confirm; it stands in for
     every state outside OK and CO alike, because `State` folds them all into `OTHER`
-  - The **screenshots** are a new set under `docs/screenshots/10b-tabs/`; the phase-8c-ui set
-    is left as it was and no longer shows the current deal page or Home
+  - (settled in v0.21) the phase-8c-ui screenshot set is deleted; `docs/screenshots/10b-tabs/`
+    is the current set, and it predates the profile rows and the filter selects
 
 - 10a-scenarios' open questions (v0.19):
   - **Our payoff due** is the commitment plus the origination fee's payoff half - what the

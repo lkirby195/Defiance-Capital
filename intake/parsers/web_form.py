@@ -39,11 +39,16 @@ from schema.models import (
     BorrowerInfo,
     DealInfo,
     ExperienceBucket,
+    ProjectsInProgress,
     PropertyInfo,
     State,
     StateSource,
+    Strategy,
     TermBucket,
     Tranche,
+    WorkCrew,
+    WorkStatus,
+    YearsInvesting,
     months_for_bucket,
 )
 
@@ -70,6 +75,12 @@ class WebApplyForm(BaseModel):
     credit_range: Tranche
     experience_bucket: ExperienceBucket
     repeat_borrower: bool
+    # About your investing (SPEC §4.1, 10c): all five optional on the public form.
+    work_status: WorkStatus | None = None
+    years_investing: YearsInvesting | None = None
+    projects_in_progress: ProjectsInProgress | None = None
+    strategy: Strategy | None = None
+    work_crew: WorkCrew | None = None
     # The property. ``state_entered`` is False when the state was read off the listing link
     # rather than picked, so the property records it as inferred (SPEC §4.5).
     address: str = Field(min_length=1, max_length=300)
@@ -114,6 +125,11 @@ def parse_web_form(form: WebApplyForm) -> ParsedIntake:
             credit_range=form.credit_range,
             experience_bucket=form.experience_bucket,
             repeat_borrower=form.repeat_borrower,
+            work_status=form.work_status,
+            years_investing=form.years_investing,
+            projects_in_progress=form.projects_in_progress,
+            strategy=form.strategy,
+            work_crew=form.work_crew,
         ),
         property=PropertyInfo(
             address_raw=form.address_line,

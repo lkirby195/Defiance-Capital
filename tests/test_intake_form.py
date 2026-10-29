@@ -261,9 +261,9 @@ def test_the_form_prints_labels_only(client: QueueClient, stored_deal: Deal, pat
     assert "<dl" not in form and 'class="help"' not in form and "SPEC" not in form
     for text in labels(body).values():
         assert "—" not in text and " - " not in text, text
-    # the headings are the three groups and nothing more
+    # the headings are the four groups and nothing more
     headings = re.findall(r"<h2>(.*?)</h2>", form)
-    assert headings == ["Overview", "Property Overview", "Deal Economics"]
+    assert headings == ["Overview", "About your investing", "Property Overview", "Deal Economics"]
     assert "<h3" not in form
 
 
