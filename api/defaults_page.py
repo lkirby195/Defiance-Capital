@@ -66,6 +66,8 @@ _PERCENT_ENDINGS = (
     ".ltc",
     ".ltv",
     "takeout_ltv",
+    "borrower_rate_cushion",
+    "borrower_rate_rounding",
 )
 _MONEY_ENDINGS = ("_usd", "loan_amount_rounding")
 _RATIO_ENDINGS = ("target_dscr",)

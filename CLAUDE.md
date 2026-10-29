@@ -40,7 +40,8 @@ glenwood-uw/
                            #   flip.py, rental.py (the takeout), take_back.py (the
                            #   lender's downside, solved on its XIRR), sensitivity.py (the lender's),
                            #   borrower.py (the Borrower Sensitivity), pricing.py (the matrix),
-                           #   sources_uses.py (Sources & Uses)
+                           #   sources_uses.py (Sources & Uses), quote.py (the borrower's
+                           #   cushioned rate and their figures at it, SPEC §4.2)
     version.py             # ENGINE_VERSION string, bump on any math change
   adapters/
     base.py                # Adapter Protocol + AdapterResult
@@ -77,6 +78,7 @@ glenwood-uw/
     persistence.py         # append screens / underwrites rows; rebuild results from them
     home.py                # the Home page: the four sections, their membership, the ordering, the search filter
     indicative.py          # the thank-you link's token and the indicative terms it shows a web borrower
+    adjust.py              # Adjust my numbers: the borrower's five-box edit and its "Borrower edit n" run
     purge.py               # the one-time `glenwood deals purge`; every deal table, users kept
     readiness.py           # the SPEC 8.1 checklist: every input, its value, where it came from
     requests.py            # UnderwriteRequest / TeamOverrides: what the team supplies by hand
@@ -277,16 +279,27 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
 - **Every form post carries a CSRF token.** The guard is a router-level dependency (`api/security.py`), so a new route is covered by where it lives rather than by somebody remembering; every `<form method="post">` renders `{{ csrf.field(csrf_token) }}`. `tests/test_csrf.py` posts to every guarded route without one and asserts the refusal — do not add a route that needs an exemption without saying why there. The one exemption is the public borrower form: a token is bound to a signed-in user and a borrower has no account; the honeypot and the rate limit stand in front of it instead, and `tests/test_csrf.py` says so.
 - **The borrower is told their indicative terms and nothing else.** A submission is sent to
   `/apply/thanks/<token>` (SPEC §4.2), which says the team will be in touch and, only when the
-  arrival run said Go or Conditional, shows one table under the required disclaimer: the
-  quoted pricing rows' loan amount and rate, with the estimated profit and cash-on-cash
-  beside them when the borrower gave a sale price (`services/indicative.py` decides; rows
-  above `pricing.max_quoted_rate` are left out; nothing qualifying means the plain page).
-  Never a verdict, an IRR, a flag, a sensitivity or a status: the screen and the underwrite
-  run on arrival (SPEC §4.6), and the rest of what they say stays on the team's side. The
-  token is random, expires after `web_intake.thanks_token_hours`, and what the page showed
-  is recorded on the deal and printed on the deal page under Pricing as "Shown to borrower".
-  The page's strings live in `api/i18n.py` in English and Spanish; the Spanish column is
-  marked pending native-speaker review there and stays marked until one has read it.
+  run it reads said Go or Conditional, shows one table under the required disclaimer: the
+  quoted pricing rows' loan amount and rate, with the estimated profit, project yield and
+  cash-on-cash beside them when the borrower gave a sale price (`services/indicative.py`
+  decides; rows above `pricing.max_quoted_rate` are left out; nothing qualifying means the
+  plain page). **Every rate shown is cushioned** - the solve plus
+  `pricing.borrower_rate_cushion`, rounded up to `pricing.borrower_rate_rounding` - and every
+  figure beside it is the Flip at that rate (`engine/calc/quote.py`); the team's pages keep
+  the solve. The Advanced view adds the borrower's own cash flows and Sources & Uses, and
+  **Adjust my numbers** lets them retype five boxes (sale price, rehab, loan amount, rent,
+  term), each save a new submission as the borrower and a `system` run named "Borrower edit
+  n" that the page then reads (`services/adjust.py`). Never a verdict, an IRR, a flag, a
+  sensitivity, a status, the pricing target, the maximum quoted rate, the cushion, an
+  assumption value, a take-back or rental figure or a team member's name - the leak guard in
+  `tests/test_borrower_pages.py` renders every borrower-facing page and searches for each,
+  and a new borrower-facing page goes on its list. Every `/apply` response carries
+  `X-Robots-Tag: noindex` (`api/main.py`). The token is random, expires after
+  `web_intake.thanks_token_hours`, and what the page showed - the cushioned figures, the
+  solve beside each, the version and the views - is recorded on the deal and printed on the
+  deal page under Pricing as "Shown to borrower". The page's strings live in `api/i18n.py`
+  in English and Spanish; the Spanish column is marked pending native-speaker review there
+  and stays marked until one has read it.
 
 ## Style
 

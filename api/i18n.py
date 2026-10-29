@@ -231,6 +231,66 @@ STRINGS: Mapping[str, tuple[str, str]] = {
         "Add an estimated sale price for a profit estimate.",
         "Agregue un precio de venta estimado para recibir una estimación de ganancia.",
     ),
+    "terms_project_yield": ("Project yield", "Rendimiento del proyecto"),
+    # the two views of the thank-you page (v0.22): Simple is the table alone, Advanced adds
+    # the borrower's own cash flows and Sources & Uses under it
+    "views_aria": ("How much to show", "Cuánto mostrar"),
+    "view_simple": ("Simple", "Simple"),
+    "view_advanced": ("Advanced", "Avanzado"),
+    "advanced_basis": (
+        "The tables below are for a {amount} loan at {rate}.",
+        "Las tablas a continuación corresponden a un préstamo de {amount} a {rate}.",
+    ),
+    "cash_flows_title": ("Your cash flows", "Sus flujos de efectivo"),
+    "cf_month": ("Month", "Mes"),
+    "cf_purchase": ("Purchase", "Compra"),
+    "cf_rehab": ("Rehab", "Remodelación"),
+    "cf_holding": ("Holding", "Mantenimiento"),
+    "cf_financing": ("Financing", "Financiamiento"),
+    "cf_sale": ("Sale", "Venta"),
+    "cf_net": ("Net", "Neto"),
+    "cf_total": ("Total", "Total"),
+    "cf_note": (
+        "Purchase includes closing costs; rehab includes the contingency; the sale is net "
+        "of selling costs. The loan's proceeds and payoff are not shown.",
+        "La compra incluye los costos de cierre; la remodelación incluye la contingencia; "
+        "la venta es neta de los costos de venta. El desembolso y el pago del préstamo no "
+        "se muestran.",
+    ),
+    "su_title": ("Sources and uses", "Fuentes y usos"),
+    "su_sources": ("Sources", "Fuentes"),
+    "su_uses": ("Uses", "Usos"),
+    "su_advance": ("Loan advance at closing", "Desembolso del préstamo al cierre"),
+    "su_holdback": ("Rehab holdback", "Retención para remodelación"),
+    "su_equity": ("Your equity", "Su capital propio"),
+    "su_purchase": ("Purchase price", "Precio de compra"),
+    "su_closing": ("Closing costs", "Costos de cierre"),
+    "su_rehab": ("Rehab budget", "Presupuesto de remodelación"),
+    "su_contingency": ("Contingency", "Contingencia"),
+    "su_holding": ("Holding costs", "Costos de mantenimiento"),
+    "su_interest": ("Interest", "Intereses"),
+    "su_origination": ("Origination fee", "Comisión de originación"),
+    "su_total": ("Total", "Total"),
+    # Adjust my numbers (v0.22): five boxes over the request as it was sent
+    "adjust_link": ("Adjust my numbers", "Ajustar mis números"),
+    "adjust_title": ("Adjust my numbers", "Ajustar mis números"),
+    "adjust_intro": (
+        "Change any of these and we will work out your indicative terms again. Everything "
+        "else on your request stays as you sent it.",
+        "Cambie cualquiera de estos datos y calcularemos de nuevo sus términos indicativos. "
+        "Todo lo demás en su solicitud queda tal como lo envió.",
+    ),
+    "adjust_submit": ("Update my terms", "Actualizar mis términos"),
+    "adjust_back": ("Back to my terms", "Volver a mis términos"),
+    "adjust_saved": (
+        "Your numbers were updated. Here are your new indicative terms.",
+        "Sus números fueron actualizados. Estos son sus nuevos términos indicativos.",
+    ),
+    "adjust_closed": (
+        "This request can no longer be changed online. A member of our team will be in touch.",
+        "Esta solicitud ya no se puede modificar en línea. Un miembro de nuestro equipo se "
+        "comunicará con usted.",
+    ),
 }
 
 _COLUMN: dict[Language, int] = {ENGLISH: 0, SPANISH: 1}

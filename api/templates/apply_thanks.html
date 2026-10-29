@@ -1,11 +1,14 @@
 {% extends "public.html" %}
 {% block title %}{{ t.thanks_title }} — Defiance Capital{% endblock %}
 
-{# The thank-you page (SPEC §4.2). The team will be in touch; and, when the arrival run said
-   Go or Conditional and at least one pricing row is quotable, one table of indicative terms
-   under the required disclaimer (``services/indicative.py`` decides; this page only prints).
+{# The thank-you page (SPEC §4.2). The team will be in touch; and, when the run the page
+   reads said Go or Conditional and at least one pricing row is quotable, one table of
+   indicative terms under the required disclaimer (``services/indicative.py`` decides; this
+   page only prints), each row at its cushioned rate. Two views: Simple is the table alone,
+   Advanced adds the borrower's own cash flows and Sources & Uses under it, both at the
+   first row's cushioned rate. Then the link to Adjust my numbers while the deal is live.
    Nothing else of the analysis is here - no verdict, no IRR, no flags, no sensitivity - and
-   the profit and yield columns appear only when the borrower gave a sale price. #}
+   the profit columns appear only when the borrower gave a sale price. #}
 
 {% block content %}
 <section class="panel">
@@ -24,6 +27,7 @@
             <th class="num">{{ t.terms_rate }}</th>
             {% if terms.with_profit %}
               <th class="num">{{ t.terms_profit }}</th>
+              <th class="num">{{ t.terms_project_yield }}</th>
               <th class="num">{{ t.terms_yield }}</th>
             {% endif %}
           </tr>
@@ -36,6 +40,7 @@
               <td class="num">{{ row.interest_rate | quoted }}</td>
               {% if terms.with_profit %}
                 <td class="num">{{ row.profit | dollars }}</td>
+                <td class="num">{{ row.project_yield | pct }}</td>
                 <td class="num">{{ row.cash_on_cash | pct }}</td>
               {% endif %}
             </tr>
@@ -46,7 +51,83 @@
     {% if not terms.with_profit %}<p class="small" id="terms-add-sale-price">{{ t.terms_add_sale_price }}</p>{% endif %}
     <p class="small" id="terms-business-purpose">{{ t.terms_business_purpose }}</p>
   </div></div>
+  <nav class="views" id="terms-views" aria-label="{{ t.views_aria }}">
+    <a class="btn small {{ 'primary' if view == 'simple' else 'quiet' }}" href="{{ simple_href }}"{% if view == 'simple' %} aria-current="page"{% endif %}>{{ t.view_simple }}</a>
+    <a class="btn small {{ 'primary' if view == 'advanced' else 'quiet' }}" href="{{ advanced_href }}"{% if view == 'advanced' %} aria-current="page"{% endif %}>{{ t.view_advanced }}</a>
+  </nav>
+  {% if advanced %}
+  <div id="borrower-advanced">
+    <p class="small" id="advanced-basis">{{ t.advanced_basis.format(amount=advanced.loan_amount | dollars, rate=advanced.interest_rate | quoted) }}</p>
+    <div class="chart" id="borrower-cash-flows">
+      <h2>{{ t.cash_flows_title }}</h2>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t.cf_month }}</th>
+              <th class="num">{{ t.cf_purchase }}</th>
+              <th class="num">{{ t.cf_rehab }}</th>
+              <th class="num">{{ t.cf_holding }}</th>
+              <th class="num">{{ t.cf_financing }}</th>
+              <th class="num">{{ t.cf_sale }}</th>
+              <th class="num">{{ t.cf_net }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in advanced.cash_flows %}
+              <tr>
+                <th scope="row">{{ row.month }}</th>
+                <td class="num">{{ row.purchase | dollars }}</td>
+                <td class="num">{{ row.rehab | dollars }}</td>
+                <td class="num">{{ row.holding | dollars }}</td>
+                <td class="num">{{ row.financing | dollars }}</td>
+                <td class="num">{% if row.sale is not none %}{{ row.sale | dollars }}{% endif %}</td>
+                <td class="num">{{ row.net | dollars }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr id="cash-flow-totals">
+              <th scope="row">{{ t.cf_total }}</th>
+              <td class="num">{{ advanced.totals.purchase | dollars }}</td>
+              <td class="num">{{ advanced.totals.rehab | dollars }}</td>
+              <td class="num">{{ advanced.totals.holding | dollars }}</td>
+              <td class="num">{{ advanced.totals.financing | dollars }}</td>
+              <td class="num">{% if advanced.totals.sale is not none %}{{ advanced.totals.sale | dollars }}{% endif %}</td>
+              <td class="num">{{ advanced.totals.net | dollars }}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <p class="small">{{ t.cf_note }}</p>
+    </div>
+    {% set su = advanced.sources_and_uses %}
+    <div class="chart" id="borrower-sources-uses">
+      <h2>{{ t.su_title }}</h2>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr><th>{{ t.su_sources }}</th><th class="num"></th><th>{{ t.su_uses }}</th><th class="num"></th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">{{ t.su_advance }}</th><td class="num">{{ su.advance_at_closing | dollars }}</td><th scope="row">{{ t.su_purchase }}</th><td class="num">{{ su.purchase_price | dollars }}</td></tr>
+            <tr><th scope="row">{{ t.su_holdback }}</th><td class="num">{{ su.rehab_holdback | dollars }}</td><th scope="row">{{ t.su_closing }}</th><td class="num">{{ su.closing_costs | dollars }}</td></tr>
+            <tr><th scope="row">{{ t.su_equity }}</th><td class="num">{{ su.borrower_equity | dollars }}</td><th scope="row">{{ t.su_rehab }}</th><td class="num">{{ su.rehab_costs | dollars }}</td></tr>
+            <tr><td></td><td></td><th scope="row">{{ t.su_contingency }}</th><td class="num">{{ su.contingency | dollars }}</td></tr>
+            <tr><td></td><td></td><th scope="row">{{ t.su_holding }}</th><td class="num">{{ su.holding_costs | dollars }}</td></tr>
+            <tr><td></td><td></td><th scope="row">{{ t.su_interest }}</th><td class="num">{{ su.interest | dollars }}</td></tr>
+            <tr><td></td><td></td><th scope="row">{{ t.su_origination }}</th><td class="num">{{ su.origination | dollars }}</td></tr>
+          </tbody>
+          <tfoot>
+            <tr id="sources-uses-totals"><th scope="row">{{ t.su_total }}</th><td class="num">{{ su.total_sources | dollars }}</td><th scope="row">{{ t.su_total }}</th><td class="num">{{ su.total_uses | dollars }}</td></tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
   {% endif %}
+  {% endif %}
+  {% if adjust_href %}<p><a class="btn quiet" id="adjust-link" href="{{ adjust_href }}">{{ t.adjust_link }}</a></p>{% endif %}
   <p><a href="{{ again_href }}">{{ t.thanks_again }}</a></p>
 </section>
 {% endblock %}

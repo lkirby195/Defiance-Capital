@@ -21,6 +21,7 @@ thank-you.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -29,6 +30,7 @@ from starlette.responses import RedirectResponse, Response
 from starlette.status import HTTP_303_SEE_OTHER, HTTP_403_FORBIDDEN
 
 from api.render import templates
+from api.routes.apply import APPLY_PATH
 from api.routes.apply import router as apply_router
 from api.routes.auth import router as auth_router
 from api.routes.deals import router as deals_router
@@ -49,6 +51,25 @@ app.include_router(intake_router)
 app.include_router(deals_router)
 app.include_router(defaults_router)
 app.include_router(apply_router)
+
+# Nothing under /apply is for a search engine (SPEC §4.2): the form is linked from where
+# GLENWOOD puts it, and a thank-you page with a borrower's terms on it is theirs alone for
+# as long as its link is live. The header goes on every response under the path - the
+# form, the thank-you, the adjust page, a 422, a 429 - so a crawler that reached one is told
+# the same thing whatever it found.
+NOINDEX = "noindex"
+
+
+@app.middleware("http")
+async def noindex_the_borrower_pages(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    """``X-Robots-Tag: noindex`` on every /apply route."""
+    response = await call_next(request)
+    path = request.url.path
+    if path == APPLY_PATH or path.startswith(APPLY_PATH + "/"):
+        response.headers["X-Robots-Tag"] = NOINDEX
+    return response
 
 
 @app.exception_handler(NotSignedIn)

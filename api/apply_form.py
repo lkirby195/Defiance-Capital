@@ -35,20 +35,20 @@ from adapters.listing_url import address_from_url
 from api.masks import mask_one
 from api.problems import NO_PROBLEMS, FormProblems, at_top, by_field
 from config.config import Config, get_config
-from intake.normalize import normalize
-from intake.parsers.web_form import WebApplyForm, parse_web_form
+from intake.parsers.web_form import WebApplyForm
 from schema.labels import experience_label, tranche_label
 from schema.masks import money_display, money_parse, phone_digits
 from schema.models import (
     BORROWER_PROFILE_FIELDS,
     PROFILE_ENUMS,
-    Channel,
     ExperienceBucket,
     IntakeRecord,
     State,
     TermBucket,
     Tranche,
 )
+from services.adjust import ADJUSTABLE_FIELDS, LANGUAGE_KEY
+from services.intake import web_intake_record
 
 # Every box the page renders, in the order it asks for them (SPEC §4.2), so a blank the
 # browser dropped is still a blank box when the page is put back.
@@ -188,6 +188,26 @@ def _is_email(text: str) -> bool:
     return bool(at) and bool(local) and "." in domain and not domain.startswith(".")
 
 
+def _money_problem(name: str, text: str) -> str | None:
+    """The complaint key a money box earns, or None; a blank box earns none here."""
+    if not text:
+        return None
+    amount = _money(text)
+    if amount is None or not amount.is_finite():
+        return "err_amount"
+    if amount < 0 or (name in POSITIVE_MONEY and amount == 0):
+        return "err_amount_positive"
+    if amount >= Decimal("1000000000000") or amount != amount.quantize(Decimal("0.01")):
+        return "err_amount"
+    return None
+
+
+def _term_problem(term: str | None) -> str | None:
+    if term and term not in {member.value for member in TermBucket}:
+        return "err_choice"
+    return None
+
+
 def complaints(submitted: Mapping[str, str], t: Mapping[str, str]) -> FormProblems:
     """One line per thing wrong, under the box it is about, in the borrower's language.
 
@@ -232,19 +252,10 @@ def complaints(submitted: Mapping[str, str], t: Mapping[str, str]) -> FormProble
     if link and not _is_url(link):
         complain("listing_url", "err_url")
     for name in MONEY_FIELDS:
-        text = submitted.get(name, "")
-        if not text:
-            continue
-        amount = _money(text)
-        if amount is None or not amount.is_finite():
-            complain(name, "err_amount")
-        elif amount < 0 or (name in POSITIVE_MONEY and amount == 0):
-            complain(name, "err_amount_positive")
-        elif amount >= Decimal("1000000000000") or amount != amount.quantize(Decimal("0.01")):
-            complain(name, "err_amount")
-    term = submitted.get("term_bucket")
-    if term and term not in {member.value for member in TermBucket}:
-        complain("term_bucket", "err_choice")
+        if key := _money_problem(name, submitted.get(name, "")):
+            complain(name, key)
+    if key := _term_problem(submitted.get("term_bucket")):
+        complain("term_bucket", key)
     closing = submitted.get("closing_date", "")
     if closing:
         try:
@@ -328,15 +339,73 @@ def intake_record(form: WebApplyForm, *, language: str, intake_source: str | Non
     in stored units plus the language the borrower chose, so the team can see which one to
     call them back in.
     """
-    payload = form.model_dump(mode="json", exclude_none=True)
-    payload["language"] = language
-    return normalize(
-        parse_web_form(form),
-        Channel.WEB,
-        raw_payload=payload,
-        intake_source=intake_source,
-        referral_note=form.referral_note,
-    )
+    return web_intake_record(form, language=language, intake_source=intake_source)
+
+
+# --- Adjust my numbers (SPEC §4.2): five boxes over the stored form -------------------------------
+
+# The boxes the adjust page has, in the order it shows them; the money ones and the term.
+ADJUST_FIELDS: tuple[str, ...] = ADJUSTABLE_FIELDS
+ADJUST_REQUIRED: frozenset[str] = frozenset({"rehab_costs", "loan_requested", "term_bucket"})
+ADJUST_MONEY: tuple[str, ...] = tuple(name for name in ADJUST_FIELDS if name in MONEY_FIELDS)
+
+
+def adjust_complaints(submitted: Mapping[str, str], t: Mapping[str, str]) -> FormProblems:
+    """The five boxes, each checked by the rule the full form checks it by."""
+    found: dict[str, list[str]] = {}
+    for name in ADJUST_FIELDS:
+        if name in ADJUST_REQUIRED and not submitted.get(name, "").strip():
+            found.setdefault(name, []).append(t["err_required"])
+    for name in ADJUST_MONEY:
+        if key := _money_problem(name, submitted.get(name, "").strip()):
+            found.setdefault(name, []).append(t[key])
+    if key := _term_problem(submitted.get("term_bucket")):
+        found.setdefault("term_bucket", []).append(t[key])
+    return by_field(found)
+
+
+def adjusted_form(
+    payload: Mapping[str, Any], submitted: Mapping[str, str], t: Mapping[str, str]
+) -> tuple[WebApplyForm | None, FormProblems]:
+    """The borrower's stored form with the five boxes replaced by what they typed now.
+
+    ``payload`` is the latest web submission's stored payload (``services/adjust.py``):
+    everything on it but the five boxes stays as it was sent. A blank optional box - the
+    sale price, the rent - takes the value off; a required one was refused above.
+    """
+    problems = adjust_complaints(submitted, t)
+    if problems:
+        return None, problems
+    values = {key: value for key, value in payload.items() if key != LANGUAGE_KEY}
+    for name in ADJUST_FIELDS:
+        text = submitted.get(name, "").strip()
+        if not text:
+            values.pop(name, None)
+        elif name in MONEY_FIELDS:
+            values[name] = money_parse(text)
+        else:
+            values[name] = text
+    try:
+        return WebApplyForm.model_validate(values), NO_PROBLEMS
+    except ValidationError:
+        return None, at_top(t["fix_marked"])
+
+
+def adjust_values(current: Mapping[str, Any]) -> dict[str, str]:
+    """The five boxes filled from the deal's own numbers, the masks on."""
+    values = dict.fromkeys(ADJUST_FIELDS, "")
+    for name in ADJUST_FIELDS:
+        value = current.get(name)
+        if value is None or value == "":
+            continue
+        values[name] = money_display(value) if name in MONEY_FIELDS else str(value)
+    return values
+
+
+def adjust_redisplay(submitted: Mapping[str, str]) -> dict[str, str]:
+    """A rejected adjust post back in its five boxes."""
+    values = redisplay_values(submitted)
+    return {name: values[name] for name in ADJUST_FIELDS}
 
 
 # --- the choices the page offers, labelled in the borrower's language ----------------------------

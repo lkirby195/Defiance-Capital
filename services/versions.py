@@ -88,9 +88,10 @@ NAME_MAX = 100
 
 # The ``deals`` columns a snapshot leaves out: the row's identity, the channel it came in on
 # and its public-form provenance (none of which an edit changes), its place on the lifecycle
-# (which a restore must not rewind), its timestamps, and the thank-you link and the record
-# of what it showed the borrower (SPEC §4.2) - what the borrower was told is a fact about
-# the past, not an input a restore puts back. Everything else is an input.
+# (which a restore must not rewind), its timestamps, and the thank-you link, the version it
+# reads and the record of what it showed the borrower (SPEC §4.2) - what the borrower was
+# told is a fact about the past, not an input a restore puts back. Everything else is an
+# input.
 NOT_SNAPSHOTTED: frozenset[str] = frozenset(
     {
         "id",
@@ -102,6 +103,7 @@ NOT_SNAPSHOTTED: frozenset[str] = frozenset(
         "thanks_token_expires_at",
         "indicative_terms_shown_at",
         "indicative_terms_shown",
+        "borrower_terms_version",
         "created_at",
         "updated_at",
     }

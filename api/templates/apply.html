@@ -14,75 +14,7 @@
    form the server checks the same way (api/apply_form.py) and answers with the complaint
    under the box. #}
 
-{% macro badge(name) -%}
-  {%- if name in required %}<span class="mark">{{ t.required }}</span>
-  {%- else %}<span class="mark">{{ t.optional }}</span>{% endif -%}
-{%- endmacro %}
-
-{% macro error(name) -%}
-  {%- set messages = errors.get(name) %}
-  {%- if messages %}<span class="err" id="{{ name }}-error">{{ messages | join(" ") }}</span>{% endif -%}
-{%- endmacro %}
-
-{% macro invalid(name) -%}
-  {%- if errors.get(name) %} aria-invalid="true" aria-describedby="{{ name }}-error"{% endif -%}
-{%- endmacro %}
-
-{% macro hint(text) -%}
-  {%- if text %}<span class="hint">{{ text }}</span>{% endif -%}
-{%- endmacro %}
-
-{% macro text_box(name, label, kind="text", mode="", mask="", help="", autocomplete="", maxlength=0, unlocks="") %}
-  <div class="field">
-    <label for="{{ name }}">{{ label }} {{ badge(name) }}</label>
-    <input id="{{ name }}" name="{{ name }}" type="{{ kind }}" value="{{ form[name] }}"
-           {%- if mode %} inputmode="{{ mode }}"{% endif %}
-           {%- if mask %} data-mask="{{ mask }}"{% endif %}
-           {%- if autocomplete %} autocomplete="{{ autocomplete }}"{% endif %}
-           {%- if maxlength %} maxlength="{{ maxlength }}"{% endif %}
-           {%- if unlocks %} data-unlocks="{{ unlocks }}"{% endif %}
-           {%- if name in required %} required{% endif %}{{ invalid(name) }}>
-    {{ hint(help) }}
-    {{ error(name) }}
-  </div>
-{% endmacro %}
-
-{% macro money_box(name, label, help="") %}
-  {{ text_box(name, label, mode="decimal", mask="money", help=help) }}
-{% endmacro %}
-
-{% macro select_box(name, label, choices, help="") %}
-  <div class="field">
-    <label for="{{ name }}">{{ label }} {{ badge(name) }}</label>
-    <select id="{{ name }}" name="{{ name }}"{% if name in required %} required{% endif %}{{ invalid(name) }}>
-      <option value="">{{ t.pick_one }}</option>
-      {%- for value, text in choices %}
-      <option value="{{ value }}"{% if form[name] == value %} selected{% endif %}>{{ text }}</option>
-      {%- endfor %}
-    </select>
-    {{ hint(help) }}
-    {{ error(name) }}
-  </div>
-{% endmacro %}
-
-{% macro choice_group(name, label, choices, help="") %}
-  {#- Radios as tappable rows. `required` on every radio makes the group required, which is
-      what the browser and the script both read. -#}
-  <div class="field" role="group" aria-labelledby="{{ name }}-label">
-    <span class="cap" id="{{ name }}-label">{{ label }} {{ badge(name) }}</span>
-    <div class="choices">
-      {%- for value, text in choices %}
-      <label class="choice">
-        <input type="radio" name="{{ name }}" value="{{ value }}"
-               {%- if form[name] == value %} checked{% endif %}
-               {%- if name in required %} required{% endif %}{{ invalid(name) }}> {{ text }}
-      </label>
-      {%- endfor %}
-    </div>
-    {{ hint(help) }}
-    {{ error(name) }}
-  </div>
-{% endmacro %}
+{% from "_apply_fields.html" import text_box, money_box, select_box, choice_group with context %}
 
 {% block content %}
 <h1>{{ t.heading }}</h1>

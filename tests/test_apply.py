@@ -28,8 +28,10 @@ from api.ratelimit import LIMITER, RateLimiter
 from api.render import dollars, pct, quoted
 from config.config import DEFAULT_PATH, Config, get_config, load_yaml
 from db.models import AuditLog, Borrower, Deal, IntakeSubmission, Screen, Underwrite
+from engine.calc.quote import borrower_quote, borrower_rate
 from schema.models import (
     AuditAction,
+    BorrowerQuote,
     Channel,
     ExperienceBucket,
     PricingMatrix,
@@ -51,6 +53,7 @@ from services import (
     home_view,
     run_screen,
     save_overrides,
+    terms_version,
     underwrite_readiness,
     version_results,
 )
@@ -743,6 +746,22 @@ def arrival(session: Session, deal: Deal) -> tuple[Verdict, PricingMatrix | None
     return results.screen.verdict, pricing
 
 
+def quote_for(session: Session, deal: Deal) -> BorrowerQuote:
+    """The run the page reads, as the page shows it: every quoted row at its cushioned rate
+    (v0.22), the request first."""
+    results = version_results(session, get_version(session, deal.id, terms_version(deal)))
+    assert results.underwrite is not None and results.underwrite.pricing is not None
+    assert results.underwrite_inputs is not None
+    sizing = results.underwrite.sizing
+    return borrower_quote(
+        results.underwrite_inputs,
+        results.underwrite.pricing,
+        sizing.credit_tranche,
+        sizing.experience_tier,
+        get_config(),
+    )
+
+
 def capped(monkeypatch: pytest.MonkeyPatch, max_quoted_rate: str) -> None:
     """Run the arrival analysis under a lower maximum quoted rate."""
     import services.autorun
@@ -774,14 +793,28 @@ def test_a_go_deal_sees_its_indicative_terms_and_nothing_else(
     # the request first, then each smaller loan, largest to smallest (SPEC §4.2, v0.18) -
     # the reverse of the team's Pricing section, which runs most equity first
     assert ["Requested", "-5%", "-10%"] == re.findall(r'<th scope="row">([^<]+)</th>', table)
-    for cell in ("Loan amount", "Rate", "Estimated profit", "Yield (cash-on-cash)"):
+    for cell in (
+        "Loan amount",
+        "Rate",
+        "Estimated profit",
+        "Project yield",
+        "Yield (cash-on-cash)",
+    ):
         assert f">{cell}</th>" in table
-    for row in pricing.rows:
+    # every rate shown carries the cushion (v0.22), rounded up to the step; the solve the
+    # team sees is nowhere on the page, and the profit is what the loan costs at the shown rate
+    quote = quote_for(db_session, deal)
+    for row, shown in zip(pricing.rows, reversed(quote.rows), strict=True):
         assert row.interest_rate is not None and row.borrower_profit is not None
+        assert shown.loan_amount == row.loan_amount and shown.solved_rate == row.interest_rate
+        assert shown.borrower_rate == borrower_rate(row.interest_rate, get_config())
+        assert shown.borrower_rate > row.interest_rate
+        assert shown.profit is not None and shown.profit < row.borrower_profit
         assert dollars(row.loan_amount) in table
-        assert quoted(row.interest_rate) in table
-        assert dollars(row.borrower_profit) in table
-        assert pct(row.borrower_cash_on_cash) in table
+        assert quoted(shown.borrower_rate) in table
+        assert quoted(row.interest_rate) not in main
+        assert dollars(shown.profit) in table and dollars(row.borrower_profit) not in main
+        assert pct(shown.project_yield) in table and pct(shown.cash_on_cash) in table
     assert "Add an estimated sale price" not in table
     # nothing else of the analysis: no verdict, no IRR, no flags, no sensitivity
     for forbidden in ("GO", "CONDITIONAL", "DECLINE", "IRR", "Verdict", "flag", "Sensitivity"):
@@ -810,7 +843,8 @@ def test_a_conditional_deal_without_a_sale_price_sees_amounts_and_rates_only(
     assert "Estimated profit" not in table and "Yield" not in table
     assert "Add an estimated sale price for a profit estimate." in table
     for row in pricing.rows:
-        assert dollars(row.loan_amount) in table and quoted(row.interest_rate) in table
+        assert dollars(row.loan_amount) in table
+        assert quoted(borrower_rate(row.interest_rate, get_config())) in table
     assert DISCLAIMER_EN in table and "For business-purpose loans only." in table
 
 
@@ -863,7 +897,8 @@ def test_rows_above_the_max_quoted_rate_are_left_out(
     assert "Requested" not in table and dollars(left_out[0].loan_amount) not in table
     assert re.findall(r'<th scope="row">([^<]+)</th>', table) == ["-5%", "-10%"]
     for row in kept:
-        assert dollars(row.loan_amount) in table and quoted(row.interest_rate) in table
+        assert dollars(row.loan_amount) in table
+        assert quoted(borrower_rate(row.interest_rate, get_config())) in table
 
     capped(monkeypatch, "0.01")
     link = thanks_link(post(anon_client))
@@ -912,12 +947,21 @@ def test_what_was_shown_is_recorded_on_the_deal_once_and_the_team_sees_it(
     assert record is not None
     assert record["language"] == "es" and record["with_profit"] is True
     assert [row["label"] for row in record["rows"]] == ["Requested", "-5%", "-10%"]
-    # the borrower's order is the team's reversed: request first, then descending (v0.18)
-    for shown, row in zip(record["rows"], reversed(pricing.rows), strict=True):
+    # the run read, the cushion and the views opened are on the record (v0.22)
+    assert record["version"] == 1 and record["views"] == ["simple"]
+    assert Decimal(record["rate_cushion"]) == get_config().pricing.borrower_rate_cushion
+    assert Decimal(record["rate_rounding"]) == get_config().pricing.borrower_rate_rounding
+    # the borrower's order is the team's reversed: request first, then descending (v0.18);
+    # the rate recorded is the cushioned one shown, the solve beside it for the team
+    quote = quote_for(db_session, deal)
+    rows = zip(record["rows"], reversed(pricing.rows), quote.rows, strict=True)
+    for shown, row, at_quote in rows:
         assert Decimal(shown["loan_amount"]) == row.loan_amount
-        assert Decimal(shown["interest_rate"]) == row.interest_rate
-        assert Decimal(shown["profit"]) == row.borrower_profit
-        assert Decimal(shown["cash_on_cash"]) == row.borrower_cash_on_cash
+        assert Decimal(shown["interest_rate"]) == at_quote.borrower_rate
+        assert Decimal(shown["solved_rate"]) == row.interest_rate
+        assert Decimal(shown["profit"]) == at_quote.profit
+        assert Decimal(shown["project_yield"]) == at_quote.project_yield
+        assert Decimal(shown["cash_on_cash"]) == at_quote.cash_on_cash
         assert shown["is_request"] is (row.step == 0)
     # ...in the audit trail, as the borrower
     rows = list(
@@ -948,16 +992,20 @@ def test_what_was_shown_is_recorded_on_the_deal_once_and_the_team_sees_it(
     assert "<dt>Language</dt><dd>Spanish</dd>" in shown_block
     assert "Nothing shown to the borrower." not in shown_block
     assert re.findall(r'<th scope="row">([^<]+)</th>', shown_block) == ["Requested", "-5%", "-10%"]
-    for row in pricing.rows:
+    assert "<dt>Version</dt><dd>1</dd>" in shown_block
+    assert "<dt>Views</dt><dd>simple</dd>" in shown_block
+    assert ">Rate shown</th>" in shown_block and ">Solved rate</th>" in shown_block
+    for row, at_quote in zip(pricing.rows, reversed(quote.rows), strict=True):
         assert dollars(row.loan_amount) in shown_block
+        assert quoted(at_quote.borrower_rate) in shown_block
         assert quoted(row.interest_rate) in shown_block
-        assert dollars(row.borrower_profit) in shown_block
-        assert pct(row.borrower_cash_on_cash) in shown_block
+        assert dollars(at_quote.profit) in shown_block
+        assert pct(at_quote.cash_on_cash) in shown_block
     # and the Spanish page the borrower saw read the same numbers
     table = terms_table(body)
     assert table is not None
-    for row in pricing.rows:
-        assert dollars(row.loan_amount) in table and quoted(row.interest_rate) in table
+    for at_quote in quote.rows:
+        assert dollars(at_quote.loan_amount) in table and quoted(at_quote.borrower_rate) in table
 
 
 def test_the_table_reads_in_spanish(anon_client: QueueClient, db_session: Session) -> None:

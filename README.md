@@ -195,8 +195,12 @@ Two things worth knowing before you do it:
 
 - **Nothing the team reads is public.** Every route but the borrower form is behind a session
   cookie. Pages redirect to `/login`; the JSON routes under `/deals` answer 401.
-- **`/apply` is the one public page.** It writes a new deal and reads nothing back; the
-  borrower sees only "we will be in touch". A hidden honeypot box drops a bot's post without
+- **`/apply` is the one public page.** It writes a new deal and reads back the borrower's
+  own indicative terms on the thank-you link - every rate cushioned by
+  `pricing.borrower_rate_cushion` and rounded up to `pricing.borrower_rate_rounding` - with
+  an Advanced view of their own cash flows and an Adjust my numbers form that re-runs the
+  deal as "Borrower edit n" (SPEC §4.2). Every response under `/apply` says
+  `X-Robots-Tag: noindex`. A hidden honeypot box drops a bot's post without
   a word, and `web_intake.submissions_per_hour_per_ip` in `config/glenwood.yaml` (placeholder
   5) turns the next post from one address in an hour away with a polite line. The count is
   per process and starts over on a restart, which is fine for what it protects. Behind a

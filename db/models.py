@@ -378,6 +378,10 @@ class Deal(Base):
     # the borrower saw. NULL until it is shown; never shown on a Decline or without a quote.
     indicative_terms_shown_at: Mapped[datetime | None] = mapped_column()
     indicative_terms_shown: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # The version that page reads (SPEC §4.2, v0.22): the arrival run's number on a web
+    # deal, moved by each "Borrower edit n" the borrower saves from the page; NULL reads as
+    # version 1. A fact about the page, not an input.
+    borrower_terms_version: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 

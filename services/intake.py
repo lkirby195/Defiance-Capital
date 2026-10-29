@@ -47,6 +47,7 @@ from config.config import Config
 from db.models import Deal, IntakeSubmission
 from db.repository import (
     apply_profile,
+    borrower_columns,
     create_deal_from_intake,
     find_or_create_borrower,
     find_or_create_property,
@@ -76,6 +77,27 @@ EDIT_INTAKE_FROM: frozenset[Status] = frozenset(Status) - {
 # The key on the public form's stored payload that is not a form field: the language the
 # borrower filled it in (``api/apply_form.intake_record``).
 LANGUAGE_KEY = "language"
+
+
+def web_intake_record(
+    form: WebApplyForm, *, language: str, intake_source: str | None
+) -> IntakeRecord:
+    """Normalize a validated public form into the record every intake write takes.  # SPEC §4.2
+
+    The raw payload kept on the immutable ``intake_submissions`` row is the validated form
+    in stored units plus the language the borrower chose, so the team can see which one to
+    call them back in - and so a later borrower edit can be built from it
+    (``services/adjust.py``).
+    """
+    payload = form.model_dump(mode="json", exclude_none=True)
+    payload[LANGUAGE_KEY] = language
+    return normalize(
+        parse_web_form(form),
+        Channel.WEB,
+        raw_payload=payload,
+        intake_source=intake_source,
+        referral_note=form.referral_note,
+    )
 
 
 def create_deal(
@@ -259,6 +281,11 @@ def _apply_record(
     before: dict[str, Any] = {}
     after: dict[str, Any] = {}
     columns = form_columns(record)
+    if record.channel is Channel.WEB:
+        # The borrower's own estimates move with the borrower's own edit (SPEC §4.2, v0.22) -
+        # a blank box takes one off - where a team edit, which has no box for them, leaves
+        # them be.
+        columns = {**columns, **borrower_columns(record)}
     # ...plus the split, which the edit may reset and populate may fill back in.
     watched = (*columns, "loan_purchase_portion", "loan_rehab_portion")
     original = {column: getattr(deal, column) for column in watched}

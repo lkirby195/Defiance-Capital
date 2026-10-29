@@ -347,6 +347,7 @@ def test_the_snapshot_covers_every_deal_column_but_the_rows_identity() -> None:
         "thanks_token_expires_at",
         "indicative_terms_shown_at",
         "indicative_terms_shown",
+        "borrower_terms_version",
         "created_at",
         "updated_at",
     }
