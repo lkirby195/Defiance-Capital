@@ -284,11 +284,14 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
   cash-on-cash beside them when the borrower gave a sale price (`services/indicative.py`
   decides; rows above `pricing.max_quoted_rate` are left out; nothing qualifying means the
   plain page). **Every rate shown is cushioned** - the solve plus
-  `pricing.borrower_rate_cushion`, rounded up to `pricing.borrower_rate_rounding` - and every
+  `pricing.borrower_rate_cushion`, rounded up to `pricing.borrower_rate_rounding`, never above
+  `pricing.max_quoted_rate` - and every
   figure beside it is the Flip at that rate (`engine/calc/quote.py`); the team's pages keep
-  the solve. The Advanced view adds the borrower's own cash flows and Sources & Uses, and
+  the solve. The Advanced view adds the borrower's own cash flows (the loan's advance, draws
+  and payoff among them, with a net cash line per month) and Sources & Uses, and
   **Adjust my numbers** lets them retype five boxes (sale price, rehab, loan amount, rent,
-  term), each save a new submission as the borrower and a `system` run named "Borrower edit
+  term), each save moving only the boxes they changed - what the team entered since stays -
+  as a new submission as the borrower and a `system` run named "Borrower edit
   n" that the page then reads (`services/adjust.py`). Never a verdict, an IRR, a flag, a
   sensitivity, a status, the pricing target, the maximum quoted rate, the cushion, an
   assumption value, a take-back or rental figure or a team member's name - the leak guard in

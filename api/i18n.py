@@ -248,14 +248,19 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "cf_holding": ("Holding", "Mantenimiento"),
     "cf_financing": ("Financing", "Financiamiento"),
     "cf_sale": ("Sale", "Venta"),
-    "cf_net": ("Net", "Neto"),
+    "cf_advance": ("Loan advance", "Desembolso del préstamo"),
+    "cf_draws": ("Draws", "Desembolsos de obra"),
+    "cf_payoff": ("Payoff", "Liquidación del préstamo"),
+    "cf_net": ("Net cash", "Efectivo neto"),
     "cf_total": ("Total", "Total"),
     "cf_note": (
         "Purchase includes closing costs; rehab includes the contingency; the sale is net "
-        "of selling costs. The loan's proceeds and payoff are not shown.",
+        "of selling costs. The loan advance and the draws are money in, the payoff is money "
+        "out, and the net cash column is what you put in or take out each month.",
         "La compra incluye los costos de cierre; la remodelación incluye la contingencia; "
-        "la venta es neta de los costos de venta. El desembolso y el pago del préstamo no "
-        "se muestran.",
+        "la venta es neta de los costos de venta. El desembolso del préstamo y los "
+        "desembolsos de obra son dinero que entra, la liquidación es dinero que sale, y la "
+        "columna de efectivo neto es lo que usted pone o recibe cada mes.",
     ),
     "su_title": ("Sources and uses", "Fuentes y usos"),
     "su_sources": ("Sources", "Fuentes"),
