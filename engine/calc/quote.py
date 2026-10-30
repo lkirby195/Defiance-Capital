@@ -4,14 +4,17 @@ The pricing matrix solves each row's rate to the exact minimum that earns the le
 target (``engine/calc/pricing.py``, SPEC §8.10). That is the team's number. What the
 borrower is shown on the thank-you page is that number with a cushion on it:
 
-    borrower_rate = solved_rate + pricing.borrower_rate_cushion,
-                    rounded UP to the next multiple of pricing.borrower_rate_rounding,
-                    never above RATE_CEILING
+    borrower_rate = min(solved_rate + pricing.borrower_rate_cushion
+                            rounded UP to the next multiple of pricing.borrower_rate_rounding,
+                        pricing.max_quoted_rate)
 
 so a row solved at 16.34% under the placeholders (0.5% and 0.25%) is quoted at 17.00%: 16.84%
 rounded up to the quarter point. Rounded up, never to the nearest, for the reason the solve
 itself rounds up - a rate rounded down would cut into the cushion the lender set. A cushion
-of zero and a step of 0.01% show the solve itself.
+of zero and a step of 0.01% show the solve itself. The maximum quoted rate is the ceiling on
+what is shown: a row is quoted only when its solve clears it (the matrix leaves the row's
+rate blank otherwise, and ``quoted_rows`` leaves the row out), and the cushion never carries
+the rate shown above it - a 17.9% solve under an 18% maximum is quoted at 18.00%, not 18.50%.
 
 Every borrower figure beside the rate is **at the cushioned rate**: the ledger is laid out
 again at the row's loan amount and the borrower's rate - exactly as a sensitivity cell is
@@ -28,14 +31,16 @@ else the largest quoted loan - at its cushioned rate, for the thank-you page's A
                     month 0), rehab (the budget and its contingency, straight-line over the
                     rehab period, or at month 0 when there is none), holding (the carry,
                     every period, the stub prorated), financing (that period's interest and
-                    fees off the ledger) and the sale (net of the broker, in the payoff
-                    period; blank with no sale price). Costs are negative, the sale positive,
-                    and the net column adds up to the flip's net profit to the cent.
+                    fees off the ledger), the sale (net of the broker, in the payoff period;
+                    blank with no sale price), and the loan itself as the borrower sees it:
+                    the advance at closing and each draw as money in, the payoff - the
+                    principal going back - as money out, each read off the same ledger with
+                    the lender's signs turned around. Costs and the payoff are negative, the
+                    sale, the advance and the draws positive, and the net cash column is
+                    what the borrower puts in or takes out that month; it adds up to the
+                    flip's net profit to the cent, because every dollar advanced is paid off.
     sources & uses  ``engine/calc/sources_uses`` at the cushioned rate: the interest and the
                     borrower's equity move with the rate, the rest stands.
-
-The loan's own proceeds and payoff are not in the cash flows: they are the lender's ledger,
-and the table is the project as the borrower pays for it (SPEC §4.2).
 
 Pure: ``UnderwriteInputs``, the stored ``PricingMatrix``, the caps cell and a ``Config`` in,
 a ``BorrowerQuote`` out. Nothing here is recorded on the underwrite row: the service reads a
@@ -49,7 +54,6 @@ from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 
 from config.config import Config
 from engine.calc.flip import flip_analysis
-from engine.calc.pricing import RATE_CEILING
 from engine.calc.sensitivity import Grid, Point
 from engine.calc.sources_uses import sources_and_uses
 from schema.models import (
@@ -69,17 +73,19 @@ ZERO = Decimal(0)
 CENTS = Decimal("0.01")
 
 
-def borrower_rate(solved: Decimal, config: Config, ceiling: Decimal = RATE_CEILING) -> Decimal:
-    """The solved rate plus the cushion, rounded up to the next rounding step.  # SPEC §4.2
+def borrower_rate(solved: Decimal, config: Config) -> Decimal:
+    """The solved rate plus the cushion, rounded up to the next rounding step, and never
+    above ``pricing.max_quoted_rate``.  # SPEC §4.2
 
     ``(solved + cushion) / step`` is taken to the next whole number of steps - up, never to
-    the nearest - and multiplied back; a rate already on a step stays on it. Capped at
-    ``ceiling``, the most the model accepts as a rate.
+    the nearest - and multiplied back; a rate already on a step stays on it. The maximum
+    quoted rate caps the result: a solve the matrix quoted is at or under it, and what the
+    cushion adds on top is cut back to it.
     """
     cushioned = solved + config.pricing.borrower_rate_cushion
     step = config.pricing.borrower_rate_rounding
     steps = (cushioned / step).quantize(Decimal(1), rounding=ROUND_CEILING)
-    return min(steps * step, ceiling)
+    return min(steps * step, config.pricing.max_quoted_rate)
 
 
 def quoted_rows(matrix: PricingMatrix) -> list[PricingRow]:
@@ -111,7 +117,9 @@ def borrower_cash_flows(point: Point, flip: FlipAnalysis) -> list[BorrowerCashFl
     the rehab period; the holding cost every period after closing, the stub's prorated and
     the last period taking the rounding remainder so the column adds to the total; the
     financing as each ledger row's interest and fees; the sale, net of the broker, in the
-    payoff period. Costs negative, the sale positive.
+    payoff period; the loan's advance, draws and payoff as the ledger has them, signs
+    turned to the borrower's. Costs and the payoff negative, the sale and the loan's money
+    in positive; ``net`` is the month's cash in the borrower's hands.
     """
     loan = point.loan
     entries = point.overview.entries
@@ -139,6 +147,8 @@ def borrower_cash_flows(point: Point, flip: FlipAnalysis) -> list[BorrowerCashFl
         financing = -(entry.interest + entry.fees)
         spent = -rehab.get(entry.month, ZERO)
         sold = sale if entry.month == last and sale is not None else None
+        advance, draws, payoff = -entry.funding, -entry.draws, -entry.payoff
+        project = purchase + spent + holding + financing + (sold if sold is not None else ZERO)
         rows.append(
             BorrowerCashFlow(
                 month=entry.month,
@@ -148,7 +158,10 @@ def borrower_cash_flows(point: Point, flip: FlipAnalysis) -> list[BorrowerCashFl
                 holding=holding,
                 financing=financing,
                 sale=sold,
-                net=purchase + spent + holding + financing + (sold if sold is not None else ZERO),
+                advance=advance,
+                draws=draws,
+                payoff=payoff,
+                net=project + advance + draws + payoff,
             )
         )
     return rows

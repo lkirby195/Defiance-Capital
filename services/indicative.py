@@ -150,6 +150,9 @@ class CashFlowTotals(NamedTuple):
     holding: Decimal
     financing: Decimal
     sale: Decimal | None
+    advance: Decimal
+    draws: Decimal
+    payoff: Decimal
     net: Decimal
 
 
@@ -162,6 +165,9 @@ def cash_flow_totals(rows: list[BorrowerCashFlow]) -> CashFlowTotals:
         holding=sum((row.holding for row in rows), zero),
         financing=sum((row.financing for row in rows), zero),
         sale=sum(sold, zero) if sold else None,
+        advance=sum((row.advance for row in rows), zero),
+        draws=sum((row.draws for row in rows), zero),
+        payoff=sum((row.payoff for row in rows), zero),
         net=sum((row.net for row in rows), zero),
     )
 

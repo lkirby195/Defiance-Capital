@@ -1960,7 +1960,10 @@ class BorrowerCashFlow(BaseModel):
     """One period of the borrower's own cash flows (``engine/calc/quote.py``).  # SPEC §4.2
 
     Costs are negative and the sale positive; ``sale`` is None on every period but the
-    payoff's, and on that one too when there is no sale price. ``net`` is the row's sum.
+    payoff's, and on that one too when there is no sale price. The loan is here with the
+    borrower's signs: ``advance`` (at closing) and ``draws`` are money in and positive,
+    ``payoff`` - the principal going back - money out and negative, each the lender's ledger
+    entry turned around. ``net`` is the row's sum: the month's cash in the borrower's hands.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1972,6 +1975,9 @@ class BorrowerCashFlow(BaseModel):
     holding: Decimal
     financing: Decimal
     sale: Decimal | None
+    advance: Decimal
+    draws: Decimal
+    payoff: Decimal
     net: Decimal
 
 

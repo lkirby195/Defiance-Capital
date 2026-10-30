@@ -2,7 +2,7 @@
 
 Status: **v0.22**, 2026-10-29, engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
 
-**v0.22** gives the borrower a cushioned quote, two views and five boxes of their own (migration `0024`, no engine change). Every rate on the thank-you page is the row's solved rate plus `pricing.borrower_rate_cushion` (placeholder 0.5%), rounded **up** to the next `pricing.borrower_rate_rounding` (placeholder 0.25%), and the estimated profit, the new **project yield** column and the cash-on-cash beside it are the Flip Analysis at that rate (`engine/calc/quote.py`, computed when the page renders from the version's stored inputs); the team's pages keep the uncushioned solve, both keys are on the Defaults page, and the "Shown to borrower" record stores the cushioned figures with the solve beside each. The page opens on **Simple** - the table - and a toggle opens **Advanced**: the borrower's own cash flows by month (purchase, rehab, holding, financing, sale) and Sources & Uses, both at the first row's cushioned rate, in Spanish too. **Adjust my numbers**, a link live for the token's life, is a form of five boxes - the sale price, the rehab budget, the loan amount, the rent and the term bucket - and each save is a new intake submission as the borrower, a new automatic run named **Borrower edit n** that the page then reads (`deals.borrower_terms_version`), new indicative terms, a new record of what was shown, and a row the team sees in History; it is rate-limited and honeypotted as the form is. A leak-guard test renders every borrower-facing page of a fully analyzed deal and searches it for the lender's side, and every `/apply` response carries `X-Robots-Tag: noindex` (§4.2, §5, §10).
+**v0.22** gives the borrower a cushioned quote, two views and five boxes of their own (migration `0024`, no engine change). Every rate on the thank-you page is the row's solved rate plus `pricing.borrower_rate_cushion` (placeholder 0.5%), rounded **up** to the next `pricing.borrower_rate_rounding` (placeholder 0.25%) and never above `pricing.max_quoted_rate` (10d-fix), and the estimated profit, the new **project yield** column and the cash-on-cash beside it are the Flip Analysis at that rate (`engine/calc/quote.py`, computed when the page renders from the version's stored inputs); the team's pages keep the uncushioned solve, both keys are on the Defaults page, and the "Shown to borrower" record stores the cushioned figures with the solve beside each. The page opens on **Simple** - the table - and a toggle opens **Advanced**: the borrower's own cash flows by month (purchase, rehab, holding, financing, sale, the loan's advance, draws and payoff, and the net cash each month) and Sources & Uses, both at the first row's cushioned rate, in Spanish too. **Adjust my numbers**, a link live for the token's life, is a form of five boxes - the sale price, the rehab budget, the loan amount, the rent and the term bucket - and each save moves only the boxes the borrower changed (what the team entered since stays) as a new intake submission as the borrower, a new automatic run named **Borrower edit n** that the page then reads (`deals.borrower_terms_version`), new indicative terms, a new record of what was shown, and a row the team sees in History; it is rate-limited and honeypotted as the form is. A leak-guard test renders every borrower-facing page of a fully analyzed deal and searches it for the lender's side, and every `/apply` response carries `X-Robots-Tag: noindex` (§4.2, §5, §10).
 
 **v0.21** gives the borrower an **investing profile** (migration `0023`, no engine change). Both intake forms ask one more group, **About your investing**, every answer optional: is real estate your full-time work (Full-time / Part-time / This is my first project), years investing (0–1 / 2–5 / 6–10 / 10+), projects in progress right now (0 / 1 / 2–3 / 4+), what you mostly do (Flips / Rentals / Mix), who does the work (Own crew / GC / Mostly myself) (§4.1). The answers live on the `borrowers` row - they describe the person - and the latest answer given on any of their deals is the one kept; a blank box leaves the stored answer. They are shown on the deal page's Deal Overview tab under a rule of their own and on the borrower's page, Edit Intake carries them and audits each move as `borrower.<field>`, the public form asks them in Spanish too, and Home's search box grew five selects whose answers are the **profile filter chips** 10b left the hook for (§9.1). Two pieces of housekeeping: the Assumptions tab's repeated version selector is gone (the header's switcher is the one), and the stale phase-8c-ui screenshot set is deleted.
 
@@ -214,7 +214,10 @@ less would cost; the team's Pricing section runs the other way, most equity firs
 - **the rate shown is cushioned** (v0.22): the row's solved rate plus
   `pricing.borrower_rate_cushion` (placeholder 0.5%), rounded up - never to the nearest - to
   the next multiple of `pricing.borrower_rate_rounding` (placeholder 0.25%), so 16.34% is
-  quoted at 17.00%; the profit, the project yield and the cash-on-cash beside it are the
+  quoted at 17.00%, and **never above `pricing.max_quoted_rate`**: a row is quoted only
+  when its solve clears the maximum, and the cushion is cut back to the maximum where it
+  would carry the rate shown past it (a 17.9% solve under the 18% placeholder is quoted at
+  18.00%); the profit, the project yield and the cash-on-cash beside it are the
   Flip Analysis (§8.4) at the row's loan amount and that rate (`engine/calc/quote.py`), laid
   out when the page renders from the version's stored inputs and the config in force. The
   team's Pricing section, the workbook and the CLI keep the uncushioned solve
@@ -230,9 +233,12 @@ request when it is quoted, else the largest quoted loan - at its cushioned rate:
 borrower's **cash flows** by ledger period (purchase with the closing costs in month 0, the
 rehab and its contingency straight-line over the rehab months, the holding cost every period,
 the financing as each period's interest and fees, the sale net of the broker in the payoff
-period; costs negative, the net column adding to the profit on the table above; the loan's
-own proceeds and payoff not in it) and **Sources & Uses** (§8.11) at that rate. Nothing
-lender-side is on either, and both read in Spanish.
+period, and the loan itself as the borrower sees it - the advance at closing and each draw
+as money in, the payoff as money out, the lender's ledger entries with the signs turned;
+costs and the payoff negative, the sale and the loan's money in positive, and a **net cash**
+column per month that is what the borrower puts in or takes out, adding to the profit on
+the table above because every dollar advanced is paid off) and **Sources & Uses** (§8.11) at
+that rate. Nothing lender-side is on either, and both read in Spanish.
 
 Above the table, in both languages: *"These figures are indicative only, based on the
 information you provided and our standard assumptions. They are not an offer, commitment,
@@ -253,11 +259,17 @@ and never the token).
 is and only while the deal is in a status an edit is allowed from (§4.5), opens
 `/apply/thanks/<token>/adjust`: five boxes holding the deal's own numbers - the sale price
 they expect, the rehab budget, the loan amount, the monthly rent and the term bucket - and
-nothing else. A save lays the five over the borrower's latest web submission and applies it
-exactly as Edit Intake applies one: a new immutable `intake_submissions` row, the form's own
-columns moved (the team's economics, valuation and court search untouched; a team-entered
-sale price or rent still in force over the borrower's, §6.1), `INTAKE_EDITED` as
-`web:<email>`, then an automatic run as `system` named **Borrower edit n** (n counting the
+nothing else. A save lays the five over the borrower's latest web submission and applies
+**only the boxes the borrower changed** - a box is a change when it differs from what the
+deal carries now, which is what the page filled it with; the term box shows the bucket that
+seeds the deal's months when the team has set the months (blank when none does), and the
+term is a change when the months differ - as Edit Intake applies one: a new
+immutable `intake_submissions` row carrying the whole form, the changed boxes' columns moved
+and nothing else (the other boxes, a closing date or a purpose the team entered since the
+borrower's submission, the team's economics, the valuation and the court search all stay;
+a team-entered sale price or rent is still in force over the borrower's, §6.1),
+`INTAKE_EDITED` as `web:<email>`, then an automatic run as `system` named **Borrower edit
+n** (n counting the
 borrower's edits on the deal), which takes the Working mark by the usual rule (§5). The deal
 keeps that run's number (`deals.borrower_terms_version`); the page re-renders the indicative
 terms from it and records what it showed. The team sees the edit and the version in History.
@@ -1694,7 +1706,10 @@ runs the Flip at the cushioned rate when the page renders), splits the thank-you
 Simple and Advanced views (the borrower's cash flows and Sources & Uses), adds Adjust my
 numbers (five boxes, a new submission and a "Borrower edit n" run per save, the page
 reading that run through `deals.borrower_terms_version`), the leak-guard test and
-`X-Robots-Tag: noindex` on every `/apply` route (§4.2, §5, §10).
+`X-Robots-Tag: noindex` on every `/apply` route (§4.2, §5, §10). 10d-fix caps the cushioned
+rate at `pricing.max_quoted_rate`, puts the loan's advance, draws and payoff in the
+borrower's cash flows with a net cash line per month, and makes a borrower edit move only
+the boxes the borrower changed, so a team Edit Intake made in between survives it.
 
 Phase 10c (no engine change, migration `0023`, v0.21) gives the borrower an investing
 profile: the "About your investing" group on both intake forms, stored on `borrowers`, shown
@@ -1719,22 +1734,20 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
 
 ## 13. Open items
 
-- 10d-borrower's open questions (v0.22):
-  - **The cushioned rate is not re-checked against `max_quoted_rate`**: a row is quoted when
-    its solve clears the maximum, and the cushion can carry the rate shown above it (a 17.9%
-    solve shows 18.50% under the placeholders). Dropping such a row, or capping the shown
-    rate at the maximum, are both one-line changes
+- 10d-borrower's open questions (v0.22; three closed by 10d-fix: the cushioned rate is
+  capped at `pricing.max_quoted_rate`, the loan is in the borrower's cash flows, and a
+  borrower edit moves only the boxes the borrower changed):
   - **The quote is computed when the page renders**, from the version's stored inputs and
     matrix under the config in force - not stored on the underwrite row, and no engine bump
     (the underwrite's own result does not change). A cushion changed between two visits
     shows the new one; the record of what was shown keeps the cushion it was built with
   - **The Advanced view's basis** is the first row shown: the request when quoted, else the
-    largest quoted loan; the loan's own proceeds and payoff are not in the cash flows, which
-    are the project as the borrower pays for it
-  - **A borrower edit re-applies the latest web submission** with the five boxes laid over
-    it; a team Edit Intake made in between is overwritten by the borrower's copy of the
-    other boxes, as any later edit overwrites an earlier one, and a team-entered sale price
-    or rent still beats the borrower's (§6.1) so the new terms may not move with the box
+    largest quoted loan; the other rows have no cash flows of their own on the page
+  - **A borrower edit's submission row carries the whole form** - the latest web submission
+    with the five boxes laid over it - though only the changed boxes move the deal; a
+    Restore of that row from History re-applies all of it, as a restore of any submission
+    does, and a team-entered sale price or rent still beats the borrower's (§6.1) so the
+    new terms may not move with the box
   - **The edit's run is the system's** ("Borrower edit n", actor `system`), as every
     automatic run is, and takes the Working mark unless a person chose the Working version;
     the `INTAKE_EDITED` row is the borrower's

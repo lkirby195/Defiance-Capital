@@ -70,6 +70,9 @@
               <th class="num">{{ t.cf_holding }}</th>
               <th class="num">{{ t.cf_financing }}</th>
               <th class="num">{{ t.cf_sale }}</th>
+              <th class="num">{{ t.cf_advance }}</th>
+              <th class="num">{{ t.cf_draws }}</th>
+              <th class="num">{{ t.cf_payoff }}</th>
               <th class="num">{{ t.cf_net }}</th>
             </tr>
           </thead>
@@ -82,6 +85,9 @@
                 <td class="num">{{ row.holding | dollars }}</td>
                 <td class="num">{{ row.financing | dollars }}</td>
                 <td class="num">{% if row.sale is not none %}{{ row.sale | dollars }}{% endif %}</td>
+                <td class="num">{{ row.advance | dollars }}</td>
+                <td class="num">{{ row.draws | dollars }}</td>
+                <td class="num">{{ row.payoff | dollars }}</td>
                 <td class="num">{{ row.net | dollars }}</td>
               </tr>
             {% endfor %}
@@ -94,6 +100,9 @@
               <td class="num">{{ advanced.totals.holding | dollars }}</td>
               <td class="num">{{ advanced.totals.financing | dollars }}</td>
               <td class="num">{% if advanced.totals.sale is not none %}{{ advanced.totals.sale | dollars }}{% endif %}</td>
+              <td class="num">{{ advanced.totals.advance | dollars }}</td>
+              <td class="num">{{ advanced.totals.draws | dollars }}</td>
+              <td class="num">{{ advanced.totals.payoff | dollars }}</td>
               <td class="num">{{ advanced.totals.net | dollars }}</td>
             </tr>
           </tfoot>

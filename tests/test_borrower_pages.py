@@ -14,6 +14,7 @@ the team's names.
 from __future__ import annotations
 
 import re
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
@@ -22,11 +23,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from api.apply_form import ADJUST_FIELDS, HONEYPOT
+from api.intake_form import intake_form_values
 from api.masks import mask_one
 from api.render import dollars, pct, quoted
 from config.config import get_config
 from db.models import AuditLog, Deal, Version
-from schema.models import AuditAction, Channel, Status, TermBucket, Verdict
+from schema.masks import money_display
+from schema.models import AuditAction, Channel, LoanPurpose, Status, TermBucket, Verdict
 from services import deal_history, decline, version_results
 from tests.conftest import ACTOR, USER_EMAIL, USER_NAME, QueueClient, requires_db
 from tests.test_apply import (
@@ -132,9 +135,30 @@ def test_simple_is_the_default_and_advanced_adds_the_two_tables(
     assert dollars(first.profit) in totals, "the net total is the profit on the table above"
     sale = [row.sale for row in quote.cash_flows if row.sale is not None]
     assert len(sale) == 1 and dollars(sale[0]) in totals
-    for cell in ("Purchase", "Rehab", "Holding", "Financing", "Sale", "Net"):
+    for cell in (
+        "Purchase",
+        "Rehab",
+        "Holding",
+        "Financing",
+        "Sale",
+        "Loan advance",
+        "Draws",
+        "Payoff",
+        "Net cash",
+    ):
         assert f">{cell}</th>" in flows
     assert "Purchase includes closing costs" in block
+    # the loan is in the borrower's table: the advance in month 0, the payoff - the loan
+    # amount - in the last, and the two cancel in the totals row
+    first_row = between(flows, "<tbody>", "</tr>")
+    assert first_row is not None and dollars(quote.cash_flows[0].advance) in first_row
+    assert quote.cash_flows[0].advance > 0
+    assert quote.cash_flows[-1].payoff == -first.loan_amount
+    assert dollars(quote.cash_flows[-1].payoff) in flows
+    loan_columns = sum((r.advance + r.draws + r.payoff for r in quote.cash_flows), Decimal(0))
+    assert loan_columns == 0  # the loan's three columns add to nothing
+    assert dollars(-first.loan_amount) in totals  # the payoff total
+    assert "the net cash column is what you put in or take out each month" in block
     # Sources & Uses, balanced, its equity the borrower's cash at the cushioned rate
     su = quote.sources_and_uses
     uses = between(block, '<div class="chart" id="borrower-sources-uses">', "</table>")
@@ -171,9 +195,14 @@ def test_the_advanced_view_reads_in_spanish(anon_client: QueueClient, db_session
         "Ajustar mis números",
         "Su capital propio",
         "Rendimiento del proyecto",
+        "Desembolso del préstamo",
+        "Desembolsos de obra",
+        "Liquidación del préstamo",
+        "Efectivo neto",
     ):
         assert text in body, text
     assert "Your cash flows" not in body and "Advanced" not in body
+    assert "Net cash" not in body and "Payoff" not in body
 
 
 # --- Adjust my numbers ----------------------------------------------------------------------------
@@ -287,6 +316,92 @@ def test_a_save_is_a_new_submission_a_borrower_edit_version_and_new_terms(
     db_session.expire_all()
     assert [version.name for version in versions(db_session, deal)][-1] == "Borrower edit 2"
     assert deal.borrower_terms_version == 3
+
+
+def test_a_team_edit_in_between_survives_a_borrower_edit(
+    anon_client: QueueClient, client: QueueClient, db_session: Session
+) -> None:
+    """The borrower moves one box; what the team entered since stays (SPEC §4.2)."""
+    link = thanks_link(post(anon_client))
+    (deal,) = deals(db_session)
+    base = token_base(link)
+    assert deal.loan_purpose is None and deal.closing_date is not None
+    arrived_on = deal.closing_date
+
+    # the team edits the closing date and the purpose through Edit Intake
+    body = {
+        key: value for key, value in intake_form_values(deal).items() if value not in ("", None)
+    }
+    body.update({"closing_date": "2027-01-15", "loan_purpose": "REFINANCE"})
+    response = client.post(f"/queue/deals/{deal.id}/intake", data=body, follow_redirects=False)
+    assert response.status_code == 303, response.text
+    db_session.expire_all()
+    assert deal.closing_date == date(2027, 1, 15) and deal.closing_date != arrived_on
+    assert deal.loan_purpose is LoanPurpose.REFINANCE
+    assert deal.rehab_costs == Decimal("40000") and deal.loan_requested == Decimal("160000")
+    was_sale, was_rent = deal.estimated_sale_price_borrower, deal.monthly_rent_borrower
+    assert was_sale == Decimal("290000") and was_rent is not None
+    # the team form carries the term in months only, so the edit cleared the bucket
+    was_term, was_months = deal.term_bucket, deal.term_months
+    assert was_term is None and was_months == 12
+    team_versions = len(versions(db_session, deal))
+
+    # the borrower changes the sale price alone; the other four boxes go back as the page
+    # filled them, which is as the deal stands
+    page = anon_client.get(f"{base}/adjust?lang=en").text
+    assert money_display(was_sale) in page and money_display(Decimal(160000)) in page
+    assert 'value="12" selected' in page  # the bucket that seeds the deal's twelve months
+    boxes = {
+        "estimated_sale_price": "$325,000",
+        "rehab_costs": money_display(deal.rehab_costs),
+        "loan_requested": money_display(deal.loan_requested),
+        "monthly_rent": money_display(was_rent),
+        "term_bucket": "12",
+    }
+    response = adjust(anon_client, base, **boxes)
+    assert response.status_code == 303, response.text
+    db_session.expire_all()
+
+    # both survive: the sale price is the borrower's new one, the date and the purpose the
+    # team's, and nothing else moved
+    assert deal.estimated_sale_price_borrower == Decimal("325000")
+    assert deal.closing_date == date(2027, 1, 15)
+    assert deal.loan_purpose is LoanPurpose.REFINANCE
+    assert deal.rehab_costs == Decimal("40000") and deal.loan_requested == Decimal("160000")
+    assert deal.monthly_rent_borrower == was_rent
+    assert deal.term_bucket is was_term and deal.term_months == was_months
+    edited = [
+        row
+        for row in db_session.scalars(
+            select(AuditLog)
+            .where(AuditLog.row_id == str(deal.id))
+            .order_by(AuditLog.created_at, AuditLog.id)
+        )
+        if row.action == AuditAction.INTAKE_EDITED.value
+    ]
+    assert [row.actor for row in edited] == [USER_EMAIL, "web:maria@ortizbuilds.example"]
+    after = dict(edited[-1].after or {})
+    after.pop("submission_id")
+    assert after == {"estimated_sale_price_borrower": "325000"}
+    assert edited[-1].before == {"estimated_sale_price_borrower": "290000.00"}
+    # the run read the team's date and the borrower's price
+    (latest,) = versions(db_session, deal)[team_versions:]
+    assert latest.name == "Borrower edit 1"
+    results = version_results(db_session, latest)
+    assert results.underwrite_inputs is not None
+    assert results.underwrite_inputs.closing_date == date(2027, 1, 15)
+    assert deal.borrower_terms_version == latest.number
+
+    # a box sent back unchanged is no edit: the second save moves nothing but the submission
+    assert adjust(anon_client, base, **boxes).status_code == 303
+    db_session.expire_all()
+    rows = [
+        row
+        for row in db_session.scalars(select(AuditLog).where(AuditLog.row_id == str(deal.id)))
+        if row.action == AuditAction.INTAKE_EDITED.value
+    ]
+    assert len(rows) == 3
+    assert set(rows[-1].after or {}) == {"submission_id"} and not rows[-1].before
 
 
 def test_a_bad_box_is_refused_in_place_and_nothing_is_saved(

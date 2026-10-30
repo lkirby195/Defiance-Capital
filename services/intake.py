@@ -37,6 +37,7 @@ not go ahead.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any
 from uuid import UUID
 
@@ -137,6 +138,7 @@ def update_intake(
     *,
     actor: str,
     config: Config | None = None,
+    only: Collection[str] | None = None,
 ) -> Deal:
     """Re-apply an edited intake to an existing deal. Flushes; no commit.  # SPEC §4.1, §4.5
 
@@ -149,12 +151,25 @@ def update_intake(
     The status moves in one direction only: ``NEEDS_INFO`` to ``NEW`` once the minimum viable
     intake is complete. Nothing drags a screened deal backwards to be re-screened as if it
     were new; the re-run the route makes afterwards is what brings the verdict up to date.
+
+    ``only`` names the ``deals`` columns the edit is allowed to move, for a record whose
+    other fields are a base it was built on rather than an answer about the deal: the
+    borrower's Adjust my numbers (``services/adjust.py``, SPEC §4.2) lays five boxes over
+    their earlier submission and must not undo what the team has entered since. With it,
+    every other column stays as it is, the links and the completeness are not re-derived,
+    and the submission row still carries the whole record.
     """
     deal = load_deal(session, deal_id)
     if deal.status not in EDIT_INTAKE_FROM:
         raise ActionNotAllowed(deal.id, deal.status, "edited", set(EDIT_INTAKE_FROM))
     return _apply_record(
-        session, deal, record, actor=actor, action=AuditAction.INTAKE_EDITED, config=config
+        session,
+        deal,
+        record,
+        actor=actor,
+        action=AuditAction.INTAKE_EDITED,
+        config=config,
+        only=only,
     )
 
 
@@ -276,8 +291,13 @@ def _apply_record(
     config: Config | None,
     restored_from: IntakeSubmission | None = None,
     note: dict[str, Any] | None = None,
+    only: Collection[str] | None = None,
 ) -> Deal:
-    """Write a record's form columns onto a deal, append the submission, record who did it."""
+    """Write a record's form columns onto a deal, append the submission, record who did it.
+
+    ``only`` restricts the write to those columns and skips the relink and the completeness
+    step (``update_intake``): the record then describes the edit, not the deal.
+    """
     before: dict[str, Any] = {}
     after: dict[str, Any] = {}
     columns = form_columns(record)
@@ -286,6 +306,8 @@ def _apply_record(
         # a blank box takes one off - where a team edit, which has no box for them, leaves
         # them be.
         columns = {**columns, **borrower_columns(record)}
+    if only is not None:
+        columns = {column: value for column, value in columns.items() if column in only}
     # ...plus the split, which the edit may reset and populate may fill back in.
     watched = (*columns, "loan_purchase_portion", "loan_rehab_portion")
     original = {column: getattr(deal, column) for column in watched}
@@ -300,8 +322,9 @@ def _apply_record(
     # off a split product with its old split still on it is a row the database refuses
     # (``ck_deals_loan_split_only_on_split_products``).
     _reconcile_split(deal, before, after)
-    _relink(session, deal, record, before, after)
-    _apply_completeness(deal, record, before, after)
+    if only is None:
+        _relink(session, deal, record, before, after)
+        _apply_completeness(deal, record, before, after)
     # A box the form left blank on a defaulted economic is the default again, not nothing -
     # and a column that ends where it started is not a change, so it leaves the audit row.
     for column, value in populate(deal, config).items():

@@ -6,7 +6,10 @@ closed-form arithmetic ``tests/test_borrower_sensitivity.by_hand_with_cost`` hol
 Borrower Sensitivity to - a $150,000 note, all at close, interest for a year at the rate and
 a 2% fee - so a row quoted at 17.00% where 16.34% was solved costs the borrower 0.66 points
 more, $990 on the request, and nothing else in the stack moves. Denver's holdback checks the
-cash flows' shape and that every column adds up to the Flip Analysis's own line.
+cash flows' shape - the loan's advance, draws and payoff among them, the ledger's with the
+signs turned - and that every column adds up to the Flip Analysis's own line. The maximum
+quoted rate is tested at both edges: a solve exactly at it is quoted at it, with the cushion
+cut off; a solve a basis point over it is not quoted at all.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ import pytest
 
 from config.config import Config
 from engine.calc.flip import flip_analysis
-from engine.calc.pricing import RATE_CEILING, pricing_matrix
+from engine.calc.pricing import pricing_matrix
 from engine.calc.quote import (
     borrower_cash_flows,
     borrower_quote,
@@ -64,7 +67,7 @@ def quote_for(
         ("0.1200", "0.005", "0.0025", "0.1250"),  # already on a step: stays there
         ("0.1634", "0", "0.0001", "0.1634"),  # no cushion, the finest step: the solve itself
         ("0.1634", "0", "0.01", "0.17"),  # the rounding alone still rounds up
-        ("0.1634", "0.005", "1", "1"),  # a whole-point step: up to 100%
+        ("0.1634", "0.005", "1", "0.18"),  # a whole-point step: up to 100%, cut to the max
     ],
 )
 def test_the_cushioned_rate_by_hand(solved: str, cushion: str, step: str, expected: str) -> None:
@@ -72,10 +75,39 @@ def test_the_cushioned_rate_by_hand(solved: str, cushion: str, step: str, expect
     assert borrower_rate(D(solved), config) == D(expected)
 
 
-def test_the_cushioned_rate_never_passes_the_ceiling() -> None:
-    config = config_with(borrower_rate_cushion="0.005", borrower_rate_rounding="0.0025")
-    assert borrower_rate(D("0.999"), config) == RATE_CEILING
-    assert borrower_rate(RATE_CEILING, config) == RATE_CEILING
+def test_the_cushioned_rate_never_passes_the_maximum_quoted_rate() -> None:
+    config = config_with(
+        borrower_rate_cushion="0.005", borrower_rate_rounding="0.0025", max_quoted_rate="0.17"
+    )
+    assert borrower_rate(D("0.1634"), config) == D("0.17")  # 16.84% -> 17.00%: on the edge
+    assert borrower_rate(D("0.1676"), config) == D("0.17")  # 17.26% -> 17.50%, cut to 17%
+    assert borrower_rate(D("0.17"), config) == D("0.17")  # the maximum itself, cushion lost
+    assert borrower_rate(D("0.12"), config) == D("0.1250")  # well under: the cushion stands
+    whole = config_with(borrower_rate_cushion="0.005", borrower_rate_rounding="0.0025")
+    assert borrower_rate(D("0.1790"), whole) == D("0.18")  # the placeholder: 18.50% -> 18%
+    assert borrower_rate(D("0.1750"), whole) == D("0.18")  # 18.00% exactly, untouched
+    assert borrower_rate(D("0.1749"), whole) == D("0.18")  # 17.99% -> 18.00%, on the edge
+
+
+def test_the_maximum_quoted_rate_at_both_edges_on_wichita() -> None:
+    # at the edge: Wichita's 16.34% solve is the maximum itself, so every row is quoted - at
+    # the maximum, the cushion cut off entirely - and the figures are the Flip at 16.34%
+    at_max = config_with(max_quoted_rate="0.1634")
+    quote, matrix, _ = quote_for(wichita_inputs(), at_max)
+    assert all(row.cleared and not row.over_max_quote for row in matrix.rows)
+    assert [row.loan_amount for row in quote.rows] == [D(150000), D(143000), D(135000)]
+    for row in quote.rows:
+        assert row.solved_rate == D("0.1634") and row.borrower_rate == D("0.1634")
+        profit, total, equity = by_hand_with_cost(row.loan_amount, D("0.1634"))
+        assert row.profit is not None and abs(row.profit - profit) < CLOSE
+        assert abs(row.cash_invested - equity) < CLOSE
+    assert quote.cash_flows is not None and quote.sources_and_uses is not None
+    # a basis point under the solve: no row clears the maximum, and none is quoted
+    just_under = config_with(max_quoted_rate="0.1633")
+    quote, matrix, _ = quote_for(wichita_inputs(), just_under)
+    assert all(row.over_max_quote and row.rate_needed == D("0.1634") for row in matrix.rows)
+    assert quoted_rows(matrix) == [] and quote.rows == []
+    assert quote.cash_flows is None and quote.sources_and_uses is None
 
 
 def test_the_placeholders_load_and_the_loader_refuses_nonsense() -> None:
@@ -127,12 +159,23 @@ def test_no_sale_price_quotes_the_rate_and_nothing_the_price_feeds() -> None:
     assert all(row.borrower_rate == D("0.17") and row.cash_invested > 0 for row in quote.rows)
     assert quote.cash_flows is not None and quote.sources_and_uses is not None
     assert all(row.sale is None for row in quote.cash_flows)
-    # with nothing to sell, the net is the whole cost stack, every line of it a cost
-    assert all(row.net < 0 for row in quote.cash_flows)
+    # with nothing to sell, the net cash adds up to the whole cost stack, every line of it a
+    # cost; the loan's money in and its payoff cancel
+    flows = quote.cash_flows
     assert all(
-        row.net == row.purchase + row.rehab + row.holding + row.financing
-        for row in quote.cash_flows
+        row.net
+        == row.purchase
+        + row.rehab
+        + row.holding
+        + row.financing
+        + row.advance
+        + row.draws
+        + row.payoff
+        for row in flows
     )
+    assert sum((row.advance + row.draws + row.payoff for row in flows), D(0)) == 0
+    stack = sum((row.purchase + row.rehab + row.holding + row.financing for row in flows), D(0))
+    assert abs(sum((row.net for row in flows), D(0)) - stack) < CLOSE
 
 
 def test_a_row_the_team_cannot_quote_is_not_quoted_to_the_borrower_either() -> None:
@@ -173,6 +216,17 @@ def test_denver_cash_flows_add_up_to_the_flip_at_the_cushioned_rate() -> None:
     assert sold[0].sale == flip.estimated_sale_price - flip.broker_costs
     assert flip.net_profit is not None and flip.net_profit == first.profit
     assert abs(total("net") - flip.net_profit) < CLOSE  # the same additions, grouped differently
+    # the loan as the borrower sees it: the advance at closing and the draws over the rehab
+    # months in, the payoff - exactly what was advanced and drawn - out in the last period,
+    # each the lender's ledger entry with the sign turned
+    assert rows[0].advance == point.loan.funded_at_close == -point.overview.entries[0].funding
+    assert all(row.advance == 0 for row in rows[1:])
+    assert total("draws") == point.loan.commitment - point.loan.funded_at_close > 0
+    assert [row.draws for row in rows] == [-entry.draws for entry in point.overview.entries]
+    assert rows[-1].payoff == -first.loan_amount and all(row.payoff == 0 for row in rows[:-1])
+    assert total("advance") + total("draws") + total("payoff") == 0
+    # month 0 is the equity in at closing: the price and the closing costs less the advance
+    assert rows[0].net == rows[0].purchase + rows[0].advance + rows[0].financing
     # the shape: the purchase at closing and nothing of the carry; the rehab over the rehab
     # months only; the carry every period after; each row's net is its own sum
     assert rows[0].purchase < 0 and rows[0].holding == 0 and rows[0].rehab == 0
@@ -182,7 +236,16 @@ def test_denver_cash_flows_add_up_to_the_flip_at_the_cushioned_rate() -> None:
     assert [row.month for row in rows if row.rehab != 0] == list(range(1, months + 1))
     assert all(row.holding < 0 for row in rows[1:])
     for row in rows:
-        assert row.net == row.purchase + row.rehab + row.holding + row.financing + (row.sale or 0)
+        assert row.net == (
+            row.purchase
+            + row.rehab
+            + row.holding
+            + row.financing
+            + (row.sale or 0)
+            + row.advance
+            + row.draws
+            + row.payoff
+        )
     # Sources & Uses at the same rate: balanced, its interest the cushioned ledger's, its
     # equity the row's cash invested
     su = quote.sources_and_uses
