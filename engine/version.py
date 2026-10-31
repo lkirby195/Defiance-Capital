@@ -3,6 +3,15 @@
 Bump on any change to the math in ``engine/`` and add or update a fixture test that
 demonstrates the change.
 
+**9a-rentcast (2026-10-31), no bump.** The first adapter (SPEC §6.2) reaches the engine as
+an optional ``market_data`` input on both stages (``MarketDataInputs``: the AVM and rent
+ranges, and whether the pull was skipped) and ``as_is_value_source`` on the underwrite's
+inputs, and two Info codes on ``ScreenFlag`` - ``SALE_PRICE_ABOVE_AVM_RANGE`` and
+``MARKET_DATA_BUDGET_EXHAUSTED`` - raised by ``engine/screen.market_data_flags`` at either
+stage. No result shape changes and no number moves: a stored row loads as it did, a run
+without the input raises nothing, and the as-is value the take-back reads is simply the
+adapter's where there is one.
+
 **2.2.0 (10b-tabs, 2026-10-28) lets config's ``take_back.foreclosure_months.OTHER`` stand in
 for a state outside the footprint.** A deal whose state has no entry of its own - which is
 every deal outside OK and CO, since ``State`` folds the rest into ``OTHER`` - used to have no

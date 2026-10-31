@@ -217,3 +217,11 @@ Two things worth knowing before you do it:
   and a row whose actor resolves to nobody would be worse than useless.
 - **Nothing is ever sent to a borrower automatically.** The screen drafts a reply; a person
   copies it, edits it and sends it by hand (SPEC §11).
+- **Market data is RentCast, and it is optional.** With `RENTCAST_API_KEY` set (the dashboard
+  on Render, `.env` locally) every deal is enriched on arrival - the property record, the
+  automated valuation and the long-term rent estimate, three requests - and the deal page's
+  Refresh market data button pulls again. Without it nothing is pulled and the team's own
+  as-is value and rent stand. The free tier is 50 requests a month: `rentcast.monthly_request_budget`
+  in `config/glenwood.yaml` (placeholder 50) is where the pull stops and says so, and
+  `rentcast.cache_days` (placeholder 30) is how long one address's pull serves the next deal at it.
+  Every call is an `enrichment_runs` row with the raw body, and every pull an audit row (SPEC §6.2).

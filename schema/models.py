@@ -381,6 +381,8 @@ class AuditAction(StrEnum):
     VERSION_MARKED_WORKING = "VERSION_MARKED_WORKING"  # the deal's Working version moved
     VERSION_RESTORED = "VERSION_RESTORED"  # a version's inputs loaded back onto the deal
     THANKS_TOKEN_ISSUED = "THANKS_TOKEN_ISSUED"  # SPEC §4.2: the web thank-you link, its expiry
+    # SPEC §6.2: a property-data pull - at arrival, or Refresh market data - and what it filled
+    MARKET_DATA_FETCHED = "MARKET_DATA_FETCHED"
     INDICATIVE_TERMS_SHOWN = "INDICATIVE_TERMS_SHOWN"  # SPEC §4.2: what the borrower was shown
     DEALS_PURGED = "DEALS_PURGED"  # the one-time cleanup (README); row_id is "*"
     LOI_SENT = "LOI_SENT"  # SPEC §9.3, Phase 5
@@ -760,6 +762,10 @@ class ScreenFlag(StrEnum):
     # row that carries it still loads.
     COMMITMENT_BELOW_REQUEST = "COMMITMENT_BELOW_REQUEST"
     REHAB_PORTION_EXCEEDS_BUDGET = "REHAB_PORTION_EXCEEDS_BUDGET"  # INFO, the holdback, §8.2
+    # INFO, SPEC §6.2: the estimated sale price is above the AVM's high plus the rehab costs
+    SALE_PRICE_ABOVE_AVM_RANGE = "SALE_PRICE_ABOVE_AVM_RANGE"
+    # INFO, SPEC §6.2: the property-data pull was skipped for the month's request budget
+    MARKET_DATA_BUDGET_EXHAUSTED = "MARKET_DATA_BUDGET_EXHAUSTED"
 
 
 class UnderwriteFlag(StrEnum):
@@ -965,6 +971,27 @@ class BorrowerInputs(BaseModel):
     repeat_borrower_verified: RepeatBorrowerStatus | None = None
 
 
+class MarketDataInputs(BaseModel):
+    """What the property-data adapter said about the subject, as the engine reads it.  # SPEC §6.2
+
+    The AVM's range around the as-is value it produced (the value itself reaches the
+    underwrite as ``as_is_value``), the rent estimate's range beside it, and whether the pull
+    was skipped for the month's request budget. Both stages raise two Info flags from it:
+    ``SALE_PRICE_ABOVE_AVM_RANGE`` when the estimated sale price is above the range high plus
+    the rehab costs, and ``MARKET_DATA_BUDGET_EXHAUSTED`` when nothing was pulled. None on the
+    inputs means no adapter ran at all, which raises nothing: a deal from before the adapter
+    existed is not a deal whose budget ran out.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    as_is_value_low: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    as_is_value_high: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    monthly_rent_low: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    monthly_rent_high: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    budget_exhausted: bool = False
+
+
 class ScreenInputs(BaseModel):
     """Everything the screen needs; the caller assembles it from deal + enrichment.  # SPEC §7"""
 
@@ -974,6 +1001,8 @@ class ScreenInputs(BaseModel):
     state: State
     borrower: BorrowerInputs
     court_records: CourtRecordInputs | None = None
+    # What the property-data adapter said (SPEC §6.2); None when no adapter ran.
+    market_data: MarketDataInputs | None = None
 
 
 # --- Engine outputs (SPEC §7.5, §8.2) ---------------------------------------------------------
@@ -1126,8 +1155,10 @@ class UnderwriteInputs(BaseModel):
     take_back_lost_interest_months: int | None = Field(default=None, ge=0, le=60)
     # The rental's exit value (SPEC §8.5): typed on the panel, else the estimated sale price.
     rental_exit_value: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
-    # The as-is value (SPEC §8.6): optional, team-typed, read by the take-back alone.
+    # The as-is value (SPEC §8.6): the adapter's AVM when one ran, else the team's own,
+    # read by the take-back alone; ``as_is_value_source`` says which (SPEC §6.1).
     as_is_value: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    as_is_value_source: ValueSource | None = None
     monthly_rent: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     # Where the rent came from (SPEC §4.2, §6.1): the team's own entry, or the borrower's
     # claim on the public form. None when nobody said, which a fixture handed straight to
@@ -1135,11 +1166,15 @@ class UnderwriteInputs(BaseModel):
     monthly_rent_source: ValueSource | None = None
     loan_purpose: LoanPurpose | None = None
     court_records: CourtRecordInputs | None = None
+    # What the property-data adapter said (SPEC §6.2); None when no adapter ran.
+    market_data: MarketDataInputs | None = None
 
     @model_validator(mode="after")
     def _rent_source_needs_a_rent(self) -> UnderwriteInputs:
         if self.monthly_rent_source is not None and self.monthly_rent is None:
             raise ValueError("a monthly rent source cannot be recorded without its value")
+        if self.as_is_value_source is not None and self.as_is_value is None:
+            raise ValueError("an as-is value source cannot be recorded without its value")
         return self
 
     @model_validator(mode="after")

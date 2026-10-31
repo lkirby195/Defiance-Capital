@@ -44,7 +44,8 @@ glenwood-uw/
                            #   cushioned rate and their figures at it, SPEC §4.2)
     version.py             # ENGINE_VERSION string, bump on any math change
   adapters/
-    base.py                # Adapter Protocol + AdapterResult
+    base.py                # Adapter Protocol, AdapterResult, AdapterStatus, Subject
+    rentcast.py            # the first adapter (SPEC §6.2): /properties, /avm/value, /avm/rent/long-term
     mortgage_automator.py
     forecasa.py
     oscn.py
@@ -70,7 +71,8 @@ glenwood-uw/
     autorun.py             # the analysis: screen then underwrite, behind Run Analysis and on arrival / edit as `system`
     borrowers.py           # the borrower's page: every deal on their row, with the totals
     defaults.py            # the SPEC 8.1 defaults every deal is populated with, and which are defaults
-    enrichment.py          # what the adapters produced (Phase 3); the precedence rule
+    enrichment.py          # what the adapters produced, as the engine reads it; the precedence rule
+    market_data.py         # the RentCast pull: at arrival and behind Refresh, the cache, the budget, the rows
     history.py             # a deal's versions, and the intake edits no version ran on
     intake.py              # store an IntakeRecord with an actor; re-apply an edited one; restore an earlier one
     lifecycle.py           # the two automatic status transitions (SPEC 4.6)
@@ -122,7 +124,7 @@ glenwood-uw/
 
 **Money and rates.** Use `Decimal` for money and rates inside `engine/`. Never `float` for dollar amounts. Round only at output boundaries.
 
-**Adapters are thin and mockable.** Each adapter implements the `Adapter` Protocol in `adapters/base.py`, returns an `AdapterResult` (status, raw payload, parsed result, source, timestamp), and never raises on a remote failure — it returns `status=FAILED` with the error. All network calls go through `httpx` with timeouts. Every adapter has a fixture-backed test that does not hit the network.
+**Adapters are thin and mockable.** Each adapter implements the `Adapter` Protocol in `adapters/base.py`, returns one `AdapterResult` per call (status, raw payload, parsed result, source, timestamps), and never raises on a remote failure — it returns `status=FAILED` with the error. All network calls go through `httpx` with timeouts. Every adapter has a fixture-backed test that does not hit the network. The first one is RentCast (SPEC §6.2): keyed by `RENTCAST_API_KEY`, run by `services/market_data.py` at arrival on every channel and behind the deal page's Refresh market data button, cached by address for `rentcast.cache_days`, and skipped - never failed - when the month's `rentcast.monthly_request_budget` would be passed. Its AVM is the as-is value and its rent estimate the market rent, each winning under the precedence rule above; it never writes the estimated sale price, and it fills blanks on the property row and nothing else. Without a key it is off and the team's entries stand, which is also how the tests run; a test that needs it hands `fetch_market_data` an adapter on an `httpx.MockTransport`.
 
 **A deal says why a button is off.** Anything the review queue refuses to run, it says the
 reason for *before* the person presses it. `services/readiness.py` derives the Underwrite

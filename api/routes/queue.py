@@ -114,12 +114,14 @@ from services import (
     ReasonRequired,
     UnderwritingAssumptions,
     VersionNotFound,
+    adapter_values,
     add_note,
     apply_defaults,
     auto_run,
     borrower_view,
     chips_from,
     clean_name,
+    configured,
     deal_history,
     deal_trail,
     deal_versions,
@@ -136,6 +138,8 @@ from services import (
     pause,
     profile_filter_choices,
     progress,
+    read_market_data,
+    refresh_market_data,
     reopen,
     reset_assumptions,
     restore_intake,
@@ -490,7 +494,11 @@ def render_deal(
             # What the ledger would run on, and why it is off when it is off (SPEC §8.1).
             # The refusal behind the button reads the same rules, so the page cannot
             # promise a run the assembly then declines.
-            "readiness": underwrite_readiness(deal),
+            "readiness": underwrite_readiness(deal, adapter_values(session, deal)),
+            # What RentCast said about the property (SPEC §6.2), for the Market data card,
+            # and whether the Refresh button is live (a key is set).
+            "market": read_market_data(session, deal),
+            "market_available": configured(),
             "defaults": default_marks(deal),
             "form": form if form is not None else assumptions_form(deal),
             "court": court if court is not None else court_form(deal),
@@ -1009,6 +1017,33 @@ def court_action(
     run = auto_run(session, saved)
     session.commit()
     return redirect(ran_path(deal_id, run), f"Court search saved. {run.summary()}".strip())
+
+
+# --- market data (SPEC §6.2) --------------------------------------------------------------------
+
+
+@router.post("/queue/deals/{deal_id}/market-data", response_model=None)
+def refresh_market_data_action(
+    deal_id: UUID, session: SessionDep, user: PageUser
+) -> RedirectResponse:
+    """Refresh market data: a fresh RentCast pull, cache or no cache, then the automatic run.
+
+    The pull is audited against the person who pressed the button; the run after it is the
+    system's, as after any change to what the analysis reads, so the results on the page are
+    never older than the market data beside them. Without a key nothing is written and the
+    notice says what is missing; the button is off on the page in that case anyway.
+    """
+    try:
+        deal = load_deal(session, deal_id)
+    except DealNotFound:
+        return redirect(HOME_PATH, "That deal does not exist.")
+    fetch = refresh_market_data(session, deal, actor=user.email)
+    if not fetch.wrote:
+        session.rollback()
+        return redirect(deal_path(deal_id), fetch.words())
+    run = auto_run(session, deal)
+    session.commit()
+    return redirect(ran_path(deal_id, run), f"{fetch.words()} {run.summary()}".strip())
 
 
 # --- versions (SPEC §5, §9) ---------------------------------------------------------------------

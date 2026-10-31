@@ -134,6 +134,16 @@ from services.lifecycle import (
     status_after_screen,
     status_after_underwrite,
 )
+from services.market_data import (
+    SOURCE_LABEL,
+    Fetch,
+    FetchOutcome,
+    MarketData,
+    configured,
+    fetch_market_data,
+    read_market_data,
+    refresh_market_data,
+)
 from services.passwords import WeakPassword, hash_password, verify_password
 from services.persistence import (
     latest_screen,
@@ -257,6 +267,14 @@ __all__ = [
     "WeakPassword",
     "WrongPassword",
     "adapter_values",
+    "SOURCE_LABEL",
+    "Fetch",
+    "FetchOutcome",
+    "MarketData",
+    "configured",
+    "fetch_market_data",
+    "read_market_data",
+    "refresh_market_data",
     "add_note",
     "advance_after_screen",
     "advance_for_underwrite",

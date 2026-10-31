@@ -35,6 +35,10 @@ from sqlalchemy.orm import Session
 
 # Set before anything imports api.security, which reads it when a cookie is signed.
 os.environ.setdefault("SESSION_SECRET", "test-session-secret-not-a-real-one")
+# No test reaches RentCast: a key in the developer's environment would turn every arrival
+# into three billed requests. The one live test (tests/test_rentcast.py) reads the key itself,
+# so it is handed over separately before this runs.
+RENTCAST_LIVE_KEY = os.environ.pop("RENTCAST_API_KEY", None)
 
 from api.main import app  # noqa: E402
 from api.masks import mask_one  # noqa: E402

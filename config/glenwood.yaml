@@ -116,6 +116,12 @@ web_intake:                               # SPEC §4.2 — the public borrower f
   thanks_token_hours: 24                  # PLACEHOLDER: how long the thank-you link with the
                                           #   borrower's indicative terms stays live
 
+rentcast:                                 # SPEC §6 - the RentCast property-data adapter
+  cache_days: 30                          # PLACEHOLDER: a second deal at the same address within
+                                          #   this many days reuses the stored pull
+  monthly_request_budget: 50              # PLACEHOLDER: the free tier's requests per calendar
+                                          #   month; at it the pull is skipped, not failed
+
 leverage_caps:                            # SPEC §7.4 — loan structure x credit tranche x experience tier
   # PLACEHOLDER GRID: every cell carries the same dummy caps so it is obvious nothing is tuned.
   # GLENWOOD fills this. Each cell: ltc, ltv (fractions of 1). LTV is the commitment over

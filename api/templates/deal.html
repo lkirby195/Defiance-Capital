@@ -544,6 +544,89 @@
   </div>
 </section>
 
+{# --- market data (SPEC §6.2): what RentCast said about the property ---------------------- #}
+<section class="panel chart" id="market-data">
+  <div class="row">
+    <h2>Market data</h2>
+    {% if market_available %}
+      <form method="post" action="/queue/deals/{{ deal.id }}/market-data">
+        {{ csrf.field(csrf_token) }}
+        <button type="submit" class="small">Refresh market data</button>
+      </form>
+    {% else %}
+      <span class="btn small off" title="RENTCAST_API_KEY is not set">Refresh market data</span>
+    {% endif %}
+  </div>
+  {% if market %}
+    <dl class="facts small" id="market-facts">
+      <dt>AVM value</dt><dd>{{ market.as_is_value | money }}</dd>
+      <dt>AVM range</dt>
+      <dd>{% if market.as_is_value_low is not none or market.as_is_value_high is not none
+          %}{{ market.as_is_value_low | money }} – {{ market.as_is_value_high | money }}{% else %}—{% endif %}</dd>
+      <dt>Market rent</dt><dd>{{ market.monthly_rent | money }}</dd>
+      <dt>Rent range</dt>
+      <dd>{% if market.monthly_rent_low is not none or market.monthly_rent_high is not none
+          %}{{ market.monthly_rent_low | money }} – {{ market.monthly_rent_high | money }}{% else %}—{% endif %}</dd>
+      <dt>Last sale</dt>
+      <dd>{{ market.last_sale_price | money }}{% if market.last_sale_date %} on {{ market.last_sale_date | day }}{% endif %}</dd>
+      <dt>Property type</dt><dd>{{ market.property_type | plain }}</dd>
+      <dt>Lot size</dt><dd>{{ market.lot_size | whole }}{% if market.lot_size is not none %} sq ft{% endif %}</dd>
+      <dt>Fetched</dt><dd>{{ market.fetched_at | when }}</dd>
+      <dt>Source</dt>
+      <dd>{{ market.source_label }}{% if market.cached_from %}, reused from a pull on {{ market.cached_from | day }}{% endif %}</dd>
+      {% if market.budget_exhausted %}
+        <dt>Status</dt><dd>Not pulled: the month's request budget is exhausted</dd>
+      {% endif %}
+      {% for source, error in market.errors.items() %}
+        <dt>{{ source }}</dt><dd>{{ error }}</dd>
+      {% endfor %}
+    </dl>
+    {% macro comps(title, rows, id, price_label) %}
+    <details class="ledger" id="{{ id }}">
+      <summary>{{ title }} <span class="count">({{ rows | length }})</span></summary>
+      {% if rows %}
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Address</th><th class="num">Distance (mi)</th><th class="num">{{ price_label }}</th>
+            <th class="num">Beds</th><th class="num">Baths</th><th class="num">Sq ft</th><th>Date</th></tr></thead>
+          <tbody>
+            {% for comp in rows %}
+            <tr>
+              <td>{{ comp.address | plain }}</td>
+              <td class="num">{{ comp.distance_miles | plain }}</td>
+              <td class="num">{{ comp.price | money }}</td>
+              <td class="num">{{ comp.bedrooms | plain }}</td>
+              <td class="num">{{ comp.bathrooms | plain }}</td>
+              <td class="num">{{ comp.square_footage | whole }}</td>
+              <td>{{ comp.date | day }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}<p class="small muted">None</p>{% endif %}
+    </details>
+    {% endmacro %}
+    {{ comps("Sale comps", market.value_comps, "sale-comps", "Price") }}
+    {{ comps("Rental comps", market.rent_comps, "rent-comps", "Rent") }}
+    <details class="ledger" id="sale-history">
+      <summary>Sale history <span class="count">({{ market.sale_history | length }})</span></summary>
+      {% if market.sale_history %}
+      <table>
+        <thead><tr><th>Date</th><th>Event</th><th class="num">Price</th></tr></thead>
+        <tbody>
+          {% for event in market.sale_history %}
+          <tr><td>{{ event.date | day }}</td><td>{{ event.event | plain }}</td><td class="num">{{ event.price | money }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<p class="small muted">None</p>{% endif %}
+    </details>
+  {% else %}
+    <p class="small muted">No market data.</p>
+  {% endif %}
+</section>
+
 {# --- the score components (SPEC §7) ------------------------------------------------------- #}
 <section class="panel chart" id="scored-as">
   <h2>Scored as</h2>

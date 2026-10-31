@@ -79,6 +79,7 @@ from services.intake import (
     reapply_intake,
     record_from_payload,
 )
+from services.market_data import market_snapshot
 from services.persistence import screen_result, underwrite_result
 from services.runner import load_deal
 
@@ -154,6 +155,9 @@ def take_snapshot(session: Session, deal: Deal) -> dict[str, Any]:
         "deal": {column: jsonable(getattr(deal, column)) for column in SNAPSHOT_COLUMNS},
         "borrower": _borrower(deal.borrower),
         "property": _property(deal.property),
+        # What the adapter said at the time (SPEC §6.2): a record of what the run read,
+        # not a column a restore puts back - the market data in force then is what it runs on.
+        "market_data": market_snapshot(session, deal),
     }
 
 

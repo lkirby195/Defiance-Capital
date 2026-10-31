@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.22
+# GLENWOOD Underwriting Platform — SPEC v0.23
 
-Status: **v0.22**, 2026-10-29, engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.23**, 2026-10-31, engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.23** adds the first enrichment adapter: **RentCast** (`adapters/rentcast.py`, `services/market_data.py`; no engine bump, no migration). Every deal is enriched **at arrival on every channel, before the screen**: three requests keyed by the address - the property record, the value estimate and the long-term rent estimate - each its own `enrichment_runs` row with the raw body. The AVM is the **as-is value** and the rent estimate the **market rent**, each source `ADAPTER` and each winning over the team's own under §6.1; the estimated sale price is **never** touched (the AVM is as-is, the sale price is after the repair), and `SALE_PRICE_ABOVE_AVM_RANGE` (Info, both stages) says when the sale price is above the AVM's high plus the rehab costs, showing both. The record fills blanks on `properties` - beds, baths, square feet, year built, units - and never a value a person entered; the last sale, the sale history and the comps are stored and shown. A second deal at the same address inside `rentcast.cache_days` (placeholder 30) reuses the stored runs as CACHED rows of its own; the month's requests are counted off the rows and a pull that would pass `rentcast.monthly_request_budget` (placeholder 50, the free tier) is skipped with one SKIPPED row and `MARKET_DATA_BUDGET_EXHAUSTED` (Info) rather than failed. A failure of any kind is a FAILED row and the run proceeds on what the deal holds. The Deal Overview tab gets a **Market data** card - the AVM and its range, the rent and its range, the last sale, when it was fetched and from where, two collapsible comp tables and the sale history - with a **Refresh market data** button that pulls again past the cache, audited `MARKET_DATA_FETCHED`, and runs the analysis; readiness says `ADAPTER` for the two values; the borrower's pages show none of it (§5, §6.2, §8.1, §9, §10). The key is `RENTCAST_API_KEY`; without it the adapter is off and nothing changes.
 
 **v0.22** gives the borrower a cushioned quote, two views and five boxes of their own (migration `0024`, no engine change). Every rate on the thank-you page is the row's solved rate plus `pricing.borrower_rate_cushion` (placeholder 0.5%), rounded **up** to the next `pricing.borrower_rate_rounding` (placeholder 0.25%) and never above `pricing.max_quoted_rate` (10d-fix), and the estimated profit, the new **project yield** column and the cash-on-cash beside it are the Flip Analysis at that rate (`engine/calc/quote.py`, computed when the page renders from the version's stored inputs); the team's pages keep the uncushioned solve, both keys are on the Defaults page, and the "Shown to borrower" record stores the cushioned figures with the solve beside each. The page opens on **Simple** - the table - and a toggle opens **Advanced**: the borrower's own cash flows by month (purchase, rehab, holding, financing, sale, the loan's advance, draws and payoff, and the net cash each month) and Sources & Uses, both at the first row's cushioned rate, in Spanish too. **Adjust my numbers**, a link live for the token's life, is a form of five boxes - the sale price, the rehab budget, the loan amount, the rent and the term bucket - and each save moves only the boxes the borrower changed (what the team entered since stays) as a new intake submission as the borrower, a new automatic run named **Borrower edit n** that the page then reads (`deals.borrower_terms_version`), new indicative terms, a new record of what was shown, and a row the team sees in History; it is rate-limited and honeypotted as the form is. A leak-guard test renders every borrower-facing page of a fully analyzed deal and searches it for the lender's side, and every `/apply` response carries `X-Robots-Tag: noindex` (§4.2, §5, §10).
 
@@ -415,7 +417,7 @@ Tables (one-line intent each; full DDL via Alembic migrations):
 - `intake_submissions` — every inbound message/file/form, immutable, raw
 - `deals` — one per property × borrower inquiry; current `IntakeRecord` state lives here
 - `properties` — normalized address, city, parcel, county, state, and the descriptive facts (§8.1); reused across deals
-- `enrichment_runs` — one row per adapter call: source, timestamp, status, raw response ref, parsed result
+- `enrichment_runs` — one row per adapter call: source, timestamp, status (`OK`, `FAILED`, `CACHED`, `SKIPPED`), raw response, parsed result, error (§6.2)
 - `screens` — screen inputs, score components, verdict, reasons; one per run (re-screen creates a new row)
 - `underwrites` — full underwrite inputs and outputs (JSONB, the monthly ledger included), version of engine used
 - `versions` — one per analysis run: deal_id, number, name, created_at, actor, engine_version, config_hash, inputs_snapshot (JSONB), screen_id, underwrite_id, is_working
@@ -553,7 +555,7 @@ Each adapter implements a common `Protocol` (see `CLAUDE.md`), returns typed res
 | PropStream | Property detail, owner history, **deed history under borrower entities** (experience verification), lien lookup | No public API known; CSV export or manual in v1 | Screen | Recon |
 | Credco | Tri-merge credit report | API or PDF, depends on account | Underwrite only, requires signed authorization | Recon |
 | RicherValues | Paid valuation (the estimated sale price) | API or PDF, depends on account | Underwrite only | Recon |
-| Property data API (ATTOM / RentCast / similar) | Programmatic valuation, rent estimate, comps when PropStream is manual | API, paid | Both | Optional |
+| **RentCast** | Property record (attributes, last sale, sale history), automated valuation with range and sale comps, long-term rent estimate with range and rental comps (§6.2) | API (`RENTCAST_API_KEY`; free tier 50 requests a month, one deal is three) | Both | **Known** - built, 9a |
 | LinkedPhone | Inbound SMS/call capture | Webhook or polling | Intake | Recon |
 
 Experience verification: count buy→sell pairs in the last 36 months across the borrower's known entities from deed history. Self-reported bucket is displayed next to the verified count; mismatch is a flag, not a fail.
@@ -598,6 +600,81 @@ survives into the credit memo (§9.2), where a reader is deciding how much weigh
 a Go. Both can be named at either stage: the underwrite re-runs the §7.2 tests on the
 record in force at underwrite time (§8.1), so a hand search reaches it too — named as the
 team's only where no adapter has superseded it by then.
+
+### 6.2 RentCast (the property-data adapter)
+
+The first adapter (9a). `adapters/rentcast.py` implements the `Adapter` Protocol in
+`adapters/base.py`; `services/market_data.py` does the asking and the writing. Base URL
+`https://api.rentcast.io/v1`, header `X-Api-Key`, `httpx` with a 10-second timeout and no
+retry. One enrichment of a deal is three GETs keyed by the property's street address:
+
+| Call | Query | What the deal takes from it |
+|---|---|---|
+| `/properties?address=` | the address alone | the property record: beds, baths, square feet, year built, lot size, unit count, property type; the **last sale price and date**; the **sale history** |
+| `/avm/value?address=` | plus `bedrooms`, `bathrooms`, `squareFootage`, `propertyType` when the deal has them (2-4 units is `Multi-Family`, 5+ `Apartment`) | the **as-is value** (`price`), its range (`priceRangeLow` / `High`) and the **sale comps** |
+| `/avm/rent/long-term?address=` | the same | the **market rent** (`rent`), its range and the **rental comps** |
+
+Each call is one `enrichment_runs` row: `source` is `rentcast/properties`, `rentcast/avm/value`
+or `rentcast/avm/rent/long-term`, `status` `OK` or `FAILED`, `raw_response` the body whatever
+the status (an error body too), `parsed_result` the adapter's reading of an OK body - money as
+strings of two decimals, dates as `YYYY-MM-DD` - and `error` the reason in words. Nothing
+raises for the remote: a timeout, a refused connection, a 4xx or 5xx (404 is RentCast's "no
+results", 400 an address it cannot geolocate, 401 a bad key, 429 its 20-a-second limit), a body
+that is not JSON or not the documented shape each come back `FAILED`, and the arrival run
+proceeds on whatever the deal already holds.
+
+**Mapping** (§6.1 precedence, source `ADAPTER`):
+
+- `as_is_value` ← the AVM `price`. The adapter's number beats the team's own (`deals.as_is_value`
+  and an underwrite request's alike) and overwrites neither; the underwrite's stored inputs
+  carry `as_is_value_source`. The range and the comps are stored and shown, not read by the math.
+- `monthly_rent` ← the rent estimate. Adapter over team over borrower, the three columns kept.
+- Property attributes **fill blanks only**: `beds`, `baths`, `sf`, `year_built`, `units` on the
+  shared `properties` row, each only where it was NULL; a value a person entered is never moved.
+  The lot size has no column and is shown from the record.
+- The last sale price and date and the sale history are stored on the `/properties` row and shown.
+- The **estimated sale price is not touched**: the AVM values the property as it stands and the
+  sale price is after the repair. `SALE_PRICE_ABOVE_AVM_RANGE` (Info, fixed; raised by both
+  stages from `MarketDataInputs`) says when the estimated sale price in force is above the AVM
+  high **plus the rehab costs** - the most the two can honestly differ by - and the message
+  shows both sides: "Estimated sale price $400,000.00 is above the AVM range high $258,000.00
+  plus rehab costs $48,000.00 ($306,000.00)."
+
+**Where it runs.** At arrival on every channel - the team form, the JSON intake, the public
+form - inside `services/intake.create_deal`, after the §8.1 defaults and before the arrival
+run, so the as-is value and the rent are on the first analysis. On the deal page, **Refresh
+market data** (Deal Overview tab, the Market data card's bar) pulls again past the cache and
+runs the analysis as `system`, so the results are never older than the market data beside
+them; the button is off, saying `RENTCAST_API_KEY is not set`, when there is no key. A team
+edit does not pull again: the runs after it read the rows in force.
+
+**Cache.** `properties` is keyed by the normalized address and shared across deals (§5), so the
+property row is the cache key: a deal whose address has an `OK` run inside
+`rentcast.cache_days` (placeholder 30) gets `CACHED` rows of its own - the body copied, the
+original run and its time named in `parsed_result` - and sends nothing; the card says "reused
+from a pull on <date>". Refresh bypasses it; a `cache_days` of 0 turns it off.
+
+**Budget.** The month's requests (UTC calendar month) are counted off the rows that sent one
+(`OK` or `FAILED`, never a copy). When the next pull's three would pass
+`rentcast.monthly_request_budget` (placeholder 50), it is skipped: one row, `source`
+`rentcast`, `status` `SKIPPED`, `error` naming the count, and the runs after it raise
+`MARKET_DATA_BUDGET_EXHAUSTED` (Info) while no value is in force. The cache is consulted first,
+so a repeat address costs nothing against the budget.
+
+**Record.** Every pull - at arrival, on Refresh, a cache hit, a budget skip - is one
+`MARKET_DATA_FETCHED` audit row against the actor who caused it (the intake's actor, the person
+who pressed the button), naming the trigger, the outcome, each call's status, the two values,
+the deal a cache hit was copied from and the property columns it filled. A version's
+`inputs_snapshot` carries `market_data` - the two values, the two ranges, when and the run ids -
+as a record of what the run read; a restore does not put it back, it runs on the market data
+then in force.
+
+**What the borrower sees:** nothing. The thank-you page and its views print no market data,
+and the leak guard holds them to it.
+
+**Not pulled from RentCast:** the court record and the estimated sale price (no source for
+either); the value and rent comps feed no math; nothing is pulled for a deal with a listing
+link and no street address.
 
 ---
 
@@ -811,8 +888,8 @@ counts it as present.
 | Input | Notes |
 |---|---|
 | `estimated_sale_price` | The ARV. LTV is computed on it (§7.4, §8.2) and the Flip analysis sells at it. Optional: without one, LTV is `NOT_AVAILABLE` with `ESTIMATED_SALE_PRICE_MISSING` (Soft) and the Flip analysis is `NOT_EVALUATED` with `SALE_PRICE_MISSING` (Info) — the run itself goes ahead |
-| `monthly_rent` | Optional. The **market rent** (labelled Monthly Rent): the Rental analysis sets it against the required rent and the Take-Back solves the sale price at it; without it those lines report `NOT_EVALUATED` under `MONTHLY_RENT_MISSING` (Info) rather than running on a zero, and everything that does not read it still computes (§8.5, §8.6) |
-| `as_is_value` | Optional (v0.19). The team's as-is valuation, typed on the Underwriting Assumptions panel as **As-Is Value**; nothing in the screen reads it. The Take-Back sets its haircut price beside it when there is one (§8.6) |
+| `monthly_rent` | Optional. The **market rent** (labelled Monthly Rent; RentCast's long-term rent estimate when one was pulled, §6.2, winning over the team's and the borrower's): the Rental analysis sets it against the required rent and the Take-Back solves the sale price at it; without it those lines report `NOT_EVALUATED` under `MONTHLY_RENT_MISSING` (Info) rather than running on a zero, and everything that does not read it still computes (§8.5, §8.6) |
+| `as_is_value` | Optional (v0.19). RentCast's AVM when one was pulled (§6.2, source `ADAPTER`, winning over the team's), else the team's as-is valuation, typed on the Underwriting Assumptions panel as **As-Is Value**; nothing in the screen reads it. The Take-Back sets its haircut price beside it when there is one (§8.6) |
 | `rental_exit_value` | Default: the estimated sale price in force (v0.19). What the takeout lends against (§8.5), typed on the panel as **Exit Value**. Nothing is written for the default - the column is `NULL` and the sale price is read where it is needed, so a sale price edited later moves it - and a typed value equal to the sale price is stored as `NULL` again; the box carries the "default" tag while it holds the sale price and Reset all puts it back. Without a sale price or a typed value the Rental analysis is `NOT_EVALUATED` |
 
 The as-is value is gone from the engine, from the form and from `deals` (migration `0011`).
@@ -1196,6 +1273,12 @@ The §7.2 court codes and the credit, experience and leverage codes the screen r
 | `SALE_PRICE_MISSING` | Info (fixed) | §8.4: there is no `estimated_sale_price`, so the Flip analysis is `NOT_EVALUATED`, and so are the Take-Back's solves and, unless an exit value was typed, the Rental's takeout; the screen's own `ESTIMATED_SALE_PRICE_MISSING` (Soft) reports the same absence on the leverage side |
 | `NO_REHAB_PERIOD` | Info (fixed) | §8.3: a holdback whose term leaves `rehab_months = 0`, so the rehab portion is advanced at close instead of drawn |
 
+Two more Info codes are raised by **both** stages from the property-data pull (§6.2, v0.23), as
+the provenance flags are: `SALE_PRICE_ABOVE_AVM_RANGE` when the estimated sale price in force is
+above the AVM range high plus the rehab costs (the message shows both), and
+`MARKET_DATA_BUDGET_EXHAUSTED` when the pull was skipped for the month's request budget. Neither
+is graded by config and neither moves a verdict.
+
 ### 8.9 Lender and Borrower Sensitivity
 
 **Lender Sensitivity** is IRR by loan amount and annual rate, on the deal page under the
@@ -1373,7 +1456,14 @@ is on the page in this order with the tab row as in-page links:
    components); the **court and filing search** (collapsed; the outcome, the date and the
    typed matters, its own Save). The grid's Overview is followed by **About their
    investing** (v0.21): the borrower's five profile answers (§4.1 row 7), read off the
-   borrower's row, an em dash where one was not given.
+   borrower's row, an em dash where one was not given. Between the grid and Scored as sits
+   the **Market data** card (v0.23, §6.2): the AVM value and its range, the market rent and
+   its range, the last sale, the property type and lot size, when it was fetched and from
+   where ("RentCast", or "RentCast, reused from a pull on <date>"), a status line when the
+   pull was skipped and each failed call's error, then **Sale comps**, **Rental comps**
+   (address, distance, price or rent, beds, baths, square feet, date) and **Sale history** as
+   three collapsed tables; **Refresh market data** on its bar, off with its reason when no key
+   is set. "No market data." when nothing was ever pulled.
 3. **Cash Flows** - the ledger, the whole table, open.
 4. **Sources & Uses** - the sources beside the uses (§8.11).
 5. **Scenarios** - Flip, Rental and Take-Back as three cards, each led by its headline figure
@@ -1552,6 +1642,8 @@ workbook to export.
 - states served and court-record adapter per state
 - `web_intake.submissions_per_hour_per_ip` (placeholder 5): posts to the public form from one address in a sliding hour before the next is turned away (§4.2)
 - `web_intake.thanks_token_hours` (placeholder 24): how long a submission's thank-you link, with the borrower's indicative terms on it, stays live (§4.2)
+- `rentcast.cache_days` (placeholder 30; 0 to 365): how long one RentCast pull at an address stands in for the next deal at the same address (§6.2); 0 caches nothing
+- `rentcast.monthly_request_budget` (placeholder 50, the free tier; 0 turns the adapter off): the requests allowed per calendar month; a pull that would pass it is skipped with `MARKET_DATA_BUDGET_EXHAUSTED` (§6.2). The key itself is the `RENTCAST_API_KEY` environment variable, not config
 
 Gone with the v0.2 §8, and rejected by the loader if a stale yaml still carries them:
 `returns` (target IRR, rate grid, month window), `takeout` (DSCR takeout LTV, rate,
@@ -1567,7 +1659,7 @@ Config is versioned; each `screens`/`underwrites` row records the config hash us
 
 Every value is shown, read-only, on the **Defaults** page (`/defaults`, signed in, linked from
 the top bar), grouped Economics, Flip, Rental, Take-Back, Pricing, Sensitivity, Screen caps and
-thresholds, Dates, each beside its dotted key (`fees.origination_default_pct`). The leverage
+thresholds, Dates, Market data, each beside its dotted key (`fees.origination_default_pct`). The leverage
 caps show as one table per loan type. A test reads the yaml itself and fails on any key the
 page does not show, so a new key has to be placed in a group (`api/defaults_page.py`).
 
@@ -1711,6 +1803,15 @@ rate at `pricing.max_quoted_rate`, puts the loan's advance, draws and payoff in 
 borrower's cash flows with a net cash line per month, and makes a borrower edit move only
 the boxes the borrower changed, so a team Edit Intake made in between survives it.
 
+Phase 9a (no engine change, no migration, v0.23) is the first of the Phase 3 adapters:
+RentCast (§6.2). `adapters/base.py` is the Protocol CLAUDE.md always named, `adapters/rentcast.py`
+the three calls, `services/market_data.py` the pull at arrival and behind Refresh market data,
+the cache by address, the month's budget, the rows and the audit row; `AdapterValues` carries
+the AVM as the as-is value and the rent estimate as the market rent into the §6.1 precedence
+that was waiting for them, and two Info flags come off a new optional `market_data` input to
+both stages. The rest of Phase 3 - the borrower match, the lien search, the court records -
+is still ahead; the team is still the source for the court record and the sale price.
+
 Phase 10c (no engine change, migration `0023`, v0.21) gives the borrower an investing
 profile: the "About your investing" group on both intake forms, stored on `borrowers`, shown
 on the deal page and the borrower's page, carried and audited by Edit Intake, asked in
@@ -1734,6 +1835,28 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
 
 ## 13. Open items
 
+- 9a-rentcast's open questions (v0.23):
+  - **Refresh runs the analysis.** The button pulls and then runs as `system`, on the rule that
+    the results on the page are never older than the inputs beside them; the brief named the
+    pull and the audit row and not the run
+  - **A team edit does not pull again**: the runs after it read the rows in force, and a stale
+    pull is refreshed by the button. An edit that changes the address does not pull either
+  - **The cache key is the property row** (the normalized address), not the typed string: two
+    spellings that normalize alike share a row and a pull, two that do not get two pulls
+  - **The budget counts requests sent** (`OK` and `FAILED` alike, UTC calendar month) off this
+    database's rows; requests made with the same key from anywhere else are not counted, and
+    RentCast itself does not bill a 404. The placeholder is the free tier's 50
+  - **A property type is sent only from a unit count** (2-4 `Multi-Family`, 5+ `Apartment`);
+    one unit says nothing about house against condo, so nothing is sent and RentCast looks the
+    subject up
+  - **The flag's rehab is the entered `rehab_costs`**, not the contingency-adjusted figure
+  - **The lot size has no column**: shown from the record, not stored on `properties`
+  - **The sale comps' date is the listing date** (`listedDate`, else `lastSeenDate`): RentCast's
+    value comps are listings, with a price asked rather than a price paid
+  - **The snapshot records the market data and a restore does not put it back**: a version
+    restored after a Refresh runs on the newer pull
+  - **The live smoke test is a skip** in a normal run (`RENTCAST_LIVE=1` and a key turn it on),
+    which is the one skip `uv run pytest` now reports
 - 10d-borrower's open questions (v0.22; three closed by 10d-fix: the cushioned rate is
   capped at `pricing.max_quoted_rate`, the loan is in the borrower's cash flows, and a
   borrower edit moves only the boxes the borrower changed):

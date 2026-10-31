@@ -65,3 +65,7 @@ services:
       # Changing it signs everyone out; that is the rotation procedure, not a side effect.
       - key: SESSION_SECRET
         generateValue: true
+      # Optional (SPEC 6.2): the RentCast key. Set in the dashboard; unset, the adapter is
+      # off and nothing is pulled. The month's request budget is config, not the key.
+      - key: RENTCAST_API_KEY
+        sync: false

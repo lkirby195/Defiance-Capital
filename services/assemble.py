@@ -351,6 +351,7 @@ def screen_inputs(
         state=core.state,
         borrower=borrower_inputs(core),
         court_records=court_records(deal, adapters),
+        market_data=adapters.market_data,
     )
 
 
@@ -428,6 +429,11 @@ def underwrite_inputs(
     interest_rate = _first(
         request.interest_rate, deal.interest_rate, settings.interest.default_annual_rate
     )
+    # The as-is value (SPEC §6.2, §8.6): the adapter's AVM over the team's own, the request's
+    # number being the team's newest; where it came from travels with it.
+    as_is_value, as_is_source = resolve_one(
+        adapters.as_is_value, _first(request.as_is_value, deal.as_is_value)
+    )
     if term is None:
         raise DealNotReady(
             deal.id, ["deal.term_months (the ledger runs closing to payoff (SPEC §8.1))"]
@@ -460,9 +466,11 @@ def underwrite_inputs(
         # The exit value and the as-is value (SPEC §8.5, §8.6): the request, then the deal,
         # then None - the engine reads the sale price for the first and nothing for the second.
         rental_exit_value=_first(request.rental_exit_value, deal.rental_exit_value),
-        as_is_value=_first(request.as_is_value, deal.as_is_value),
+        as_is_value=as_is_value,
+        as_is_value_source=as_is_source,
         monthly_rent=rent.monthly_rent,
         monthly_rent_source=rent.monthly_rent_source,
         loan_purpose=_first(request.loan_purpose, deal.loan_purpose),
         court_records=court_records(deal, adapters),
+        market_data=adapters.market_data,
     )

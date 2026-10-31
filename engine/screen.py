@@ -36,12 +36,14 @@ from schema.models import (
     Flag,
     LeverageMetric,
     LienKind,
+    MarketDataInputs,
     RepeatBorrowerStatus,
     ScreenComponents,
     ScreenFlag,
     ScreenInputs,
     ScreenResult,
     Severity,
+    SizingInputs,
     SizingResult,
     State,
     Tranche,
@@ -604,6 +606,56 @@ def provenance_flags(
     )
 
 
+# --- market data (SPEC §6.2) --------------------------------------------------------------------
+
+
+def market_data_flags(
+    deal: SizingInputs, market: MarketDataInputs | None, config: Config
+) -> list[Flag]:
+    """The two Info flags the property-data pull can raise, at either stage.  # SPEC §6.2
+
+    ``SALE_PRICE_ABOVE_AVM_RANGE`` when the estimated sale price in force is above the AVM's
+    range high plus the rehab costs: the AVM is an as-is figure and the sale price is after
+    the rehab, so the rehab budget is the most the two can honestly differ by, and a price
+    further out than that is a claim the market data does not support. The message shows
+    both sides. ``MARKET_DATA_BUDGET_EXHAUSTED`` when the pull was skipped for the month's
+    request budget (``rentcast.monthly_request_budget``), so a reader knows the as-is value
+    and the rent are whatever a person entered, not a pull that came back empty. Neither
+    moves a verdict. Nothing is raised when no adapter ran at all (``market`` is None).
+    """
+    if market is None:
+        return []
+    flags: list[Flag] = []
+    if market.budget_exhausted:
+        budget = config.rentcast.monthly_request_budget
+        flags.append(
+            Flag(
+                code=ScreenFlag.MARKET_DATA_BUDGET_EXHAUSTED,
+                severity=Severity.INFO,
+                message=(
+                    "Market data was not pulled: the RentCast request budget of "
+                    f"{budget} for the month is exhausted; the as-is value and the market "
+                    "rent are whatever the team or the borrower entered."
+                ),
+            )
+        )
+    high = market.as_is_value_high
+    price = deal.estimated_sale_price
+    if high is not None and price is not None and price > high + deal.rehab_costs:
+        flags.append(
+            Flag(
+                code=ScreenFlag.SALE_PRICE_ABOVE_AVM_RANGE,
+                severity=Severity.INFO,
+                message=(
+                    f"Estimated sale price {money(price)} is above the AVM range high "
+                    f"{money(high)} plus rehab costs {money(deal.rehab_costs)} "
+                    f"({money(high + deal.rehab_costs)})."
+                ),
+            )
+        )
+    return flags
+
+
 # --- verdict, reasons, reply (SPEC §7.5) --------------------------------------------------------
 
 
@@ -667,6 +719,7 @@ def screen(inputs: ScreenInputs, config: Config) -> ScreenResult:
         + state_flags(inputs.state, config)
         + leverage_flags(sizing)
         + provenance_flags(sizing, inputs.court_records)
+        + market_data_flags(inputs.deal, inputs.market_data, config)
     )
     verdict = verdict_from_flags(flags)
     return ScreenResult(
