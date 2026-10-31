@@ -88,7 +88,9 @@ def test_the_groups_the_brief_names() -> None:
         "Sensitivity",
         "Screen caps and thresholds",
         "Dates",
+        "Market data",
     ]
+    assert group_of("rentcast.cache_days") == "Market data"
     assert group_of("fees.origination_default_pct") == "Economics"
     assert group_of("fees.broker_selling_pct") == "Flip"
     assert group_of("interest.day_count_basis") == "Dates"

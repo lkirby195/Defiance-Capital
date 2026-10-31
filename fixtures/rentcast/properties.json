@@ -1,0 +1,69 @@
+[
+  {
+    "id": "3320-Meade-St,-Denver,-CO-80211",
+    "formattedAddress": "3320 Meade St, Denver, CO 80211",
+    "addressLine1": "3320 Meade St",
+    "addressLine2": null,
+    "city": "Denver",
+    "state": "CO",
+    "stateFips": "08",
+    "zipCode": "80211",
+    "county": "Denver",
+    "countyFips": "031",
+    "latitude": 39.763215,
+    "longitude": -105.038941,
+    "propertyType": "Single Family",
+    "bedrooms": 3,
+    "bathrooms": 2,
+    "squareFootage": 1420,
+    "lotSize": 6250,
+    "yearBuilt": 1948,
+    "assessorID": "02191-04-021-000",
+    "legalDescription": "L 21 & 22 BLK 4 HIGHLAND PARK",
+    "subdivision": "HIGHLAND PARK",
+    "zoning": "U-SU-C",
+    "lastSaleDate": "2019-06-14T00:00:00.000Z",
+    "lastSalePrice": 212000,
+    "hoa": null,
+    "features": {
+      "architectureType": "Bungalow",
+      "cooling": false,
+      "exteriorType": "Brick",
+      "floorCount": 1,
+      "foundationType": "Crawl",
+      "garage": true,
+      "garageSpaces": 1,
+      "garageType": "Detached",
+      "heating": true,
+      "heatingType": "Forced Air",
+      "roofType": "Composition Shingle",
+      "roomCount": 6,
+      "unitCount": 1
+    },
+    "taxAssessments": {
+      "2024": {"year": 2024, "value": 228400, "land": 118000, "improvements": 110400}
+    },
+    "propertyTaxes": {
+      "2024": {"year": 2024, "total": 1612}
+    },
+    "history": {
+      "2011-03-02": {"event": "Sale", "date": "2011-03-02T00:00:00.000Z", "price": 148500},
+      "2019-06-14": {"event": "Sale", "date": "2019-06-14T00:00:00.000Z", "price": 212000}
+    },
+    "owner": {
+      "names": ["Highland Park Holdings LLC"],
+      "type": "Organization",
+      "mailingAddress": {
+        "id": "PO-Box-1120,-Denver,-CO-80201",
+        "formattedAddress": "PO Box 1120, Denver, CO 80201",
+        "addressLine1": "PO Box 1120",
+        "addressLine2": null,
+        "city": "Denver",
+        "state": "CO",
+        "stateFips": "08",
+        "zipCode": "80201"
+      }
+    },
+    "ownerOccupied": false
+  }
+]

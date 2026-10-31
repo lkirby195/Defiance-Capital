@@ -405,6 +405,21 @@ class WebIntakeConfig(_Section):
     thanks_token_hours: Annotated[int, Field(ge=1, le=24 * 30)]
 
 
+class RentcastConfig(_Section):
+    """The RentCast property-data adapter's two tunables.  # SPEC §6
+
+    ``cache_days`` is how long one pull at an address stands in for the next deal at the same
+    address (placeholder 30): a second deal inside the window reuses the stored runs rather
+    than spending three more requests. ``monthly_request_budget`` is the requests the plan
+    allows per calendar month (placeholder 50, the free tier); when the next pull would pass
+    it, the pull is skipped and the run says so with ``MARKET_DATA_BUDGET_EXHAUSTED`` rather
+    than failing. A budget of 0 turns the adapter off without unsetting the key.
+    """
+
+    cache_days: Annotated[int, Field(ge=0, le=365)]
+    monthly_request_budget: Annotated[int, Field(ge=0, le=1_000_000)]
+
+
 class StatesConfig(_Section):
     """States served and the court-record adapter per state.  # SPEC §6, §10"""
 
@@ -450,6 +465,7 @@ class Config(_Section):
     take_back: TakeBackConfig
     states: StatesConfig
     web_intake: WebIntakeConfig
+    rentcast: RentcastConfig
 
     @model_validator(mode="before")
     @classmethod

@@ -61,6 +61,7 @@ from schema.models import SPLIT_PRODUCTS, AuditAction, Channel, IntakeRecord, St
 from services.audit import DEALS, jsonable, record_audit
 from services.defaults import populate
 from services.errors import ActionNotAllowed
+from services.market_data import fetch_market_data
 from services.persistence import latest_screen
 from services.runner import load_deal
 
@@ -108,11 +109,15 @@ def create_deal(
 
     The deal is populated with its SPEC §8.1 defaults on the way in, whatever the channel,
     and the audit row names what was written as ``defaults`` beside the intake's own facts
-    and the submission it was created from.
+    and the submission it was created from. Then the property-data pull (SPEC §6.2,
+    ``services/market_data.py``), on every channel and before the arrival run the caller
+    makes, so the as-is value and the market rent are on the first analysis; it writes its
+    own rows and its own audit row, and a failure leaves the deal to run on what it holds.
     """
     deal = create_deal_from_intake(session, record)
     defaults = populate(deal, config)
     session.flush()
+    fetch_market_data(session, deal, actor=actor, config=config)
     record_audit(
         session,
         actor=actor,

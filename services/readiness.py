@@ -395,14 +395,14 @@ def underwrite_readiness(
                 "flip is not evaluated and LTV is not available (SPEC §7.4, §8.4)"
             ),
         ),
-        _row(
+        _resolved_row(
             "as_is_value",
             "As-is value",
-            deal.as_is_value,
-            fmt="money",
+            adapter=adapters.as_is_value,
+            team=deal.as_is_value,
             note=(
-                "optional; the Take-Back's haircut price is set beside it when there is one "
-                "(SPEC §8.6)"
+                "optional; RentCast's AVM when one was pulled, else the team's own (SPEC §6.2); "
+                "the Take-Back's haircut price is set beside it when there is one (SPEC §8.6)"
             ),
         ),
         _resolved_row(

@@ -48,6 +48,7 @@ GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("credit", "screen", "flags", "experience", "states", "web_intake", "leverage_caps"),
     ),
     ("Dates", ("closing", "interest.day_count_basis", "draws.listing_months")),
+    ("Market data", ("rentcast",)),
 )
 OTHER = "Other"
 
