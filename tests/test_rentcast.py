@@ -45,12 +45,16 @@ from api.ratelimit import LIMITER
 from config.config import DEFAULT_PATH, Config, load_yaml
 from db.models import AuditLog, Deal, EnrichmentRun, Screen, Underwrite, Version
 from engine.screen import market_data_flags
+from engine.sizing import size_deal
 from schema.models import (
     AuditAction,
+    ExperienceTier,
     MarketDataInputs,
     Product,
     ScreenFlag,
     SizingInputs,
+    SizingResult,
+    Tranche,
     ValueSource,
 )
 from services import (
@@ -123,13 +127,25 @@ class Recorder:
         return [request.url.path for request in self.requests]
 
 
+class Ticking:
+    """A clock that moves one second per reading, so successive pulls order by time."""
+
+    def __init__(self, start: datetime = T0) -> None:
+        self.now = start
+
+    def __call__(self) -> datetime:
+        self.now += timedelta(seconds=1)
+        return self.now
+
+
 def fake(
-    overrides: dict[str, httpx.Response | Exception] | None = None, when: datetime = T0
+    overrides: dict[str, httpx.Response | Exception] | None = None,
+    when: datetime = T0,
+    ticking: bool = False,
 ) -> tuple[RentCastAdapter, Recorder]:
     recorder = Recorder(overrides)
-    adapter = RentCastAdapter(
-        "test-key", transport=httpx.MockTransport(recorder), clock=lambda: when
-    )
+    clock = Ticking(when) if ticking else (lambda: when)
+    adapter = RentCastAdapter("test-key", transport=httpx.MockTransport(recorder), clock=clock)
     return adapter, recorder
 
 
@@ -288,15 +304,25 @@ def test_the_adapter_comes_from_the_environment_or_not_at_all() -> None:
 # --- the two flags, pure (SPEC §6.2) --------------------------------------------------------------
 
 
-def sizing(price: str | None) -> SizingInputs:
+def sizing(price: str | None, contingency: str | None = None) -> SizingInputs:
     return SizingInputs(
         product=Product.ACQUISITION,
         purchase_price=D("200000.00"),
         rehab_costs=D("48000.00"),
         loan_requested=D("195000.00"),
+        contingency_pct=None if contingency is None else D(contingency),
         estimated_sale_price=None if price is None else D(price),
         estimated_sale_price_source=None if price is None else ValueSource.TEAM,
     )
+
+
+def sized(inputs: SizingInputs) -> SizingResult:
+    return size_deal(inputs, Tranche.T1, ExperienceTier.E3, CONFIG)
+
+
+def flags(price: str | None, market: MarketDataInputs | None, contingency: str | None = None):
+    inputs = sizing(price, contingency)
+    return market_data_flags(inputs, sized(inputs), market, CONFIG)
 
 
 RANGE = MarketDataInputs(as_is_value_low=D("214000.00"), as_is_value_high=D("258000.00"))
@@ -305,23 +331,35 @@ RANGE = MarketDataInputs(as_is_value_low=D("214000.00"), as_is_value_high=D("258
 def test_a_sale_price_above_the_avm_high_plus_the_rehab_is_flagged_and_both_sides_are_shown() -> (
     None
 ):
-    (flag,) = market_data_flags(sizing("320000.00"), RANGE, CONFIG)
+    # the config contingency is 0.00, so the adjusted rehab is the $48,000 entered
+    (flag,) = flags("320000.00", RANGE)
     assert flag.code is ScreenFlag.SALE_PRICE_ABOVE_AVM_RANGE and flag.severity.value == "INFO"
     assert flag.message == (
         "Estimated sale price $320,000.00 is above the AVM range high $258,000.00 plus rehab "
-        "costs $48,000.00 ($306,000.00)."
+        "costs with contingency $48,000.00 ($306,000.00)."
     )
 
 
+def test_the_rehab_the_flag_measures_against_carries_the_contingency() -> None:
+    # 10% on $48,000 is $52,800: the line moves from $306,000 to $310,800
+    assert flags("310000.00", RANGE, contingency="0.10") == []
+    (flag,) = flags("311000.00", RANGE, contingency="0.10")
+    assert flag.message == (
+        "Estimated sale price $311,000.00 is above the AVM range high $258,000.00 plus rehab "
+        "costs with contingency $52,800.00 ($310,800.00)."
+    )
+    assert len(flags("311000.00", RANGE)) == 1  # without the contingency it was over already
+
+
 def test_a_sale_price_inside_the_rehab_of_the_avm_high_is_not() -> None:
-    assert market_data_flags(sizing("306000.00"), RANGE, CONFIG) == []
-    assert market_data_flags(sizing(None), RANGE, CONFIG) == []
-    assert market_data_flags(sizing("320000.00"), MarketDataInputs(), CONFIG) == []
-    assert market_data_flags(sizing("320000.00"), None, CONFIG) == []
+    assert flags("306000.00", RANGE) == []
+    assert flags(None, RANGE) == []
+    assert flags("320000.00", MarketDataInputs()) == []
+    assert flags("320000.00", None) == []
 
 
 def test_an_exhausted_budget_is_flagged_and_names_the_budget() -> None:
-    (flag,) = market_data_flags(sizing(None), MarketDataInputs(budget_exhausted=True), CONFIG)
+    (flag,) = flags(None, MarketDataInputs(budget_exhausted=True))
     assert flag.code is ScreenFlag.MARKET_DATA_BUDGET_EXHAUSTED
     assert "request budget of 50 for the month is exhausted" in flag.message
 
@@ -413,10 +451,10 @@ def test_a_team_entry_is_enriched_on_arrival_and_the_first_run_reads_it(
     assert inputs["deal"]["estimated_sale_price_source"] == "TEAM"
     screen_row = latest_screen(db_session, deal.id)
     assert screen_row is not None
-    flags = {flag.code.value: flag.message for flag in screen_result(screen_row).flags}
-    assert flags["SALE_PRICE_ABOVE_AVM_RANGE"] == (
+    raised = {flag.code.value: flag.message for flag in screen_result(screen_row).flags}
+    assert raised["SALE_PRICE_ABOVE_AVM_RANGE"] == (
         "Estimated sale price $400,000.00 is above the AVM range high $258,000.00 plus rehab "
-        "costs $48,000.00 ($306,000.00)."
+        "costs with contingency $48,000.00 ($306,000.00)."
     )
     # readiness says where the two values came from
     rows = {
@@ -865,10 +903,123 @@ def test_the_subject_is_the_deals_property_and_a_unit_count_names_the_type(
         )
         return transient_deal(record)
 
-    assert subject_for(deal_for()) == Subject(ADDRESS, 3, D("2.0"), 1420, None)
-    assert subject_for(deal_for(units=3)) is not None
-    assert subject_for(deal_for(units=3)).property_type == "Multi-Family"  # type: ignore[union-attr]
-    assert subject_for(deal_for(units=12)).property_type == "Apartment"  # type: ignore[union-attr]
+    assert subject_for(deal_for()) == Subject(ADDRESS, 3, D("2.0"), 1420, "Single Family")
+    without_units = dict(team_entry)
+    del without_units["units"]
+    blank = subject_for(deal_for(**{key: value for key, value in without_units.items()}))
+
+    def type_of(**changes: Any) -> str | None:
+        subject = subject_for(deal_for(**changes))
+        assert subject is not None
+        return subject.property_type
+
+    assert type_of(units=1) == "Single Family"
+    assert type_of(units=3) == "Multi-Family"
+    assert type_of(units=4) == "Multi-Family"
+    assert type_of(units=5) == "Apartment"
+    assert type_of(units=12) == "Apartment"
+    assert blank is not None and blank.property_type == "Single Family"
+    # ...and it is what the AVM calls carry
+    adapter, recorder = fake()
+    adapter.enrich(subject_for(deal_for()))  # type: ignore[arg-type]
+    assert recorder.requests[1].url.params["propertyType"] == "Single Family"
+
+
+@requires_db
+def test_an_edit_that_moves_the_address_pulls_again_past_the_cache_before_the_run(
+    client: QueueClient,
+    db_session: Session,
+    team_entry: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter, recorder = fake(ticking=True)
+    use(monkeypatch, adapter)
+    body_ = form_body(team_entry)
+    assert client.post("/intake/team", data=body_, follow_redirects=False).status_code == 303
+    deal = one_deal(db_session)
+    assert len(recorder.requests) == 3
+    # another deal already pulled Elm St today, so the cache would serve it - and must not
+    elm = "12 Elm St, Denver, CO 80202"
+    other = store_deal(
+        db_session,
+        {
+            **team_entry,
+            "address": elm,
+            "borrower_name": "Ada Lin",
+            "borrower_phone": "720-555-0102",
+        },
+    )
+    assert (
+        fetch_market_data(db_session, other, actor=ACTOR, adapter=adapter).outcome
+        is FetchOutcome.FETCHED
+    )
+    assert len(recorder.requests) == 6
+
+    def edit(**changes: str) -> Any:
+        response = client.post(
+            f"/queue/deals/{deal.id}/intake",
+            data=form_body(team_entry, **changes),
+            follow_redirects=False,
+        )
+        assert response.status_code == 303, response.text
+        return response
+
+    # the street address: a fresh pull, past the cache, then the run
+    edit(address=elm)
+    assert len(recorder.requests) == 9
+    assert recorder.requests[-3].url.params["address"] == elm
+    assert statuses(db_session, deal) == {source: ["OK", "OK"] for source in SOURCES}
+    arrival, moved = audits(db_session, deal)
+    assert moved.actor == USER_EMAIL and moved.after is not None
+    assert (moved.after["trigger"], moved.after["outcome"]) == ("edit", "FETCHED")
+    # the run after the edit read the new rows, not the arrival's: the pull came first
+    versions = {
+        v.number: v.inputs_snapshot["market_data"]["runs"]
+        for v in db_session.scalars(select(Version).where(Version.deal_id == deal.id))
+    }
+    assert set(versions) == {1, 2}
+    assert not set(versions[1].values()) & set(versions[2].values())
+    newest = sorted(runs(db_session, deal), key=lambda run: run.requested_at)[-3:]
+    assert set(versions[2].values()) == {str(run.id) for run in newest}
+    assert count(db_session, Version) == 2
+    # the city alone, and the state alone (the address line carries it), each pull again
+    edit(address=elm, city="Aurora")
+    assert len(recorder.requests) == 12
+    edit(address="12 Elm St, Pueblo, CO 81003", city="Aurora")
+    assert len(recorder.requests) == 15
+    edit(address="12 Elm St, Pueblo, OK 74101", city="Aurora")
+    assert len(recorder.requests) == 18
+    # every other edit reads the rows in force
+    edit(address="12 Elm St, Pueblo, OK 74101", city="Aurora", purchase_price="192500.00")
+    edit(address="12 Elm St, Pueblo, OK 74101", city="Aurora", beds="4", borrower_name="Rafa Ortiz")
+    assert len(recorder.requests) == 18
+    assert len(audits(db_session, deal)) == 5
+    assert count(db_session, Version) == 7
+
+
+@requires_db
+def test_an_edit_that_moves_nothing_about_the_address_does_not_pull(
+    client: QueueClient,
+    db_session: Session,
+    team_entry: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter, recorder = fake()
+    use(monkeypatch, adapter)
+    assert (
+        client.post("/intake/team", data=form_body(team_entry), follow_redirects=False).status_code
+        == 303
+    )
+    deal = one_deal(db_session)
+    response = client.post(
+        f"/queue/deals/{deal.id}/intake",
+        data=form_body(team_entry, purchase_price="192500.00", rehab_costs="50000.00"),
+        follow_redirects=False,
+    )
+    assert response.status_code == 303 and len(recorder.requests) == 3
+    assert statuses(db_session, deal) == {source: ["OK"] for source in SOURCES}
+    assert len(audits(db_session, deal)) == 1
+    assert count(db_session, Version) == 2
 
 
 # --- live, by request only ------------------------------------------------------------------------

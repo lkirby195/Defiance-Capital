@@ -327,6 +327,7 @@ def _apply_record(
     # off a split product with its old split still on it is a row the database refuses
     # (``ck_deals_loan_split_only_on_split_products``).
     _reconcile_split(deal, before, after)
+    moved = only is None and address_moved(deal, record)
     if only is None:
         _relink(session, deal, record, before, after)
         _apply_completeness(deal, record, before, after)
@@ -356,7 +357,33 @@ def _apply_record(
         before=before,
         after=after,
     )
+    if moved:
+        # The market data was about the old address (SPEC §6.2): pull again, past the cache,
+        # before the automatic run the caller makes. Any other edit reads the rows in force.
+        fetch_market_data(
+            session, deal, actor=actor, config=config, bypass_cache=True, trigger="edit"
+        )
     return deal
+
+
+def address_moved(deal: Deal, record: IntakeRecord) -> bool:
+    """Whether the record puts the deal at a different street address, city or state.
+
+    # SPEC §6.2. Compared against the property the deal points at now, before the relink:
+    # the normalized address line (the property key), the city and the state. A deal with
+    # no property yet that is given an address has moved too - nothing was pulled for it.
+    """
+    info = record.property
+    if info is None or not (info.address_normalized or info.city):
+        return False
+    prop = deal.property
+    if prop is None:
+        return True
+    return (
+        info.address_normalized != prop.address_normalized
+        or (info.city or None) != (prop.city or None)
+        or info.state is not prop.state
+    )
 
 
 def _reconcile_split(deal: Deal, before: dict[str, Any], after: dict[str, Any]) -> None:

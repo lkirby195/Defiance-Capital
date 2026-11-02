@@ -1,8 +1,8 @@
 # GLENWOOD Underwriting Platform — SPEC v0.23
 
-Status: **v0.23**, 2026-10-31, engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.23**, 2026-11-02 (9a-fix), engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
 
-**v0.23** adds the first enrichment adapter: **RentCast** (`adapters/rentcast.py`, `services/market_data.py`; no engine bump, no migration). Every deal is enriched **at arrival on every channel, before the screen**: three requests keyed by the address - the property record, the value estimate and the long-term rent estimate - each its own `enrichment_runs` row with the raw body. The AVM is the **as-is value** and the rent estimate the **market rent**, each source `ADAPTER` and each winning over the team's own under §6.1; the estimated sale price is **never** touched (the AVM is as-is, the sale price is after the repair), and `SALE_PRICE_ABOVE_AVM_RANGE` (Info, both stages) says when the sale price is above the AVM's high plus the rehab costs, showing both. The record fills blanks on `properties` - beds, baths, square feet, year built, units - and never a value a person entered; the last sale, the sale history and the comps are stored and shown. A second deal at the same address inside `rentcast.cache_days` (placeholder 30) reuses the stored runs as CACHED rows of its own; the month's requests are counted off the rows and a pull that would pass `rentcast.monthly_request_budget` (placeholder 50, the free tier) is skipped with one SKIPPED row and `MARKET_DATA_BUDGET_EXHAUSTED` (Info) rather than failed. A failure of any kind is a FAILED row and the run proceeds on what the deal holds. The Deal Overview tab gets a **Market data** card - the AVM and its range, the rent and its range, the last sale, when it was fetched and from where, two collapsible comp tables and the sale history - with a **Refresh market data** button that pulls again past the cache, audited `MARKET_DATA_FETCHED`, and runs the analysis; readiness says `ADAPTER` for the two values; the borrower's pages show none of it (§5, §6.2, §8.1, §9, §10). The key is `RENTCAST_API_KEY`; without it the adapter is off and nothing changes.
+**v0.23** adds the first enrichment adapter: **RentCast** (`adapters/rentcast.py`, `services/market_data.py`; no engine bump, no migration). Every deal is enriched **at arrival on every channel, before the screen**: three requests keyed by the address - the property record, the value estimate and the long-term rent estimate - each its own `enrichment_runs` row with the raw body. The AVM is the **as-is value** and the rent estimate the **market rent**, each source `ADAPTER` and each winning over the team's own under §6.1; the estimated sale price is **never** touched (the AVM is as-is, the sale price is after the repair), and `SALE_PRICE_ABOVE_AVM_RANGE` (Info, both stages) says when the sale price is above the AVM's high plus the contingency-adjusted rehab costs, showing both (9a-fix). The record fills blanks on `properties` - beds, baths, square feet, year built, units - and never a value a person entered; the last sale, the sale history and the comps are stored and shown. A second deal at the same address inside `rentcast.cache_days` (placeholder 30) reuses the stored runs as CACHED rows of its own; the month's requests are counted off the rows and a pull that would pass `rentcast.monthly_request_budget` (placeholder 50, the free tier) is skipped with one SKIPPED row and `MARKET_DATA_BUDGET_EXHAUSTED` (Info) rather than failed. A failure of any kind is a FAILED row and the run proceeds on what the deal holds. An Edit Intake that changes the street address, the city or the state pulls again past the cache before its run (9a-fix). The Deal Overview tab gets a **Market data** card - the AVM and its range, the rent and its range, the last sale, when it was fetched and from where, two collapsible comp tables and the sale history - with a **Refresh market data** button that pulls again past the cache, audited `MARKET_DATA_FETCHED`, and runs the analysis; readiness says `ADAPTER` for the two values; the borrower's pages show none of it (§5, §6.2, §8.1, §9, §10). The key is `RENTCAST_API_KEY`; without it the adapter is off and nothing changes.
 
 **v0.22** gives the borrower a cushioned quote, two views and five boxes of their own (migration `0024`, no engine change). Every rate on the thank-you page is the row's solved rate plus `pricing.borrower_rate_cushion` (placeholder 0.5%), rounded **up** to the next `pricing.borrower_rate_rounding` (placeholder 0.25%) and never above `pricing.max_quoted_rate` (10d-fix), and the estimated profit, the new **project yield** column and the cash-on-cash beside it are the Flip Analysis at that rate (`engine/calc/quote.py`, computed when the page renders from the version's stored inputs); the team's pages keep the uncushioned solve, both keys are on the Defaults page, and the "Shown to borrower" record stores the cushioned figures with the solve beside each. The page opens on **Simple** - the table - and a toggle opens **Advanced**: the borrower's own cash flows by month (purchase, rehab, holding, financing, sale, the loan's advance, draws and payoff, and the net cash each month) and Sources & Uses, both at the first row's cushioned rate, in Spanish too. **Adjust my numbers**, a link live for the token's life, is a form of five boxes - the sale price, the rehab budget, the loan amount, the rent and the term bucket - and each save moves only the boxes the borrower changed (what the team entered since stays) as a new intake submission as the borrower, a new automatic run named **Borrower edit n** that the page then reads (`deals.borrower_terms_version`), new indicative terms, a new record of what was shown, and a row the team sees in History; it is rate-limited and honeypotted as the form is. A leak-guard test renders every borrower-facing page of a fully analyzed deal and searches it for the lender's side, and every `/apply` response carries `X-Robots-Tag: noindex` (§4.2, §5, §10).
 
@@ -611,7 +611,7 @@ retry. One enrichment of a deal is three GETs keyed by the property's street add
 | Call | Query | What the deal takes from it |
 |---|---|---|
 | `/properties?address=` | the address alone | the property record: beds, baths, square feet, year built, lot size, unit count, property type; the **last sale price and date**; the **sale history** |
-| `/avm/value?address=` | plus `bedrooms`, `bathrooms`, `squareFootage`, `propertyType` when the deal has them (2-4 units is `Multi-Family`, 5+ `Apartment`) | the **as-is value** (`price`), its range (`priceRangeLow` / `High`) and the **sale comps** |
+| `/avm/value?address=` | plus `bedrooms`, `bathrooms`, `squareFootage` when the deal has them, and `propertyType` off the unit count: one unit or blank is `Single Family`, 2-4 `Multi-Family`, 5+ `Apartment` | the **as-is value** (`price`), its range (`priceRangeLow` / `High`) and the **sale comps** |
 | `/avm/rent/long-term?address=` | the same | the **market rent** (`rent`), its range and the **rental comps** |
 
 Each call is one `enrichment_runs` row: `source` is `rentcast/properties`, `rentcast/avm/value`
@@ -636,17 +636,23 @@ proceeds on whatever the deal already holds.
 - The **estimated sale price is not touched**: the AVM values the property as it stands and the
   sale price is after the repair. `SALE_PRICE_ABOVE_AVM_RANGE` (Info, fixed; raised by both
   stages from `MarketDataInputs`) says when the estimated sale price in force is above the AVM
-  high **plus the rehab costs** - the most the two can honestly differ by - and the message
-  shows both sides: "Estimated sale price $400,000.00 is above the AVM range high $258,000.00
-  plus rehab costs $48,000.00 ($306,000.00)."
+  high **plus the contingency-adjusted rehab costs** (`rehab_adj = rehab_costs × (1 +
+  contingency_pct)`, §8.2; the whole budget is the most the two can honestly differ by) and
+  the message shows both sides: "Estimated sale price $400,000.00 is above the AVM range high
+  $258,000.00 plus rehab costs with contingency $48,000.00 ($306,000.00)."
 
 **Where it runs.** At arrival on every channel - the team form, the JSON intake, the public
 form - inside `services/intake.create_deal`, after the §8.1 defaults and before the arrival
 run, so the as-is value and the rent are on the first analysis. On the deal page, **Refresh
 market data** (Deal Overview tab, the Market data card's bar) pulls again past the cache and
 runs the analysis as `system`, so the results are never older than the market data beside
-them; the button is off, saying `RENTCAST_API_KEY is not set`, when there is no key. A team
-edit does not pull again: the runs after it read the rows in force.
+them; the button is off, saying `RENTCAST_API_KEY is not set`, when there is no key. An **Edit
+Intake that changes the street address, the city or the state** pulls again, past the cache,
+after the edit is written and before the automatic run (`services/intake.address_moved`:
+the normalized address line, the city and the state, against the property the deal pointed
+at; a deal given an address for the first time counts). Every other edit reads the rows in
+force. A Restore that moves the address pulls the same way; the borrower's Adjust my numbers
+never relinks and never pulls.
 
 **Cache.** `properties` is keyed by the normalized address and shared across deals (§5), so the
 property row is the cache key: a deal whose address has an `OK` run inside
@@ -1275,7 +1281,7 @@ The §7.2 court codes and the credit, experience and leverage codes the screen r
 
 Two more Info codes are raised by **both** stages from the property-data pull (§6.2, v0.23), as
 the provenance flags are: `SALE_PRICE_ABOVE_AVM_RANGE` when the estimated sale price in force is
-above the AVM range high plus the rehab costs (the message shows both), and
+above the AVM range high plus the contingency-adjusted rehab costs (the message shows both), and
 `MARKET_DATA_BUDGET_EXHAUSTED` when the pull was skipped for the month's request budget. Neither
 is graded by config and neither moves a verdict.
 
@@ -1839,17 +1845,18 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
   - **Refresh runs the analysis.** The button pulls and then runs as `system`, on the rule that
     the results on the page are never older than the inputs beside them; the brief named the
     pull and the audit row and not the run
-  - **A team edit does not pull again**: the runs after it read the rows in force, and a stale
-    pull is refreshed by the button. An edit that changes the address does not pull either
+  - **An edit pulls again only for the address, the city or the state** (9a-fix); a changed
+    unit count, bed count or square footage - which the AVM calls carry - does not, and the
+    button is the way to re-ask with them
   - **The cache key is the property row** (the normalized address), not the typed string: two
     spellings that normalize alike share a row and a pull, two that do not get two pulls
   - **The budget counts requests sent** (`OK` and `FAILED` alike, UTC calendar month) off this
     database's rows; requests made with the same key from anywhere else are not counted, and
     RentCast itself does not bill a 404. The placeholder is the free tier's 50
-  - **A property type is sent only from a unit count** (2-4 `Multi-Family`, 5+ `Apartment`);
-    one unit says nothing about house against condo, so nothing is sent and RentCast looks the
-    subject up
-  - **The flag's rehab is the entered `rehab_costs`**, not the contingency-adjusted figure
+  - **The property type comes off the unit count alone** (9a-fix: one or blank `Single
+    Family`, 2-4 `Multi-Family`, 5+ `Apartment`); a condo or a townhouse is sent as a house
+  - **The flag measures against `rehab_adj`** (9a-fix), the entered rehab times one plus the
+    contingency in force - the deal's own or the config default
   - **The lot size has no column**: shown from the record, not stored on `properties`
   - **The sale comps' date is the listing date** (`listedDate`, else `lastSeenDate`): RentCast's
     value comps are listings, with a price asked rather than a price paid
