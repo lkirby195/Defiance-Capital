@@ -11,9 +11,11 @@ fill-blanks rule on the property row, the cache by address and its window, the m
 budget, the Refresh button and its audit row, failed calls as rows the run proceeds past, the
 snapshot, and the borrower's pages showing none of it.
 
-The one live test at the bottom runs only with ``RENTCAST_LIVE=1`` and a key in the
-environment, against one known address, and asserts the shape of what comes back rather
-than any value.
+The one live test at the bottom (``-k rentcast_live``) runs only with ``RENTCAST_LIVE=1`` and
+a key the app's own loader can find - the environment first, else ``.env`` - against one known
+address, and asserts the shape of what comes back rather than any value. Every other test
+runs with an empty key parked in the environment (``tests/conftest.py``), which is what keeps
+a developer's ``.env`` from turning the arrival pull on under them.
 """
 
 from __future__ import annotations
@@ -71,12 +73,18 @@ from services import (
     underwrite_readiness,
 )
 from services.assemble import underwrite_inputs
-from services.market_data import fill_property_blanks, subject_for
+from services.market_data import (
+    configured,
+    default_adapter,
+    fill_property_blanks,
+    rentcast_api_key,
+    subject_for,
+)
 from services.readiness import InputSource
 from services.requests import UnderwriteRequest
 from tests.conftest import (
     ACTOR,
-    RENTCAST_LIVE_KEY,
+    RENTCAST_ENV_KEY,
     USER_EMAIL,
     QueueClient,
     form_body,
@@ -411,7 +419,9 @@ def use(monkeypatch: pytest.MonkeyPatch, adapter: RentCastAdapter | None) -> Non
     """Make ``adapter`` the one the deployment is configured with, key and all."""
     monkeypatch.setattr("services.market_data.default_adapter", lambda: adapter)
     if adapter is None:
-        monkeypatch.delenv(API_KEY_ENV, raising=False)
+        # Empty, not absent: an absent variable lets load_dotenv bring a developer's .env key
+        # back under the test (tests/conftest.py); an empty one reads as unset and stays.
+        monkeypatch.setenv(API_KEY_ENV, "")
     else:
         monkeypatch.setenv(API_KEY_ENV, "test-key")
 
@@ -1022,16 +1032,68 @@ def test_an_edit_that_moves_nothing_about_the_address_does_not_pull(
     assert count(db_session, Version) == 2
 
 
+# --- the key --------------------------------------------------------------------------------------
+
+
+def test_the_key_is_read_from_the_environment_first_and_from_dotenv_second(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    dotenv = tmp_path / ".env"
+    dotenv.write_text(f"{API_KEY_ENV}=from-dotenv\n", encoding="utf-8")
+    monkeypatch.setattr("services.market_data.DOTENV_PATH", dotenv)
+    monkeypatch.setenv(API_KEY_ENV, "from-shell")
+    assert rentcast_api_key() == "from-shell"
+    monkeypatch.delenv(API_KEY_ENV)
+    assert rentcast_api_key() == "from-dotenv"
+    assert configured() is True
+    # An explicit environment is the whole environment: .env is not consulted.
+    assert rentcast_api_key({}) is None
+    assert configured({API_KEY_ENV: " k "}) is True
+
+
+def test_an_empty_key_in_the_environment_keeps_the_dotenv_key_out(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The suite parks "" in the environment (tests/conftest.py). load_dotenv leaves a present
+    # variable alone, so a developer's .env cannot turn the adapter on under the tests; the
+    # defect this closes was the popped key coming back with the first signed cookie.
+    dotenv = tmp_path / ".env"
+    dotenv.write_text(f"{API_KEY_ENV}=from-dotenv\n", encoding="utf-8")
+    monkeypatch.setattr("services.market_data.DOTENV_PATH", dotenv)
+    monkeypatch.setenv(API_KEY_ENV, "")
+    assert rentcast_api_key() is None
+    assert configured() is False
+    assert default_adapter() is None
+    assert os.environ[API_KEY_ENV] == ""
+
+
 # --- live, by request only ------------------------------------------------------------------------
 
 
+def live_api_key() -> str | None:
+    """The key the live test runs on, read the way the app reads it (``rentcast_api_key``):
+    the shell's own value wins, else ``.env``. conftest parks an empty value in the
+    environment so no other test can reach RentCast; it is lifted for this one read and put
+    back before anything else runs.
+    """
+    os.environ.pop(API_KEY_ENV, None)
+    if RENTCAST_ENV_KEY:
+        os.environ[API_KEY_ENV] = RENTCAST_ENV_KEY
+    try:
+        return rentcast_api_key()
+    finally:
+        os.environ[API_KEY_ENV] = ""
+
+
+LIVE_KEY = live_api_key() if os.environ.get("RENTCAST_LIVE") == "1" else None
+
+
 @pytest.mark.skipif(
-    os.environ.get("RENTCAST_LIVE") != "1" or not (RENTCAST_LIVE_KEY or "").strip(),
-    reason="set RENTCAST_LIVE=1 and RENTCAST_API_KEY for the live smoke test (3 billed requests)",
+    LIVE_KEY is None,
+    reason="RENTCAST_LIVE=1 and a key in the environment or .env run it (3 billed requests)",
 )
-def test_live_smoke_one_known_address_comes_back_in_shape() -> None:
-    adapter = RentCastAdapter.from_env({API_KEY_ENV: RENTCAST_LIVE_KEY or ""})
-    assert adapter is not None
+def test_rentcast_live_smoke_one_known_address_comes_back_in_shape() -> None:
+    adapter = RentCastAdapter(LIVE_KEY or "")
     record, value, rent = adapter.enrich(Subject("5500 Grand Lake Dr, San Antonio, TX 78244"))
     for result in (record, value, rent):
         assert result.status is AdapterStatus.OK, (result.source, result.error)

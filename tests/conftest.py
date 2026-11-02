@@ -35,10 +35,14 @@ from sqlalchemy.orm import Session
 
 # Set before anything imports api.security, which reads it when a cookie is signed.
 os.environ.setdefault("SESSION_SECRET", "test-session-secret-not-a-real-one")
-# No test reaches RentCast: a key in the developer's environment would turn every arrival
-# into three billed requests. The one live test (tests/test_rentcast.py) reads the key itself,
-# so it is handed over separately before this runs.
-RENTCAST_LIVE_KEY = os.environ.pop("RENTCAST_API_KEY", None)
+# No test reaches RentCast: a key in the developer's environment or in .env would turn every
+# arrival into three billed requests. An EMPTY value is parked in the environment rather than
+# the variable popped: the app's loader (services.market_data.rentcast_api_key) reads empty as
+# unset, and load_dotenv(override=False) - which session_secret() and database_url() call on
+# the way - leaves a variable that is present alone, so .env cannot re-arm it mid-run (popping
+# it did not survive the first signed cookie). The live test lifts the sentinel for its one read.
+RENTCAST_ENV_KEY = os.environ.get("RENTCAST_API_KEY")
+os.environ["RENTCAST_API_KEY"] = ""
 
 from api.main import app  # noqa: E402
 from api.masks import mask_one  # noqa: E402
