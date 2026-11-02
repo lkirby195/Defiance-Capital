@@ -305,16 +305,22 @@ class Fetch:
 
 
 def subject_for(deal: Deal) -> Subject | None:
-    """The deal's property as the adapter is asked about it; None without a street address."""
+    """The deal's property as the adapter is asked about it; None without a street address.
+
+    The property type RentCast's AVMs take comes off the unit count (SPEC §6.2): 2-4 is
+    ``Multi-Family``, 5 or more ``Apartment``, and one unit or a blank is ``Single Family``.
+    """
     prop = deal.property
     if prop is None or not prop.address_raw:
         return None
     units = prop.units
-    property_type = None
     if units is not None and 2 <= units <= 4:
         property_type = "Multi-Family"
     elif units is not None and units >= 5:
         property_type = "Apartment"
+    else:
+        # one unit, or nothing said: a house, which is what every deal so far has been
+        property_type = "Single Family"
     return Subject(
         address=prop.address_raw,
         bedrooms=prop.beds,

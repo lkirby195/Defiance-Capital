@@ -10,7 +10,9 @@ inputs, and two Info codes on ``ScreenFlag`` - ``SALE_PRICE_ABOVE_AVM_RANGE`` an
 ``MARKET_DATA_BUDGET_EXHAUSTED`` - raised by ``engine/screen.market_data_flags`` at either
 stage. No result shape changes and no number moves: a stored row loads as it did, a run
 without the input raises nothing, and the as-is value the take-back reads is simply the
-adapter's where there is one.
+adapter's where there is one. 9a-fix (2026-11-02, no bump) measures the sale-price flag
+against the contingency-adjusted rehab (``SizingResult.rehab_adj``) rather than the entered
+rehab costs; the message says "rehab costs with contingency".
 
 **2.2.0 (10b-tabs, 2026-10-28) lets config's ``take_back.foreclosure_months.OTHER`` stand in
 for a state outside the footprint.** A deal whose state has no entry of its own - which is

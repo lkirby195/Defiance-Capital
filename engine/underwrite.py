@@ -360,7 +360,7 @@ def underwrite(inputs: UnderwriteInputs, config: Config) -> UnderwriteResult:
         + leverage_flags(sizing)
         + court_flags(inputs.court_records, config)
         + provenance_flags(sizing, inputs.court_records, inputs.monthly_rent_source)
-        + market_data_flags(inputs.deal, inputs.market_data, config)
+        + market_data_flags(inputs.deal, sizing, inputs.market_data, config)
         + structure_flags(loan, config)
         + sale_price_flags(flip, rental)
         + cash_on_cash_flags(flip, config)
