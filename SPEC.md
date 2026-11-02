@@ -1649,7 +1649,7 @@ workbook to export.
 - `web_intake.submissions_per_hour_per_ip` (placeholder 5): posts to the public form from one address in a sliding hour before the next is turned away (§4.2)
 - `web_intake.thanks_token_hours` (placeholder 24): how long a submission's thank-you link, with the borrower's indicative terms on it, stays live (§4.2)
 - `rentcast.cache_days` (placeholder 30; 0 to 365): how long one RentCast pull at an address stands in for the next deal at the same address (§6.2); 0 caches nothing
-- `rentcast.monthly_request_budget` (placeholder 50, the free tier; 0 turns the adapter off): the requests allowed per calendar month; a pull that would pass it is skipped with `MARKET_DATA_BUDGET_EXHAUSTED` (§6.2). The key itself is the `RENTCAST_API_KEY` environment variable, not config
+- `rentcast.monthly_request_budget` (placeholder 50, the free tier; 0 turns the adapter off): the requests allowed per calendar month; a pull that would pass it is skipped with `MARKET_DATA_BUDGET_EXHAUSTED` (§6.2). The key itself is the `RENTCAST_API_KEY` environment variable, not config - read by `services.market_data.rentcast_api_key`, the environment first and `.env` second, as `DATABASE_URL` is
 
 Gone with the v0.2 §8, and rejected by the loader if a stale yaml still carries them:
 `returns` (target IRR, rate grid, month window), `takeout` (DSCR takeout LTV, rate,
@@ -1862,8 +1862,10 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
     value comps are listings, with a price asked rather than a price paid
   - **The snapshot records the market data and a restore does not put it back**: a version
     restored after a Refresh runs on the newer pull
-  - **The live smoke test is a skip** in a normal run (`RENTCAST_LIVE=1` and a key turn it on),
-    which is the one skip `uv run pytest` now reports
+  - **The live smoke test is a skip** in a normal run (`RENTCAST_LIVE=1` turns it on, with the
+    key in the environment or in `.env`; `uv run pytest -k rentcast_live` selects it), which is
+    the one skip `uv run pytest` now reports; every other test runs with an empty key parked in
+    the environment so a developer's `.env` cannot arm the adapter under it (9a-smoke)
 - 10d-borrower's open questions (v0.22; three closed by 10d-fix: the cushioned rate is
   capped at `pricing.max_quoted_rate`, the loan is in the borrower's cash flows, and a
   borrower edit moves only the boxes the borrower changed):

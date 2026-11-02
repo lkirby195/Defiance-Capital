@@ -37,6 +37,7 @@ filled. Nothing here commits.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -44,6 +45,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
+from dotenv import load_dotenv
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -59,6 +61,7 @@ from adapters.rentcast import (
 )
 from config.config import Config, get_config
 from db.models import Deal, EnrichmentRun, Property
+from db.session import DOTENV_PATH
 from schema.models import AuditAction
 from services.audit import DEALS, jsonable, record_audit
 
@@ -89,14 +92,32 @@ class _Default:
 DEFAULT_ADAPTER = _Default()
 
 
-def configured(environ: dict[str, str] | None = None) -> bool:
+def rentcast_api_key(environ: Mapping[str, str] | None = None) -> str | None:
+    """``RENTCAST_API_KEY``; a real environment variable wins over ``.env``, as ``DATABASE_URL``
+    and ``SESSION_SECRET`` do (``db.session.database_url``, ``api.security.session_secret``).
+
+    None when unset or empty: the deployment has no key and market data is off. An explicit
+    ``environ`` is read as the whole environment and ``.env`` is not consulted - the tests
+    hand one in. A variable that is present, even empty, is left alone by ``load_dotenv``,
+    which is what lets the test suite park an empty value so ``.env`` cannot arm the adapter
+    under it.
+    """
+    if environ is None:
+        load_dotenv(DOTENV_PATH, override=False)
+        environ = os.environ
+    key = environ.get(API_KEY_ENV, "").strip()
+    return key or None
+
+
+def configured(environ: Mapping[str, str] | None = None) -> bool:
     """Whether a RentCast key is set, which is what turns the Refresh button on."""
-    return bool((environ if environ is not None else os.environ).get(API_KEY_ENV, "").strip())
+    return rentcast_api_key(environ) is not None
 
 
 def default_adapter() -> Adapter | None:
     """The adapter the deployment is configured with; None without a key."""
-    return RentCastAdapter.from_env()
+    key = rentcast_api_key()
+    return RentCastAdapter(key) if key else None
 
 
 # --- reading the rows ----------------------------------------------------------------------------
