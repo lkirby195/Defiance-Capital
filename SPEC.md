@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.23
+# GLENWOOD Underwriting Platform — SPEC v0.24
 
-Status: **v0.23**, 2026-11-02 (9a-fix), engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.24**, 2026-11-03 (ui-market-top), engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.24** puts the **Market data** card at the top of the Deal Overview tab, above Deal Economics and Property, with Refresh market data still on its bar (§9), and stamps each `audit_log` row with `clock_timestamp()` rather than `now()` (migration `0025`, no engine change), so the rows one request writes - an edit, the pull it sets off, the run after it - keep the order they were written in rather than sharing the transaction's start time (§5).
 
 **v0.23** adds the first enrichment adapter: **RentCast** (`adapters/rentcast.py`, `services/market_data.py`; no engine bump, no migration). Every deal is enriched **at arrival on every channel, before the screen**: three requests keyed by the address - the property record, the value estimate and the long-term rent estimate - each its own `enrichment_runs` row with the raw body. The AVM is the **as-is value** and the rent estimate the **market rent**, each source `ADAPTER` and each winning over the team's own under §6.1; the estimated sale price is **never** touched (the AVM is as-is, the sale price is after the repair), and `SALE_PRICE_ABOVE_AVM_RANGE` (Info, both stages) says when the sale price is above the AVM's high plus the contingency-adjusted rehab costs, showing both (9a-fix). The record fills blanks on `properties` - beds, baths, square feet, year built, units - and never a value a person entered; the last sale, the sale history and the comps are stored and shown. A second deal at the same address inside `rentcast.cache_days` (placeholder 30) reuses the stored runs as CACHED rows of its own; the month's requests are counted off the rows and a pull that would pass `rentcast.monthly_request_budget` (placeholder 50, the free tier) is skipped with one SKIPPED row and `MARKET_DATA_BUDGET_EXHAUSTED` (Info) rather than failed. A failure of any kind is a FAILED row and the run proceeds on what the deal holds. An Edit Intake that changes the street address, the city or the state pulls again past the cache before its run (9a-fix). The Deal Overview tab gets a **Market data** card - the AVM and its range, the rent and its range, the last sale, when it was fetched and from where, two collapsible comp tables and the sale history - with a **Refresh market data** button that pulls again past the cache, audited `MARKET_DATA_FETCHED`, and runs the analysis; readiness says `ADAPTER` for the two values; the borrower's pages show none of it (§5, §6.2, §8.1, §9, §10). The key is `RENTCAST_API_KEY`; without it the adapter is off and nothing changes.
 
@@ -481,6 +483,12 @@ onto the row whether the row is new or a repeat borrower's, answer by answer, an
 puts each move on its audit row as `borrower.<field>`. None is an engine input: a version
 snapshot carries the borrower's id, name, phone, email and entities as before, and a restore
 leaves the profile where it is.
+
+`0025` moves `audit_log.created_at` from `now()` to `clock_timestamp()` (v0.24), as `0004`
+did for `screens` and `underwrites`: `now()` is the transaction's start, so every audit row
+one request wrote shared one timestamp and the trail fell back on the row's random id to
+order them. Existing rows keep the times they were written with, so a pre-7a intake row that
+names no submission still finds it by the shared `now()` (§9, History).
 
 **Versions** (`0018`). A version is one analysis run - the screen and the underwrite Run
 Analysis, Save & Run, Reset all, Restore inputs and every automatic run produce together
@@ -1455,17 +1463,18 @@ is on the page in this order with the tab row as in-page links:
    opening on one line of small text ("Status: Underwriting · Verdict: Go", the version in
    view's verdict, a dash before any) above Progress / Pause / Kill, Decline, Re-open and
    Add note.
-2. **Deal Overview** - **Deal Economics and Property** as one label/value grid, two pairs
+2. **Deal Overview** - the **Market data** card first (v0.24; described below), then
+   **Deal Economics and Property** as one label/value grid, two pairs
    across on a desktop and one on a phone, under section rules (From the public form on a
    web deal, Overview, Property Overview, Deal Economics), with an Edit Intake link on its
    bar and what is still needed from the borrower under it; **Scored as** (the score
    components); the **court and filing search** (collapsed; the outcome, the date and the
    typed matters, its own Save). The grid's Overview is followed by **About their
    investing** (v0.21): the borrower's five profile answers (§4.1 row 7), read off the
-   borrower's row, an em dash where one was not given. Between the grid and Scored as sits
-   the **Market data** card (v0.23, §6.2): the AVM value and its range, the market rent and
-   its range, the last sale, the property type and lot size, when it was fetched and from
-   where ("RentCast", or "RentCast, reused from a pull on <date>"), a status line when the
+   borrower's row, an em dash where one was not given. The **Market data** card (v0.23,
+   §6.2; at the top of the tab since v0.24, between the grid and Scored as before it): the
+   AVM value and its range, the market rent and its range, the last sale, the property type
+   and lot size, when it was fetched and from where ("RentCast", or "RentCast, reused from a pull on <date>"), a status line when the
    pull was skipped and each failed call's error, then **Sale comps**, **Rental comps**
    (address, distance, price or rent, beds, baths, square feet, date) and **Sale history** as
    three collapsed tables; **Refresh market data** on its bar, off with its reason when no key
@@ -1808,6 +1817,10 @@ reading that run through `deals.borrower_terms_version`), the leak-guard test an
 rate at `pricing.max_quoted_rate`, puts the loan's advance, draws and payoff in the
 borrower's cash flows with a net cash line per month, and makes a borrower edit move only
 the boxes the borrower changed, so a team Edit Intake made in between survives it.
+
+ui-market-top (no engine change, migration `0025`, v0.24) moves the Market data card to the
+top of the Deal Overview tab and gives `audit_log.created_at` the `clock_timestamp()` default
+the run tables have, so one request's audit rows order as they were written (§5, §9).
 
 Phase 9a (no engine change, no migration, v0.23) is the first of the Phase 3 adapters:
 RentCast (§6.2). `adapters/base.py` is the Protocol CLAUDE.md always named, `adapters/rentcast.py`
