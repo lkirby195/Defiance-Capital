@@ -92,12 +92,13 @@ def _updated_at() -> Mapped[datetime]:
 
 
 def _event_at() -> Mapped[datetime]:
-    """Insert time of an append-only run row, from ``clock_timestamp()``.
+    """Insert time of an append-only row - a run, or an audit row - from ``clock_timestamp()``.
 
     Not ``now()``: that is the transaction start time and is identical for every row
     written in one transaction, which would leave two runs of the same screen with no
     order between them. ``clock_timestamp()`` reads the wall clock per row, so
-    "the latest screen" is always a real answer.
+    "the latest screen" is always a real answer, and so is the order of the audit rows
+    one request wrote (migration ``0025``).
     """
     return mapped_column(server_default=func.clock_timestamp(), nullable=False)
 
@@ -599,4 +600,4 @@ class AuditLog(Base):
     row_id: Mapped[str] = mapped_column(String(64), nullable=False)
     before: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     after: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
-    created_at: Mapped[datetime] = _created_at()
+    created_at: Mapped[datetime] = _event_at()

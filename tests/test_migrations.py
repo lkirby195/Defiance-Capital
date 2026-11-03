@@ -8,6 +8,7 @@ that was carrying $9,000 of carry goes on carrying $9,000 of carry (SPEC §8.1).
 
 from __future__ import annotations
 
+import json
 import uuid
 from decimal import Decimal
 
@@ -16,7 +17,7 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config as AlembicConfig
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import Engine, inspect, text
+from sqlalchemy import Connection, Engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from db.models import Base
@@ -647,6 +648,77 @@ def test_0022_adds_the_exit_value_and_the_as_is_value_empty(
         columns = {column["name"] for column in inspect(conn).get_columns("deals")}
         assert not ({"rental_exit_value", "as_is_value"} & columns)
         assert conn.execute(text("SELECT count(*) FROM deals")).scalar() == 1
+
+    command.downgrade(alembic_cfg, "base")
+    with test_engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
+
+
+# Three audit rows written in one transaction, each taking the column's default.
+AUDIT_ROW = text(
+    """
+    INSERT INTO audit_log (id, actor, action, table_name, row_id, after)
+    VALUES (:id, 'sam@glenwood.example', 'NOTE_ADDED', 'deals', :deal_id,
+            CAST(:after AS JSONB))
+    """
+)
+
+
+def created_at_default(conn: Connection) -> str:
+    (column,) = [c for c in inspect(conn).get_columns("audit_log") if c["name"] == "created_at"]
+    return str(column["default"])
+
+
+def write_notes(conn: Connection, deal_id: str, notes: list[str]) -> None:
+    for note in notes:
+        conn.execute(
+            AUDIT_ROW, {"id": uuid.uuid4(), "deal_id": deal_id, "after": json.dumps({"note": note})}
+        )
+
+
+def written_order(conn: Connection, deal_id: str) -> list[str]:
+    """The notes by insert time alone - no id to break a tie."""
+    rows = conn.execute(
+        text("SELECT after->>'note' FROM audit_log WHERE row_id = :id ORDER BY created_at"),
+        {"id": deal_id},
+    )
+    return [note for (note,) in rows]
+
+
+def test_0025_stamps_each_audit_row_as_it_is_written(
+    alembic_cfg: AlembicConfig, test_engine: Engine
+) -> None:
+    """``clock_timestamp()`` per row, as the run tables have had since 0004; the downgrade
+    puts back ``now()``, the transaction's start, which every row of one transaction shares."""
+    command.upgrade(alembic_cfg, "0024")
+    with test_engine.connect() as conn:
+        assert created_at_default(conn) == "now()"
+
+    command.upgrade(alembic_cfg, "0025")
+    deal_id = str(uuid.uuid4())
+    notes = ["first", "second", "third"]
+    with test_engine.begin() as conn:
+        assert created_at_default(conn) == "clock_timestamp()"
+        write_notes(conn, deal_id, notes)
+    with test_engine.connect() as conn:
+        stamps = conn.execute(
+            text("SELECT count(DISTINCT created_at) FROM audit_log WHERE row_id = :id"),
+            {"id": deal_id},
+        ).scalar()
+        assert stamps == len(notes)
+        assert written_order(conn, deal_id) == notes
+
+    command.downgrade(alembic_cfg, "0024")
+    with test_engine.begin() as conn:
+        assert created_at_default(conn) == "now()"
+        conn.execute(text("DELETE FROM audit_log"))
+        write_notes(conn, deal_id, notes)
+    with test_engine.connect() as conn:
+        stamps = conn.execute(
+            text("SELECT count(DISTINCT created_at) FROM audit_log WHERE row_id = :id"),
+            {"id": deal_id},
+        ).scalar()
+        assert stamps == 1
 
     command.downgrade(alembic_cfg, "base")
     with test_engine.begin() as conn:

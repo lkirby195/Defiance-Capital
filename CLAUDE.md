@@ -157,9 +157,10 @@ Its header is the address, four chips (borrower - a link to the borrower's page 
 small line atop the Actions card; the version facts (when, who, engine) are in the versions
 table. Under the header six tabs (v0.20, SPEC §9), the active one the URL hash: **Summary**
 (the Return Overview's figures, Pricing, the two sensitivities, the leverage against the
-caps, the Actions), **Deal Overview** (Deal Economics and Property as one label/value grid
-under section rules, the borrower's investing profile under one of them, what is still
-needed, Scored as, the court search collapsed), **Cash
+caps, the Actions), **Deal Overview** (the Market data card with its Refresh button at the
+top, then Deal Economics and Property as one label/value grid under section rules, the
+borrower's investing profile under one of them, what is still needed, Scored as, the court
+search collapsed), **Cash
 Flows** (the ledger, open), **Sources & Uses**, **Scenarios** (the three cards) and
 **Assumptions**: the **Underwriting Assumptions** panel as a grid of rows - the caption, then
 the box on the value side with its reset link and the "default" tag at the right edge -
