@@ -96,13 +96,17 @@ def test_history_lists_every_version_with_who_and_which_engine(
 def test_an_intake_row_written_before_submission_ids_still_finds_its_actor(
     db_session: Session, team_entry: dict[str, Any]
 ) -> None:
-    """The audit row and the submission share a transaction's ``now()``; that is the join."""
+    """The audit row and the submission share a transaction's ``now()``; that is the join.
+
+    Every row that old was also written before migration 0025, when ``audit_log`` was
+    stamped ``now()`` as the submission still is, so this one is stamped the same way.
+    """
     record = normalize(
         parse_team_form(TeamEntryForm(**team_entry)), Channel.TEAM, raw_payload=team_entry
     )
     deal = create_deal_from_intake(db_session, record)
     populate(deal)
-    record_audit(
+    row = record_audit(
         db_session,
         actor="an older queue",
         action=AuditAction.INTAKE_CREATED,
@@ -110,6 +114,7 @@ def test_an_intake_row_written_before_submission_ids_still_finds_its_actor(
         row_id=deal.id,
         after={"channel": "TEAM"},  # no submission_id, as every row before 7a
     )
+    row.created_at = func.now()  # type: ignore[assignment]
     db_session.commit()
     (entry,) = deal_history(db_session, deal.id)
     assert entry.kind is HistoryKind.EDIT

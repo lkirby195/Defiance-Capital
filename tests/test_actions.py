@@ -390,6 +390,24 @@ def test_each_action_posts_and_records_the_signed_in_person(
     assert db_session.get(Deal, deal_with_overrides.id).status is Status.DEAD  # type: ignore[union-attr]
 
 
+def test_rows_one_transaction_wrote_keep_the_order_they_were_written_in(
+    db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """``clock_timestamp()``, not ``now()`` (migration 0025): rows written together carry
+    their own insert times, so the trail is not left to their random ids.  # SPEC §5"""
+    notes = [f"note {n}" for n in range(6)]
+    for note in notes:
+        add_note(db_session, deal_with_overrides.id, actor=ACTOR, note=note)
+    db_session.commit()
+
+    written = rows(db_session, deal_with_overrides, AuditAction.NOTE_ADDED)
+    stamps = [row.created_at for row in written]
+    assert stamps == sorted(set(stamps))  # one per row, rising
+    assert [row.after for row in written] == [{"note": note} for note in notes]
+    trail = [row.after for row in deal_trail(db_session, deal_with_overrides.id)]
+    assert trail[: len(notes)] == [{"note": note} for note in reversed(notes)]
+
+
 def test_an_action_the_status_rules_out_comes_back_as_the_page_saying_why(
     client: TestClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
