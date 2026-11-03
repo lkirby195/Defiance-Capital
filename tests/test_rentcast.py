@@ -506,7 +506,7 @@ def test_the_deal_page_shows_the_market_data_card(
     )
     deal = one_deal(db_session)
     page = client.get(f"/queue/deals/{deal.id}").text
-    card = page[page.index('id="market-data"') : page.index('id="scored-as"')]
+    card = page[page.index('id="market-data"') : page.index('id="economics"')]
     assert "<h2>Market data</h2>" in card
     assert f'action="/queue/deals/{deal.id}/market-data"' in card
     assert ">Refresh market data</button>" in card
@@ -550,7 +550,7 @@ def test_without_an_adapter_the_arrival_runs_as_before(
     assert row is not None
     assert row.inputs["as_is_value"] is None and row.inputs["market_data"] is None
     page = client.get(f"/queue/deals/{deal.id}").text
-    card = page[page.index('id="market-data"') : page.index('id="scored-as"')]
+    card = page[page.index('id="market-data"') : page.index('id="economics"')]
     assert "No market data." in card
     assert 'title="RENTCAST_API_KEY is not set">Refresh market data</span>' in card
     # the button is off, and the post behind it writes nothing and says why

@@ -42,6 +42,8 @@ MEMBERS: dict[str, tuple[str, ...]] = {
         '<section class="panel" id="actions">',
     ),
     "tab-overview": (
+        '<section class="panel chart" id="market-data">',
+        "<h2>Market data</h2>",
         '<section class="panel chart" id="economics">',
         "<h2>Deal Economics and Property</h2>",
         '<dl class="kv" id="intake-facts">',
@@ -50,8 +52,6 @@ MEMBERS: dict[str, tuple[str, ...]] = {
         '<div class="kv-section">Property Overview</div>',
         '<div class="kv-section">Deal Economics</div>',
         "<h3>Still needed from the borrower</h3>",
-        '<section class="panel chart" id="market-data">',
-        "<h2>Market data</h2>",
         '<section class="panel chart" id="scored-as">',
         "<h2>Scored as</h2>",
         '<details class="panel" id="court">',
@@ -142,6 +142,20 @@ def test_each_panel_holds_its_sections_and_nothing_of_another_s(
     # every section the page has is inside one panel: nothing of substance between them
     for key in MEMBERS:
         assert body.count(f'data-tab="{key}"') == 2, key  # the link and the panel
+
+
+def test_market_data_opens_the_overview_with_its_refresh_button(
+    client: QueueClient, deal_with_overrides: Deal
+) -> None:
+    """The card is the tab's first section, above Deal Economics and Property, and the
+    button stays on its bar - here off, as the suite runs with no key."""
+    panel = panels(page(client, deal_with_overrides))["tab-overview"]
+    first = re.search(r"<(?:section|details)\b[^>]*>", panel)
+    assert first is not None and 'id="market-data"' in first.group(0)
+    economics = panel.index('<section class="panel chart" id="economics">')
+    card, rest = panel[first.start() : economics], panel[economics:]
+    assert 'title="RENTCAST_API_KEY is not set">Refresh market data</span>' in card
+    assert "Refresh market data" not in rest
 
 
 def test_the_same_panels_analyzed_or_not(client: QueueClient, deal_with_overrides: Deal) -> None:
