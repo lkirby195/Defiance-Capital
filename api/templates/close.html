@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% import "_csrf.html" as csrf %}
+{% block title %}Close loan — Defiance Capital{% endblock %}
+
+{# The confirmation in front of Progress's move to Closed (SPEC §4.6, v0.25). A closed loan
+   is not paused, declined or killed afterwards, so the Progress control on an Under LOI row
+   leads here rather than acting, and the form below is the only thing that posts the
+   confirmation - to Progress itself. #}
+
+{% block content %}
+<section class="panel narrow wide">
+  <h1>Mark this loan closed?</h1>
+  <p class="lede">
+    {% if deal.property and deal.property.address_raw %}{{ deal.property.address_raw }}
+    {% elif deal.property and deal.property.listing_url %}{{ deal.property.listing_url }}
+    {% else %}Deal {{ deal.id }}{% endif %}
+    · {{ deal.borrower.name if deal.borrower and deal.borrower.name else "(no guarantor name)" }}
+    · {{ deal.loan_requested | money }}
+    · <span class="tag status">{{ deal.status | label }}</span>
+  </p>
+  <p class="small">A closed loan moves to Closed and is not paused, declined or killed afterwards.</p>
+  <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/advance">
+    {{ csrf.field(csrf_token) }}
+    <input type="hidden" name="confirm" value="yes">
+    <input type="hidden" name="return_to" value="{{ return_to }}">
+    <div class="actions">
+      <button type="submit" {% if not allowed.progress_closes %}disabled{% endif %}>Close loan</button>
+      <a class="small" href="{{ back_url }}">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

@@ -1,14 +1,17 @@
 """What the Home page shows.  # SPEC §9.1, §12
 
-Four sections, in this order, and every deal is in exactly one of them:
+Six sections, in this order, and every deal is in exactly one of them (v0.25):
 
-    Borrower Submissions   deals the borrower typed in on the public form (channel WEB)
-    DCF New Deals          deals the team entered (every other channel)
+    Borrower Submissions   live deals the borrower typed in on the public form (channel WEB)
+    DCF New Deals          live deals the team entered (every other channel)
+    Under LOI              status LOI_SENT or HANDED_OFF, whichever channel it came in on
+    Closed                 status CLOSED: the loan closed and funded
     On Pause               status PAUSED, whichever channel it came in on
     Dead                   status DEAD or DECLINED, whichever channel it came in on
 
-The first two are the live work and leave out the paused and the dead; the last two are
-where those went. Within each section the most recently touched deal is first.
+The first two are the work still being sized and leave out everything past it; Under LOI and
+Closed are the road a deal is meant to take, Progress walking it along (SPEC §4.6); the last
+two are where the rest went. Within each section the most recently touched deal is first.
 
 "Most recently touched" is the latest of everything that has happened to the deal, not the
 day it arrived: the intake that created it and any submission since, its latest screen, its
@@ -18,10 +21,11 @@ nobody has opened in a fortnight, which is backwards: the deal being worked is t
 seeing.
 
 Each row carries what a person scans a list for - who, where, how much, which product, the
-Working version's verdict and IRR, where it came from, when it last moved - and the three
-controls
-(``services/actions.py``): Progress, Pause and Kill, each live only from the statuses it
-applies from, so a button that would be refused is off rather than a surprise.
+Working version's verdict and IRR, where it came from, when it last moved - and the four
+controls (``services/actions.py``, ``services/delete.py``): Progress, Pause, Kill and Delete,
+the first three live only from the statuses they apply from, so a button that would be
+refused is off rather than a surprise. Progress names where it goes, and the move to Closed,
+Kill and Delete each go through a confirmation page first.
 
 **The verdict and the IRR are the Working version's** (``services/versions.py``), not the
 latest run's: a draft somebody ran to try a number does not change what the list says the
@@ -29,13 +33,13 @@ deal is until they mark it Working. A deal with runs and no version at all - one
 only through the JSON stage routes - shows its latest screen and underwrite instead, so a
 result is never hidden for want of a version. The runs still count as activity either way.
 
-**The search box** (v0.20) narrows every section to the deals whose borrower matches: the
-guarantor's name, an entity's name, or the phone by its digits. ``HomeFilter`` carries
-the query and, beside it, the **profile-field chips** (10c, SPEC §4.1): one ``(field, value)``
-per "About your investing" answer picked in the selects under the box, each read off the
-borrower's row and applied in ``matches``; a chip naming a ``deals`` column narrows by that
-column instead. The borrower's own page (``services/borrowers.py``) lists the same rows for
-one borrower.
+**The search bar** (v0.25) narrows every section by three selects: **Borrower** - every
+borrower with a deal on the list, by name - and two of the borrower's "About your investing"
+answers (SPEC §4.1), **Commitment Level** (the full-time question) and **Years investing**.
+``HomeFilter`` carries the borrower and, beside it, the **chips**: one ``(field, value)`` per
+answer picked, each read off the borrower's row in ``matches``; a chip naming a ``deals``
+column narrows by that column instead. The borrower's own page (``services/borrowers.py``)
+lists the same rows for one borrower.
 """
 
 from __future__ import annotations
@@ -51,18 +55,21 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from db.models import AuditLog, Deal, IntakeSubmission, Screen, Underwrite, Version
-from schema.labels import enum_label, profile_caption, profile_label
+from db.models import AuditLog, Borrower, Deal, IntakeSubmission, Screen, Underwrite, Version
+from schema.labels import enum_label, home_filter_caption, home_filter_label
+from schema.masks import phone_display
 from schema.models import BORROWER_PROFILE_FIELDS, PROFILE_ENUMS, Channel, Status, Verdict
-from services.actions import MARK_DEAD_FROM, PAUSE_FROM, PROGRESS_FROM
+from services.actions import MARK_DEAD_FROM, PAUSE_FROM, PROGRESS_FROM, progress_target
 from services.audit import DEALS
 
 
 class Section(StrEnum):
-    """The four headings, in the order the page shows them."""
+    """The six headings, in the order the page shows them."""
 
     BORROWER = "BORROWER"
     DCF = "DCF"
+    LOI = "LOI"
+    CLOSED = "CLOSED"
     PAUSED = "PAUSED"
     DEAD = "DEAD"
 
@@ -70,122 +77,160 @@ class Section(StrEnum):
 SECTION_TITLES: dict[Section, str] = {
     Section.BORROWER: "Borrower Submissions",
     Section.DCF: "DCF New Deals",
+    Section.LOI: "Under LOI",
+    Section.CLOSED: "Closed",
     Section.PAUSED: "On Pause",
     Section.DEAD: "Dead",
 }
 
 # The statuses that put a deal in the Dead section, whichever channel it came in on.
 DEAD_STATUSES: frozenset[Status] = frozenset({Status.DEAD, Status.DECLINED})
+# ...in Under LOI: terms went out, and handed off is the step after that (Phase 6).
+LOI_STATUSES: frozenset[Status] = frozenset({Status.LOI_SENT, Status.HANDED_OFF})
 
-# A phone is searched by its digits once the query holds this many of them; fewer and a
-# query like "3rd" is a name, not a number.
-PHONE_SEARCH_DIGITS = 3
+# The profile questions Home filters by (v0.25): the full-time question, which Home calls
+# Commitment Level, and years investing. The other three are read on the deal page and the
+# borrower's page and not filtered on.
+HOME_FILTER_FIELDS: tuple[str, ...] = ("work_status", "years_investing")
+assert set(HOME_FILTER_FIELDS) <= set(BORROWER_PROFILE_FIELDS)
+
+# The query-string key the Borrower select posts, and the chip it makes.
+BORROWER_PARAM = "borrower"
+BORROWER_CAPTION = "Borrower"
+NO_NAME = "(no guarantor name)"
+
+
+@dataclass(frozen=True)
+class BorrowerChoice:
+    """One option in Home's Borrower select: the borrower's id and the words it reads as."""
+
+    id: UUID
+    label: str
 
 
 @dataclass(frozen=True)
 class HomeFilter:
-    """What narrows the list: the search box's query, and the profile chips.  # SPEC §4.1, §9.1
+    """What narrows the list: the Borrower select, and the profile chips.  # SPEC §4.1, §9.1
 
-    ``chips`` is ``(field, value)`` pairs, one per "About your investing" select set under
-    the search box - ``("years_investing", "2_5")`` - read off the borrower's row in
-    ``matches``; a pair naming a ``deals`` column (``("status", "PAUSED")``) narrows by that
-    column instead. Each is rendered as a chip under the box that removes itself.
+    ``borrower_id`` is the Borrower select's answer: one person's deals and nobody else's.
+    ``chips`` is ``(field, value)`` pairs, one per profile select set beside it -
+    ``("years_investing", "2_5")`` - read off the borrower's row in ``matches``; a pair
+    naming a ``deals`` column (``("status", "PAUSED")``) narrows by that column instead.
     """
 
-    query: str = ""
+    borrower_id: UUID | None = None
     chips: tuple[tuple[str, str], ...] = ()
 
     @property
     def active(self) -> bool:
-        return bool(self.query.strip()) or bool(self.chips)
+        return self.borrower_id is not None or bool(self.chips)
 
-    @property
-    def chip_summary(self) -> str:
-        """The chips as words: each one's caption and answer, comma-separated."""
-        return ", ".join(
-            f"{chip_caption(field)}: {chip_label(field, value)}" for field, value in self.chips
-        )
-
-    @property
-    def summary(self) -> str:
-        """What the result line says the list was narrowed by: the query in quotes, then the
-        chips. The page composes the same line itself so the query is escaped on its own."""
-        parts = [f'"{self.query.strip()}"'] if self.query.strip() else []
-        if self.chips:
-            parts.append(self.chip_summary)
-        return ", ".join(parts)
+    def selected(self, field: str, value: str) -> bool:
+        """Whether a select's option is the one picked: the page marks it ``selected``."""
+        if field == BORROWER_PARAM:
+            return self.borrower_id is not None and str(self.borrower_id) == value
+        return (field, value) in self.chips
 
     def without(self, field: str) -> HomeFilter:
-        """The same filter less every chip on ``field``: the link a chip removes itself with."""
+        """The same filter less ``field``: the link a chip removes itself with."""
+        if field == BORROWER_PARAM:
+            return replace(self, borrower_id=None)
         return replace(self, chips=tuple(chip for chip in self.chips if chip[0] != field))
 
     @property
     def query_string(self) -> str:
-        """The filter as Home's own query string, ``q`` first, empty when nothing narrows."""
-        params = [("q", self.query.strip())] if self.query.strip() else []
+        """The filter as Home's own query string, the borrower first; empty when unfiltered."""
+        params = [(BORROWER_PARAM, str(self.borrower_id))] if self.borrower_id else []
         return urlencode([*params, *self.chips])
 
 
 NO_FILTER = HomeFilter()
 
 
+def borrower_from(params: Mapping[str, str]) -> UUID | None:
+    """The Borrower select's answer off the query string; anything not an id is no answer,
+    so a mangled bookmark shows the whole list rather than an error."""
+    value = (params.get(BORROWER_PARAM) or "").strip()
+    try:
+        return UUID(value) if value else None
+    except ValueError:
+        return None
+
+
 def chips_from(params: Mapping[str, str]) -> tuple[tuple[str, str], ...]:
-    """The profile chips a query string carries: each profile field named with one of its
-    answers, in field order. An unknown answer is dropped rather than refused - the page
-    still works, it just does not narrow by it.  # SPEC §4.1 (10c)"""
+    """The profile chips a query string carries: each Home filter field named with one of
+    its answers, in field order. An unknown answer - or a field Home no longer filters by -
+    is dropped rather than refused: the page still works, it just does not narrow by it.
+    # SPEC §4.1, §9.1"""
     chips: list[tuple[str, str]] = []
-    for field in BORROWER_PROFILE_FIELDS:
+    for field in HOME_FILTER_FIELDS:
         value = (params.get(field) or "").strip()
         if value and value in {member.value for member in PROFILE_ENUMS[field]}:
             chips.append((field, value))
     return tuple(chips)
 
 
+def filter_from(params: Mapping[str, str]) -> HomeFilter:
+    """Home's whole filter off its query string: the borrower, then the chips."""
+    return HomeFilter(borrower_id=borrower_from(params), chips=chips_from(params))
+
+
 def chip_caption(field: str) -> str:
-    """The words a chip leads with: the profile question's caption, else the column's name."""
-    return profile_caption(field) if field in BORROWER_PROFILE_FIELDS else enum_label(field)
+    """The words a chip leads with: the filter's caption, else the column's name."""
+    return home_filter_caption(field) if field in HOME_FILTER_FIELDS else enum_label(field)
 
 
 def chip_label(field: str, value: str) -> str:
-    """The words a chip's answer reads as: the profile label, else the value title-cased."""
-    return profile_label(value) if field in BORROWER_PROFILE_FIELDS else enum_label(value)
+    """The words a chip's answer reads as: the filter's label, else the value title-cased."""
+    return home_filter_label(value) if field in HOME_FILTER_FIELDS else enum_label(value)
 
 
 def profile_filter_choices() -> list[tuple[str, str, list[tuple[str, str]]]]:
-    """The five selects under Home's search box: ``(field, caption, [(value, label), ...])``."""
+    """The two profile selects beside the Borrower one: ``(field, caption, [(value, label)])``."""
     return [
         (
             field,
-            profile_caption(field),
-            [(member.value, profile_label(member)) for member in PROFILE_ENUMS[field]],
+            home_filter_caption(field),
+            [(member.value, home_filter_label(member)) for member in PROFILE_ENUMS[field]],
         )
-        for field in BORROWER_PROFILE_FIELDS
+        for field in HOME_FILTER_FIELDS
     ]
 
 
-def digits(text: str) -> str:
-    return "".join(ch for ch in text if ch.isdigit())
+def borrower_label(borrower: Borrower) -> str:
+    """What a borrower reads as in the select: the name, else an entity, else the phone."""
+    name = (borrower.name or "").strip()
+    if name:
+        return name
+    entity = next((e.name for e in borrower.entities if (e.name or "").strip()), None)
+    if entity:
+        return entity.strip()
+    return phone_display(borrower.phone) if borrower.phone else NO_NAME
 
 
-def query_matches(deal: Deal, query: str) -> bool:
-    """Whether the deal's borrower answers to ``query``: name, entity or phone.  # SPEC §9.1
+def borrower_choices(deals: list[Deal]) -> list[BorrowerChoice]:
+    """The Borrower select: every borrower with a deal, A to Z.  # SPEC §9.1 (v0.25)
 
-    Names and entities by case-blind substring; the phone by its digits, so ``555-0147``
-    and ``5550147`` find the same person, once the query carries enough digits to be one.
-    A blank query matches everything. A deal with no borrower row matches nothing but a
-    blank query.
+    Built off the deals, so a borrower whose last deal was deleted is not offered. Two
+    people who read the same carry their phone after the name, so the select never offers
+    two options a person cannot tell apart.
     """
-    needle = query.strip().casefold()
-    if not needle:
-        return True
-    borrower = deal.borrower
-    if borrower is None:
-        return False
-    haystacks = [borrower.name or "", *(entity.name for entity in borrower.entities)]
-    if any(needle in text.casefold() for text in haystacks):
-        return True
-    wanted = digits(needle)
-    return len(wanted) >= PHONE_SEARCH_DIGITS and wanted in digits(borrower.phone or "")
+    borrowers = {deal.borrower.id: deal.borrower for deal in deals if deal.borrower is not None}
+    labelled = [(borrower, borrower_label(borrower)) for borrower in borrowers.values()]
+    seen: dict[str, int] = {}
+    for _, text in labelled:
+        seen[text.casefold()] = seen.get(text.casefold(), 0) + 1
+    choices = [
+        BorrowerChoice(
+            borrower.id,
+            f"{text} · {phone_display(borrower.phone)}"
+            if seen[text.casefold()] > 1 and borrower.phone
+            else text,
+        )
+        for borrower, text in labelled
+    ]
+    choices.sort(key=lambda choice: (choice.label.casefold(), str(choice.id)))
+    return choices
 
 
 def chip_matches(deal: Deal, field: str, value: str) -> bool:
@@ -202,8 +247,8 @@ def chip_matches(deal: Deal, field: str, value: str) -> bool:
 
 
 def matches(entry: HomeEntry, filter: HomeFilter) -> bool:
-    """Whether a row stays on the list under ``filter``: the query, then every chip."""
-    if not query_matches(entry.deal, filter.query):
+    """Whether a row stays on the list under ``filter``: the borrower, then every chip."""
+    if filter.borrower_id is not None and entry.deal.borrower_id != filter.borrower_id:
         return False
     return all(chip_matches(entry.deal, field, value) for field, value in filter.chips)
 
@@ -214,6 +259,10 @@ def section_of(deal: Deal) -> Section:
         return Section.PAUSED
     if deal.status in DEAD_STATUSES:
         return Section.DEAD
+    if deal.status in LOI_STATUSES:
+        return Section.LOI
+    if deal.status is Status.CLOSED:
+        return Section.CLOSED
     if deal.channel is Channel.WEB:
         return Section.BORROWER
     return Section.DCF
@@ -266,6 +315,16 @@ class HomeEntry:
         return self.deal.status in PROGRESS_FROM
 
     @property
+    def progress_to(self) -> Status | None:
+        """Where Progress takes this deal: ``PAUSED`` for back where it was, None for nowhere."""
+        return progress_target(self.deal.status)
+
+    @property
+    def progress_closes(self) -> bool:
+        """Whether Progress would close the loan: the button is a link to its confirmation."""
+        return self.progress_to is Status.CLOSED
+
+    @property
     def can_pause(self) -> bool:
         return self.deal.status in PAUSE_FROM
 
@@ -287,13 +346,52 @@ class HomeSection:
 
 
 @dataclass(frozen=True)
+class FilterChip:
+    """One chip under the search bar: what it reads and the query string without it."""
+
+    field: str
+    text: str
+    rest: str
+
+
+@dataclass(frozen=True)
 class HomeView:
-    """The whole page: the four sections, every one of them present even when empty,
-    the filter they were narrowed by, and how many deals there were before it."""
+    """The whole page: the six sections, every one of them present even when empty,
+    the filter they were narrowed by, the Borrower select's options, and how many deals
+    there were before the filter."""
 
     sections: list[HomeSection]
     filter: HomeFilter = NO_FILTER
     unfiltered_total: int = 0
+    borrowers: tuple[BorrowerChoice, ...] = ()
+
+    @property
+    def chips(self) -> list[FilterChip]:
+        """The chips the filter makes, the borrower first: each a link that removes itself."""
+        out: list[FilterChip] = []
+        if self.filter.borrower_id is not None:
+            name = next((c.label for c in self.borrowers if c.id == self.filter.borrower_id), None)
+            out.append(
+                FilterChip(
+                    BORROWER_PARAM,
+                    f"{BORROWER_CAPTION}: {name or NO_NAME}",
+                    self.filter.without(BORROWER_PARAM).query_string,
+                )
+            )
+        out.extend(
+            FilterChip(
+                name,
+                f"{chip_caption(name)}: {chip_label(name, value)}",
+                self.filter.without(name).query_string,
+            )
+            for name, value in self.filter.chips
+        )
+        return out
+
+    @property
+    def chip_summary(self) -> str:
+        """The chips as words, comma-separated: what the result line says it narrowed by."""
+        return ", ".join(chip.text for chip in self.chips)
 
     @property
     def total(self) -> int:
@@ -446,7 +544,10 @@ def home_view(session: Session, filter: HomeFilter = NO_FILTER) -> HomeView:
     """Every deal, in its section, most recently touched first; narrowed by ``filter``."""
     deals = list(
         session.scalars(
-            select(Deal).options(selectinload(Deal.borrower), selectinload(Deal.property))
+            select(Deal).options(
+                selectinload(Deal.borrower).selectinload(Borrower.entities),
+                selectinload(Deal.property),
+            )
         )
     )
     entries = entries_for(session, deals)
@@ -458,4 +559,5 @@ def home_view(session: Session, filter: HomeFilter = NO_FILTER) -> HomeView:
         sections=[HomeSection(key, by_section[key]) for key in Section],
         filter=filter,
         unfiltered_total=len(entries),
+        borrowers=tuple(borrower_choices(deals)),
     )

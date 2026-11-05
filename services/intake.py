@@ -66,14 +66,15 @@ from services.persistence import latest_screen
 from services.runner import load_deal
 
 # Every status where the intake is still a live description of a deal somebody is working.
-# A DECLINED or DEAD deal is closed out (re-open it first); LOI_SENT and HANDED_OFF are past
-# the point where terms went out on these numbers, and editing them under a sent LOI would
-# leave the file disagreeing with the document.
+# A DECLINED or DEAD deal is closed out (re-open it first); LOI_SENT, HANDED_OFF and CLOSED
+# are past the point where terms went out on these numbers, and editing them under a sent LOI
+# - or a funded loan - would leave the file disagreeing with the document.
 EDIT_INTAKE_FROM: frozenset[Status] = frozenset(Status) - {
     Status.DECLINED,
     Status.DEAD,
     Status.LOI_SENT,
     Status.HANDED_OFF,
+    Status.CLOSED,
 }
 
 # The key on the public form's stored payload that is not a form field: the language the

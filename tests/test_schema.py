@@ -54,6 +54,7 @@ def test_enum_values_match_spec() -> None:
         "UNDERWRITING",
         "LOI_SENT",
         "HANDED_OFF",
+        "CLOSED",
         "PAUSED",
         "DECLINED",
         "DEAD",

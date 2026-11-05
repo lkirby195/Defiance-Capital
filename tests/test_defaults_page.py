@@ -12,7 +12,7 @@ import re
 
 from fastapi.testclient import TestClient
 
-from api.defaults_page import GROUPS, OTHER, display, flatten, group_of, groups
+from api.defaults_page import GROUPS, OTHER, display, flatten, group_of, groups, label_for
 from config.config import DEFAULT_PATH, Config, load_yaml
 from tests.conftest import QueueClient, requires_db
 
@@ -40,21 +40,29 @@ def test_the_page_shows_the_groups_in_order_and_some_values(client: QueueClient)
     at = [body.index(f"<h2>{heading}</h2>") for heading in headings]
     assert at == sorted(at)
     assert f"<h2>{OTHER}</h2>" not in body
-    assert 'data-key="interest.default_annual_rate">12.5%<' in body
+    assert 'data-key="interest.default_annual_rate">12.50%<' in body
     assert 'data-key="fees.closing_costs_default_usd">$1,000.00<' in body
-    assert 'data-key="pricing.target_lender_irr">20%<' in body
-    assert 'data-key="pricing.loan_amount_pct_steps">0%, -5%, -10%<' in body
+    assert 'data-key="pricing.target_lender_irr">20.00%<' in body
+    assert (
+        'data-key="pricing.loan_amount_pct_steps">0.00%, -2.50%, -5.00%, -7.50%, -10.00%<' in body
+    )
     assert 'data-key="pricing.loan_amount_rounding">$1,000.00<' in body
-    assert 'data-key="pricing.borrower_rate_cushion">0.5%<' in body
+    assert 'data-key="pricing.borrower_rate_cushion">0.50%<' in body
+    assert 'data-key="pricing.borrower_coc_target">20.00%<' in body
     assert 'data-key="pricing.borrower_rate_rounding">0.25%<' in body
     assert 'data-key="web_intake.thanks_token_hours">24<' in body
     assert 'data-key="rental.target_dscr">1.20x<' in body
-    assert 'data-key="rental.takeout_ltv">75%<' in body
+    assert 'data-key="rental.takeout_ltv">75.00%<' in body
     assert 'data-key="take_back.foreclosure_months.OK">6<' in body
     assert 'data-key="take_back.foreclosure_months.OTHER">8<' in body
     assert 'data-key="take_back.hold_months">12, 24, 36<' in body
     assert 'data-key="states.served">OK, CO<' in body
-    assert 'data-key="leverage_caps.ACQUISITION_REHAB.T3.E2.ltv">75%<' in body
+    assert 'data-key="leverage_caps.ACQUISITION_REHAB.T3.E2.ltv">75.00%<' in body
+    assert 'data-key="flags.severities.OPEN_TAX_LIEN">Hard<' in body
+    # v0.25: the column is "Variable", and no label carries a unit word
+    assert "<th>Variable</th>" in body and "<th>Setting</th>" not in body
+    for clutter in ("default pct", "Default annual rate", "Broker selling", " usd<"):
+        assert clutter not in body, clutter
 
 
 @requires_db
@@ -101,7 +109,28 @@ def test_the_groups_the_brief_names() -> None:
 def test_display() -> None:
     from decimal import Decimal as D
 
-    assert display("fees.origination_default_pct", D("0.02")) == "2%"
-    assert display("sensitivity.rate_min", D("0.125")) == "12.5%"
+    assert display("fees.origination_default_pct", D("0.02")) == "2.00%"
+    assert display("sensitivity.rate_min", D("0.125")) == "12.50%"
+    assert display("pricing.borrower_rate_rounding", D("0.0025")) == "0.25%"
     assert display("take_back.legal_costs_usd", D("5000.00")) == "$5,000.00"
     assert display("credit.tranche_cutoffs.T1", 740) == "740"
+
+
+def test_every_row_is_labelled_in_the_team_s_words() -> None:
+    """v0.25: no "default pct" and no bare state code; the unit is the value's job."""
+    assert label_for("fees.origination_default_pct") == "Origination"
+    assert label_for("fees.broker_selling_pct") == "Sales cost"
+    assert label_for("interest.default_annual_rate") == "Interest rate"
+    assert label_for("take_back.foreclosure_months.OK") == "OK foreclosure months"
+    assert label_for("take_back.foreclosure_months.CO") == "CO foreclosure months"
+    assert label_for("take_back.foreclosure_months.OTHER") == "Other states foreclosure months"
+    assert label_for("states.court_adapter.OK") == "OK court records source"
+    assert label_for("credit.tranche_cutoffs.T1") == "T1 minimum FICO"
+    assert label_for("flags.severities.OPEN_TAX_LIEN") == "Open tax lien"
+    # a key nobody named still loses its unit words
+    assert label_for("fees.some_new_default_usd") == "Some new"
+    leaves = [leaf for group in groups(CONFIG) for leaf in group.leaves]
+    for leaf in leaves:
+        for word in ("pct", "usd", "default"):
+            assert word not in leaf.label.lower().split(), (leaf.key, leaf.label)
+    assert len({leaf.label for leaf in leaves}) == len(leaves), "two rows read the same"

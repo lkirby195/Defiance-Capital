@@ -104,7 +104,7 @@ def test_run_analysis_runs_both_as_the_person_and_reloads_on_the_result(
     body = client.get(f"/queue/deals/{deal.id}").text
     assert 'data-chip="irr">IRR <strong>' in body and "IRR <strong>—</strong>" not in body
     assert '<span class="tag GO">Go</span>' in body[body.index('id="history"') :]
-    assert "Scored as" in body and "Leverage against caps" in body
+    assert "Scored as" not in body and "Leverage against caps" in body
     assert body.index("<h2>Pricing") < body.index("<h2>Lender Sensitivity")
     assert body.index("<h2>Lender Sensitivity") < body.index("<h2>Borrower Sensitivity")
     assert body.index("<h2>Borrower Sensitivity") < body.index("<h2>Flip Analysis")
@@ -163,8 +163,11 @@ def test_the_page_shows_the_borrower_sensitivity_and_the_pricing_rows(
     pricing = body[body.index('<section class="panel chart" id="pricing">') :]
     pricing = pricing[: pricing.index("</section>")]
     assert "Target lender IRR" in pricing
+    # the table alone: the sentences are on the stored result and the workbook (v0.25)
+    assert "<ul" not in pricing and "<li" not in pricing
     for row in result.pricing.rows:
-        assert html.escape(row.sentence) in pricing
+        assert html.escape(row.sentence) not in pricing
+        assert f'<th scope="row">{row.label}</th>' in pricing
 
 
 def test_a_deal_with_no_sale_price_says_the_borrower_side_was_not_evaluated(
@@ -175,7 +178,8 @@ def test_a_deal_with_no_sale_price_says_the_borrower_side_was_not_evaluated(
     assert run(client, deal_with_overrides).status_code == 303
     body = client.get(f"/queue/deals/{deal_with_overrides.id}").text
     assert "Not evaluated: there is no estimated sale price." in body
-    assert "the borrower&#39;s profit is not evaluated" in body or "No rate on the grid" in body
+    pricing = body[body.index('<section class="panel chart" id="pricing">') :]
+    assert '<th scope="row">Requested</th>' in pricing[: pricing.index("</section>")]
 
 
 def test_run_analysis_on_a_paused_deal_runs_and_leaves_it_paused(

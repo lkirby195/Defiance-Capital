@@ -814,7 +814,7 @@
       "type": "string"
     },
     "Status": {
-      "description": "Deal lifecycle status.  # SPEC \u00a74.5, \u00a74.6\n\n``PAUSED`` is a deal set aside by a person: it keeps its runs and its intake, nothing\nautomatic runs on it, and Progress returns it to the status it was paused from (the\n``audit_log`` row that paused it says which). It sits between the live statuses and the\ntwo closed ones because that is what it is - neither being worked nor over.",
+      "description": "Deal lifecycle status.  # SPEC \u00a74.5, \u00a74.6\n\n``PAUSED`` is a deal set aside by a person: it keeps its runs and its intake, nothing\nautomatic runs on it, and Progress returns it to the status it was paused from (the\n``audit_log`` row that paused it says which). It sits between the live statuses and the\ntwo closed ones because that is what it is - neither being worked nor over.\n\n``LOI_SENT`` reads as \"Under LOI\" (``schema/labels.py``) and ``CLOSED`` is the loan that\nclosed and funded (v0.25): the end of the road a deal is meant to take, where ``DECLINED``\nand ``DEAD`` are the two ends it is not. Progress walks a deal along it (SPEC \u00a74.6).",
       "enum": [
         "NEW",
         "NEEDS_INFO",
@@ -823,6 +823,7 @@
         "UNDERWRITING",
         "LOI_SENT",
         "HANDED_OFF",
+        "CLOSED",
         "PAUSED",
         "DECLINED",
         "DEAD"

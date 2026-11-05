@@ -40,7 +40,6 @@ ORDER = (
     '<div class="tab-panel" id="tab-overview"',
     '<section class="panel chart" id="economics">',
     "<h2>Deal Economics and Property</h2>",
-    '<section class="panel chart" id="scored-as">',
     '<details class="panel" id="court">',
     '<div class="tab-panel" id="tab-cash-flows"',
     '<section class="panel chart" id="cash-flows">',
@@ -150,8 +149,8 @@ def test_an_unevaluated_analysis_is_a_state_not_an_error(
     assert '<p class="headline na">Not evaluated</p>' in take_back
     assert '<p class="headline">' not in trio
     assert 'class="problem"' not in trio and 'class="banner"' not in trio
-    for card in (flip, rental, take_back):
-        assert "<dt>Status" in card and '<dl class="facts small' in card
+    for card in (flip, rental, take_back):  # the headline says it; no Status row (v0.25)
+        assert "<dt>Status" not in card and '<dl class="facts small' in card
 
 
 def test_a_deal_on_the_grid_has_its_cell_marked_on_both_tables(
@@ -377,6 +376,6 @@ def test_home_rows_carry_chips_and_an_empty_section_says_so_in_one_line(
     # no Open button: the address is the link, then the three controls in order
     assert ">Open<" not in row
     assert row.index(">Progress</button>") < row.index(">Pause</button>") < row.index(">Kill<")
-    # three of the four sections are empty on this database
-    assert body.count('<p class="small muted" style="margin:0">None.</p>') == 3
-    assert body.count('<span class="count">') == 4
+    # five of the six sections are empty on this database
+    assert body.count('<p class="small muted" style="margin:0">None.</p>') == 5
+    assert body.count('<span class="count">') == 6

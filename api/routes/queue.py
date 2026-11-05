@@ -15,10 +15,13 @@ only turns their refusals into something readable on the page. A successful acti
 so a refresh re-reads the deal instead of re-running the action; a failed one re-renders with
 the reason, because a failure usually has something to fix on the page.
 
-The three controls on a Home row - Progress, Pause, Kill - post to the same routes the deal
-page's buttons do, carrying ``return_to=home`` so the redirect lands back on the list. Kill
-goes through a confirmation page first (``kill.html``): a dead deal is not re-opened, and a
-button that does that in one click on a list is a button somebody will press by mistake.
+The four controls on a Home row - Progress, Pause, Kill, Delete - post to the same routes the
+deal page's buttons do, carrying ``return_to=home`` so the redirect lands back on the list.
+Kill goes through a confirmation page first (``kill.html``): a dead deal is not re-opened, and
+a button that does that in one click on a list is a button somebody will press by mistake.
+So, for the same reason, do Progress's move to Closed (``close.html``, v0.25) - a closed loan
+is not paused, declined or killed afterwards - and Delete (``delete.html``), which cannot be
+undone at all.
 Server-rendered, like everything else here - a ``confirm()`` dialog would be script that
 decides something, which the queue does not have (CLAUDE.md).
 
@@ -95,6 +98,7 @@ from schema.models import (
     LoanPurpose,
     Product,
     State,
+    Status,
     Tranche,
 )
 from services import (
@@ -110,7 +114,6 @@ from services import (
     BorrowerNotFound,
     CourtSearch,
     DealNotFound,
-    HomeFilter,
     ReasonRequired,
     UnderwritingAssumptions,
     VersionNotFound,
@@ -119,13 +122,14 @@ from services import (
     apply_defaults,
     auto_run,
     borrower_view,
-    chips_from,
     clean_name,
     configured,
     deal_history,
     deal_trail,
     deal_versions,
     decline,
+    delete_deal,
+    filter_from,
     get_version,
     home_view,
     is_defaulted,
@@ -138,6 +142,7 @@ from services import (
     pause,
     profile_filter_choices,
     progress,
+    progress_target,
     read_market_data,
     refresh_market_data,
     reopen,
@@ -149,7 +154,6 @@ from services import (
     save_court_search,
     screen_is_stale,
     screen_result,
-    shown_terms,
     snapshot_complete,
     underwrite_readiness,
     underwrite_result,
@@ -331,6 +335,7 @@ def _allowed(deal: Deal) -> dict[str, bool]:
     """Which action buttons this deal's status leaves live.  # SPEC §4.6"""
     return {
         "progress": deal.status in PROGRESS_FROM,
+        "progress_closes": progress_target(deal.status) is Status.CLOSED,
         "pause": deal.status in PAUSE_FROM,
         "decline": deal.status in DECLINE_FROM,
         "kill": deal.status in MARK_DEAD_FROM,
@@ -472,7 +477,6 @@ def render_deal(
             "submitted_language": _submitted_language(session, deal),
             # What the thank-you page showed this borrower, if anything (SPEC §4.2); a
             # fact about the past, under Pricing, whichever version the page shows.
-            "shown_terms": shown_terms(deal),
             # Derived, not stored (SPEC §8.1): the last day of the month the term lands on,
             # shown read-only beside the term it comes from.
             "payoff_date": deal_payoff_date(deal),
@@ -555,17 +559,15 @@ def home() -> RedirectResponse:
 
 
 @router.get("/queue", response_class=HTMLResponse, response_model=None)
-def home_page(request: Request, session: SessionDep, user: PageUser, q: str = "") -> HTMLResponse:
-    """Home: every deal in one of four sections, most recently touched first.  # SPEC §9.1
+def home_page(request: Request, session: SessionDep, user: PageUser) -> HTMLResponse:
+    """Home: every deal in one of six sections, most recently touched first.  # SPEC §9.1
 
-    ``?q=`` is the search box: the sections narrow to the deals whose borrower's name,
-    entity or phone matches (``services/home.py``), and the box keeps what was typed. A
-    profile field on the query string - ``?years_investing=2_5`` - is one of the filter
-    chips (10c, SPEC §4.1): the selects under the box post them, and each chip is a link
-    back here without itself.
+    The search bar's three selects are the query string (v0.25): ``?borrower=<id>`` narrows
+    to one borrower's deals, and a profile field - ``?work_status=FULL_TIME``,
+    ``?years_investing=2_5`` - is one of the filter chips (SPEC §4.1). Each chip is a link
+    back here without itself (``services/home.py``).
     """
-    chips = chips_from(dict(request.query_params))
-    view = home_view(session, HomeFilter(query=q.strip(), chips=chips))
+    view = home_view(session, filter_from(dict(request.query_params)))
     context = {"view": view, "profile_filters": profile_filter_choices()}
     return page(request, "home.html", context, user=user)
 
@@ -1185,15 +1187,36 @@ def _act(
 def advance_action(
     request: Request, deal_id: UUID, session: SessionDep, user: PageUser, form: FormDep
 ) -> HTMLResponse | RedirectResponse:
-    """Progress: the next status, or the prior one off a pause (``services.actions.progress``)."""
+    """Progress: the next status, or the prior one off a pause (``services.actions.progress``).
+
+    A move to Closed needs the confirmation page's ``confirm=yes`` (v0.25): a post without it
+    - a stale button, a form from somewhere else - is answered with that page rather than a
+    closed loan, the way Kill answers one.
+    """
+    posted = fields(form)
+    return_to = posted.get(RETURN_TO)
+    try:
+        closes = progress_target(load_deal(session, deal_id).status) is Status.CLOSED
+    except DealNotFound:
+        return redirect(HOME_PATH, "That deal does not exist.")
+    if closes and posted.get("confirm") != "yes":
+        return confirm_page(
+            request,
+            session,
+            deal_id,
+            user,
+            CLOSE,
+            return_to=return_to,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
     return _act(
         request,
         session,
         deal_id,
         user,
         lambda: progress(session, deal_id, actor=user.email),
-        "Progressed.",
-        fields(form).get(RETURN_TO),
+        "Closed." if closes else "Progressed.",
+        return_to,
     )
 
 
@@ -1227,23 +1250,31 @@ def decline_action(
     )
 
 
-def kill_page(
+# The three confirmation pages, by the template each renders (SPEC §4.6): Kill, Progress's
+# move to Closed (v0.25) and Delete (v0.25).
+KILL = "kill.html"
+CLOSE = "close.html"
+DELETE = "delete.html"
+
+
+def confirm_page(
     request: Request,
     session: Session,
     deal_id: UUID,
     user: PageUser,
+    template: str,
     *,
     return_to: str | None,
     status_code: int = status.HTTP_200_OK,
 ) -> HTMLResponse | RedirectResponse:
-    """The confirmation in front of Kill: the deal by name, and the two ways out."""
+    """A confirmation in front of an action: the deal by name, and the two ways out."""
     try:
         deal = load_deal(session, deal_id)
     except DealNotFound:
         return redirect(HOME_PATH, "That deal does not exist.")
     return page(
         request,
-        "kill.html",
+        template,
         {
             "deal": deal,
             "allowed": _allowed(deal),
@@ -1255,12 +1286,77 @@ def kill_page(
     )
 
 
+def kill_page(
+    request: Request,
+    session: Session,
+    deal_id: UUID,
+    user: PageUser,
+    *,
+    return_to: str | None,
+    status_code: int = status.HTTP_200_OK,
+) -> HTMLResponse | RedirectResponse:
+    """The confirmation in front of Kill."""
+    return confirm_page(
+        request, session, deal_id, user, KILL, return_to=return_to, status_code=status_code
+    )
+
+
 @router.get("/queue/deals/{deal_id}/kill", response_class=HTMLResponse, response_model=None)
 def kill_confirm_page(
     request: Request, deal_id: UUID, session: SessionDep, user: PageUser
 ) -> HTMLResponse | RedirectResponse:
     """Ask before killing: a dead deal is not re-opened (SPEC §4.6)."""
     return kill_page(request, session, deal_id, user, return_to=request.query_params.get(RETURN_TO))
+
+
+@router.get("/queue/deals/{deal_id}/close", response_class=HTMLResponse, response_model=None)
+def close_confirm_page(
+    request: Request, deal_id: UUID, session: SessionDep, user: PageUser
+) -> HTMLResponse | RedirectResponse:
+    """Ask before closing the loan: Progress from Under LOI (SPEC §4.6, v0.25). The page's
+    form posts to Progress with the confirmation."""
+    return confirm_page(
+        request, session, deal_id, user, CLOSE, return_to=request.query_params.get(RETURN_TO)
+    )
+
+
+@router.get("/queue/deals/{deal_id}/delete", response_class=HTMLResponse, response_model=None)
+def delete_confirm_page(
+    request: Request, deal_id: UUID, session: SessionDep, user: PageUser
+) -> HTMLResponse | RedirectResponse:
+    """Ask before deleting: it cannot be undone (SPEC §4.6, v0.25)."""
+    return confirm_page(
+        request, session, deal_id, user, DELETE, return_to=request.query_params.get(RETURN_TO)
+    )
+
+
+@router.post("/queue/deals/{deal_id}/delete", response_model=None)
+def delete_action(
+    request: Request, deal_id: UUID, session: SessionDep, user: PageUser, form: FormDep
+) -> HTMLResponse | RedirectResponse:
+    """Delete the deal (``services/delete.py``), once the confirmation page has said so.
+
+    Always lands on Home: the deal page it came from no longer exists. A post without the
+    confirmation is answered with the confirmation page, as Kill's is.
+    """
+    posted = fields(form)
+    if posted.get("confirm") != "yes":
+        return confirm_page(
+            request,
+            session,
+            deal_id,
+            user,
+            DELETE,
+            return_to=posted.get(RETURN_TO),
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    try:
+        delete_deal(session, deal_id, actor=user.email)
+    except DealNotFound:
+        session.rollback()
+        return redirect(HOME_PATH, "That deal does not exist.")
+    session.commit()
+    return redirect(HOME_PATH, "Deleted.")
 
 
 @router.post("/queue/deals/{deal_id}/kill", response_model=None)

@@ -78,7 +78,8 @@ glenwood-uw/
     lifecycle.py           # the two automatic status transitions (SPEC 4.6)
     passwords.py           # PBKDF2 hash / verify; pure
     persistence.py         # append screens / underwrites rows; rebuild results from them
-    home.py                # the Home page: the four sections, their membership, the ordering, the search filter
+    home.py                # the Home page: the six sections, their membership, the ordering, the search bar
+    delete.py              # Delete: one deal and its rows, orphaned borrower/property too; the trail stays
     indicative.py          # the thank-you link's token and the indicative terms it shows a web borrower
     adjust.py              # Adjust my numbers: the borrower's five-box edit and its "Borrower edit n" run
     purge.py               # the one-time `glenwood deals purge`; every deal table, users kept
@@ -151,7 +152,8 @@ every team edit, as the actor `system` (`services/autorun.py`, SPEC §4.6); a ro
 stores, edits or restores a deal calls it. A paused deal is left out until Progress brings it
 back. The one button is **Run Analysis**, which runs both stages as the person who pressed
 it; the page never names a stage - it shows the IRR and the ledger - and the Flags, the
-Reasons and the Suggested Reply are on the stored rows, the CLI and the workbook, not on it.
+Reasons, the Suggested Reply, the pricing sentences and Scored as are on the stored rows, the
+CLI and the workbook, not on it (v0.25); no Scenarios card prints its status.
 Its header is the address, four chips (borrower - a link to the borrower's page - entity,
 "Loan Request: $X" in whole dollars, IRR) and the phone; the status and the verdict are a
 small line atop the Actions card; the version facts (when, who, engine) are in the versions
@@ -186,10 +188,11 @@ the Deal Economics - the loan structure among them as a radio, "100% at close" /
 whose Holdback reveals a Rehab portion box by a stylesheet rule - plus, on New Deal only, an
 optional Version name for the arrival version; everything with a default populates from config and is
 edited on the deal page, and Edit Intake writes only the columns the form has a box for
-(`db/repository.form_columns`, the loan split among them). Home carries a search box
-(borrower name, entity, phone) and five profile selects whose answers are the filter chips
-(`services/home.HomeFilter`: `query` and `chips`, each chip a `(field, value)` read off the
-borrower's row), and the borrower's name on a row links to `/borrowers/{id}`: who they are,
+(`db/repository.form_columns`, the loan split among them). Home is six sections - Borrower
+Submissions, DCF New Deals, Under LOI, Closed, On Pause, Dead (v0.25) - under a search bar of
+three selects: Borrower (every borrower with a deal), Commitment Level and Years investing
+(`services/home.HomeFilter`: `borrower_id` and `chips`, each chip a `(field, value)` read off
+the borrower's row), and the borrower's name on a row links to `/borrowers/{id}`: who they are,
 their profile, every deal on their row, with the totals (`services/borrowers.py`). The
 profile's codes read as words through `schema/labels.PROFILE_LABELS` on the team's pages and
 through `api/i18n.py` on the public form.
@@ -271,7 +274,7 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
   `12` alike, and renders the tag hidden or shown itself, so a browser that runs none of it
   still posts a deal that saves and still reads the right tag. The collapsed sections on
   the deal page are the browser's own `<details>`, and Reset all to defaults confirms on a
-  page of its own, as Kill does. The team form's Holdback radio reveals its Rehab portion box
+  page of its own, as Kill, Delete and the Progress that closes a loan do. The team form's Holdback radio reveals its Rehab portion box
   by a stylesheet rule on the checked radio (`:has()`, shown always where it is unsupported),
   not by script. Nothing client-side validates, fetches or decides. If a page
   seems to need script for anything else, it needs a different page. The public borrower form (`/apply`,
@@ -302,8 +305,8 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
   and a new borrower-facing page goes on its list. Every `/apply` response carries
   `X-Robots-Tag: noindex` (`api/main.py`). The token is random, expires after
   `web_intake.thanks_token_hours`, and what the page showed - the cushioned figures, the
-  solve beside each, the version and the views - is recorded on the deal and printed on the
-  deal page under Pricing as "Shown to borrower". The page's strings live in `api/i18n.py`
+  solve beside each, the version and the views - is recorded on the deal and its audit trail
+  (the deal page stopped printing it in v0.25). The page's strings live in `api/i18n.py`
   in English and Spanish; the Spanish column is marked pending native-speaker review there
   and stays marked until one has read it.
 
