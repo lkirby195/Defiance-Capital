@@ -13,14 +13,19 @@
    which engine, are in the History; the status and the verdict are one small line atop the
    Actions card. Under the header a row of tabs, one panel each, in this order:
 
-     1. Summary        the Return Overview's figures, Pricing, the Lender and Borrower
-                       Sensitivity side by side, the leverage against the caps, the Actions
+     1. Summary        the Return Overview's figures, Pricing (the table alone: no
+                       sentences under it and, v0.25, no "Shown to borrower" record - that
+                       stays on the deal and its audit trail), the Lender and Borrower
+                       Sensitivity side by side, the leverage against the caps (the table
+                       alone), the Actions
      2. Deal Overview  Market data with its Refresh button, Deal Economics and Property as
                        one label/value grid under section rules, what is still needed from
-                       the borrower, Scored as, the court and filing search
+                       the borrower, the court and filing search (Scored as is off the page
+                       from v0.25; the screen row, the CLI and the workbook keep it)
      3. Cash Flows     the ledger, the whole table, open
      4. Sources & Uses
-     5. Scenarios      Flip, Rental and Take-Back as three cards, each led by its headline
+     5. Scenarios      Flip, Rental and Take-Back as three cards, each led by its headline;
+                       no analysis prints its status - "Not evaluated" is the headline's job
      6. Assumptions    the Underwriting Assumptions panel as a label/value grid - the box on
                        the value side, its "default" tag at the right edge - with Save & Run
                        and Reset all under it, then the versions card: the history (the
@@ -240,65 +245,10 @@
         </tbody>
       </table>
     </div>
-    <ul class="sentences small">
-      {% for row in matrix.rows %}<li>{{ row.sentence }}</li>{% if row.derisk %}<li class="derisk">{{ row.derisk }}</li>{% endif %}{% endfor %}
-    </ul>
   {% elif result %}
     <p class="small muted">Not on this ledger; run the analysis again for the table.</p>
   {% else %}
     <p class="small muted">No analysis yet.</p>
-  {% endif %}
-  {% if deal.channel | plain == "WEB" %}
-    {# What the borrower saw on the thank-you page (SPEC §4.2): the Indicative terms table
-       as it was rendered the first time, or nothing. Independent of the version shown. #}
-    <div id="shown-to-borrower"><div class="chart">
-      <h3>Shown to borrower</h3>
-      {% if shown_terms %}
-        <dl class="facts small" style="margin-bottom:12px">
-          <dt>Shown</dt><dd>{{ deal.indicative_terms_shown_at | when }}</dd>
-          <dt>Language</dt><dd>{% if shown_terms.language == "es" %}Spanish{% else %}English{% endif %}</dd>
-          <dt>Version</dt><dd>{{ shown_terms.version | plain }}</dd>
-          <dt>Views</dt><dd>{{ shown_terms.views | join(", ") }}</dd>
-          {% if shown_terms.rate_cushion is not none %}
-            <dt>Rate cushion</dt><dd>{{ shown_terms.rate_cushion | quoted }}, rounded up to {{ shown_terms.rate_rounding | quoted }}</dd>
-          {% endif %}
-        </dl>
-        <div class="scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Step</th>
-                <th class="num">Loan amount</th>
-                <th class="num">Rate shown</th>
-                <th class="num">Solved rate</th>
-                {% if shown_terms.with_profit %}
-                  <th class="num">Estimated profit</th>
-                  <th class="num">Project yield</th>
-                  <th class="num">Yield (cash-on-cash)</th>
-                {% endif %}
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in shown_terms.rows %}
-                <tr>
-                  <th scope="row">{{ row.label }}</th>
-                  <td class="num">{{ row.loan_amount | dollars }}</td>
-                  <td class="num">{{ row.interest_rate | quoted }}</td>
-                  <td class="num">{{ row.solved_rate | quoted }}</td>
-                  {% if shown_terms.with_profit %}
-                    <td class="num">{{ row.profit | dollars }}</td>
-                    <td class="num">{{ row.project_yield | pct }}</td>
-                    <td class="num">{{ row.cash_on_cash | pct }}</td>
-                  {% endif %}
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      {% else %}
-        <p class="small muted">Nothing shown to the borrower.</p>
-      {% endif %}
-    </div></div>
   {% endif %}
 </section>
 
@@ -393,10 +343,14 @@
   <p class="small muted" id="deal-standing">Status: {{ deal.status | label }} · Verdict: {{ screen.result.verdict | label if screen else "—" }}</p>
   <div class="grid3">
     <div class="actions">
+      {% if allowed.progress_closes %}
+        <a class="btn quiet" href="/queue/deals/{{ deal.id }}/close" title="Marks the loan Closed, after a confirmation">Progress</a>
+      {% else %}
       <form method="post" action="/queue/deals/{{ deal.id }}/advance">
         {{ csrf.field(csrf_token) }}
-        <button class="quiet" type="submit" title="A scored deal goes into review; a paused deal goes back where it was" {% if not allowed.progress %}disabled{% endif %}>Progress</button>
+        <button class="quiet" type="submit" title="A scored deal goes into review, a deal being priced Under LOI; a paused deal goes back where it was" {% if not allowed.progress %}disabled{% endif %}>Progress</button>
       </form>
+      {% endif %}
       <form method="post" action="/queue/deals/{{ deal.id }}/pause">
         {{ csrf.field(csrf_token) }}
         <button class="quiet" type="submit" title="Sets the deal aside; nothing runs on it until Progress" {% if not allowed.pause %}disabled{% endif %}>Pause</button>
@@ -404,8 +358,9 @@
       {% if allowed.kill %}
         <a class="btn danger" href="/queue/deals/{{ deal.id }}/kill" title="Marks the deal dead, after a confirmation">Kill</a>
       {% else %}
-        <span class="btn danger off" title="A dead deal is already dead">Kill</span>
+        <span class="btn danger off" title="{% if deal.status | plain == 'CLOSED' %}A closed loan is not killed{% else %}A dead deal is already dead{% endif %}">Kill</span>
       {% endif %}
+      <a class="btn danger" href="/queue/deals/{{ deal.id }}/delete" title="Deletes the deal for good, after a confirmation">Delete</a>
     </div>
 
     <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/decline">
@@ -627,35 +582,6 @@
   </div>
 </section>
 
-{# --- the score components (SPEC §7) ------------------------------------------------------- #}
-<section class="panel chart" id="scored-as">
-  <h2>Scored as</h2>
-  {% if screen %}
-    <dl class="facts small">
-      <dt>Credit tranche</dt>
-      <dd>{{ screen.result.components.credit_tranche | tranche }}</dd>
-      <dt>Credit tranche basis</dt>
-      <dd>{{ "Verified" if screen.result.components.credit_tranche_verified else "Self-reported" }}</dd>
-      <dt>Floor tranche</dt>
-      <dd>{{ screen.result.components.floor_tranche | tranche }}</dd>
-      <dt>Meets the floor</dt>
-      <dd>{{ screen.result.components.credit_meets_floor | yes_no }}</dd>
-      <dt>Experience tier</dt>
-      <dd>{{ screen.result.components.experience_tier | plain }}</dd>
-      <dt>Experience tier (self-reported)</dt>
-      <dd>{{ screen.result.components.experience_tier_self_reported | plain }}</dd>
-      <dt>Experience tier (verified)</dt>
-      <dd>{{ screen.result.components.experience_tier_verified | plain }}</dd>
-      <dt>Repeat-borrower override</dt>
-      <dd>{{ screen.result.components.repeat_borrower_override_applied | yes_no }}</dd>
-      <dt>Court records from</dt>
-      <dd>{{ screen.result.components.court_records_source | label }}</dd>
-    </dl>
-  {% else %}
-    <p class="small muted">No analysis yet.</p>
-  {% endif %}
-</section>
-
 {# --- the court and filing search (SPEC §6.1, §7.2), collapsed ------------------------------ #}
 <details class="panel" id="court"{% if court_open %} open{% endif %}>
   <summary><h2>Court and filing search</h2></summary>
@@ -777,8 +703,6 @@
     {% else %}<p class="headline na">Not evaluated</p>{% endif %}
     <span class="headline-label">Net profit</span>
     <dl class="facts small">
-      <dt>Status</dt>
-      <dd>{{ flip.status | plain }}</dd>
       <dt>Broker selling %</dt><dd>{{ flip.broker_selling_pct | pct }}{{ dflt("broker_selling_pct") }}</dd>
     </dl>
     <h3>Profit</h3>
@@ -841,8 +765,6 @@
     {% else %}<p class="headline na">Not evaluated</p>{% endif %}
     <span class="headline-label">Required rent</span>
     <dl class="facts small" id="rental-takeout">
-      <dt>Status</dt>
-      <dd>{{ rental.status | plain }}</dd>
       <dt>Exit value</dt><dd>{{ rental.exit_value | money }}{% if rental.exit_value_source | plain == "SALE_PRICE" %} <span class="dflt">default</span>{% endif %}</dd>
       <dt>Takeout LTV</dt><dd>{{ rental.takeout_ltv | pct }}</dd>
       <dt>Takeout loan</dt><dd>{{ rental.takeout_loan | money }}</dd>
@@ -857,7 +779,6 @@
     </dl>
     <h3>Market rent</h3>
     <dl class="facts small" id="rental-market">
-      <dt>Status</dt><dd>{{ rental.market_rent_status | plain }}</dd>
       <dt>Market rent</dt><dd>{{ rental.market_rent | money }}</dd>
       <dt>Gap</dt><dd>{{ rental.rent_gap | money }}</dd>
       <dt>DSCR, amortizing</dt><dd>{{ rental.dscr_amortizing | ratio }}</dd>
@@ -893,8 +814,6 @@
     {% else %}<p class="headline na">Not evaluated</p>{% endif %}
     <span class="headline-label">Sale price needed</span>
     <dl class="facts small" id="take-back-timeline">
-      <dt>Status</dt>
-      <dd>{{ take_back.status | plain }}</dd>
       <dt>Loan amount</dt><dd>{{ take_back.loan_amount | money }}</dd>
       <dt>Default month</dt><dd>{{ take_back.default_month | plain }}</dd>
       <dt>Interest received</dt><dd>{{ take_back.interest_received | money }}</dd>

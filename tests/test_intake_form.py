@@ -292,7 +292,7 @@ def test_a_screened_deal_names_the_range_in_its_flags_and_caps_cell(
     messages = [flag.message for flag in screen_result(row).flags]
     assert any("Under 620 is below the floor of 620–659" in message for message in messages)
     body = form_page(client, f"/queue/deals/{deal_id}")
-    assert "Caps cell" in body
+    assert "Leverage against caps" in body and "Caps cell" not in body  # the table alone
     assert not re.search(r">\s*T[1-5]\s*<", body), "a raw tranche code is still on the page"
 
 

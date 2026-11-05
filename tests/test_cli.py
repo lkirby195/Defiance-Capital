@@ -109,7 +109,7 @@ def test_run_underwrite_prints_every_section(
     total = expected["sources_and_uses"]["total_uses"]
     assert table.replace("$", "").replace(",", "").count(total) == 2
     # the requested row's de-risk line is the one row with none; the others say it
-    assert pricing.count("of equity brings the rate to") == 2
+    assert pricing.count("of equity brings the rate to") == 4  # five rows from v0.25
 
 
 @pytest.mark.parametrize("path", UNDERWRITE_FILES, ids=UNDERWRITE_IDS)

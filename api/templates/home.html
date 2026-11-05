@@ -2,24 +2,38 @@
 {% import "_csrf.html" as csrf %}
 {% block title %}Home — Defiance Capital{% endblock %}
 
-{# Four sections, always in this order and always present (services/home.py): the
-   borrower's own submissions, the deals the team entered, the ones on pause, the dead. Each
+{# Six sections, always in this order and always present (services/home.py): the
+   borrower's own submissions, the deals the team entered, the ones Under LOI, the loans
+   that closed, the ones on pause, the dead. Each
    is a chart card: the section title and its count on the accent bar, the column labels on
    the tinted row under it, the deals ruled across. A row is who - the borrower's name is the
    link to their page - where - the address is the link to the deal - how much, which
    product, the Working version's verdict as a chip and its IRR to two decimals, where it
-   came from and the day it last moved, then the Action column: Progress, Pause and Kill as
-   small secondary buttons. Each control is a plain form post carrying ``return_to=home`` so
-   the action lands back here; Kill is a link to its confirmation page rather than a
-   one-click post. A control the deal's status rules out is off, with the reason on its
-   hover. An empty section says so in one line.
+   came from and the day it last moved, then the Action column: Progress, Pause, Kill and the
+   trash can as small secondary buttons. Each control is a plain form post carrying
+   ``return_to=home`` so the action lands back here; Kill, the trash can and a Progress that
+   would close the loan are links to their confirmation pages rather than one-click posts.
+   Progress's hover says where it goes. A control the deal's status rules out is off, with
+   the reason on its hover. An empty section says so in one line.
 
-   Above the sections sits the search box (v0.20): a plain GET form whose one box narrows
-   every section to the deals whose borrower's name, entity or phone matches; the counts
-   are of what is shown. Beside the box, five selects (10c, SPEC §4.1) - one per "About your
-   investing" question, "Any" by default - narrow by the borrower's profile; each answer
-   picked is a chip in the row under the box, and the chip is a link that removes itself.
-   Everything is the query string, so a narrowed Home can be bookmarked. #}
+   Above the sections sits the search bar (v0.25): a plain GET form of three selects -
+   Borrower (every borrower with a deal, A to Z), Commitment Level and Years investing, each
+   reading its caption until something is picked - that narrow every section; the counts
+   are of what is shown. Each answer picked is a chip in the row under the bar, and the chip
+   is a link that removes itself. Everything is the query string, so a narrowed Home can be
+   bookmarked. #}
+
+{% macro trash_icon() -%}
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+{%- endmacro %}
+
+{% macro progress_hint(entry) -%}
+  {%- set to = entry.progress_to -%}
+  {%- if to is none -%}Nothing comes next from {{ entry.deal.status | label }}
+  {%- elif to | plain == "PAUSED" -%}Returns the deal to where it was before the pause
+  {%- elif to | plain == "CLOSED" -%}Marks the loan Closed, after a confirmation
+  {%- else -%}Moves the deal to {{ to | label }}{%- endif -%}
+{%- endmacro %}
 
 {% macro control_button(entry, action, label, live, why) %}
   <form method="post" action="/queue/deals/{{ entry.deal.id }}/{{ action }}">
@@ -50,15 +64,19 @@
     <td>{{ deal.channel | label }}{% if deal.intake_source %} · {{ deal.intake_source }}{% endif %}</td>
     <td class="small muted">{{ entry.last_activity | day }}</td>
     <td class="action">
-      {{ control_button(entry, "advance", "Progress", entry.can_progress,
-                        "Returns a paused deal to where it was; otherwise the next status") }}
+      {% if entry.progress_closes %}
+        <a class="btn small quiet" href="/queue/deals/{{ deal.id }}/close?return_to=home" title="{{ progress_hint(entry) }}">Progress</a>
+      {% else %}
+        {{ control_button(entry, "advance", "Progress", entry.can_progress, progress_hint(entry)) }}
+      {% endif %}
       {{ control_button(entry, "pause", "Pause", entry.can_pause,
                         "Sets the deal aside; nothing runs on it until Progress") }}
       {% if entry.can_kill %}
         <a class="btn small quiet" href="/queue/deals/{{ deal.id }}/kill?return_to=home" title="Marks the deal dead, after a confirmation">Kill</a>
       {% else %}
-        <span class="btn small quiet off" title="A dead deal is already dead">Kill</span>
+        <span class="btn small quiet off" title="{% if entry.deal.status | plain == 'CLOSED' %}A closed loan is not killed{% else %}A dead deal is already dead{% endif %}">Kill</span>
       {% endif %}
+      <a class="btn small quiet trash" href="/queue/deals/{{ deal.id }}/delete?return_to=home" title="Deletes the deal for good, after a confirmation" aria-label="Delete">{{ trash_icon() }}</a>
     </td>
   </tr>
 {% endmacro %}
@@ -67,14 +85,19 @@
 <h1>Home</h1>
 
 <form class="search" id="deal-search" method="get" action="/queue" role="search">
-  <input type="search" id="q" name="q" value="{{ view.filter.query }}" placeholder="Borrower, entity or phone" aria-label="Search deals by borrower name, entity or phone">
-  {# the profile filters (10c): a select per question, its caption as the "any" option #}
+  {# each select's caption is its "any" option, so an untouched bar reads as its labels #}
   <div class="filters" id="profile-filters">
+    <select name="borrower" id="borrower-filter" aria-label="Borrower">
+      <option value="">Borrower</option>
+      {%- for choice in view.borrowers %}
+      <option value="{{ choice.id }}"{% if view.filter.selected("borrower", choice.id | string) %} selected{% endif %}>{{ choice.label }}</option>
+      {%- endfor %}
+    </select>
     {% for field, caption, choices in profile_filters %}
       <select name="{{ field }}" aria-label="{{ caption }}">
         <option value="">{{ caption }}</option>
         {%- for value, text in choices %}
-        <option value="{{ value }}"{% if (field, value) in view.filter.chips %} selected{% endif %}>{{ text }}</option>
+        <option value="{{ value }}"{% if view.filter.selected(field, value) %} selected{% endif %}>{{ text }}</option>
         {%- endfor %}
       </select>
     {% endfor %}
@@ -83,11 +106,11 @@
   {% if view.filter.active %}<a class="small" href="/queue">Clear</a>{% endif %}
   {# one chip per answer picked; the chip is the link that takes it off #}
   <div class="chips" id="filter-chips" data-hook="profile-filters">
-    {% for field, value in view.filter.chips %}{% set rest = view.filter.without(field).query_string %}<a class="tag fact" data-filter="{{ field }}" href="/queue{% if rest %}?{{ rest }}{% endif %}" title="Remove this filter">{{ field | caption }}: {{ value | profile }} ×</a>{% endfor %}
+    {% for chip in view.chips %}<a class="tag fact" data-filter="{{ chip.field }}" href="/queue{% if chip.rest %}?{{ chip.rest }}{% endif %}" title="Remove this filter">{{ chip.text }} ×</a>{% endfor %}
   </div>
 </form>
 {% if view.filter.active %}
-  <p class="lede small" id="search-result">{{ view.total }} of {{ view.unfiltered_total }} deals match {% if view.filter.query.strip() %}"{{ view.filter.query.strip() }}"{% if view.filter.chips %}, {% endif %}{% endif %}{{ view.filter.chip_summary }}.</p>
+  <p class="lede small" id="search-result">{{ view.total }} of {{ view.unfiltered_total }} deals match {{ view.chip_summary }}.</p>
 {% endif %}
 
 {% for section in view.sections %}

@@ -6,6 +6,13 @@ module turns the validated ``Config`` into labelled rows, one per yaml leaf, key
 leaf's dotted path (``fees.origination_default_pct``). The page prints that path beside every
 value, so a person who wants a number changed can name exactly the one they mean.
 
+Each row is labelled in the team's words (v0.25, ``LABELS``): "Origination", not "Origination
+default pct"; "Sales cost", not "Broker selling pct"; "OK foreclosure months", not a bare
+"OK". The unit is the value's job - ``2.00%``, ``$1,000.00``, ``1.20x`` - so no label carries
+"pct" or "usd", and every percentage, dollar figure and ratio prints to two decimals. Counts
+(months, years, FICO points) stay whole. A key ``LABELS`` does not name still gets a label,
+from its last part with those unit words dropped.
+
 Every leaf belongs to one group by the longest prefix in ``GROUPS``. A leaf no prefix claims
 lands in **Other** rather than off the page, and ``tests/test_defaults_page.py`` fails on
 both a yaml leaf the page does not show and a leaf that fell into Other - so a key added to
@@ -24,7 +31,7 @@ from typing import Any
 
 from config.config import Config
 from schema.labels import enum_label
-from schema.models import ExperienceTier, Product, Tranche
+from schema.models import ExperienceTier, Product, Severity, Tranche
 
 # (group heading, dotted prefixes it claims), in the order the page shows them.
 GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -69,9 +76,66 @@ _PERCENT_ENDINGS = (
     "takeout_ltv",
     "borrower_rate_cushion",
     "borrower_rate_rounding",
+    "borrower_coc_target",
 )
 _MONEY_ENDINGS = ("_usd", "loan_amount_rounding")
 _RATIO_ENDINGS = ("target_dscr",)
+
+
+# The team's word for each leaf (v0.25), by its dotted key. The flag severities and the
+# per-state entries are worded by ``label_for`` from their last part.
+LABELS: dict[str, str] = {
+    "fees.origination_default_pct": "Origination",
+    "fees.contingency_default_pct": "Rehab contingency",
+    "fees.closing_costs_default_usd": "Closing costs",
+    "fees.holding_costs_default_pct_of_cost": "Holding costs (of purchase + rehab)",
+    "interest.default_annual_rate": "Interest rate",
+    "fees.broker_selling_pct": "Sales cost",
+    "rental.expenses_pct_of_rent": "Operating expenses (of rent)",
+    "rental.takeout_ltv": "Takeout LTV",
+    "rental.takeout_rate": "Takeout rate",
+    "rental.amortization_years": "Amortization (years)",
+    "rental.target_dscr": "Target DSCR",
+    "take_back.lost_interest_months": "Lost interest (months)",
+    "take_back.legal_costs_usd": "Legal costs",
+    "take_back.hold_months": "Hold periods (months)",
+    "pricing.target_lender_irr": "Target lender IRR",
+    "pricing.max_quoted_rate": "Max quoted rate",
+    "pricing.loan_amount_pct_steps": "Loan amount steps",
+    "pricing.loan_amount_rounding": "Loan amount rounding",
+    "pricing.borrower_coc_target": "Borrower cash-on-cash target",
+    "pricing.borrower_rate_cushion": "Borrower rate cushion",
+    "pricing.borrower_rate_rounding": "Borrower rate rounding",
+    "sensitivity.loan_step_usd": "Loan amount step",
+    "sensitivity.loan_steps": "Loan amount steps (each way)",
+    "sensitivity.rate_min": "Rate from",
+    "sensitivity.rate_max": "Rate to",
+    "sensitivity.rate_step": "Rate step",
+    "credit.floor_tranche": "Credit floor tranche",
+    "screen.tolerance_band": "Leverage tolerance band",
+    "flags.lookbacks.bankruptcy_years": "Bankruptcy lookback (years)",
+    "flags.lookbacks.satisfied_judgment_years": "Satisfied judgment lookback (years)",
+    "flags.thresholds.unsatisfied_judgments_aggregate_usd": "Unsatisfied judgments (aggregate)",
+    "flags.thresholds.active_civil_litigation_usd": "Active civil litigation",
+    "experience.repeat_borrower_min_tier": "Repeat borrower minimum tier",
+    "states.served": "States served",
+    "web_intake.submissions_per_hour_per_ip": "Web submissions per hour per address",
+    "web_intake.thanks_token_hours": "Thank-you link life (hours)",
+    "draws.listing_months": "Listing period (months)",
+    "interest.day_count_basis": "Day count basis",
+    "closing.default_lead_days": "Closing lead (days)",
+    "rentcast.cache_days": "RentCast cache (days)",
+    "rentcast.monthly_request_budget": "RentCast monthly request budget",
+}
+
+# A leaf under one of these, keyed by a state or a tranche, reads "<that> <words>".
+_PER_ENTRY: dict[str, str] = {
+    "take_back.foreclosure_months": "foreclosure months",
+    "states.court_adapter": "court records source",
+    "credit.tranche_cutoffs": "minimum FICO",
+}
+# Unit words a fallback label drops: the value says them.
+_UNIT_WORDS = frozenset({"default", "pct", "usd", "of", "cost", "rent"})
 
 
 @dataclass(frozen=True)
@@ -120,14 +184,15 @@ def group_of(key: str) -> str:
 
 
 def _one(key: str, value: Any) -> str:
+    if isinstance(value, Severity):
+        return enum_label(value)  # HARD -> Hard, as the deal page's chips read
     if isinstance(value, Enum):
-        return str(value.value)
+        return str(value.value)  # a state or a grid code (OK, T4, E2) reads as itself
     if isinstance(value, bool):
         return "Yes" if value else "No"
     if isinstance(value, Decimal):
         if key.endswith(_PERCENT_ENDINGS):
-            text = f"{value * 100:.3f}".rstrip("0").rstrip(".")
-            return f"{text}%"
+            return f"{value * 100:.2f}%"
         if key.endswith(_MONEY_ENDINGS):
             sign = "-" if value < 0 else ""
             return f"{sign}${abs(value):,.2f}"
@@ -137,16 +202,27 @@ def _one(key: str, value: Any) -> str:
 
 
 def display(key: str, value: Any) -> str:
-    """A leaf's value as the page prints it: ``2%``, ``$1,000.00``, ``1.20x``, ``OK, CO``."""
+    """A leaf's value as the page prints it: ``2.00%``, ``$1,000.00``, ``1.20x``, ``OK, CO``."""
     if isinstance(value, list):
         return ", ".join(_one(key, item) for item in value) or "(none)"
     return _one(key, value)
 
 
 def label_for(key: str) -> str:
-    """The last part of a dotted key, in words: ``holding_costs_default_pct_of_cost`` ->
-    ``Holding costs default pct of cost``."""
-    words = key.rsplit(".", 1)[-1].replace("_", " ")
+    """A leaf's label in the team's words: ``LABELS`` when it names the key; a per-state or
+    per-tranche entry as ``OK foreclosure months``; a flag code sentence-cased; else the
+    last part of the key without its unit words (``closing_costs_default_usd`` -> ``Closing
+    costs``)."""
+    if key in LABELS:
+        return LABELS[key]
+    parent, last = key.rsplit(".", 1) if "." in key else ("", key)
+    if parent in _PER_ENTRY:
+        return f"{'Other states' if last == 'OTHER' else last} {_PER_ENTRY[parent]}"
+    if last.isupper():
+        words = last.replace("_", " ").lower()
+        return words[:1].upper() + words[1:]
+    kept = [word for word in last.split("_") if word not in _UNIT_WORDS] or last.split("_")
+    words = " ".join(kept)
     return words[:1].upper() + words[1:]
 
 

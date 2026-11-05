@@ -52,8 +52,6 @@ MEMBERS: dict[str, tuple[str, ...]] = {
         '<div class="kv-section">Property Overview</div>',
         '<div class="kv-section">Deal Economics</div>',
         "<h3>Still needed from the borrower</h3>",
-        '<section class="panel chart" id="scored-as">',
-        "<h2>Scored as</h2>",
         '<details class="panel" id="court">',
     ),
     "tab-cash-flows": ('<section class="panel chart" id="cash-flows">', "<h2>Cash Flows</h2>"),

@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.24
+# GLENWOOD Underwriting Platform — SPEC v0.25
 
-Status: **v0.24**, 2026-11-03 (ui-market-top), engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.25**, 2026-11-04 (home-pipeline-sections-delete), engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.25** is the pipeline on Home, a delete, and a cleaner deal page and Defaults page (migration `0026`, no engine change). **Home has six sections** - Borrower Submissions, DCF New Deals, **Under LOI** (`LOI_SENT`, `HANDED_OFF`), **Closed** (the new `CLOSED` status: the loan closed and funded), On Pause, Dead - and **Progress walks a deal along them**: `SCREENED` → `IN_REVIEW` as before, `IN_REVIEW` or `UNDERWRITING` → `LOI_SENT` (audited `LOI_SENT`; the Phase 5 LOI generation will write the same code), and `LOI_SENT` or `HANDED_OFF` → `CLOSED` (audited `LOAN_CLOSED`) through a confirmation page, as Kill goes through its own; the button's hover names where it goes. A closed loan is not paused, declined, killed, edited or run automatically; `LOI_SENT` reads "Under LOI" wherever a status is shown (§4.6, §9.1). **Delete** - a trash can on every Home row and a Delete on the deal page's Actions, behind a confirmation page - removes the deal, its submissions, runs, versions, enrichment runs, documents and `ma_sync` rows, and its borrower (with any entity only they held) and property when no other deal holds them; the deal's audit trail stays and one `DEAL_DELETED` row is added saying what it was and what went (`services/delete.py`). **Home's search bar is three selects**: Borrower (every borrower with a deal, A to Z, the phone after the name when two read the same) replacing the free-text box, **Commitment Level** (the full-time question, "Full time" / "Part time" / "First time") and Years investing; the other three profile questions are no longer filters, and each answer is still a chip that removes itself. The **pricing matrix** runs 0 to -10% of the request by 2.5% (`pricing.loan_amount_pct_steps`, five rows; the borrower's indicative terms carry the rows that qualify, so up to five). The **deal page** loses the sentence bullets under Pricing, the Shown to borrower record (kept on the deal and the audit trail), the facts list under the leverage table, the Scored as card (kept on the screen row, the CLI and the workbook) and the Status row on every Scenarios card. The **Defaults page** heads its first column "Variable", labels every row in the team's words ("Origination", "Sales cost", "OK foreclosure months"; no "default pct"), and prints every percentage, dollar figure and ratio to two decimals (§10).
 
 **v0.24** puts the **Market data** card at the top of the Deal Overview tab, above Deal Economics and Property, with Refresh market data still on its bar (§9), and stamps each `audit_log` row with `clock_timestamp()` rather than `now()` (migration `0025`, no engine change), so the rows one request writes - an edit, the pull it sets off, the run after it - keep the order they were written in rather than sharing the transaction's start time (§5).
 
@@ -257,7 +259,8 @@ a view already recorded shows the same rows and records nothing new. The deal pa
 the record under Pricing as **Shown to borrower** - the version, the views, the cushion, the
 rate shown and the solved rate - or "Nothing shown to the borrower." on a web deal whose page
 never showed the table. The link's issue is audited too (`THANKS_TOKEN_ISSUED`, the expiry
-and never the token).
+and never the token). From v0.25 the deal page no longer prints the record; it stays on the
+deal and the audit trail.
 
 **Adjust my numbers** (v0.22). A link on the thank-you page, live for as long as the token
 is and only while the deal is in a status an edit is allowed from (§4.5), opens
@@ -399,9 +402,12 @@ row (§5):
 | Control | From | To |
 |---|---|---|
 | Progress | `SCREENED` | `IN_REVIEW`, as advancing to review always did |
+| Progress | `IN_REVIEW`, `UNDERWRITING` | `LOI_SENT` - Under LOI (v0.25) |
+| Progress | `LOI_SENT`, `HANDED_OFF` | `CLOSED`, after a confirmation page (v0.25) |
 | Progress | `PAUSED` | the status the deal was paused from, read off the `PAUSED` audit row's `before` |
-| Pause | any live status (not `PAUSED`, `DECLINED`, `DEAD`) | `PAUSED` |
-| Kill | anything but `DEAD`, after a confirmation page | `DEAD` |
+| Pause | any live status (not `PAUSED`, `CLOSED`, `DECLINED`, `DEAD`) | `PAUSED` |
+| Kill | anything but `DEAD` and `CLOSED`, after a confirmation page | `DEAD` |
+| Delete | anything, after a confirmation page (v0.25) | the deal and its rows are gone; the audit trail stays with a `DEAL_DELETED` row |
 
 **A `PAUSED` deal is set aside.** Nothing automatic runs on it - an edit on a paused deal is
 stored and waits - a re-screen or a re-underwrite a person presses leaves its status alone,
@@ -1337,8 +1343,8 @@ cost so a reader can divide one by the other.
 
 ### 8.10 Pricing matrix
 
-One row per `pricing.loan_amount_pct_steps` entry (placeholder `[0, -0.05, -0.10]`, engine
-`1.10.0`), each a share of the request that only ever lends less. The row's loan amount is
+One row per `pricing.loan_amount_pct_steps` entry (`[0, -0.025, -0.05, -0.075, -0.10]` from
+v0.25, placeholder `[0, -0.05, -0.10]` before it, engine `1.10.0`), each a share of the request that only ever lends less. The row's loan amount is
 the request times `1 + step`, **rounded half-up to the nearest `pricing.loan_amount_rounding`**
 (placeholder $1,000) and never above the request; the request row (step 0) is never rounded,
 so a $195,000 request prices as $195,000, $185,000 (185,250 rounded down) and $176,000
@@ -1468,7 +1474,8 @@ is on the page in this order with the tab row as in-page links:
    across on a desktop and one on a phone, under section rules (From the public form on a
    web deal, Overview, Property Overview, Deal Economics), with an Edit Intake link on its
    bar and what is still needed from the borrower under it; **Scored as** (the score
-   components); the **court and filing search** (collapsed; the outcome, the date and the
+   components; off the page from v0.25, on the screen row, the CLI and the workbook); the
+   **court and filing search** (collapsed; the outcome, the date and the
    typed matters, its own Save). The grid's Overview is followed by **About their
    investing** (v0.21): the borrower's five profile answers (§4.1 row 7), read off the
    borrower's row, an em dash where one was not given. The **Market data** card (v0.23,
@@ -1546,8 +1553,10 @@ One page in the review queue: intake facts, enrichment hits, score components, v
 missing fields on the deal page; the reasons and the suggested reply on the stored `screens`
 row, the CLI report and the workbook, where a person drafting a message reads them.
 
-**Home and the borrower's page** (v0.20). Home's four sections (§12) sit under a **search
-box**: one GET box that narrows every section to the deals whose borrower matches - the
+**Home and the borrower's page** (v0.20; v0.25 replaces the box and the five selects with
+three selects - Borrower, Commitment Level, Years investing - and adds Under LOI and Closed
+between DCF New Deals and On Pause, see the v0.25 note). Home's four sections (§12) sit
+under a **search box**: one GET box that narrows every section to the deals whose borrower matches - the
 guarantor's name or an entity's by case-blind substring, the phone by its digits once the
 query holds three of them - with the counts of what is shown, a line saying how many of how
 many match, and Clear. Beside the box, five **profile selects** (v0.21), one per "About your
@@ -1650,7 +1659,7 @@ workbook to export.
 - `interest.day_count_basis` (30): the days a whole monthly period counts as, for the final stub period's prorated interest (§8.3)
 - `closing.default_lead_days` (14): the **default for `closing_date`** (§8.1) is the last day of the month this many days after the deal came in
 - sensitivity (§8.9): `loan_step_usd` (5,000), `loan_steps` (4), `rate_min` (12.5%), `rate_max` (17.5%), `rate_step` (1%) - the shape of the IRR grid; every cell is a ledger re-run
-- pricing (§8.10): `borrower_coc_target` (20%, placeholder, v0.17; the Flip's cash-on-cash target, §8.4), `target_lender_irr` (20%, placeholder), `max_quoted_rate` (18%, placeholder; above 0, at most 100%), `loan_amount_pct_steps` (`[0, -0.05, -0.10]`, placeholder; each between -1 and 0, no duplicates, at least one) and `loan_amount_rounding` ($1,000, placeholder; above 0). The old `loan_amount_steps` is refused by name. The borrower's quote (§4.2, v0.22): `borrower_rate_cushion` (0.5%, placeholder; 0 to 100%) added to a row's solved rate before it is shown, and `borrower_rate_rounding` (0.25%, placeholder; above 0, at most 100%), the step the cushioned rate is rounded up to
+- pricing (§8.10): `borrower_coc_target` (20%, placeholder, v0.17; the Flip's cash-on-cash target, §8.4), `target_lender_irr` (20%, placeholder), `max_quoted_rate` (18%, placeholder; above 0, at most 100%), `loan_amount_pct_steps` (`[0, -0.025, -0.05, -0.075, -0.10]` from v0.25; each between -1 and 0, no duplicates, at least one) and `loan_amount_rounding` ($1,000, placeholder; above 0). The old `loan_amount_steps` is refused by name. The borrower's quote (§4.2, v0.22): `borrower_rate_cushion` (0.5%, placeholder; 0 to 100%) added to a row's solved rate before it is shown, and `borrower_rate_rounding` (0.25%, placeholder; above 0, at most 100%), the step the cushioned rate is rounded up to
 - rental takeout (§8.5): `expenses_pct_of_rent` (35%) and `takeout_rate` (6.5%), the defaults for the two per-deal assumptions; `takeout_ltv` (75%, placeholder, v0.19; above 0), `amortization_years` (30) and `target_dscr` (1.20, placeholder; the renamed `dscr_floor`, which is refused by name)
 - take-back (§8.6): `lost_interest_months` (3) and `legal_costs_usd` (5,000), the defaults for the two per-deal assumptions; `foreclosure_months` by state (placeholders OK 6, CO 4, OTHER 8; every served state needs an entry, and `OTHER` stands in for any other state, v0.20) and `hold_months` (`[12, 24, 36]`; distinct, ascending, 1 to 120). The DSCR test's `amortization_years` and `dscr_floor` are refused by name
 - underwrite flag severities: `MARKET_RENT_BELOW_REQUIRED` and `TAKEOUT_BELOW_PAYOFF` (placeholder Soft), `TAKE_BACK_PRICE_ABOVE_PURCHASE` (placeholder Hard), `BORROWER_COC_BELOW_TARGET` (placeholder Soft, v0.17). The informational codes (§8.8) are fixed `Info` in code and the loader refuses to grade them, as it refuses the retired `DSCR_BELOW_FLOOR` and `TAKE_BACK_DSCR_BELOW_FLOOR`

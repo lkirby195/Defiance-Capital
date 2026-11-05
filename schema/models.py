@@ -237,6 +237,10 @@ class Status(StrEnum):
     automatic runs on it, and Progress returns it to the status it was paused from (the
     ``audit_log`` row that paused it says which). It sits between the live statuses and the
     two closed ones because that is what it is - neither being worked nor over.
+
+    ``LOI_SENT`` reads as "Under LOI" (``schema/labels.py``) and ``CLOSED`` is the loan that
+    closed and funded (v0.25): the end of the road a deal is meant to take, where ``DECLINED``
+    and ``DEAD`` are the two ends it is not. Progress walks a deal along it (SPEC §4.6).
     """
 
     NEW = "NEW"
@@ -246,6 +250,7 @@ class Status(StrEnum):
     UNDERWRITING = "UNDERWRITING"
     LOI_SENT = "LOI_SENT"
     HANDED_OFF = "HANDED_OFF"
+    CLOSED = "CLOSED"
     PAUSED = "PAUSED"
     DECLINED = "DECLINED"
     DEAD = "DEAD"
@@ -334,8 +339,11 @@ class AuditAction(StrEnum):
     doing. Stable because an auditor reads them years later and a renamed code would orphan
     every row already written under the old name.
 
-    ``LOI_SENT`` and ``HANDED_OFF`` are written by the SPEC §12 Phase 5 and 6 actions, which
-    do not exist yet; they are named so the codes are settled before the rows are.
+    ``LOI_SENT`` is Progress moving a deal Under LOI by hand (v0.25); the SPEC §12 Phase 5
+    LOI generation will write the same code when it lands. ``HANDED_OFF`` is still Phase 6's
+    and unwritten. ``LOAN_CLOSED`` is Progress closing the loan, behind its confirmation page.
+    ``DEAL_DELETED`` is the one row a deleted deal leaves behind: what it was, and who
+    removed it (``services/delete.py``).
 
     ``PAUSED`` and ``RESUMED`` are the two halves of setting a deal aside (SPEC §4.6): the
     first row's ``before.status`` is where ``RESUMED`` sends the deal back to.
@@ -385,8 +393,10 @@ class AuditAction(StrEnum):
     MARKET_DATA_FETCHED = "MARKET_DATA_FETCHED"
     INDICATIVE_TERMS_SHOWN = "INDICATIVE_TERMS_SHOWN"  # SPEC §4.2: what the borrower was shown
     DEALS_PURGED = "DEALS_PURGED"  # the one-time cleanup (README); row_id is "*"
-    LOI_SENT = "LOI_SENT"  # SPEC §9.3, Phase 5
+    LOI_SENT = "LOI_SENT"  # SPEC §4.6 Progress (v0.25); §9.3 Phase 5 writes it too
     HANDED_OFF = "HANDED_OFF"  # SPEC §9.4, Phase 6
+    LOAN_CLOSED = "LOAN_CLOSED"  # SPEC §4.6: Progress from Under LOI, after a confirmation
+    DEAL_DELETED = "DEAL_DELETED"  # SPEC §4.6: the deal and its rows removed; this row stays
     # Users and access (SPEC §11: credit data access is logged)
     USER_CREATED = "USER_CREATED"
     USER_DEACTIVATED = "USER_DEACTIVATED"

@@ -38,6 +38,7 @@ from schema.models import (
     ExperienceBucket,
     Product,
     ProjectsInProgress,
+    Status,
     Strategy,
     TermBucket,
     Tranche,
@@ -64,12 +65,14 @@ TERM_BUCKET_LABELS: Mapping[TermBucket, str] = {
 }
 
 # The codes ``str.title()`` does not fit: the two loan structures, by the words on the team
-# form's radio (SPEC §3). Everything else - CASH_OUT, BANKRUPTCY_IN_LOOKBACK - title-cases
+# form's radio (SPEC §3), and ``LOI_SENT``, which the team and Home's section call "Under LOI"
+# (v0.25, SPEC §9.1). Everything else - CASH_OUT, BANKRUPTCY_IN_LOOKBACK - title-cases
 # correctly and is deliberately not listed, so this stays a list of exceptions rather than a
 # second copy of every enum.
 _ENUM_LABELS: Mapping[str, str] = {
     Product.ACQUISITION.value: "100% at close",
     Product.ACQUISITION_REHAB.value: "Holdback",
+    Status.LOI_SENT.value: "Under LOI",
 }
 
 # SPEC §3, one line each: structure, then how interest is charged.
@@ -116,6 +119,20 @@ PROFILE_CAPTIONS: Mapping[str, str] = {
     "work_crew": "Who does the work",
 }
 assert tuple(PROFILE_CAPTIONS) == BORROWER_PROFILE_FIELDS
+
+# Home's two profile filters (v0.25, SPEC §9.1) and their own words: the full-time question
+# is "Commitment Level" there, its answers "Full time" / "Part time" / "First time". The deal
+# page, the borrower's page and the team form keep ``PROFILE_CAPTIONS`` / ``PROFILE_LABELS``.
+HOME_FILTER_CAPTIONS: Mapping[str, str] = {
+    "work_status": "Commitment Level",
+    "years_investing": "Years investing",
+}
+HOME_FILTER_LABELS: Mapping[str, str] = {
+    WorkStatus.FULL_TIME.value: "Full time",
+    WorkStatus.PART_TIME.value: "Part time",
+    WorkStatus.FIRST_PROJECT.value: "First time",
+}
+assert set(HOME_FILTER_CAPTIONS) <= set(BORROWER_PROFILE_FIELDS)
 assert set(PROFILE_LABELS) == {m.value for e in PROFILE_ENUMS.values() for m in e}
 
 _TRANCHE_ORDER: tuple[Tranche, ...] = tuple(Tranche)  # T1 (best) .. T5 (worst)  # SPEC §7.1
@@ -166,6 +183,17 @@ def profile_label(value: StrEnum | str | None) -> str:
 def profile_caption(field: str) -> str:
     """The caption a profile question carries on the team's pages: ``Years investing``."""
     return PROFILE_CAPTIONS[field]
+
+
+def home_filter_caption(field: str) -> str:
+    """The caption one of Home's profile filters carries: ``Commitment Level``."""
+    return HOME_FILTER_CAPTIONS[field]
+
+
+def home_filter_label(value: StrEnum | str) -> str:
+    """An answer as Home's filters word it: ``First time``; else its profile label."""
+    code = str(getattr(value, "value", value))
+    return HOME_FILTER_LABELS.get(code) or PROFILE_LABELS[code]
 
 
 def term_bucket_label(bucket: TermBucket | None) -> str:

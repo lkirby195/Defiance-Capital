@@ -61,15 +61,24 @@ from tests.test_borrower_sensitivity import by_hand, no_price, wichita_inputs
 from tests.test_excel_export import xirr_by_secant
 from tests.test_sensitivity import denver_inputs, holdback_flows
 
-CONFIG = Config.load()
 D = Decimal
 STEP = 1e-4  # 0.01%, as a float for the independent solve
 
+# The independent solves below were worked on the three-row grid the config shipped with
+# before v0.25 (the request, -5%, -10%). The solve does not depend on the grid, so they stay
+# pinned to it; the live grid - 0 to -10% by 2.5% - is held by its own tests.
+GOLDEN_STEPS: list[str] = ["0", "-0.05", "-0.10"]
+LIVE = Config.load()
+
 
 def config_with(**pricing: Any) -> Config:
+    """The shipped yaml on the golden grid, with ``pricing`` overridden on top."""
     data = load_yaml(DEFAULT_PATH.read_text(encoding="utf-8"))
-    data["pricing"] = {**data["pricing"], **pricing}
+    data["pricing"] = {**data["pricing"], "loan_amount_pct_steps": GOLDEN_STEPS, **pricing}
     return Config.from_dict(data)
+
+
+CONFIG = config_with()
 
 
 def matrix_for(
@@ -152,11 +161,29 @@ def independent_min_rate(irr_at: Callable[[float], float], target: float) -> Dec
 
 
 def test_placeholders_and_the_solve_constants() -> None:
-    assert CONFIG.pricing.target_lender_irr == D("0.20")
-    assert CONFIG.pricing.max_quoted_rate == D("0.18")
-    assert CONFIG.pricing.loan_amount_pct_steps == [D(0), D("-0.05"), D("-0.10")]
-    assert CONFIG.pricing.loan_amount_rounding == D(1000)
+    assert LIVE.pricing.target_lender_irr == D("0.20")
+    assert LIVE.pricing.max_quoted_rate == D("0.18")
+    assert LIVE.pricing.loan_amount_pct_steps == [
+        D(0),
+        D("-0.025"),
+        D("-0.05"),
+        D("-0.075"),
+        D("-0.10"),
+    ]
+    assert LIVE.pricing.loan_amount_rounding == D(1000)
     assert (RATE_PRECISION, RATE_CEILING) == (D("0.0001"), D(1))
+
+
+def test_the_live_grid_is_zero_to_ten_percent_off_by_two_and_a_half() -> None:
+    """v0.25: five rows, most equity first, each 2.5% of the request apart."""
+    rows = matrix_for(wichita_inputs(), LIVE).rows
+    assert [row.label for row in rows] == ["-10%", "-7.5%", "-5%", "-2.5%", "Requested"]
+    amounts = [row.loan_amount for row in rows]
+    assert amounts == sorted(amounts)
+    golden = {row.label: row for row in matrix_for(wichita_inputs(), CONFIG).rows}
+    for row in rows:
+        if row.label in golden:  # the three rows the two grids share solve the same
+            assert row.interest_rate == golden[row.label].interest_rate
 
 
 # --- the rows: a share of the request, rounded (SPEC §8.10, engine 1.10.0) ------------------------

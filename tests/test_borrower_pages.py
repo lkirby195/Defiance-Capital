@@ -308,8 +308,7 @@ def test_a_save_is_a_new_submission_a_borrower_edit_version_and_new_terms(
         "Borrower edit 1",
         "Ortiz; 1412 S Peoria Ave, OK - Request",
     ]
-    shown_block = between(page, '<div id="shown-to-borrower">', "</table>")
-    assert shown_block is not None and "<dt>Version</dt><dd>2</dd>" in shown_block
+    assert 'id="shown-to-borrower"' not in page  # the record is on the deal, not the page
 
     # a second edit counts up
     assert adjust(anon_client, base, loan_requested="$140,000").status_code == 303

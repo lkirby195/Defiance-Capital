@@ -10,8 +10,9 @@ button did nothing" is the worst possible answer: ``ActionNotAllowed`` says what
 and what the action applies to.
 
 The three controls on every Home row are here too (SPEC §4.6). **Progress** advances a deal
-to the next status - a screened deal into review, exactly as before - and, on a paused deal,
-returns it to the status it was paused from. **Pause** sets a live deal aside: nothing
+to the next status - a screened deal into review, as before; a deal in review or being priced
+Under LOI; one Under LOI (or handed off) to Closed, the loan funded (v0.25) - and, on a paused
+deal, returns it to the status it was paused from. **Pause** sets a live deal aside: nothing
 automatic runs on it until Progress brings it back, and the audit row that paused it is
 where its prior status is kept, so there is no second column to keep in step with the first.
 **Kill** marks a deal dead, with the confirmation page in front of it (``api/routes/queue``).
@@ -54,22 +55,30 @@ from services.errors import ActionNotAllowed, ReasonRequired
 from services.requests import CourtSearch, TeamOverrides, UnderwritingAssumptions
 from services.runner import load_deal
 
-# The two closed statuses: a deal that is over, one way or the other.
-CLOSED: frozenset[Status] = frozenset({Status.DECLINED, Status.DEAD})
+# The two closed-out statuses: a deal that is over, the way nobody wanted.
+CLOSED_OUT: frozenset[Status] = frozenset({Status.DECLINED, Status.DEAD})
 # A screened deal is the one a person pulls into review; the screen is Stage 1 and review is
 # what happens to a deal that cleared it.
 ADVANCE_TO_REVIEW_FROM: frozenset[Status] = frozenset({Status.SCREENED})
-# Progress is the advance above, plus the way back off a pause.
-PROGRESS_FROM: frozenset[Status] = ADVANCE_TO_REVIEW_FROM | {Status.PAUSED}
-# A live deal can be set aside; a paused or closed one already is.
-PAUSE_FROM: frozenset[Status] = frozenset(Status) - CLOSED - {Status.PAUSED}
+# A deal in review or being priced is the one terms go out on (v0.25): Under LOI.
+SEND_LOI_FROM: frozenset[Status] = frozenset({Status.IN_REVIEW, Status.UNDERWRITING})
+# A deal Under LOI - or handed off, once Phase 6 writes that - is the one that closes.
+CLOSE_FROM: frozenset[Status] = frozenset({Status.LOI_SENT, Status.HANDED_OFF})
+# Progress is each of the three advances above, plus the way back off a pause.
+PROGRESS_FROM: frozenset[Status] = (
+    ADVANCE_TO_REVIEW_FROM | SEND_LOI_FROM | CLOSE_FROM | {Status.PAUSED}
+)
+# A live deal can be set aside; a paused, closed-out or closed one is past that.
+PAUSE_FROM: frozenset[Status] = frozenset(Status) - CLOSED_OUT - {Status.PAUSED, Status.CLOSED}
 # Only a paused deal is resumed.
 RESUME_FROM: frozenset[Status] = frozenset({Status.PAUSED})
-# Every status that is still live. A deal already closed out is not closed out again.
-DECLINE_FROM: frozenset[Status] = frozenset(Status) - CLOSED
-# A deal can stop existing from anywhere, including after a decline: the borrower going
-# silent on a deal GLENWOOD had already passed on is still worth recording as dead.
-MARK_DEAD_FROM: frozenset[Status] = frozenset(Status) - {Status.DEAD}
+# Every status that is still live. A deal already closed out is not closed out again, and a
+# loan that closed is not declined after the money went out.
+DECLINE_FROM: frozenset[Status] = frozenset(Status) - CLOSED_OUT - {Status.CLOSED}
+# A deal can stop existing from anywhere short of the loan closing, including after a
+# decline: the borrower going silent on a deal GLENWOOD had already passed on is still worth
+# recording as dead. A closed loan is not killed; a deal closed by mistake is deleted.
+MARK_DEAD_FROM: frozenset[Status] = frozenset(Status) - {Status.DEAD, Status.CLOSED}
 # Only a declined deal is re-opened. DEAD is deliberately final.
 REOPEN_FROM: frozenset[Status] = frozenset({Status.DECLINED})
 # The two columns of the loan split (SPEC §8.2), applied after the product.
@@ -227,16 +236,65 @@ def resume(session: Session, deal_id: UUID, *, actor: str) -> Deal:
     )
 
 
+def send_loi(session: Session, deal_id: UUID, *, actor: str) -> Deal:
+    """IN_REVIEW or UNDERWRITING -> LOI_SENT: terms went out; the deal is Under LOI.
+
+    # SPEC §4.6, v0.25
+
+    The team's hand on the same move the Phase 5 LOI generation (SPEC §9.3) will make; both
+    write ``LOI_SENT`` on the audit row, so the trail reads the same whichever made it.
+    """
+    deal = load_deal(session, deal_id)
+    _check(deal, "put under LOI", SEND_LOI_FROM)
+    return _move(session, deal, to=Status.LOI_SENT, actor=actor, action=AuditAction.LOI_SENT)
+
+
+def close_loan(session: Session, deal_id: UUID, *, actor: str) -> Deal:
+    """LOI_SENT or HANDED_OFF -> CLOSED: the loan closed and funded.  # SPEC §4.6, v0.25
+
+    The confirmation in front of this is the page's (``api/routes/queue.py``), as Kill's is:
+    a closed loan is not paused, declined or killed afterwards, so the one-click button on a
+    Home row leads to a page rather than here.
+    """
+    deal = load_deal(session, deal_id)
+    _check(deal, "closed", CLOSE_FROM)
+    return _move(session, deal, to=Status.CLOSED, actor=actor, action=AuditAction.LOAN_CLOSED)
+
+
+def progress_target(status: Status) -> Status | None:
+    """Where Progress takes a deal in ``status``; None where it does not apply.  # SPEC §4.6
+
+    A paused deal's destination is on its audit trail (``paused_from``) rather than its
+    status, so this answers ``PAUSED`` for it: back where it was. Home and the deal page read
+    this to say where the button goes and to put the close behind its confirmation.
+    """
+    if status is Status.PAUSED:
+        return Status.PAUSED
+    if status in ADVANCE_TO_REVIEW_FROM:
+        return Status.IN_REVIEW
+    if status in SEND_LOI_FROM:
+        return Status.LOI_SENT
+    if status in CLOSE_FROM:
+        return Status.CLOSED
+    return None
+
+
 def progress(session: Session, deal_id: UUID, *, actor: str) -> Deal:
     """The Progress control: the next status, or the prior one off a pause.  # SPEC §4.6
 
-    One button for a person, two moves underneath: a paused deal is resumed, anything else
-    is advanced to review. The refusal names ``PROGRESS_FROM``, so a deal that is neither
-    screened nor paused is told both things it could have been.
+    One button for a person, four moves underneath: a paused deal is resumed; a screened one
+    is advanced to review; one in review or being priced goes Under LOI; one Under LOI is
+    closed. The refusal names ``PROGRESS_FROM``, so a deal Progress does not apply to is told
+    every status it could have been.
     """
     deal = load_deal(session, deal_id)
-    if deal.status is Status.PAUSED:
+    target = progress_target(deal.status)
+    if target is Status.PAUSED:
         return resume(session, deal_id, actor=actor)
+    if target is Status.LOI_SENT:
+        return send_loi(session, deal_id, actor=actor)
+    if target is Status.CLOSED:
+        return close_loan(session, deal_id, actor=actor)
     _check(deal, "progressed", PROGRESS_FROM)
     return advance_to_review(session, deal_id, actor=actor)
 

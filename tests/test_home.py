@@ -1,4 +1,4 @@
-"""The Home page: its four sections, their order, and the three controls on every row.
+"""The Home page: its six sections, their order, and the four controls on every row.
 
 # SPEC §4.6, §9.1, §12
 
@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from api.ratelimit import LIMITER
 from api.render import day
 from config.config import Config
-from db.models import AuditLog, Deal, IntakeSubmission, Screen, Underwrite
+from db.models import AuditLog, Borrower, Deal, IntakeSubmission, Property, Screen, Underwrite
 from schema.models import AuditAction, Channel, Status
 from services import (
     DEALS,
@@ -38,6 +38,8 @@ from services import (
     add_note,
     advance_to_review,
     auto_run,
+    decline,
+    delete_deal,
     home_view,
     last_activity,
     latest_screen,
@@ -46,6 +48,7 @@ from services import (
     pause,
     paused_from,
     progress,
+    progress_target,
     resume,
     run_screen,
     run_underwrite,
@@ -53,7 +56,7 @@ from services import (
     section_of,
     underwrite_result,
 )
-from services.home import RunSummary, query_matches
+from services.home import RunSummary
 from services.requests import UnderwriteRequest
 from tests.conftest import ACTOR, DECLINING_SALE_PRICE, QueueClient, requires_db, store_deal
 from tests.test_apply import VALID
@@ -121,20 +124,24 @@ def post(client: TestClient, deal: Deal, action: str, **data: Any) -> Any:
     return client.post(f"/queue/deals/{deal.id}/{action}", data=data, follow_redirects=False)
 
 
-# --- the four sections and who is in them (SPEC §9.1) --------------------------------------------
+# --- the six sections and who is in them (SPEC §9.1) ---------------------------------------------
 
 
-def test_the_four_sections_are_always_there_in_order(db_session: Session) -> None:
+def test_the_six_sections_are_always_there_in_order(db_session: Session) -> None:
     view = home_view(db_session)
     assert [section.key for section in view.sections] == [
         Section.BORROWER,
         Section.DCF,
+        Section.LOI,
+        Section.CLOSED,
         Section.PAUSED,
         Section.DEAD,
     ]
     assert [section.title for section in view.sections] == [
         "Borrower Submissions",
         "DCF New Deals",
+        "Under LOI",
+        "Closed",
         "On Pause",
         "Dead",
     ]
@@ -162,8 +169,9 @@ def test_a_borrower_submission_and_a_team_entry_sit_in_the_first_two(
         (Status.SCREENED, Section.DCF),
         (Status.IN_REVIEW, Section.DCF),
         (Status.UNDERWRITING, Section.DCF),
-        (Status.LOI_SENT, Section.DCF),
-        (Status.HANDED_OFF, Section.DCF),
+        (Status.LOI_SENT, Section.LOI),
+        (Status.HANDED_OFF, Section.LOI),
+        (Status.CLOSED, Section.CLOSED),
         (Status.PAUSED, Section.PAUSED),
         (Status.DECLINED, Section.DEAD),
         (Status.DEAD, Section.DEAD),
@@ -179,16 +187,24 @@ def test_every_status_lands_in_exactly_one_section(
     assert [k for k in Section if deal.id in ids(view, k)] == [key]
 
 
-@pytest.mark.parametrize("status", [Status.PAUSED, Status.DECLINED, Status.DEAD])
-def test_a_paused_or_dead_web_deal_leaves_the_borrower_section(
-    anon_client: QueueClient, db_session: Session, status: Status
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (Status.LOI_SENT, Section.LOI),
+        (Status.CLOSED, Section.CLOSED),
+        (Status.PAUSED, Section.PAUSED),
+        (Status.DECLINED, Section.DEAD),
+        (Status.DEAD, Section.DEAD),
+    ],
+)
+def test_a_web_deal_past_sizing_leaves_the_borrower_section(
+    anon_client: QueueClient, db_session: Session, status: Status, expected: Section
 ) -> None:
-    """The first two sections exclude the paused and the dead, whichever channel."""
+    """The first two sections exclude everything past them, whichever channel."""
     web = at(db_session, a_web_deal(anon_client, db_session), status)
     assert web.channel is Channel.WEB
     view = home_view(db_session)
     assert ids(view, Section.BORROWER) == []
-    expected = Section.PAUSED if status is Status.PAUSED else Section.DEAD
     assert ids(view, expected) == [web.id]
 
 
@@ -299,7 +315,7 @@ def test_each_row_carries_the_latest_verdict_and_irr(
     assert entry.irr is not None and entry.irr > 0
 
 
-# --- the three controls (SPEC §4.6) ---------------------------------------------------------------
+# --- the four controls (SPEC §4.6) ----------------------------------------------------------------
 
 
 def test_pause_sets_the_deal_aside_and_records_where_it_was(
@@ -340,20 +356,65 @@ def test_progress_on_a_screened_deal_is_the_advance_it_always_was(
     assert row.before == {"status": "SCREENED"} and row.after == {"status": "IN_REVIEW"}
 
 
-@pytest.mark.parametrize(
-    "current", [Status.NEW, Status.IN_REVIEW, Status.UNDERWRITING, Status.DECLINED, Status.DEAD]
-)
-def test_progress_from_anywhere_else_is_refused_and_names_both_statuses_it_runs_from(
+@pytest.mark.parametrize("current", [Status.IN_REVIEW, Status.UNDERWRITING])
+def test_progress_on_a_deal_being_priced_puts_it_under_loi(
+    db_session: Session, deal_with_overrides: Deal, current: Status
+) -> None:
+    """v0.25: review and pricing are followed by terms going out."""
+    at(db_session, deal_with_overrides, current)
+    assert progress_target(current) is Status.LOI_SENT
+    progress(db_session, deal_with_overrides.id, actor=ACTOR)
+    db_session.commit()
+    assert deal_with_overrides.status is Status.LOI_SENT
+    assert section_of(deal_with_overrides) is Section.LOI
+    [row] = rows(db_session, deal_with_overrides, AuditAction.LOI_SENT)
+    assert row.before == {"status": current.value} and row.after == {"status": "LOI_SENT"}
+
+
+@pytest.mark.parametrize("current", [Status.LOI_SENT, Status.HANDED_OFF])
+def test_progress_on_a_deal_under_loi_closes_the_loan(
     db_session: Session, deal_with_overrides: Deal, current: Status
 ) -> None:
     at(db_session, deal_with_overrides, current)
+    assert progress_target(current) is Status.CLOSED
+    progress(db_session, deal_with_overrides.id, actor=ACTOR)
+    db_session.commit()
+    assert deal_with_overrides.status is Status.CLOSED
+    assert section_of(deal_with_overrides) is Section.CLOSED
+    [row] = rows(db_session, deal_with_overrides, AuditAction.LOAN_CLOSED)
+    assert row.before == {"status": current.value} and row.after == {"status": "CLOSED"}
+
+
+@pytest.mark.parametrize(
+    "current", [Status.NEW, Status.NEEDS_INFO, Status.CLOSED, Status.DECLINED, Status.DEAD]
+)
+def test_progress_from_anywhere_else_is_refused_and_names_every_status_it_runs_from(
+    db_session: Session, deal_with_overrides: Deal, current: Status
+) -> None:
+    at(db_session, deal_with_overrides, current)
+    assert progress_target(current) is None
     with pytest.raises(ActionNotAllowed) as caught:
         progress(db_session, deal_with_overrides.id, actor=ACTOR)
-    assert "PAUSED" in str(caught.value) and "SCREENED" in str(caught.value)
+    for status in ("PAUSED", "SCREENED", "IN_REVIEW", "UNDERWRITING", "LOI_SENT"):
+        assert status in str(caught.value)
     assert deal_with_overrides.status is current
 
 
-@pytest.mark.parametrize("closed", [Status.PAUSED, Status.DECLINED, Status.DEAD])
+@pytest.mark.parametrize("current", [Status.CLOSED])
+def test_a_closed_loan_is_not_paused_declined_or_killed(
+    db_session: Session, deal_with_overrides: Deal, current: Status
+) -> None:
+    at(db_session, deal_with_overrides, current)
+    with pytest.raises(ActionNotAllowed):
+        pause(db_session, deal_with_overrides.id, actor=ACTOR)
+    with pytest.raises(ActionNotAllowed):
+        decline(db_session, deal_with_overrides.id, actor=ACTOR, reason="changed our minds")
+    with pytest.raises(ActionNotAllowed):
+        mark_dead(db_session, deal_with_overrides.id, actor=ACTOR)
+    assert deal_with_overrides.status is Status.CLOSED
+
+
+@pytest.mark.parametrize("closed", [Status.PAUSED, Status.CLOSED, Status.DECLINED, Status.DEAD])
 def test_a_paused_or_closed_deal_is_not_paused_again(
     db_session: Session, deal_with_overrides: Deal, closed: Status
 ) -> None:
@@ -553,6 +614,141 @@ def test_kill_records_the_reason_when_one_is_given(
     assert row.after == {"status": "DEAD", "reason": "sold elsewhere"}
 
 
+def test_closing_the_loan_asks_first_and_an_unconfirmed_progress_closes_nothing(
+    client: QueueClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    """v0.25: Progress from Under LOI goes through close.html, as Kill goes through kill.html."""
+    at(db_session, deal_with_overrides, Status.LOI_SENT)
+    body = client.get("/queue").text
+    close_link = f'href="/queue/deals/{deal_with_overrides.id}/close?return_to=home"'
+    assert close_link in body
+
+    page = client.get(f"/queue/deals/{deal_with_overrides.id}/close?return_to=home")
+    assert page.status_code == 200
+    assert "Mark this loan closed?" in page.text
+    assert f'action="/queue/deals/{deal_with_overrides.id}/advance"' in page.text
+    assert 'name="confirm" value="yes"' in page.text and 'href="/queue"' in page.text
+
+    unconfirmed = post(client, deal_with_overrides, "advance", return_to="home")
+    assert unconfirmed.status_code == 422 and "Mark this loan closed?" in unconfirmed.text
+    db_session.expire_all()
+    assert db_session.get(Deal, deal_with_overrides.id).status is Status.LOI_SENT  # type: ignore[union-attr]
+
+    closed = post(client, deal_with_overrides, "advance", confirm="yes", return_to="home")
+    assert closed.status_code == 303
+    assert closed.headers["location"].startswith("/queue?notice=Closed")
+    db_session.expire_all()
+    assert db_session.get(Deal, deal_with_overrides.id).status is Status.CLOSED  # type: ignore[union-attr]
+    assert len(rows(db_session, deal_with_overrides, AuditAction.LOAN_CLOSED)) == 1
+
+
+def test_progress_into_loi_is_one_click_and_its_hover_says_where_it_goes(
+    client: QueueClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    at(db_session, deal_with_overrides, Status.UNDERWRITING)
+    assert "Moves the deal to Under LOI" in client.get("/queue").text
+    moved = post(client, deal_with_overrides, "advance", return_to="home")
+    assert moved.status_code == 303
+    db_session.expire_all()
+    assert db_session.get(Deal, deal_with_overrides.id).status is Status.LOI_SENT  # type: ignore[union-attr]
+    body = client.get("/queue").text
+    assert body.index("<h2>Under LOI") < body.index(str(deal_with_overrides.id))
+    assert body.index(str(deal_with_overrides.id)) < body.index("<h2>Closed")
+
+
+# --- delete (v0.25) -------------------------------------------------------------------------------
+
+
+def test_delete_asks_first_and_a_post_without_the_confirmation_deletes_nothing(
+    client: QueueClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    body = client.get("/queue").text
+    assert f'href="/queue/deals/{deal_with_overrides.id}/delete?return_to=home"' in body
+    assert 'aria-label="Delete"' in body
+    page = client.get(f"/queue/deals/{deal_with_overrides.id}/delete?return_to=home")
+    assert page.status_code == 200
+    assert "Delete this deal?" in page.text and "cannot be undone" in page.text
+    assert 'name="confirm" value="yes"' in page.text and 'href="/queue"' in page.text
+
+    unconfirmed = post(client, deal_with_overrides, "delete", return_to="home")
+    assert unconfirmed.status_code == 422 and "Delete this deal?" in unconfirmed.text
+    db_session.expire_all()
+    assert db_session.get(Deal, deal_with_overrides.id) is not None
+
+
+def test_delete_removes_the_deal_and_its_rows_and_keeps_the_trail(
+    client: QueueClient, db_session: Session, deal_with_overrides: Deal
+) -> None:
+    run_underwrite(db_session, deal_with_overrides.id, UnderwriteRequest(), CONFIG, actor=ACTOR)
+    db_session.commit()
+    deal_id, borrower_id, property_id = (
+        deal_with_overrides.id,
+        deal_with_overrides.borrower_id,
+        deal_with_overrides.property_id,
+    )
+    trail_before = len(
+        list(
+            db_session.scalars(
+                select(AuditLog).where(
+                    AuditLog.table_name == DEALS, AuditLog.row_id == str(deal_id)
+                )
+            )
+        )
+    )
+    deleted = post(client, deal_with_overrides, "delete", confirm="yes", return_to="home")
+    assert deleted.status_code == 303
+    assert deleted.headers["location"].startswith("/queue?notice=Deleted")
+
+    db_session.expire_all()
+    assert db_session.get(Deal, deal_id) is None
+    for model in (Screen, Underwrite, IntakeSubmission):
+        assert list(db_session.scalars(select(model).where(model.deal_id == deal_id))) == []
+    # the borrower and the property had no other deal, so they went too
+    assert db_session.get(Borrower, borrower_id) is None
+    assert db_session.get(Property, property_id) is None
+    # the trail stays, with one row more saying what went and who removed it
+    trail = list(
+        db_session.scalars(
+            select(AuditLog)
+            .where(AuditLog.table_name == DEALS, AuditLog.row_id == str(deal_id))
+            .order_by(AuditLog.created_at, AuditLog.id)
+        )
+    )
+    assert len(trail) == trail_before + 1
+    last = trail[-1]
+    assert last.action == AuditAction.DEAL_DELETED.value and last.actor == "sam@glenwood.example"
+    assert last.before is not None and last.before["borrower_removed"] is True
+    assert last.before["rows_removed"]["screens"] >= 1
+    assert str(deal_id) not in client.get("/queue").text
+
+
+def test_delete_keeps_a_borrower_and_property_another_deal_still_holds(
+    db_session: Session,
+) -> None:
+    first = a_deal(db_session)
+    second = a_deal(db_session)
+    db_session.commit()
+    assert first.borrower_id == second.borrower_id and first.property_id == second.property_id
+    before = delete_deal(db_session, first.id, actor=ACTOR)
+    db_session.commit()
+    assert "borrower_removed" not in before and "property_removed" not in before
+    assert db_session.get(Deal, second.id) is not None
+    assert db_session.get(Borrower, second.borrower_id) is not None
+    assert [entry.deal.id for s in home_view(db_session).sections for entry in s.entries] == [
+        second.id
+    ]
+
+
+@pytest.mark.parametrize("current", [Status.CLOSED, Status.DEAD, Status.PAUSED])
+def test_a_deal_is_deleted_from_any_status(
+    db_session: Session, deal_with_overrides: Deal, current: Status
+) -> None:
+    at(db_session, deal_with_overrides, current)
+    delete_deal(db_session, deal_with_overrides.id, actor=ACTOR)
+    db_session.commit()
+    assert db_session.get(Deal, deal_with_overrides.id) is None
+
+
 def test_a_control_the_status_rules_out_comes_back_as_the_deal_page_saying_why(
     client: QueueClient, db_session: Session, deal_with_overrides: Deal
 ) -> None:
@@ -574,10 +770,9 @@ def test_the_home_page_lists_every_section_and_the_row_columns(
     assert response.status_code == 200
     body = response.text
     assert "<h1>Home</h1>" in body
-    for title in ("Borrower Submissions", "DCF New Deals", "On Pause", "Dead"):
-        assert title in body
-    assert body.index("Borrower Submissions") < body.index("DCF New Deals")
-    assert body.index("DCF New Deals") < body.index("On Pause") < body.index("Dead")
+    titles = ("Borrower Submissions", "DCF New Deals", "Under LOI", "Closed", "On Pause", "Dead")
+    positions = [body.index(f"<h2>{title}") for title in titles]
+    assert positions == sorted(positions)
     for column in ("Borrower", "Address", "Loan structure", "Verdict", "Source", "Last activity"):
         assert f"<th>{column}</th>" in body, column
     assert '<th class="num">Loan amount</th>' in body and '<th class="num">IRR</th>' in body
@@ -669,7 +864,7 @@ def test_the_deal_page_renders_a_screen_and_an_underwrite(
     response = client.get(f"/queue/deals/{deal_with_overrides.id}")
     assert response.status_code == 200
     body = response.text
-    assert "Scored as" in body
+    assert "Scored as" not in body  # off the page from v0.25
     assert "Leverage against caps" in body
     assert ">LTV<" in body and ">LTC<" in body
     # outputs on top: the pricing, the two sensitivities, the three analyses, the ledger
@@ -723,7 +918,8 @@ def test_the_analysis_runs_without_a_rent(
     response = client.post(f"/queue/deals/{deal_with_overrides.id}/run", follow_redirects=False)
     assert response.status_code == 303, response.text
     page = client.get(f"/queue/deals/{deal_with_overrides.id}").text
-    assert "NOT_EVALUATED" in page
+    # no status code is printed (v0.25); the market rent block reads its blanks
+    assert "NOT_EVALUATED" not in page and "<dt>Market rent</dt><dd>—</dd>" in page
     # the flag is on the stored result, not the page (SPEC §9)
     row = latest_underwrite(db_session, deal_with_overrides.id)
     assert row is not None
@@ -784,7 +980,7 @@ def test_every_team_entry_fixture_renders_its_screen_and_underwrite(
 
     response = client.get(f"/queue/deals/{deal.id}")
     assert response.status_code == 200, response.text
-    assert "Scored as" in response.text
+    assert "Scored as" not in response.text
     assert "Return Overview" in response.text and "<h2>Lender Sensitivity" in response.text
     assert "Take-Back Analysis" in response.text
     assert client.get("/queue").status_code == 200
@@ -793,19 +989,22 @@ def test_every_team_entry_fixture_renders_its_screen_and_underwrite(
 # --- the search box (SPEC §9.1, v0.20) ------------------------------------------------------------
 
 
-def test_the_query_matches_the_name_the_entity_and_the_phone_by_digits(
-    db_session: Session, deal_with_overrides: Deal
+def test_the_borrower_select_offers_every_borrower_with_a_deal_a_to_z(
+    db_session: Session,
 ) -> None:
-    deal = deal_with_overrides  # Dana Whitlock, Whitlock Homes LLC, 918-555-0147
-    for query in ("", "   ", "whit", "DANA", "homes llc", "555-0147", "9185550147", "(918) 555"):
-        assert query_matches(deal, query), query
-    for query in ("ortiz", "ridgeline", "555-0199", "14"):
-        assert not query_matches(deal, query), query
-    # three digits is a phone search; fewer is a name, and no name holds them
-    assert query_matches(deal, "147") and not query_matches(deal, "14")
-    # a deal with no borrower row answers only a blank query
-    deal.borrower = None
-    assert query_matches(deal, "") and not query_matches(deal, "whit")
+    """v0.25: the Borrower select replaces the search box; one option per person."""
+    a_deal(db_session, borrower_name="Rafael Ortiz", borrower_phone="7205550144")
+    a_deal(db_session, borrower_name="priya Natarajan", borrower_phone="9185550102")
+    a_deal(db_session, borrower_name="Rafael Ortiz", borrower_phone="7205550144")  # same person
+    labels = [choice.label for choice in home_view(db_session).borrowers]
+    assert labels == ["priya Natarajan", "Rafael Ortiz"]
+
+
+def test_two_borrowers_who_read_the_same_carry_their_phone(db_session: Session) -> None:
+    a_deal(db_session, borrower_name="Sam Reed", borrower_phone="7205550144")
+    a_deal(db_session, borrower_name="Sam Reed", borrower_phone="9185550102")
+    labels = sorted(choice.label for choice in home_view(db_session).borrowers)
+    assert labels == ["Sam Reed · 720-555-0144", "Sam Reed · 918-555-0102"]
 
 
 def test_the_filter_narrows_every_section_and_keeps_the_whole_count(
@@ -818,50 +1017,62 @@ def test_the_filter_narrows_every_section_and_keeps_the_whole_count(
     assert (
         everything.total == 3 and everything.unfiltered_total == 3 and not everything.filter.active
     )
-    narrowed = home_view(db_session, HomeFilter(query="rafael"))
+    narrowed = home_view(db_session, HomeFilter(borrower_id=team.borrower_id))
     assert narrowed.filter.active and narrowed.total == 1 and narrowed.unfiltered_total == 3
     assert [entry.deal.id for entry in narrowed.section(Section.DCF).entries] == [team.id]
     assert narrowed.section(Section.PAUSED).entries == []
-    by_phone = home_view(db_session, HomeFilter(query="720-555"))
-    assert [entry.deal.id for entry in by_phone.section(Section.DCF).entries] == [team.id]
     # the paused deal is found in its own section; the web deal in its
-    assert [
-        e.deal.id
-        for e in home_view(db_session, HomeFilter(query="priya")).section(Section.PAUSED).entries
-    ] == [paused.id]
-    found_web = home_view(db_session, HomeFilter(query="elena"))
+    on_pause = home_view(db_session, HomeFilter(borrower_id=paused.borrower_id))
+    assert [e.deal.id for e in on_pause.section(Section.PAUSED).entries] == [paused.id]
+    found_web = home_view(db_session, HomeFilter(borrower_id=web.borrower_id))
     assert [e.deal.id for e in found_web.section(Section.BORROWER).entries] == [web.id]
     # every section is still there, empty or not
     assert [section.key for section in narrowed.sections] == list(Section)
-    # the chips hook: a chip narrows by the deal column it names (10c will render them)
+    # a chip narrows by the deal column it names
     chipped = home_view(db_session, HomeFilter(chips=(("status", Status.PAUSED.value),)))
     assert chipped.filter.active and chipped.total == 1
     assert [entry.deal.id for entry in chipped.section(Section.PAUSED).entries] == [paused.id]
 
 
-def test_the_search_box_renders_narrows_the_page_and_keeps_what_was_typed(
+def test_the_search_bar_is_three_selects_reading_their_captions(
     client: QueueClient, db_session: Session
 ) -> None:
-    a_deal(db_session, borrower_name="Rafael Ortiz", borrower_phone="7205550144")
+    rafael = a_deal(db_session, borrower_name="Rafael Ortiz", borrower_phone="7205550144")
     other = a_deal(db_session, borrower_name="Priya Natarajan", borrower_phone="9185550102")
     body = client.get("/queue").text
     assert (
         '<form class="search" id="deal-search" method="get" action="/queue" role="search">' in body
     )
-    assert 'type="search" id="q" name="q" value=""' in body
-    assert '<div class="chips" id="filter-chips" data-hook="profile-filters">' in body
+    assert 'name="q"' not in body  # the free-text box is gone (v0.25)
+    selects = re.findall(r'<select name="([a-z_]+)"', body)
+    assert selects == ["borrower", "work_status", "years_investing"]
+    for caption in ("Borrower", "Commitment Level", "Years investing"):
+        assert f'<option value="">{caption}</option>' in body, caption
+    for answer in ("Full time", "Part time", "First time"):
+        assert f">{answer}</option>" in body, answer
+    for gone in ("Projects in progress", "Mostly does", "Who does the work"):
+        assert gone not in body, gone
     assert "Clear</a>" not in body and 'id="search-result"' not in body
-    assert "Rafael Ortiz" in body and "Priya Natarajan" in body
-    found = client.get("/queue", params={"q": "  rafael "}).text
-    assert 'name="q" value="rafael"' in found
+
+    found = client.get("/queue", params={"borrower": str(rafael.borrower_id)}).text
+    assert f'<option value="{rafael.borrower_id}" selected>Rafael Ortiz</option>' in found
     assert '<a class="small" href="/queue">Clear</a>' in found
-    assert '<p class="lede small" id="search-result">1 of 2 deals match "rafael".</p>' in found
-    assert "Rafael Ortiz" in found and "Priya Natarajan" not in found and str(other.id) not in found
     assert (
-        found.count('<span class="count">') == 4
+        '<p class="lede small" id="search-result">1 of 2 deals match Borrower: Rafael Ortiz.</p>'
+        in found
+    )
+    assert 'data-filter="borrower" href="/queue"' in found  # the chip takes itself off
+    assert str(rafael.id) in found and str(other.id) not in found
+    assert (
+        found.count('<span class="count">') == 6
         and 'DCF New Deals <span class="count">1</span>' in found
     )
-    # nothing matches: the four sections stand empty and the page says so by the count
-    none = client.get("/queue", params={"q": "nobody"}).text
-    assert '0 of 2 deals match "nobody".' in none and "No deals yet" not in none
-    assert none.count('<p class="small muted" style="margin:0">None.</p>') == 4
+
+
+def test_a_mangled_borrower_or_a_retired_filter_on_the_query_string_narrows_nothing(
+    client: QueueClient, db_session: Session
+) -> None:
+    deal = a_deal(db_session)
+    for params in ({"borrower": "not-an-id"}, {"strategy": "FLIPS"}, {"q": "nobody"}):
+        body = client.get("/queue", params=params).text
+        assert str(deal.id) in body and 'id="search-result"' not in body, params

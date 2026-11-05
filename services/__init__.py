@@ -13,6 +13,7 @@ from __future__ import annotations
 from services.actions import (
     ADVANCE_TO_REVIEW_FROM,
     ASSUMPTION_FIELDS,
+    CLOSE_FROM,
     COURT_FIELDS,
     DECLINE_FROM,
     MARK_DEAD_FROM,
@@ -21,17 +22,20 @@ from services.actions import (
     REOPEN_FROM,
     RESETTABLE,
     RESUME_FROM,
+    SEND_LOI_FROM,
     add_note,
     advance_to_review,
     apply_assumptions,
     apply_court_search,
     apply_overrides,
     apply_reset,
+    close_loan,
     decline,
     mark_dead,
     pause,
     paused_from,
     progress,
+    progress_target,
     reopen,
     reopen_status,
     reset_assumptions,
@@ -39,6 +43,7 @@ from services.actions import (
     save_assumptions,
     save_court_search,
     save_overrides,
+    send_loi,
 )
 from services.adjust import (
     ADJUSTABLE_FIELDS,
@@ -73,6 +78,7 @@ from services.defaults import (
     populate,
     submitted_on,
 )
+from services.delete import delete_deal
 from services.enrichment import NO_ADAPTER_VALUES, AdapterValues, adapter_values
 from services.errors import (
     ActionNotAllowed,
@@ -90,12 +96,15 @@ from services.errors import (
 from services.history import HistoryEntry, HistoryKind, deal_history
 from services.home import (
     SECTION_TITLES,
+    BorrowerChoice,
     HomeEntry,
     HomeFilter,
     HomeSection,
     HomeView,
     Section,
+    borrower_choices,
     chips_from,
+    filter_from,
     home_view,
     last_activity,
     profile_filter_choices,
@@ -368,4 +377,13 @@ __all__ = [
     "version_rows",
     "verify_password",
     "working_version",
+    "CLOSE_FROM",
+    "SEND_LOI_FROM",
+    "close_loan",
+    "progress_target",
+    "send_loi",
+    "delete_deal",
+    "BorrowerChoice",
+    "borrower_choices",
+    "filter_from",
 ]

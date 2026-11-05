@@ -792,7 +792,9 @@ def test_a_go_deal_sees_its_indicative_terms_and_nothing_else(
     # one row per pricing step, labelled, with the amount, the rate, the profit and the yield
     # the request first, then each smaller loan, largest to smallest (SPEC §4.2, v0.18) -
     # the reverse of the team's Pricing section, which runs most equity first
-    assert ["Requested", "-5%", "-10%"] == re.findall(r'<th scope="row">([^<]+)</th>', table)
+    assert ["Requested", "-2.5%", "-5%", "-7.5%", "-10%"] == re.findall(
+        r'<th scope="row">([^<]+)</th>', table
+    )
     for cell in (
         "Loan amount",
         "Rate",
@@ -864,10 +866,10 @@ def test_a_declined_deal_gets_the_plain_thank_you(
         assert forbidden not in main, forbidden
     db_session.expire_all()
     assert deal.indicative_terms_shown_at is None and deal.indicative_terms_shown is None
-    # ...and the deal page says nothing was shown
+    # ...and the deal page does not print the record at all (v0.25)
     pricing = between(client.get(f"/queue/deals/{deal.id}").text, 'id="pricing"', "</section>")
     assert pricing is not None
-    assert "Shown to borrower" in pricing and "Nothing shown to the borrower." in pricing
+    assert "Shown to borrower" not in pricing and 'id="shown-to-borrower"' not in pricing
 
 
 def test_rows_above_the_max_quoted_rate_are_left_out(
@@ -881,9 +883,9 @@ def test_rows_above_the_max_quoted_rate_are_left_out(
     _, pricing = arrival(db_session, first)
     assert pricing is not None
     rates = [row.interest_rate for row in pricing.rows]
-    assert len(set(rates)) == 3 and rates[-1] == max(rate for rate in rates if rate is not None)
+    assert len(set(rates)) == 5 and rates[-1] == max(rate for rate in rates if rate is not None)
 
-    middle = sorted(rate for rate in rates if rate is not None)[1]
+    middle = sorted(rate for rate in rates if rate is not None)[2]
     capped(monkeypatch, str(middle))
     link = thanks_link(post(anon_client))
     second = [deal for deal in deals(db_session) if deal.id != first.id][0]
@@ -891,11 +893,11 @@ def test_rows_above_the_max_quoted_rate_are_left_out(
     assert second_pricing is not None
     left_out = [row for row in second_pricing.rows if row.over_max_quote]
     kept = [row for row in second_pricing.rows if row.cleared]
-    assert [row.label for row in left_out] == ["Requested"] and len(kept) == 2
+    assert [row.label for row in left_out] == ["-2.5%", "Requested"] and len(kept) == 3
     table = terms_table(anon_client.get(link).text)
     assert table is not None
     assert "Requested" not in table and dollars(left_out[0].loan_amount) not in table
-    assert re.findall(r'<th scope="row">([^<]+)</th>', table) == ["-5%", "-10%"]
+    assert re.findall(r'<th scope="row">([^<]+)</th>', table) == ["-5%", "-7.5%", "-10%"]
     for row in kept:
         assert dollars(row.loan_amount) in table
         assert quoted(borrower_rate(row.interest_rate, get_config())) in table
@@ -946,7 +948,13 @@ def test_what_was_shown_is_recorded_on_the_deal_once_and_the_team_sees_it(
     record = deal.indicative_terms_shown
     assert record is not None
     assert record["language"] == "es" and record["with_profit"] is True
-    assert [row["label"] for row in record["rows"]] == ["Requested", "-5%", "-10%"]
+    assert [row["label"] for row in record["rows"]] == [
+        "Requested",
+        "-2.5%",
+        "-5%",
+        "-7.5%",
+        "-10%",
+    ]
     # the run read, the cushion and the views opened are on the record (v0.22)
     assert record["version"] == 1 and record["views"] == ["simple"]
     assert Decimal(record["rate_cushion"]) == get_config().pricing.borrower_rate_cushion
@@ -983,24 +991,11 @@ def test_what_was_shown_is_recorded_on_the_deal_once_and_the_team_sees_it(
     assert [row.action for row in trail].count(AuditAction.INDICATIVE_TERMS_SHOWN.value) == 1
     assert len(trail) == 6
 
-    # the deal page shows it under Pricing, as rendered
+    # the record stays on the deal; the deal page no longer prints it (v0.25)
     page = client.get(f"/queue/deals/{deal.id}").text
-    pricing_section = between(page, 'id="pricing"', "</section>")
-    assert pricing_section is not None
-    shown_block = pricing_section[pricing_section.index('<div id="shown-to-borrower">') :]
-    assert "Shown to borrower" in shown_block
-    assert "<dt>Language</dt><dd>Spanish</dd>" in shown_block
-    assert "Nothing shown to the borrower." not in shown_block
-    assert re.findall(r'<th scope="row">([^<]+)</th>', shown_block) == ["Requested", "-5%", "-10%"]
-    assert "<dt>Version</dt><dd>1</dd>" in shown_block
-    assert "<dt>Views</dt><dd>simple</dd>" in shown_block
-    assert ">Rate shown</th>" in shown_block and ">Solved rate</th>" in shown_block
-    for row, at_quote in zip(pricing.rows, reversed(quote.rows), strict=True):
-        assert dollars(row.loan_amount) in shown_block
-        assert quoted(at_quote.borrower_rate) in shown_block
-        assert quoted(row.interest_rate) in shown_block
-        assert dollars(at_quote.profit) in shown_block
-        assert pct(at_quote.cash_on_cash) in shown_block
+    assert 'id="shown-to-borrower"' not in page and "Shown to borrower" not in page
+    assert record["language"] == "es" and record["version"] == 1 and record["views"] == ["simple"]
+    assert len(record["rows"]) == len(pricing.rows) == 5
     # and the Spanish page the borrower saw read the same numbers
     table = terms_table(body)
     assert table is not None
@@ -1024,7 +1019,13 @@ def test_the_table_reads_in_spanish(anon_client: QueueClient, db_session: Sessio
         "Rendimiento (efectivo sobre efectivo)",
     ):
         assert f">{cell}</th>" in table
-    assert re.findall(r'<th scope="row">([^<]+)</th>', table) == ["Solicitado", "-5%", "-10%"]
+    assert re.findall(r'<th scope="row">([^<]+)</th>', table) == [
+        "Solicitado",
+        "-2.5%",
+        "-5%",
+        "-7.5%",
+        "-10%",
+    ]
     assert "Requested" not in table and DISCLAIMER_EN not in table
     assert f'href="{link.split("?")[0]}?lang=en"' in body
 

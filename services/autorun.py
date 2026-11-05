@@ -63,10 +63,11 @@ from services.versions import record_version, take_snapshot
 SYSTEM_ACTOR = "system"
 
 # A deal in one of these is not run on automatically: its intake is not finished, it is
-# closed, or a person has set it aside (SPEC §4.6) - a paused deal is left exactly as it was
-# paused. The button runs on all of them.
+# closed out, a person has set it aside (SPEC §4.6) - a paused deal is left exactly as it was
+# paused - or the loan closed, and the Working version is what it closed on (v0.25). The
+# button runs on all of them.
 NOT_RUN_FROM: frozenset[Status] = (
-    UNDERWRITE_REFUSED_UNTIL_COMPLETE | UNDERWRITE_REFUSED_FROM | {Status.PAUSED}
+    UNDERWRITE_REFUSED_UNTIL_COMPLETE | UNDERWRITE_REFUSED_FROM | {Status.PAUSED, Status.CLOSED}
 )
 
 

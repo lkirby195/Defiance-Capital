@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
+from uuid import UUID
 
 import pytest
 from sqlalchemy import select
@@ -38,7 +39,7 @@ from schema.models import (
     WorkStatus,
     YearsInvesting,
 )
-from services import HomeFilter, Section, chips_from, home_view
+from services import HomeFilter, HomeView, Section, chips_from, filter_from, home_view
 from services.home import chip_matches
 from tests.conftest import QueueClient, form_body, requires_db, store_deal
 from tests.test_apply import post
@@ -376,28 +377,39 @@ def test_a_chip_narrows_by_the_borrower_s_answer(
 
     assert ids(HomeFilter(chips=(("work_status", "PART_TIME"),))) == [rafael.id]
     assert ids(HomeFilter(chips=(("work_status", "FULL_TIME"),))) == [priya.id]
-    assert ids(HomeFilter(chips=(("work_status", "PART_TIME"), ("strategy", "MIX")))) == [rafael.id]
-    assert ids(HomeFilter(chips=(("work_status", "PART_TIME"), ("strategy", "FLIPS")))) == []
-    assert ids(HomeFilter(query="priya", chips=(("work_status", "FULL_TIME"),))) == [priya.id]
-    assert ids(HomeFilter(query="rafael", chips=(("work_status", "FULL_TIME"),))) == []
-    narrowed = home_view(db_session, HomeFilter(chips=(("strategy", "MIX"),)))
+    priya_only = HomeFilter(borrower_id=priya.borrower_id, chips=(("work_status", "FULL_TIME"),))
+    assert ids(priya_only) == [priya.id]
+    rafael_full = HomeFilter(borrower_id=rafael.borrower_id, chips=(("work_status", "FULL_TIME"),))
+    assert ids(rafael_full) == []
+    narrowed = home_view(db_session, HomeFilter(chips=(("work_status", "PART_TIME"),)))
     assert narrowed.filter.active and narrowed.total == 1 and narrowed.unfiltered_total == 2
 
 
 def test_the_filter_reads_and_writes_the_query_string() -> None:
+    """v0.25: Home filters by two profile answers; the other three are not on the bar."""
     assert chips_from(
-        {"work_status": "FULL_TIME", "strategy": "bogus", "q": "x", "status": "NEW"}
+        {"work_status": "FULL_TIME", "strategy": "MIX", "q": "x", "status": "NEW"}
     ) == (("work_status", "FULL_TIME"),)
-    assert chips_from({"strategy": " MIX ", "work_status": ""}) == (("strategy", "MIX"),)
+    assert chips_from({"years_investing": " 2_5 ", "work_status": "bogus"}) == (
+        ("years_investing", "2_5"),
+    )
     assert chips_from({}) == ()
-    both = HomeFilter(query=" a b ", chips=(("work_status", "FULL_TIME"), ("strategy", "MIX")))
-    assert both.summary == '"a b", Full-time in real estate: Full-time, Mostly does: Mix'
-    assert both.query_string == "q=a+b&work_status=FULL_TIME&strategy=MIX"
-    assert both.without("strategy").query_string == "q=a+b&work_status=FULL_TIME"
-    assert both.without("strategy").without("work_status").chips == ()
-    assert HomeFilter(chips=(("years_investing", "2_5"),)).summary == "Years investing: 2–5"
-    assert HomeFilter(query="rafael").summary == '"rafael"'
+    someone = UUID("00000000-0000-0000-0000-0000000000aa")
+    assert filter_from({"borrower": str(someone)}).borrower_id == someone
+    assert filter_from({"borrower": "nope"}).borrower_id is None
+    both = HomeFilter(
+        borrower_id=someone, chips=(("work_status", "FULL_TIME"), ("years_investing", "2_5"))
+    )
+    assert both.query_string == f"borrower={someone}&work_status=FULL_TIME&years_investing=2_5"
+    assert both.without("years_investing").query_string == (
+        f"borrower={someone}&work_status=FULL_TIME"
+    )
+    assert both.without("borrower").query_string == "work_status=FULL_TIME&years_investing=2_5"
+    assert both.without("years_investing").without("work_status").chips == ()
     assert HomeFilter().query_string == "" and not HomeFilter().active
+    assert HomeView(sections=[], filter=both).chip_summary == (
+        "Borrower: (no guarantor name), Commitment Level: Full time, Years investing: 2–5"
+    )
 
 
 def test_home_renders_the_selects_the_chips_and_the_narrowed_count(
@@ -406,10 +418,14 @@ def test_home_renders_the_selects_the_chips_and_the_narrowed_count(
     rafael, priya = two_borrowers(db_session, team_entry)
     body = client.get("/queue").text
     filters = between(body, '<div class="filters" id="profile-filters">', "</div>")
-    selects = re.findall(r'<select name="([a-z_]+)" aria-label="([^"]+)">', filters)
-    assert selects == [(field, PROFILE_CAPTIONS[field]) for field in BORROWER_PROFILE_FIELDS]
+    selects = re.findall(r'<select name="([a-z_]+)"[^>]*aria-label="([^"]+)">', filters)
+    assert selects == [
+        ("borrower", "Borrower"),
+        ("work_status", "Commitment Level"),
+        ("years_investing", "Years investing"),
+    ]
     assert '<option value="">Years investing</option>' in filters
-    assert re.search(r'<option value="FIRST_PROJECT">This is my first project</option>', filters)
+    assert '<option value="FIRST_PROJECT">First time</option>' in filters
     assert " selected" not in filters
     empty = between(
         body, '<div class="chips" id="filter-chips" data-hook="profile-filters">', "</div>"
@@ -417,35 +433,34 @@ def test_home_renders_the_selects_the_chips_and_the_narrowed_count(
     assert empty.split(">", 1)[1].strip() == ""  # the row is there and holds no chip
 
     found = client.get("/queue", params={"work_status": "PART_TIME"}).text
-    assert '<option value="PART_TIME" selected>Part-time</option>' in found
+    assert '<option value="PART_TIME" selected>Part time</option>' in found
     chips = between(
         found, '<div class="chips" id="filter-chips" data-hook="profile-filters">', "</div>"
     )
     assert (
         '<a class="tag fact" data-filter="work_status" href="/queue" title="Remove this filter">'
-        "Full-time in real estate: Part-time ×</a>"
+        "Commitment Level: Part time ×</a>"
     ) in chips
     assert (
         '<p class="lede small" id="search-result">1 of 2 deals match '
-        "Full-time in real estate: Part-time.</p>"
+        "Commitment Level: Part time.</p>"
     ) in found
     assert '<a class="small" href="/queue">Clear</a>' in found
-    assert "Rafael Ortiz" in found and "Priya Natarajan" not in found and str(priya.id) not in found
+    # every borrower stays in the Borrower select; the rows are what narrow
+    assert str(rafael.id) in found and str(priya.id) not in found
 
-    both = client.get(
-        "/queue", params={"q": "rafael", "work_status": "PART_TIME", "strategy": "MIX"}
-    ).text
+    who = str(rafael.borrower_id)
+    both = client.get("/queue", params={"borrower": who, "work_status": "PART_TIME"}).text
     chips = between(
         both, '<div class="chips" id="filter-chips" data-hook="profile-filters">', "</div>"
     )
-    assert 'data-filter="strategy" href="/queue?q=rafael&amp;work_status=PART_TIME"' in chips
-    assert 'data-filter="work_status" href="/queue?q=rafael&amp;strategy=MIX"' in chips
-    assert (
-        '1 of 2 deals match "rafael", Full-time in real estate: Part-time, Mostly does: Mix.'
-        in both
-    )
-    assert 'name="q" value="rafael"' in both and str(rafael.id) in both
-    none = client.get("/queue", params={"q": "priya", "strategy": "MIX"}).text
-    assert '0 of 2 deals match "priya", Mostly does: Mix.' in none
+    assert 'data-filter="borrower" href="/queue?work_status=PART_TIME"' in chips
+    assert f'data-filter="work_status" href="/queue?borrower={who}"' in chips
+    assert "1 of 2 deals match Borrower: Rafael Ortiz, Commitment Level: Part time." in both
+    assert str(rafael.id) in both
+    none = client.get(
+        "/queue", params={"borrower": str(priya.borrower_id), "work_status": "PART_TIME"}
+    ).text
+    assert "0 of 2 deals match Borrower: Priya Natarajan, Commitment Level: Part time." in none
     # an answer off the list narrows by nothing and breaks nothing
     assert client.get("/queue", params={"work_status": "SOMETIMES"}).status_code == 200

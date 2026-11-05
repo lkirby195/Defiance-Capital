@@ -78,7 +78,7 @@ sensitivity:                              # SPEC §8.9 - the IRR grid on the dea
 pricing:                                  # SPEC §8.10 - the Pricing section and its workbook sheet
   target_lender_irr: 0.20                 # PLACEHOLDER: the lender XIRR a row's rate must reach
   max_quoted_rate: 0.18                   # PLACEHOLDER: above this a row is not a quote; it says the rate it needs
-  loan_amount_pct_steps: [0, -0.05, -0.10] # PLACEHOLDER: each row's share off the request; 0 or less
+  loan_amount_pct_steps: [0, -0.025, -0.05, -0.075, -0.10] # 0-10% off the request by 2.5%; 0 or less
   loan_amount_rounding: 1000              # PLACEHOLDER: a stepped row's amount is rounded to the nearest
                                           #   multiple of this; the request row is never rounded
   borrower_coc_target: 0.20               # PLACEHOLDER: the flip's cash-on-cash target (SPEC §8.4); below

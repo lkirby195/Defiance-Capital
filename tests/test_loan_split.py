@@ -273,12 +273,15 @@ def test_the_deal_page_shows_the_split(client: TestClient, db_session: Session) 
     assert re.search(r"<dt>Rehab portion.*?</dt>\s*<dd>\$48,000\.00", body, re.S)
 
 
-def test_the_sizing_table_names_the_portions(client: TestClient, db_session: Session) -> None:
+def test_the_leverage_card_is_the_table_alone(client: TestClient, db_session: Session) -> None:
+    """v0.25: the facts list under the leverage table is gone; the split is on Assumptions."""
     deal = store_deal(db_session, split_entry())
     client.post(f"/queue/deals/{deal.id}/run", follow_redirects=False)
     body = client.get(f"/queue/deals/{deal.id}").text
-    assert "Rehab holdback" in body
-    assert re.search(r"<dt>Rehab holdback</dt>\s*<dd>\$48,000\.00", body)
+    leverage = body[body.index('id="leverage"') :]
+    leverage = leverage[: leverage.index("</section>")]
+    assert "<table>" in leverage and "<dl" not in leverage and "Rehab holdback" not in leverage
+    assert re.search(r"<dt>Rehab portion.*?</dt>\s*<dd>\$48,000\.00", body, re.S)
 
 
 def test_the_console_report_names_the_two_portions() -> None:

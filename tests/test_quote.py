@@ -35,7 +35,8 @@ from tests.test_borrower_sensitivity import by_hand_with_cost, no_price, wichita
 from tests.test_pricing import config_with
 from tests.test_sensitivity import denver_inputs
 
-CONFIG = Config.load()
+# On the pre-v0.25 three-row grid the figures below were worked on (tests/test_pricing.py).
+CONFIG = config_with()
 D = Decimal
 CLOSE = D("1e-15")
 
