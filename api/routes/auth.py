@@ -65,9 +65,9 @@ from services import (
     authenticate,
     change_password,
     lockout,
-    normalize_email,
     record_audit,
     record_failed_sign_in,
+    recorded_email,
 )
 from services.passwords import MIN_LENGTH
 
@@ -122,7 +122,7 @@ def sign_in(
         log.warning(
             "sign-in refused while locked for %s from %s (by email=%s, by address=%s); "
             "lifts in %ss; not recorded",
-            normalize_email(email),
+            recorded_email(email),
             address,
             lock.by_email,
             lock.by_address,

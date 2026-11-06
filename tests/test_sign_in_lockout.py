@@ -24,12 +24,14 @@ from db.models import AuditLog, User
 from schema.models import AuditAction
 from services import (
     ANONYMOUS,
+    EMAIL_LENGTH,
     UNKNOWN_ACCOUNT,
     authenticate,
     create_user,
     lockout,
     record_audit,
     record_failed_sign_in,
+    recorded_email,
 )
 from services.passwords import ITERATIONS, decoy_hash, verify_password
 from services.users import NO_ACCOUNT_HASH
@@ -162,6 +164,32 @@ def test_ten_failures_from_one_address_lock_it_for_every_email(
     assert sign_in(
         anon_client, queue_user.email, USER_PASSWORD, address="192.0.2.50"
     ).status_code == (303)
+
+
+def test_a_10000_character_email_is_recorded_as_254_and_still_locks(
+    anon_client: TestClient, db_session: Session, caplog: pytest.LogCaptureFixture
+) -> None:
+    domain = "@Glenwood.Example"
+    huge = "A" * (10_000 - len(domain)) + domain
+    assert len(huge) == 10_000 and EMAIL_LENGTH == 254
+    cut = recorded_email(huge)
+    assert cut == "a" * 254
+    # a new address each time, so it is the email's count that locks and not the address's
+    for attempt in range(LIMIT):
+        response = sign_in(anon_client, huge, WRONG, address=f"203.0.113.{attempt + 1}")
+        assert response.status_code == 401, attempt
+    rows = failures(db_session)
+    assert [row.after for row in rows] == [
+        {"email": cut, "ip": f"203.0.113.{attempt + 1}"} for attempt in range(LIMIT)
+    ]
+    assert {row.row_id for row in rows} == {UNKNOWN_ACCOUNT}
+    caplog.set_level("WARNING", logger="glenwood.auth")
+    locked = sign_in(anon_client, huge, WRONG, address="192.0.2.50")
+    assert locked.status_code == 429
+    assert len(failures(db_session)) == LIMIT
+    # the log line carries the same 254 characters, not the 10,000
+    (line,) = [r.getMessage() for r in caplog.records if "refused while locked" in r.getMessage()]
+    assert cut in line and "a" * 255 not in line
 
 
 def test_nine_failures_do_not_lock(

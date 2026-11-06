@@ -5,7 +5,9 @@ A failed sign-in is an ``audit_log`` row like everything else that happens here
 account the email names - its id, or ``unknown`` when the email has no account - and carries
 the normalized email and the client address (``api.ratelimit.client_address``). Never the
 password, not even a wrong one: a wrong password is very often somebody's right one for
-another site, or this one with a typo.
+another site, or this one with a typo. The email is cut at ``EMAIL_LENGTH`` wherever a
+failure is recorded, matched or logged (``recorded_email``), so a post with ten thousand
+characters in the box costs a row of the usual size, and still counts.
 
 The rows are the count. ``sign_in.lockout_failures`` of them for one email, or from one
 address, inside the last ``sign_in.lockout_minutes`` (SPEC §10) lock the sign-in, and
@@ -43,6 +45,15 @@ from services.users import normalize_email, user_by_email
 ANONYMOUS = "anonymous"
 # ``row_id`` when the email matches no account; the email itself is in ``after``.
 UNKNOWN_ACCOUNT = "unknown"
+# The longest address SMTP carries (RFC 5321), and ``users.email``'s width: no account's
+# email is ever cut, and anything longer is somebody filling the box.
+EMAIL_LENGTH = 254
+
+
+def recorded_email(email: str) -> str:
+    """The email as a failed sign-in is recorded, matched and logged: normalized, then cut at
+    ``EMAIL_LENGTH``."""
+    return normalize_email(email)[:EMAIL_LENGTH]
 
 
 @dataclass(frozen=True)
@@ -64,17 +75,17 @@ def record_failed_sign_in(session: Session, *, email: str, address: str) -> None
 
     The account is looked up here rather than handed in, so the route needs to know nothing
     about why ``authenticate`` said no - and every failure, whatever its reason, costs the
-    same lookup.
+    same lookup. The lookup takes the whole email, so a long one that starts with somebody's
+    address is not put down to their account; the row takes ``recorded_email``.
     """
-    normalized = normalize_email(email)
-    user = user_by_email(session, normalized)
+    user = user_by_email(session, email)
     record_audit(
         session,
         actor=ANONYMOUS,
         action=AuditAction.SIGN_IN_FAILED,
         table_name=USERS,
         row_id=user.id if user is not None else UNKNOWN_ACCOUNT,
-        after={"email": normalized, "ip": address},
+        after={"email": recorded_email(email), "ip": address},
     )
 
 
@@ -115,7 +126,7 @@ def lockout(
     settings = (config or get_config()).sign_in
     failures, minutes = settings.lockout_failures, settings.lockout_minutes
     by_email = _lifts_in(
-        session, AuditLog.after.op("->>")("email") == normalize_email(email), failures, minutes
+        session, AuditLog.after.op("->>")("email") == recorded_email(email), failures, minutes
     )
     by_address = _lifts_in(session, AuditLog.after.op("->>")("ip") == address, failures, minutes)
     waits = [wait for wait in (by_email, by_address) if wait is not None]
