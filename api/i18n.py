@@ -57,6 +57,14 @@ STRINGS: Mapping[str, tuple[str, str]] = {
         "Hemos recibido varias solicitudes desde su conexión en la última hora. Por favor, "
         "inténtelo de nuevo un poco más tarde.",
     ),
+    # Turnstile (v0.26) did not pass the post; the Spanish is pending native-speaker review
+    # like the rest of its column
+    "challenge_failed": (
+        "We could not confirm this request came from a person. Please wait a moment and "
+        "send it again.",
+        "No pudimos confirmar que esta solicitud la envió una persona. Por favor, espere un "
+        "momento y envíela de nuevo.",
+    ),
     # 1. about you
     "about_you": ("About you", "Sobre usted"),
     "full_name": ("Full name", "Nombre completo"),

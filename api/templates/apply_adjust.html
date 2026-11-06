@@ -5,9 +5,9 @@
 {# Adjust my numbers (SPEC §4.2): five boxes over the request as the borrower sent it - the
    sale price they expect, the rehab budget, the loan amount, the rent and the term - and
    nothing else. A save is a new intake submission and a new run, "Borrower edit n", and the
-   thank-you page then shows that run's terms (``services/adjust.py``). The same honeypot
-   and rate limit stand in front of it as in front of /apply, and no CSRF token: there is no
-   session to bind one to. `closed` is a deal an edit is refused on; the page then says so
+   thank-you page then shows that run's terms (``services/adjust.py``). The same rate limit,
+   honeypot and Turnstile widget (when its keys are set, _turnstile.html) stand in front of
+   it as in front of /apply, and no CSRF token: there is no session to bind one to. `closed` is a deal an edit is refused on; the page then says so
    and has no form. #}
 
 {% block content %}
@@ -38,6 +38,7 @@
   </fieldset>
 
   <p class="fine">{{ t.not_commitment }}</p>
+  {% include "_turnstile.html" %}
   <button type="submit">{{ t.adjust_submit }}</button>
 </form>
 {% endif %}

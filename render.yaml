@@ -69,3 +69,12 @@ services:
       # off and nothing is pulled. The month's request budget is config, not the key.
       - key: RENTCAST_API_KEY
         sync: false
+      # Optional (SPEC 4.2, v0.26): Cloudflare Turnstile on /apply and Adjust my numbers.
+      # Both from the Turnstile widget in the Cloudflare dashboard (README.md, "Turnstile");
+      # with either unset there is no widget and no check. The site key is public - it is
+      # printed on the page - but lives here beside its secret so the two move together.
+      - key: TURNSTILE_SITE_KEY
+        sync: false
+      # Sent to Cloudflare's siteverify and nowhere else; never in git.
+      - key: TURNSTILE_SECRET_KEY
+        sync: false

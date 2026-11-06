@@ -1,0 +1,9 @@
+{#- Cloudflare Turnstile (SPEC §4.2, v0.26; api/turnstile.py): the widget above a public
+    form's submit button and the one script it needs, both only when the two keys are set.
+    The widget writes its token into the form as cf-turnstile-response; the server asks
+    Cloudflare about it, so nothing here holds the button off or decides anything. The one
+    third-party script on any page (CLAUDE.md). -#}
+{% if turnstile_site_key %}
+  <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-language="{{ language }}" data-action="{{ turnstile_action }}"></div>
+  <script src="{{ turnstile_script }}" async defer></script>
+{% endif %}

@@ -394,7 +394,9 @@ class WebIntakeConfig(_Section):
     Posts to ``/apply`` from one address are counted over a sliding hour, and the post that
     takes the count past ``submissions_per_hour_per_ip`` is turned away with a polite "try
     again later" rather than stored. A honeypot field handles the dumbest bots for free; this
-    is for the rest, and for a person who keeps pressing the button. No CAPTCHA.
+    is for the rest, and for a person who keeps pressing the button. Cloudflare Turnstile
+    stands beside both when its two keys are set (``api/turnstile.py``, v0.26); the keys are
+    environment variables, not config, and nothing here turns it on or off.
 
     ``thanks_token_hours`` is how long the link a submission is sent to - the thank-you page
     with the borrower's indicative terms on it - stays live (placeholder 24). After that, or

@@ -25,11 +25,13 @@ the form is, behind the same honeypot.
 Nothing here is behind the session cookie, which is the whole point, and so nothing here
 carries a CSRF token either: a token is bound to a signed-in user (``api/security.py``) and
 there is nobody to bind one to. What stands in for both is that the form can write exactly
-one kind of row - a new deal, or an edit of the borrower's own - and two things stand in
-front of it: a honeypot box a person never sees, which drops the post silently when a bot
-fills it, and a per-address rate limit (``api/ratelimit.py``) that turns the sixth post in
-an hour away with a polite line. No CAPTCHA. Every response under ``/apply`` carries
-``X-Robots-Tag: noindex`` (``api/main.py``).
+one kind of row - a new deal, or an edit of the borrower's own - and three things stand in
+front of it, checked in this order on both posts: a per-address rate limit
+(``api/ratelimit.py``) that turns the sixth post in an hour away with a polite line, a
+honeypot box a person never sees, which drops the post silently when a bot fills it, and -
+when its two keys are set - Cloudflare Turnstile (``api/turnstile.py``, v0.26), whose token
+is checked before the form is read and which lets a post through when Cloudflare cannot
+answer. Every response under ``/apply`` carries ``X-Robots-Tag: noindex`` (``api/main.py``).
 
 The language is the borrower's choice. ``?lang=`` wins when they pressed the toggle, the
 browser's ``Accept-Language`` decides otherwise, and the choice rides on a hidden field so a
@@ -42,6 +44,7 @@ from __future__ import annotations
 import secrets
 from typing import Annotated, Any
 
+import httpx
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.orm import Session
 from starlette.responses import HTMLResponse, RedirectResponse
@@ -71,6 +74,7 @@ from api.i18n import choose_language, other_language, strings
 from api.problems import FormProblems, at_top
 from api.ratelimit import LIMITER, client_address
 from api.render import page, redirect
+from api.turnstile import SCRIPT_URL, Challenge, TransportDep, check, site_key
 from config.config import get_config
 from db.models import Deal
 from db.session import get_session
@@ -127,6 +131,23 @@ def _over_the_limit(request: Request) -> bool:
     return not LIMITER.allow(client_address(request), limit)
 
 
+def _challenge_failed(
+    request: Request, posted: dict[str, str], transport: httpx.BaseTransport | None
+) -> bool:
+    """Turnstile refused the post (v0.26); False when it passed, is off or could not answer."""
+    outcome = check(posted, client_address(request), transport=transport)
+    return outcome is Challenge.FAILED
+
+
+def _turnstile(action: str) -> dict[str, str | None]:
+    """The widget's part of a page's context: the site key, None when Turnstile is off."""
+    return {
+        "turnstile_site_key": site_key(),
+        "turnstile_script": SCRIPT_URL,
+        "turnstile_action": action,
+    }
+
+
 def apply_page(
     request: Request,
     *,
@@ -154,6 +175,7 @@ def apply_page(
         "state_choices": state_choices(t),
         "profile_choices": profile_choices(t),
         "problems": complaints,
+        **_turnstile("apply"),
     }
     return page(request, "apply.html", context, status_code=status_code)
 
@@ -172,7 +194,7 @@ def apply_form(request: Request) -> HTMLResponse:
 
 @router.post(APPLY_PATH, response_model=None)
 def apply_submit(
-    request: Request, session: SessionDep, form: FormDep
+    request: Request, session: SessionDep, form: FormDep, transport: TransportDep
 ) -> HTMLResponse | RedirectResponse:
     """Store the deal and send the borrower to the thank-you page; or put the form back."""
     posted = fields(form)
@@ -198,6 +220,8 @@ def apply_submit(
         # where a real borrower would be - a token nobody was issued opens the plain page -
         # so there is nothing to learn from the reply.
         return redirect(f"{THANKS_PATH}/{secrets.token_urlsafe(32)}?{thanks_query}")
+    if _challenge_failed(request, posted, transport):
+        return back(at_top(t["challenge_failed"]), status.HTTP_422_UNPROCESSABLE_CONTENT)
 
     entry, problems = read_form(posted, t)
     if entry is None:
@@ -315,6 +339,7 @@ def adjust_page(
             "back_href": f"{base}?{LANGUAGE_FIELD}={language}",
             "closed": closed,
             "problems": complaints,
+            **_turnstile("adjust"),
         },
         status_code=status_code,
     )
@@ -342,7 +367,11 @@ def adjust_form(token: str, request: Request, session: SessionDep) -> HTMLRespon
 
 @router.post(f"{THANKS_PATH}/{{token}}{ADJUST_SUFFIX}", response_model=None)
 def adjust_submit(
-    token: str, request: Request, session: SessionDep, form: FormDep
+    token: str,
+    request: Request,
+    session: SessionDep,
+    form: FormDep,
+    transport: TransportDep,
 ) -> HTMLResponse | RedirectResponse:
     """Apply the borrower's five numbers, run the deal again and send them back to their
     terms; or put the boxes back with the complaints."""
@@ -369,6 +398,8 @@ def adjust_submit(
         return back(at_top(t["rate_limited"]), status.HTTP_429_TOO_MANY_REQUESTS)
     if posted.get(HONEYPOT):
         return redirect(thanks)
+    if _challenge_failed(request, posted, transport):
+        return back(at_top(t["challenge_failed"]), status.HTTP_422_UNPROCESSABLE_CONTENT)
     payload = latest_web_payload(session, deal)
     if payload is None or deal.status not in EDIT_INTAKE_FROM:
         return back(at_top(t["adjust_closed"]), status.HTTP_409_CONFLICT, closed=True)

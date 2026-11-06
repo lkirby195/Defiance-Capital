@@ -43,6 +43,11 @@ os.environ.setdefault("SESSION_SECRET", "test-session-secret-not-a-real-one")
 # it did not survive the first signed cookie). The live test lifts the sentinel for its one read.
 RENTCAST_ENV_KEY = os.environ.get("RENTCAST_API_KEY")
 os.environ["RENTCAST_API_KEY"] = ""
+# No test reaches Cloudflare either (v0.26): both Turnstile keys are parked empty the same way,
+# so a developer's .env cannot turn the widget and its siteverify call on under the suite. A
+# test that wants it on sets both and serves siteverify from an httpx.MockTransport.
+os.environ["TURNSTILE_SITE_KEY"] = ""
+os.environ["TURNSTILE_SECRET_KEY"] = ""
 # The API docs are read once, when api.main is imported; the suite holds them to off.
 os.environ.pop("GLENWOOD_API_DOCS", None)
 
