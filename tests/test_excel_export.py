@@ -459,14 +459,14 @@ def test_the_flip_sheet_reports_the_cost_stack_with_no_sale_price() -> None:
 
 
 def test_the_flip_sheet_is_the_profit_line_by_line_then_the_cost_stack() -> None:
-    """Sale price, broker, purchase, closing, rehab, contingency, holding, interest,
+    """Sale price, sales cost, purchase, closing, rehab, contingency, holding, interest,
     origination, profit; then the stack to the total deal cost (SPEC §8.4)."""
     sheet = book_for(FIXTURE_DIR / "go_holdback_denver.json")["Flip"]
     labels = [row[0].value for row in sheet.iter_rows(min_col=1, max_col=1)]
     profit = labels[labels.index("PROFIT") + 1 : labels.index("Net profit") + 1]
     assert profit == [
         "Sale price",
-        "Broker",
+        "Sales cost",
         "Purchase",
         "Closing",
         "Rehab",

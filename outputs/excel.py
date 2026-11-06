@@ -665,7 +665,7 @@ def _sheet_flip(book: Workbook, result: UnderwriteResult) -> None:
         ("PROFIT", None, None, ""),
         ("Sale price", flip.estimated_sale_price, MONEY, ""),
         (
-            "Broker",
+            input_label("broker_selling_pct"),
             None if flip.broker_costs is None else -flip.broker_costs,
             MONEY,
             "off the price, not in the total deal cost",
@@ -816,7 +816,7 @@ def _sheet_take_back(book: Workbook, result: UnderwriteResult) -> None:
         ("Holding cost (monthly)", take_back.holding_costs_monthly, MONEY, "the deal's own"),
         ("Foreclosure carry", take_back.foreclosure_carry, MONEY, "months x monthly holding cost"),
         ("REO sale month", take_back.sale_month, INTEGER, "default + lost + foreclosure months"),
-        ("Broker", take_back.broker_selling_pct, PCT1, "off every sale"),
+        (input_label("broker_selling_pct"), take_back.broker_selling_pct, PCT1, "off every sale"),
         ("Expenses", take_back.expenses_pct, PCT1, "of the hold's rent"),
         ("Target lender IRR", take_back.target_irr, PCT1, "every solve bisects the XIRR to it"),
         ("", None, None, ""),

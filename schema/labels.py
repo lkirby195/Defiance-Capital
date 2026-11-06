@@ -30,8 +30,9 @@ the five enums, so one flat table serves them all.
 cost, by its ``deals`` column: "Origination", not "Origination Fee" here and "Origination fee"
 there; "Sales cost", not "Broker selling %". The Defaults page, the deal page, the reset page,
 the readiness rows, the workbook and the CLI report all caption the input with it, each in its
-own case (``input_label``). The dollar lines an input produces keep their own words -
-"Broker", "Origination at close" - and the borrower reads ``api/i18n.py``.
+own case (``input_label``). The sales cost's dollar line reads "Sales cost" too, not
+"Broker"; the origination's dollar lines keep "Origination at close" and "at payoff"; and the
+borrower reads ``api/i18n.py``.
 """
 
 from __future__ import annotations

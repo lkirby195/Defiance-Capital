@@ -404,10 +404,12 @@ def render_flip(flip: FlipAnalysis) -> list[str]:
     ]
     less = "" if flip.broker_costs is None else money(-flip.broker_costs)
     lines += [
-        # the input itself, as the deal page's Flip card and the workbook's Flip sheet print it
-        row(input_label("broker_selling_pct"), pct1(flip.broker_selling_pct), "of the sale price"),
         row("Sale price", money(flip.estimated_sale_price)),
-        row("  Broker", less or money(None), pct1(flip.broker_selling_pct)),
+        row(
+            f"  {input_label('broker_selling_pct')}",
+            less or money(None),
+            pct1(flip.broker_selling_pct),
+        ),
         *(
             row(f"  {label}", money(None if flip.net_profit is None else -amount), note)
             for label, amount, note in costs

@@ -2,13 +2,14 @@
 
 ``schema/labels.INPUT_LABELS`` is the one source. One fixture - the Tulsa team entry, which
 the deal page, the workbook and the CLI all take - is rendered on each surface and searched:
-the sales cost is "Sales cost" (or "Sales Cost") everywhere and "Broker selling" nowhere. The
-borrower's pages are not among them; they read ``api/i18n.py``, where "Origination fee" reads
-better to a borrower.
+the sales cost is "Sales cost" (or "Sales Cost") everywhere, its dollar line included, and
+neither "Broker selling" nor a "Broker" caption is anywhere. The borrower's pages are not
+among them; they read ``api/i18n.py``, where "Origination fee" reads better to a borrower.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,8 @@ from services.defaults import ECONOMICS
 from tests.conftest import TEAM_ENTRY_WITH_OVERRIDES, QueueClient, requires_db
 
 CONFIG = Config.load()
+# "Broker" opening a caption: a page's text after a tag, a cell's or a report line's start.
+BROKER_CAPTION = re.compile(r"(?:^|>)\s*Broker\b", re.MULTILINE)
 
 
 def test_the_labels_are_the_economics_and_the_sales_cost_by_deals_column() -> None:
@@ -74,6 +77,18 @@ def test_the_sales_cost_reads_the_same_on_every_team_surface(
         assert "sales cost" in text.lower(), name
         # the caption the origination had on four of them; the dollar lines keep their words
         assert "Origination fee" not in text and "Origination Fee" not in text, name
+        # the sales cost's dollar line is "Sales cost" too, not "Broker"
+        assert not BROKER_CAPTION.search(text), (name, BROKER_CAPTION.findall(text))
     # each in its own case: the Flip and Take-Back cards are sentence case, the panel is not
     assert "<dt>Sales cost</dt>" in deal_page and "Sales Cost" in deal_page
+    # the Flip card's two: the percentage on top, the dollar line in the profit
+    flip = deal_page[deal_page.index('id="flip"') : deal_page.index('id="flip-profit"') + 400]
+    assert flip.count("<dt>Sales cost</dt>") == 2
+    # the CLI's one line is the dollar line, its note the percentage (no row of its own)
+    (line,) = [
+        one
+        for one in surfaces["the CLI report"].splitlines()
+        if one.strip().startswith("Sales cost")
+    ]
+    assert line.startswith("  ") and "%" in line
     del db_session

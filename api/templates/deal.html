@@ -708,7 +708,7 @@
     <h3>Profit</h3>
     <dl class="facts small" id="flip-profit">
       <dt>Sale price</dt><dd>{{ flip.estimated_sale_price | money }}</dd>
-      <dt>Broker</dt><dd>{{ less(flip.broker_costs) }}</dd>
+      <dt>{{ "broker_selling_pct" | input_label }}</dt><dd>{{ less(flip.broker_costs) }}</dd>
       <dt>Purchase</dt><dd>{{ less(flip.purchase_price) }}</dd>
       <dt>Closing</dt><dd>{{ less(flip.closing_costs) }}</dd>
       <dt>Rehab</dt><dd>{{ less(flip.rehab_costs) }}</dd>
