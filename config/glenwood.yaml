@@ -15,15 +15,17 @@ placeholders:
   - interest.default_annual_rate
   - pricing.target_lender_irr
   - pricing.max_quoted_rate
-  - pricing.loan_amount_rounding
   - pricing.borrower_coc_target
   - pricing.borrower_rate_cushion
   - pricing.borrower_rate_rounding
   - rental.takeout_ltv
+  - rental.target_dscr
   - take_back.foreclosure_months
-  - web_intake.thanks_token_hours
-  - rentcast.cache_days
-  - rentcast.monthly_request_budget
+  - flags.underwrite_severities.MARKET_RENT_BELOW_REQUIRED
+  - flags.underwrite_severities.TAKEOUT_BELOW_PAYOFF
+  - flags.underwrite_severities.TAKE_BACK_PRICE_ABOVE_PURCHASE
+  - flags.underwrite_severities.BORROWER_COC_BELOW_TARGET
+  - rentcast.monthly_request_budget        # waits on the RentCast plan
   - leverage_caps
 
 credit:                                   # SPEC §7.1

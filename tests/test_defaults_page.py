@@ -227,7 +227,10 @@ def _tagged_rows(body: str) -> set[str]:
 @requires_db
 def test_each_placeholder_is_tagged_and_the_list_is_counted(client: QueueClient) -> None:
     body = client.get("/defaults").text
-    assert '<p class="small" data-key="placeholders">13 values are placeholders until ' in body
+    assert (
+        '<p class="small" data-key="placeholders">15 values are placeholders until confirmed.</p>'
+        in body
+    )
     rows = [leaf.key for group in groups(CONFIG) for leaf in group.leaves]
     # every row the list names wears the tag, and no other row does
     assert _tagged_rows(body) == {key for key in rows if CONFIG.is_placeholder(key)}
@@ -238,8 +241,18 @@ def test_each_placeholder_is_tagged_and_the_list_is_counted(client: QueueClient)
         "take_back.foreclosure_months.OK",  # a prefix entry tags every row under it
         "take_back.foreclosure_months.OTHER",
         "rentcast.monthly_request_budget",
+        "rental.target_dscr",
+        "flags.underwrite_severities.BORROWER_COC_BELOW_TARGET",
     } <= _tagged_rows(body)
-    assert "pricing.loan_amount_pct_steps" not in _tagged_rows(body)
+    for untagged in (
+        "pricing.loan_amount_pct_steps",
+        "pricing.loan_amount_rounding",  # confirmed
+        "web_intake.thanks_token_hours",  # confirmed
+        "rentcast.cache_days",  # confirmed
+        "fees.broker_selling_pct",
+        "flags.severities.OPEN_TAX_LIEN",
+    ):
+        assert untagged not in _tagged_rows(body), untagged
     # each caps table as a whole, in its title bar, and then not cell by cell
     assert f"<h4>100% at close {TAG}</h4>" in body and f"<h4>Holdback {TAG}</h4>" in body
     caps = body[body.index("<h2>Leverage Caps</h2>") : body.index("<h2>System</h2>")]
@@ -250,11 +263,9 @@ def test_each_placeholder_is_tagged_and_the_list_is_counted(client: QueueClient)
 
 def test_the_count_line_reads_for_any_length() -> None:
     data = copy.deepcopy(load_yaml(DEFAULT_PATH.read_text(encoding="utf-8")))
-    assert placeholder_line(CONFIG) == "13 values are placeholders until Defiance confirms them."
+    assert placeholder_line(CONFIG) == "15 values are placeholders until confirmed."
     data["placeholders"] = ["rental.takeout_ltv"]
-    assert placeholder_line(Config.from_dict(data)) == (
-        "1 value is a placeholder until Defiance confirms it."
-    )
+    assert placeholder_line(Config.from_dict(data)) == ("1 value is a placeholder until confirmed.")
     data["placeholders"] = []
     assert placeholder_line(Config.from_dict(data)) == "No values are placeholders."
 

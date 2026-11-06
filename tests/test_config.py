@@ -422,26 +422,31 @@ def test_hold_months_are_distinct_and_ascending(data: dict[str, Any]) -> None:
 
 # --- the placeholders list (SPEC §10, v0.27) ------------------------------------------------------
 
-# The thirteen values the yaml's comments marked PLACEHOLDER before v0.27, in the yaml's order.
-SEEDED = [
+# The values still to confirm, in the yaml's order: the thirteen the comments marked
+# PLACEHOLDER before v0.27, less the three Logan confirmed (loan amount rounding, the
+# thank-you link's life, the RentCast cache), plus the target DSCR and the four
+# underwrite-flag severities SPEC §10 also called placeholders.
+LISTED = [
     "interest.default_annual_rate",
     "pricing.target_lender_irr",
     "pricing.max_quoted_rate",
-    "pricing.loan_amount_rounding",
     "pricing.borrower_coc_target",
     "pricing.borrower_rate_cushion",
     "pricing.borrower_rate_rounding",
     "rental.takeout_ltv",
+    "rental.target_dscr",
     "take_back.foreclosure_months",
-    "web_intake.thanks_token_hours",
-    "rentcast.cache_days",
+    "flags.underwrite_severities.MARKET_RENT_BELOW_REQUIRED",
+    "flags.underwrite_severities.TAKEOUT_BELOW_PAYOFF",
+    "flags.underwrite_severities.TAKE_BACK_PRICE_ABOVE_PURCHASE",
+    "flags.underwrite_severities.BORROWER_COC_BELOW_TARGET",
     "rentcast.monthly_request_budget",
     "leverage_caps",
 ]
 
 
-def test_the_placeholders_are_the_thirteen_the_comments_marked() -> None:
-    assert Config.load().placeholders == SEEDED
+def test_the_placeholders_are_the_fifteen_still_to_confirm() -> None:
+    assert Config.load().placeholders == LISTED
     # ...and the comments no longer say so: the list is the one source
     assert "PLACEHOLDER" not in DEFAULT_PATH.read_text(encoding="utf-8")
 
@@ -457,6 +462,18 @@ def test_a_placeholder_is_a_key_or_a_prefix_of_keys() -> None:
     # a prefix is a whole part of the key, not the start of a word
     assert not cfg.is_placeholder("rental.takeout_ltv_extra")
     assert not cfg.is_placeholder("rental.takeout_rate")
+    # confirmed, and so off the list (v0.27 review)
+    for confirmed in (
+        "pricing.loan_amount_rounding",
+        "web_intake.thanks_token_hours",
+        "rentcast.cache_days",
+        "fees.broker_selling_pct",
+        "web_intake.submissions_per_hour_per_ip",
+    ):
+        assert not cfg.is_placeholder(confirmed), confirmed
+    # the four graded severities each by its own key; the court flags are not on it
+    assert cfg.is_placeholder("flags.underwrite_severities.TAKEOUT_BELOW_PAYOFF")
+    assert not cfg.is_placeholder("flags.severities.OPEN_TAX_LIEN")
 
 
 @pytest.mark.parametrize(
@@ -493,7 +510,7 @@ def test_the_list_is_required_like_every_other_key(data: dict[str, Any]) -> None
 
 def test_the_placeholders_are_not_in_the_config_hash(data: dict[str, Any]) -> None:
     baseline = Config.load().config_hash
-    for listed in ([], ["rental"], list(reversed(SEEDED)), SEEDED[:-1]):
+    for listed in ([], ["rental"], list(reversed(LISTED)), LISTED[:-1]):
         data["placeholders"] = listed
         assert Config.from_dict(data).config_hash == baseline, listed
     assert "placeholders" not in Config.load().canonical_json()

@@ -265,8 +265,8 @@ class PricingConfig(_Section):
 
     One row per ``loan_amount_pct_steps`` entry, each a signed share of the request (0 is the
     request itself, -0.05 is five percent less): the row's loan amount is the request times
-    ``1 + step``, rounded half-up to the nearest ``loan_amount_rounding`` (placeholder
-    $1,000) and never above the request; the request row itself is never rounded. For each,
+    ``1 + step``, rounded half-up to the nearest ``loan_amount_rounding`` ($1,000) and never
+    above the request; the request row itself is never rounded. For each,
     the lowest rate, solved on the ledger to 0.01%, at which the lender's XIRR reaches
     ``target_lender_irr`` (``engine/calc/pricing.py``). A step only lends less: a reduction
     comes off the advance at closing the way the sensitivity rows' does, and nothing defines
@@ -404,7 +404,7 @@ class WebIntakeConfig(_Section):
     environment variables, not config, and nothing here turns it on or off.
 
     ``thanks_token_hours`` is how long the link a submission is sent to - the thank-you page
-    with the borrower's indicative terms on it - stays live (placeholder 24). After that, or
+    with the borrower's indicative terms on it - stays live (24 hours). After that, or
     on a token nobody was issued, the page is the plain thank-you.
     """
 
@@ -416,7 +416,7 @@ class RentcastConfig(_Section):
     """The RentCast property-data adapter's two tunables.  # SPEC §6
 
     ``cache_days`` is how long one pull at an address stands in for the next deal at the same
-    address (placeholder 30): a second deal inside the window reuses the stored runs rather
+    address (30 days): a second deal inside the window reuses the stored runs rather
     than spending three more requests. ``monthly_request_budget`` is the requests the plan
     allows per calendar month (placeholder 50, the free tier); when the next pull would pass
     it, the pull is skipped and the run says so with ``MARKET_DATA_BUDGET_EXHAUSTED`` rather

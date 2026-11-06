@@ -318,8 +318,8 @@ def placeholder_line(config: Config) -> str:
     if count == 0:
         return "No values are placeholders."
     if count == 1:
-        return "1 value is a placeholder until Defiance confirms it."
-    return f"{count} values are placeholders until Defiance confirms them."
+        return "1 value is a placeholder until confirmed."
+    return f"{count} values are placeholders until confirmed."
 
 
 def caps_tables(config: Config) -> list[CapsTable]:
