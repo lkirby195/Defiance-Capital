@@ -31,7 +31,8 @@ glenwood-uw/
   schema/
     intake.json            # canonical IntakeRecord JSON schema (generated from Pydantic, committed)
     models.py              # IntakeRecord, UnderwriteResult, enums (Product, Tranche, ExperienceTier, Verdict, ...)
-    labels.py              # what a person is shown where the model stores a code (T3 -> "660-699")
+    labels.py              # what a person is shown where the model stores a code (T3 -> "660-699"),
+                           #   and INPUT_LABELS: one word for each §8.1 input on every team surface
     masks.py               # what a person types where the model stores a number ($#,###, 12%, digits)
   engine/
     sizing.py              # LTC / LTV, product-specific commitment split
@@ -96,7 +97,8 @@ glenwood-uw/
     masks.py               # which box holds which kind of number, and the config defaults
     intake_form.py         # the team-entry form: its fields, which are required, a deal as one
     apply_form.py          # the public form: its fields, which are required, the complaints
-    defaults_page.py       # /defaults: every yaml value, grouped, by its dotted key
+    defaults_page.py       # /defaults: every yaml value, grouped, its dotted key on hover,
+                           #   the placeholders tagged
     i18n.py                # every string the public form shows, English and Spanish
     ratelimit.py           # posts per address per hour on the public form
     turnstile.py           # Cloudflare Turnstile on the public form: keys, siteverify, fail open
@@ -259,7 +261,9 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
   "Holdback" - and every rendered page and flag message goes through it. The credit labels are
   derived from the config cutoffs, so moving a cutoff moves the label. The one exception is
   the caps cell (`ACQUISITION_REHAB/T3/E2`), which is a config grid coordinate a person looks
-  up rather than a label they read.
+  up rather than a label they read. The five §8.1 economics and the sales cost carry one
+  word each, `schema/labels.INPUT_LABELS` by `deals` column (v0.27), on every team surface
+  that captions them; a new caption for one of them reads it.
 - **A number the model stores is not the text a person types.** `schema/masks.py` and
   `api/masks.py` are the two halves: money is typed and shown `$425,000`, a percent `12%`
   (the deal carries `0.12`), a phone `555-123-4567` (the deal carries the digits). The
@@ -364,4 +368,6 @@ uv run glenwood deals export <deal-id> deal.xlsx --version "Base case"
 
 ## When unsure
 
-Ask. In particular, do not guess at: leverage caps, fee treatment, the listing period, the rental takeout assumptions (the LTV and the target DSCR included), or the take-back's lost-interest months, legal costs, foreclosure months by state and hold periods. Use the placeholder in config and flag it.
+Ask. In particular, do not guess at: leverage caps, fee treatment, the listing period, the rental takeout assumptions (the LTV and the target DSCR included), or the take-back's lost-interest months, legal costs, foreclosure months by state and hold periods. Use a placeholder in config, list its key
+under `placeholders:` in `config/glenwood.yaml` (the Defaults page tags it, v0.27), and
+flag it.
