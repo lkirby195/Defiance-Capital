@@ -87,6 +87,7 @@ glenwood-uw/
     requests.py            # UnderwriteRequest / TeamOverrides: what the team supplies by hand
     runner.py              # run_screen, run_underwrite
     users.py               # create / deactivate / authenticate a queue user
+    sign_in.py             # a failed sign-in's audit row, and the lockout the rows add up to
     versions.py            # one per analysis run: its inputs snapshotted, one Working per deal
   api/
     main.py, routes/       # auth, queue, intake, deals, defaults, apply (the public borrower form)
@@ -98,6 +99,7 @@ glenwood-uw/
     defaults_page.py       # /defaults: every yaml value, grouped, by its dotted key
     i18n.py                # every string the public form shows, English and Spanish
     ratelimit.py           # posts per address per hour on the public form
+    turnstile.py           # Cloudflare Turnstile on the public form: keys, siteverify, fail open
     templates/             # the review queue's own pages and the public form's (committed)
   cli/
     main.py, fixtures.py   # `glenwood run` / `glenwood export` on a fixture, no database;
@@ -236,7 +238,7 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
 
 **Record everything.** Every enrichment call writes an `enrichment_runs` row with the raw response. Every screen and underwrite records `ENGINE_VERSION` and the config hash. Nothing is overwritten; re-runs create new rows.
 
-**Every service write takes an actor and writes `audit_log`.** Credit and court data are in here (SPEC §11), so a write nobody is named for is not acceptable. `services/` never commits; the audit row lands in the caller's transaction beside the change it describes, so a rolled-back change cannot leave an audit row claiming it happened. A password, a hash, or anything else a person would not want in a log never goes in one.
+**Every service write takes an actor and writes `audit_log`.** Credit and court data are in here (SPEC §11), so a write nobody is named for is not acceptable. `services/` never commits; the audit row lands in the caller's transaction beside the change it describes, so a rolled-back change cannot leave an audit row claiming it happened. A password, a hash, or anything else a person would not want in a log never goes in one. A failed sign-in has nobody to name, so its `SIGN_IN_FAILED` row says `anonymous` and carries the email and the address (`services/sign_in.py`, v0.26); those rows are also the lockout's count, checked before any password is verified.
 
 **Config is validated on load.** `Config` must reject a yaml with missing keys or out-of-range values at startup, not at the first deal.
 
@@ -282,7 +284,13 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
   until every required box is filled and lift `required` off the address boxes while the
   listing link holds a value. Dependency-free, and the server checks every rule again
   (`api/apply_form.py`), so a browser without it posts a form that is answered the same way.
-- **Every form post carries a CSRF token.** The guard is a router-level dependency (`api/security.py`), so a new route is covered by where it lives rather than by somebody remembering; every `<form method="post">` renders `{{ csrf.field(csrf_token) }}`. `tests/test_csrf.py` posts to every guarded route without one and asserts the refusal — do not add a route that needs an exemption without saying why there. The one exemption is the public borrower form: a token is bound to a signed-in user and a borrower has no account; the honeypot and the rate limit stand in front of it instead, and `tests/test_csrf.py` says so.
+  The one third-party script anywhere is Cloudflare Turnstile's, on the two `/apply` forms
+  (the form and Adjust my numbers, `_turnstile.html`, v0.26), drawn only when both
+  `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` are set. It writes a token into the form
+  and decides nothing: the submit button never waits on it, and the server is the decider
+  (`api/turnstile.py`, after the rate limit and the honeypot, before the form is read; a
+  Cloudflare outage lets the post through). Because of it the CSP is `frame-ancestors` only.
+- **Every form post carries a CSRF token.** The guard is a router-level dependency (`api/security.py`), so a new route is covered by where it lives rather than by somebody remembering; every `<form method="post">` renders `{{ csrf.field(csrf_token) }}`. `tests/test_csrf.py` posts to every guarded route without one and asserts the refusal — do not add a route that needs an exemption without saying why there. The one exemption is the public borrower form: a token is bound to a signed-in user and a borrower has no account; the rate limit, the honeypot and - with its keys set - Turnstile stand in front of it instead, and `tests/test_csrf.py` says so.
 - **The borrower is told their indicative terms and nothing else.** A submission is sent to
   `/apply/thanks/<token>` (SPEC §4.2), which says the team will be in touch and, only when the
   run it reads said Go or Conditional, shows one table under the required disclaimer: the

@@ -56,9 +56,11 @@ services:
       # Matches .python-version, so the build and a developer's machine agree.
       - key: PYTHON_VERSION
         value: "3.12"
-      # Set in the dashboard, or wired to a Render Postgres with fromDatabase (README.md).
-      # `postgres://` and `postgresql://` are both accepted: db/session.py names the psycopg
-      # driver itself rather than leaving SQLAlchemy to guess at one that is not installed.
+      # The Neon project `glenwood`'s connection string, set in the dashboard and nowhere else
+      # (README.md, "Deploying"). The database is Neon's, not Render's, so there is no
+      # fromDatabase to wire. `postgres://` and `postgresql://` are both accepted: db/session.py
+      # names the psycopg driver itself rather than leaving SQLAlchemy to guess at one that is
+      # not installed.
       - key: DATABASE_URL
         sync: false
       # Generated once by Render and never seen by anyone, which is what a signing key wants.
