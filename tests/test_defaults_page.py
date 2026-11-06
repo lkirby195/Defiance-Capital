@@ -13,7 +13,7 @@ import re
 from fastapi.testclient import TestClient
 
 from api.defaults_page import GROUPS, OTHER, display, flatten, group_of, groups, label_for
-from config.config import DEFAULT_PATH, Config, load_yaml
+from config.config import DEFAULT_PATH, PLACEHOLDERS, Config, load_yaml
 from tests.conftest import QueueClient, requires_db
 
 CONFIG = Config.load()
@@ -83,7 +83,8 @@ def test_a_stranger_is_sent_to_sign_in(anon_client: TestClient) -> None:
 
 
 def test_every_yaml_key_has_a_group() -> None:
-    stray = sorted(key for key in yaml_keys() if group_of(key) == OTHER)
+    # the placeholders list is not a value: the page counts it under the title (v0.27)
+    stray = sorted(key for key in yaml_keys() - {PLACEHOLDERS} if group_of(key) == OTHER)
     assert not stray, f"place these in api/defaults_page.GROUPS: {stray}"
     assert all(group.heading != OTHER for group in groups(CONFIG))
 

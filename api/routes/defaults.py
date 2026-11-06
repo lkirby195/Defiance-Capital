@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from starlette.responses import HTMLResponse
 
-from api.defaults_page import caps_tables, groups
+from api.defaults_page import caps_tables, groups, placeholder_line
 from api.render import page
 from api.security import PageUser
 from config.config import get_config
@@ -27,6 +27,11 @@ def defaults_page(request: Request, user: PageUser) -> HTMLResponse:
     return page(
         request,
         "defaults.html",
-        {"groups": groups(config), "caps": caps_tables(config), "config_hash": config.config_hash},
+        {
+            "groups": groups(config),
+            "caps": caps_tables(config),
+            "config_hash": config.config_hash,
+            "placeholder_line": placeholder_line(config),
+        },
         user=user,
     )

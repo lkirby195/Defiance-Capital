@@ -418,3 +418,85 @@ def test_hold_months_are_distinct_and_ascending(data: dict[str, Any]) -> None:
     data["take_back"]["hold_months"] = [12, 12]
     with pytest.raises(ConfigError, match="distinct and ascending"):
         Config.from_dict(data)
+
+
+# --- the placeholders list (SPEC §10, v0.27) ------------------------------------------------------
+
+# The thirteen values the yaml's comments marked PLACEHOLDER before v0.27, in the yaml's order.
+SEEDED = [
+    "interest.default_annual_rate",
+    "pricing.target_lender_irr",
+    "pricing.max_quoted_rate",
+    "pricing.loan_amount_rounding",
+    "pricing.borrower_coc_target",
+    "pricing.borrower_rate_cushion",
+    "pricing.borrower_rate_rounding",
+    "rental.takeout_ltv",
+    "take_back.foreclosure_months",
+    "web_intake.thanks_token_hours",
+    "rentcast.cache_days",
+    "rentcast.monthly_request_budget",
+    "leverage_caps",
+]
+
+
+def test_the_placeholders_are_the_thirteen_the_comments_marked() -> None:
+    assert Config.load().placeholders == SEEDED
+    # ...and the comments no longer say so: the list is the one source
+    assert "PLACEHOLDER" not in DEFAULT_PATH.read_text(encoding="utf-8")
+
+
+def test_a_placeholder_is_a_key_or_a_prefix_of_keys() -> None:
+    cfg = Config.load()
+    assert cfg.is_placeholder("pricing.max_quoted_rate")
+    assert cfg.is_placeholder("take_back.foreclosure_months.OK")  # under a listed prefix
+    assert cfg.is_placeholder("leverage_caps.ACQUISITION_REHAB.T3.E2.ltv")
+    assert cfg.is_placeholder("leverage_caps.ACQUISITION")  # a whole caps table
+    assert not cfg.is_placeholder("pricing.loan_amount_pct_steps")
+    assert not cfg.is_placeholder("take_back.hold_months")
+    # a prefix is a whole part of the key, not the start of a word
+    assert not cfg.is_placeholder("rental.takeout_ltv_extra")
+    assert not cfg.is_placeholder("rental.takeout_rate")
+
+
+@pytest.mark.parametrize(
+    "entry",
+    ["fees.no_such_fee", "take_back.foreclosure", "rental.takeout", "placeholders", "", "fees."],
+    ids=["unknown leaf", "part of a key", "part of a word", "the list itself", "empty", "dot"],
+)
+def test_an_entry_that_names_no_key_is_refused_at_load(data: dict[str, Any], entry: str) -> None:
+    data["placeholders"] = [*data["placeholders"], entry]
+    with pytest.raises(ConfigError, match="placeholders names no config key"):
+        Config.from_dict(data)
+
+
+def test_an_entry_listed_twice_or_inside_another_is_refused(data: dict[str, Any]) -> None:
+    data["placeholders"] = ["rental.takeout_ltv", "rental.takeout_ltv"]
+    with pytest.raises(ConfigError, match="lists rental.takeout_ltv twice"):
+        Config.from_dict(data)
+    for pair in (["rental", "rental.takeout_ltv"], ["rental.takeout_ltv", "rental"]):
+        data["placeholders"] = pair
+        with pytest.raises(ConfigError, match="lists both"):
+            Config.from_dict(data)
+    # a whole section is a fine entry on its own, and so is an empty list
+    data["placeholders"] = ["rental"]
+    assert Config.from_dict(data).is_placeholder("rental.target_dscr")
+    data["placeholders"] = []
+    assert not Config.from_dict(data).is_placeholder("leverage_caps")
+
+
+def test_the_list_is_required_like_every_other_key(data: dict[str, Any]) -> None:
+    del data["placeholders"]
+    with pytest.raises(ConfigError, match="placeholders"):
+        Config.from_dict(data)
+
+
+def test_the_placeholders_are_not_in_the_config_hash(data: dict[str, Any]) -> None:
+    baseline = Config.load().config_hash
+    for listed in ([], ["rental"], list(reversed(SEEDED)), SEEDED[:-1]):
+        data["placeholders"] = listed
+        assert Config.from_dict(data).config_hash == baseline, listed
+    assert "placeholders" not in Config.load().canonical_json()
+    # a value still moves it, so the hash still says what the run ran on
+    data["rental"]["takeout_ltv"] = Decimal("0.70")
+    assert Config.from_dict(data).config_hash != baseline

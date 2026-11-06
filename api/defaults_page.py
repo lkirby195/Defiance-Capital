@@ -29,7 +29,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any
 
-from config.config import Config
+from config.config import PLACEHOLDERS, Config, flatten
 from schema.labels import enum_label
 from schema.models import ExperienceTier, Product, Severity, Tranche
 
@@ -165,17 +165,6 @@ class CapsTable:
     rows: list[tuple[str, list[tuple[Leaf, Leaf]]]]
 
 
-def flatten(data: Any, prefix: str = "") -> dict[str, Any]:
-    """Every leaf of a nested mapping by dotted key; a list is one leaf, not one per item."""
-    if isinstance(data, dict):
-        leaves: dict[str, Any] = {}
-        for name, value in data.items():
-            name = name.value if isinstance(name, Enum) else str(name)
-            leaves.update(flatten(value, f"{prefix}.{name}" if prefix else name))
-        return leaves
-    return {prefix: data}
-
-
 def group_of(key: str) -> str:
     """The group whose longest prefix matches ``key``; ``OTHER`` when none does."""
     best, length = OTHER, -1
@@ -239,10 +228,20 @@ def groups(config: Config) -> list[Group]:
     by_heading = {heading: Group(heading) for heading, _ in GROUPS}
     by_heading[OTHER] = Group(OTHER)
     for key, value in config_leaves(config).items():
-        if key.startswith("leverage_caps."):
+        if key.startswith("leverage_caps.") or key == PLACEHOLDERS:
             continue
         by_heading[group_of(key)].leaves.append(Leaf(key, label_for(key), display(key, value)))
     return [group for group in by_heading.values() if group.leaves or group.heading != OTHER]
+
+
+def placeholder_line(config: Config) -> str:
+    """The line under the title: how many values ``placeholders`` lists.  # SPEC §10 (v0.27)"""
+    count = len(config.placeholders)
+    if count == 0:
+        return "No values are placeholders."
+    if count == 1:
+        return "1 value is a placeholder until Defiance confirms it."
+    return f"{count} values are placeholders until Defiance confirms them."
 
 
 def caps_tables(config: Config) -> list[CapsTable]:

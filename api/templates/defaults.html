@@ -8,6 +8,7 @@
 {% block content %}
 <h1>Defaults</h1>
 <p class="lede small">config/glenwood.yaml · config hash <code>{{ config_hash[:12] }}</code></p>
+<p class="small" data-key="placeholders">{{ placeholder_line }}</p>
 
 {% for group in groups %}
 <section class="panel chart">
