@@ -84,10 +84,12 @@ and every push to `main` deploys: `uv sync --frozen --no-dev`, then `alembic upg
 against the live database before the new code serves anything, then uvicorn.
 
 **The database is Neon, not Render Postgres.** Render runs the service; the database is the
-Neon project `glenwood`, in Defiance's own Neon organization (created at Neon directly, not
-through a Render or Vercel integration). `DATABASE_URL` is the only credential the service
-holds for it, and it lives in one place: the service's environment variables on Render. It is
-not in `render.yaml`, not in git, and not in anybody's `.env`.
+Neon project `glenwood`, created at Neon directly, not through a Render or Vercel
+integration. Today the project is in Logan's own Neon organization; it moves to Defiance's in
+Workstream 2 of the go-live plan. The Neon project should be in the same region as the Render
+service: `render.yaml` says `oregon`, so AWS US West (Oregon). `DATABASE_URL` is the only
+credential the service holds for it, and it lives in one place: the service's environment
+variables on Render. It is not in `render.yaml`, not in git, and not in anybody's `.env`.
 
 **Idle connections.** The database pool pings a connection before handing it to a request
 (`db/session.py`, `pool_pre_ping`). Without it, a connection the managed Postgres or the
