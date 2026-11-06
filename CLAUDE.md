@@ -289,7 +289,8 @@ stub arithmetic stays in the engine for a future actual-payoff entry.
   `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` are set. It writes a token into the form
   and decides nothing: the submit button never waits on it, and the server is the decider
   (`api/turnstile.py`, after the rate limit and the honeypot, before the form is read; a
-  Cloudflare outage lets the post through). Because of it the CSP is `frame-ancestors` only.
+  Cloudflare outage, or a 200 refusing our secret key, lets the post through). Because of it
+  the CSP is `frame-ancestors` only.
 - **Every form post carries a CSRF token.** The guard is a router-level dependency (`api/security.py`), so a new route is covered by where it lives rather than by somebody remembering; every `<form method="post">` renders `{{ csrf.field(csrf_token) }}`. `tests/test_csrf.py` posts to every guarded route without one and asserts the refusal — do not add a route that needs an exemption without saying why there. The one exemption is the public borrower form: a token is bound to a signed-in user and a borrower has no account; the rate limit, the honeypot and - with its keys set - Turnstile stand in front of it instead, and `tests/test_csrf.py` says so.
 - **The borrower is told their indicative terms and nothing else.** A submission is sent to
   `/apply/thanks/<token>` (SPEC §4.2), which says the team will be in touch and, only when the

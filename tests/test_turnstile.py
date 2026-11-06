@@ -5,8 +5,8 @@ checked once here and then turned on with both keys and a fake siteverify on an
 ``httpx.MockTransport``, handed to the routes through ``api.turnstile.turnstile_transport``.
 Nothing here reaches Cloudflare. What is held: the widget is drawn above the submit button
 only when on; a passing token lets the post through, a failing or missing one is refused
-in the page's language with nothing stored; an outage of any kind lets the post through
-with a warning; and the rate limit and the honeypot still come first.
+in the page's language with nothing stored; an outage of any kind, or a refused secret, lets
+the post through with a warning; and the rate limit and the honeypot still come first.
 """
 
 from __future__ import annotations
@@ -270,18 +270,42 @@ def test_an_outage_lets_the_post_through_with_a_warning(
     assert "letting" in caplog.text and SECRET not in caplog.text
 
 
-def test_a_refused_secret_is_a_warning_because_every_borrower_is_being_refused(
+@pytest.mark.parametrize(
+    "code,through",
+    [
+        ("invalid-input-secret", True),
+        ("missing-input-secret", True),
+        ("invalid-input-response", False),
+    ],
+    ids=["bad secret", "no secret", "bad token"],
+)
+def test_a_refused_secret_lets_the_post_through_with_a_warning_and_a_refused_token_does_not(
     anon_client: QueueClient,
+    db_session: Session,
     turnstile_on: Callable[..., Siteverify],
     caplog: pytest.LogCaptureFixture,
+    code: str,
+    through: bool,
 ) -> None:
-    turnstile_on(says({"success": False, "error-codes": ["invalid-input-secret"]}))
+    # a 200 either way: a secret Cloudflare refused is the deployment's fault, and turning
+    # the borrower away for it would turn every borrower away
+    fake = turnstile_on(says({"success": False, "error-codes": [code]}))
     caplog.set_level("INFO", logger="glenwood.turnstile")
-    assert post(anon_client).status_code == 422
-    assert any(
+    response = post(anon_client)
+    assert len(fake.requests) == 1
+    warned = any(
         r.levelname == "WARNING" and "secret key was refused" in r.getMessage()
         for r in caplog.records
     )
+    if through:
+        assert THANKS_LINK.fullmatch(thanks_link(response))
+        assert len(deals(db_session)) == 1
+        assert warned and "letting the post through" in caplog.text
+    else:
+        assert response.status_code == 422 and FAILED_EN in response.text
+        assert deals(db_session) == []
+        assert not warned
+    assert SECRET not in caplog.text
 
 
 # --- what comes first -----------------------------------------------------------------------------

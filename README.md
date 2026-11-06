@@ -276,13 +276,13 @@ widget. To turn it on:
 
 It **fails open**: when Cloudflare cannot be reached, times out or answers anything but a
 200, the post goes through and the service log says `turnstile: siteverify …; letting the
-post through` on `glenwood.turnstile`. A refused secret (a mistyped key) is logged as a
-warning too - `turnstile: the secret key was refused` - and refuses every post until it is
-fixed, so check the log after step 3. A hostname not on the widget's list shows the widget's
-own error instead of a challenge, so the form carries no token and **every post from that
-hostname is refused**; add the hostname in Cloudflare, or unset the keys until it is.
-Cloudflare publishes test keys that always pass or always fail (the Turnstile docs,
-"Testing") for trying it on `localhost`.
+post through` on `glenwood.turnstile`. A refused secret (a mistyped key) goes the same way,
+with its own warning - `turnstile: the secret key was refused …; letting the post through` -
+so until the key is fixed Turnstile checks nothing; check the log after step 3. A hostname
+not on the widget's list shows the widget's own error instead of a challenge, so the form
+carries no token and **every post from that hostname is refused**; add the hostname in
+Cloudflare, or unset the keys until it is. Cloudflare publishes test keys that always pass
+or always fail (the Turnstile docs, "Testing") for trying it on `localhost`.
 
 ## Operational notes
 

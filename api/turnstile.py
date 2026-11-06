@@ -18,7 +18,9 @@ reaches Cloudflare; a test that wants it on sets both and serves siteverify from
 refused. But Cloudflare unreachable, slow past ``TIMEOUT`` or answering anything but a 200
 with a JSON body lets the post through, with a warning on ``glenwood.turnstile``: a borrower
 is not turned away for somebody else's outage, and the honeypot and the rate limit still
-stand while it lasts.
+stand while it lasts. So does a 200 that refuses the deployment's own secret
+(``MISCONFIGURED``): a key that is wrong for one borrower is wrong for every one of them, and
+a bad key is the deployment's fault, not theirs. The warning says so, so the log shows it.
 """
 
 from __future__ import annotations
@@ -45,8 +47,8 @@ RESPONSE_FIELD = "cf-turnstile-response"
 # As adapters/rentcast.TIMEOUT: a borrower is waiting on the answer, so not long, and a
 # timeout is an outage, which lets the post through.
 TIMEOUT = httpx.Timeout(10.0, connect=5.0)
-# Cloudflare's codes for a request that was the deployment's fault, not the borrower's: worth
-# a warning, because with them every borrower is being refused.
+# Cloudflare's codes for a request that was the deployment's fault, not the borrower's: the
+# token was never judged, so the post goes through as in an outage, with a warning.
 MISCONFIGURED = frozenset({"missing-input-secret", "invalid-input-secret"})
 
 log = logging.getLogger("glenwood.turnstile")
@@ -93,7 +95,8 @@ class Challenge(StrEnum):
     OFF = "OFF"  # no keys: nothing was asked
     PASSED = "PASSED"
     FAILED = "FAILED"  # no token, or Cloudflare said no: the post is refused
-    UNREACHED = "UNREACHED"  # Cloudflare could not answer: the post goes through
+    # Cloudflare could not answer, or refused our secret: the post goes through
+    UNREACHED = "UNREACHED"
 
 
 def check(
@@ -140,7 +143,11 @@ def check(
     codes = body.get("error-codes", []) if isinstance(body, dict) else []
     codes = [str(code) for code in codes] if isinstance(codes, list) else [str(codes)]
     if MISCONFIGURED.intersection(codes):
-        log.warning("turnstile: the secret key was refused (%s); check the deployment", codes)
-    else:
-        log.info("turnstile: refused the post from %s (%s)", remote_ip, codes)
+        log.warning(
+            "turnstile: the secret key was refused (%s); check the deployment; "
+            "letting the post through",
+            codes,
+        )
+        return Challenge.UNREACHED
+    log.info("turnstile: refused the post from %s (%s)", remote_ip, codes)
     return Challenge.FAILED
