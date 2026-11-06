@@ -6,6 +6,10 @@ parsed straight from the yaml text into ``Decimal`` so ``0.02`` is exactly
 ``Decimal("0.02")``. ``config_hash`` is a SHA-256 of the validated values in
 canonical JSON, so comments and key order do not change it; every ``screens``
 and ``underwrites`` row records it.
+
+``placeholders`` (v0.27) is the one record of which values Defiance has yet to
+confirm: dotted keys, each a leaf or a prefix of leaves. It says nothing about
+what any value is, so it is left out of the hash.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 from decimal import Decimal, InvalidOperation
+from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -260,8 +265,8 @@ class PricingConfig(_Section):
 
     One row per ``loan_amount_pct_steps`` entry, each a signed share of the request (0 is the
     request itself, -0.05 is five percent less): the row's loan amount is the request times
-    ``1 + step``, rounded half-up to the nearest ``loan_amount_rounding`` (placeholder
-    $1,000) and never above the request; the request row itself is never rounded. For each,
+    ``1 + step``, rounded half-up to the nearest ``loan_amount_rounding`` ($1,000) and never
+    above the request; the request row itself is never rounded. For each,
     the lowest rate, solved on the ledger to 0.01%, at which the lender's XIRR reaches
     ``target_lender_irr`` (``engine/calc/pricing.py``). A step only lends less: a reduction
     comes off the advance at closing the way the sensitivity rows' does, and nothing defines
@@ -399,7 +404,7 @@ class WebIntakeConfig(_Section):
     environment variables, not config, and nothing here turns it on or off.
 
     ``thanks_token_hours`` is how long the link a submission is sent to - the thank-you page
-    with the borrower's indicative terms on it - stays live (placeholder 24). After that, or
+    with the borrower's indicative terms on it - stays live (24 hours). After that, or
     on a token nobody was issued, the page is the plain thank-you.
     """
 
@@ -411,7 +416,7 @@ class RentcastConfig(_Section):
     """The RentCast property-data adapter's two tunables.  # SPEC §6
 
     ``cache_days`` is how long one pull at an address stands in for the next deal at the same
-    address (placeholder 30): a second deal inside the window reuses the stored runs rather
+    address (30 days): a second deal inside the window reuses the stored runs rather
     than spending three more requests. ``monthly_request_budget`` is the requests the plan
     allows per calendar month (placeholder 50, the free tier); when the next pull would pass
     it, the pull is skipped and the run says so with ``MARKET_DATA_BUDGET_EXHAUSTED`` rather
@@ -462,6 +467,29 @@ class StatesConfig(_Section):
 # silently winning.
 RETIRED_PRODUCT_KEYS: tuple[str, ...] = ("NO_DRAW", "SPLIT_DRAW", "SPLIT_PRINCIPAL", "WHOLETAIL")
 
+# The top-level key that lists the placeholders; not a tunable, and not hashed.
+PLACEHOLDERS = "placeholders"
+
+
+def flatten(data: Any, prefix: str = "") -> dict[str, Any]:
+    """Every leaf of a nested mapping by its dotted key (``fees.origination_default_pct``).
+
+    A list is one leaf, not one per item, and an enum key reads as its value, so the keys are
+    the ones the yaml spells.
+    """
+    if isinstance(data, dict):
+        leaves: dict[str, Any] = {}
+        for name, value in data.items():
+            name = name.value if isinstance(name, Enum) else str(name)
+            leaves.update(flatten(value, f"{prefix}.{name}" if prefix else name))
+        return leaves
+    return {prefix: data}
+
+
+def covers(entry: str, key: str) -> bool:
+    """Whether a ``placeholders`` entry names ``key``: the key itself, or a prefix of it."""
+    return key == entry or key.startswith(entry + ".")
+
 
 class Config(_Section):
     """Every GLENWOOD tunable, validated.  # SPEC §10"""
@@ -483,6 +511,8 @@ class Config(_Section):
     web_intake: WebIntakeConfig
     rentcast: RentcastConfig
     sign_in: SignInConfig
+    # The values Defiance has yet to confirm, by dotted key or prefix (v0.27, SPEC §10).
+    placeholders: list[str]
 
     @model_validator(mode="before")
     @classmethod
@@ -526,9 +556,38 @@ class Config(_Section):
             raise ValueError(f"leverage_caps is missing {len(missing)} cell(s): {shown}")
         return self
 
+    @model_validator(mode="after")
+    def _placeholders_name_keys(self) -> Config:
+        """Each entry names a key, or a prefix of keys, and no entry is another's.  # SPEC §10
+
+        A typo would otherwise tag nothing and count as one more placeholder; an entry listed
+        twice, or under a prefix already listed, would count one value twice.
+        """
+        keys = flatten(self.model_dump(mode="python", exclude={PLACEHOLDERS}))
+        unknown = [e for e in self.placeholders if not any(covers(e, key) for key in keys)]
+        if unknown:
+            raise ValueError(f"placeholders names no config key: {', '.join(unknown)}")
+        for index, entry in enumerate(self.placeholders):
+            for other in self.placeholders[:index]:
+                if other == entry:
+                    raise ValueError(f"placeholders lists {entry} twice")
+                if covers(other, entry) or covers(entry, other):
+                    raise ValueError(f"placeholders lists both {other} and {entry}")
+        return self
+
+    def is_placeholder(self, key: str) -> bool:
+        """Whether ``placeholders`` names this dotted key, itself or by a prefix."""
+        return any(covers(entry, key) for entry in self.placeholders)
+
     def canonical_json(self) -> str:
-        """Validated values as sorted, compact JSON; the input to ``config_hash``."""
-        return json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+        """Validated values as sorted, compact JSON; the input to ``config_hash``.
+
+        ``placeholders`` is left out: it says which values Defiance has yet to confirm, not
+        what any of them is, so striking one that has been confirmed moves no stored run's
+        hash (v0.27).
+        """
+        values = self.model_dump(mode="json", exclude={PLACEHOLDERS})
+        return json.dumps(values, sort_keys=True, separators=(",", ":"))
 
     @property
     def config_hash(self) -> str:

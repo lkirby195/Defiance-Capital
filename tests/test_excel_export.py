@@ -25,6 +25,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from cli.fixtures import FixtureRun, run_fixture
 from config.config import Config
 from outputs.excel import build_workbook, write_workbook
+from schema.labels import INPUT_LABELS, input_label
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures/synthetic/deals"
 CONFIG = Config.load()
@@ -458,14 +459,14 @@ def test_the_flip_sheet_reports_the_cost_stack_with_no_sale_price() -> None:
 
 
 def test_the_flip_sheet_is_the_profit_line_by_line_then_the_cost_stack() -> None:
-    """Sale price, broker, purchase, closing, rehab, contingency, holding, interest,
+    """Sale price, sales cost, purchase, closing, rehab, contingency, holding, interest,
     origination, profit; then the stack to the total deal cost (SPEC §8.4)."""
     sheet = book_for(FIXTURE_DIR / "go_holdback_denver.json")["Flip"]
     labels = [row[0].value for row in sheet.iter_rows(min_col=1, max_col=1)]
     profit = labels[labels.index("PROFIT") + 1 : labels.index("Net profit") + 1]
     assert profit == [
         "Sale price",
-        "Broker",
+        "Sales cost",
         "Purchase",
         "Closing",
         "Rehab",
@@ -535,3 +536,23 @@ def test_the_inputs_sheet_says_when_a_number_is_the_borrower_s_own() -> None:
     notes = {row[0].value: row[2].value for row in corrected.iter_rows(min_col=1, max_col=3)}
     assert notes["Estimated sale price"] == "team, by hand"
     assert notes["Monthly rent"] == "borrower, on the public form"
+
+
+def test_the_inputs_are_captioned_as_every_team_surface_captions_them() -> None:
+    """v0.27: the five §8.1 economics and the sales cost read as ``INPUT_LABELS`` words them -
+    "Origination", "Sales cost" - on the Inputs sheet and the Flip sheet alike."""
+    book = book_for(FIXTURE_DIR / "go_holdback_denver.json")
+    result = run(FIXTURE_DIR / "go_holdback_denver.json").underwrite_result
+    assert result is not None
+    for column in INPUT_LABELS:
+        find_row(book["Inputs"], input_label(column))  # raises when the caption is not there
+    sales_cost, number_format = find_row(book["Flip"], "Sales cost")
+    assert D(str(sales_cost)) == result.flip.broker_selling_pct and number_format == "0.0%"
+    assert D(str(find_row(book["Inputs"], "Origination")[0])) == D("0.02")
+    captions = {
+        str(row[0].value)
+        for sheet in book.worksheets
+        for row in sheet.iter_rows(min_col=1, max_col=1)
+        if row[0].value is not None
+    }
+    assert not captions & {"Broker selling", "Origination fee", "Holding costs (% of cost)"}

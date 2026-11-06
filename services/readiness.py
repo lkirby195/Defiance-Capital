@@ -41,7 +41,7 @@ from typing import Any, Literal
 from config.config import Config, get_config
 from db.models import Deal
 from schema.dates import Term, describe, payoff_date_for
-from schema.labels import enum_label
+from schema.labels import enum_label, input_label
 from schema.models import (
     SPLIT_PRODUCTS,
     TWELVE_PLUS_SEED_MONTHS,
@@ -374,7 +374,7 @@ def underwrite_readiness(
             deal,
             "interest_rate",
             "deal.interest_rate",
-            "Interest rate",
+            input_label("interest_rate"),
             defaults,
             fmt="pct",
             required=True,
@@ -430,7 +430,7 @@ def underwrite_readiness(
             deal,
             "contingency_pct",
             "contingency_pct",
-            "Contingency",
+            input_label("contingency_pct"),
             defaults,
             fmt="pct",
             note=f"config default: {fees.contingency_default_pct:.2%} of the rehab costs",
@@ -439,7 +439,7 @@ def underwrite_readiness(
             deal,
             "closing_costs_usd",
             "closing_costs_usd",
-            "Closing costs",
+            input_label("closing_costs_usd"),
             defaults,
             note="the lender's own, inside the LTC denominator (SPEC §8.2)",
         ),
@@ -447,7 +447,7 @@ def underwrite_readiness(
             deal,
             "holding_costs_pct_of_cost",
             "holding_costs_pct_of_cost",
-            "Holding costs (% of price + rehab)",
+            input_label("holding_costs_pct_of_cost"),
             defaults,
             fmt="pct",
             note=holding_costs_note(deal, fees.holding_costs_default_pct_of_cost),
@@ -456,7 +456,7 @@ def underwrite_readiness(
             deal,
             "origination_fee_pct",
             "origination_fee_pct",
-            "Origination fee",
+            input_label("origination_fee_pct"),
             defaults,
             fmt="pct",
             note=(
@@ -468,7 +468,7 @@ def underwrite_readiness(
             deal,
             "broker_selling_pct",
             "broker_selling_pct",
-            "Broker selling costs",
+            input_label("broker_selling_pct"),
             defaults,
             fmt="pct",
             note=(

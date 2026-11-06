@@ -2,57 +2,83 @@
 {% block title %}Defaults — Defiance Capital{% endblock %}
 
 {# Every value in config/glenwood.yaml, grouped, read-only (api/defaults_page.py): one card
-   per group, a simple table in each. Each value carries its dotted yaml key in data-key,
-   which is what tests/test_defaults_page.py checks against the yaml itself. #}
+   per group, System collapsed at the bottom. Every card's table is Variable | Value on the
+   same two fixed columns (.defaults in _style.html), so the values line up down the page.
+   Each value carries its dotted yaml key in data-key, which is what
+   tests/test_defaults_page.py checks against the yaml itself, and its row carries the key as
+   its hover title (v0.27: there is no Key column). A value the yaml's placeholders list
+   names wears a "placeholder" tag, a caps table the list names wears one in its title bar,
+   and so does the collapsed System card's bar while it holds one; the line under the title
+   counts the list. #}
 
-{% block content %}
-<h1>Defaults</h1>
-<p class="lede small">config/glenwood.yaml · config hash <code>{{ config_hash[:12] }}</code></p>
+{% macro tag(on) %}{% if on %} <span class="dflt">placeholder</span>{% endif %}{% endmacro %}
 
-{% for group in groups %}
-<section class="panel chart">
-  <h2>{{ group.heading }}</h2>
+{% macro pairs(leaves) %}
   <div class="scroll">
-    <table>
-      <thead><tr><th>Variable</th><th class="num">Value</th><th>Key</th></tr></thead>
+    <table class="pairs">
+      <colgroup><col class="variable"><col class="value"></colgroup>
+      <thead><tr><th>Variable</th><th>Value</th></tr></thead>
       <tbody>
-        {% for leaf in group.leaves %}
-          <tr>
+        {% for leaf in leaves %}
+          <tr title="{{ leaf.key }}">
             <td>{{ leaf.label }}</td>
-            <td class="num" data-key="{{ leaf.key }}">{{ leaf.value }}</td>
-            <td class="small muted"><code>{{ leaf.key }}</code></td>
+            <td><span data-key="{{ leaf.key }}">{{ leaf.value }}</span>{{ tag(leaf.placeholder) }}</td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-  {% if group.heading == "Screen caps and thresholds" %}
-    <div class="pad">
-    <h3>Leverage caps <span class="unit"><code>leverage_caps.&lt;loan type&gt;.&lt;tranche&gt;.&lt;tier&gt;</code></span></h3>
-    {% for table in caps %}
-      <div class="chart">
-      <h4>{{ table.product }}</h4>
-      <div class="scroll">
-        <table>
-          <thead>
-            <tr><th>Tranche</th>{% for tier in table.tiers %}<th class="num">{{ tier }}</th>{% endfor %}</tr>
-          </thead>
-          <tbody>
-            {% for tranche, cells in table.rows %}
-              <tr>
-                <td>{{ tranche }}</td>
-                {% for ltc, ltv in cells %}
-                  <td class="num small"><span class="unit">LTC</span> <span data-key="{{ ltc.key }}">{{ ltc.value }}</span> · <span class="unit">LTV</span> <span data-key="{{ ltv.key }}">{{ ltv.value }}</span></td>
-                {% endfor %}
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      </div>
-    {% endfor %}
+{% endmacro %}
+
+{% macro caps_table(table) %}
+  <div class="chart">
+    <h4>{{ table.structure }}{{ tag(table.placeholder) }}</h4>
+    <div class="scroll">
+      <table class="caps">
+        <colgroup><col class="credit">{% for _ in table.tiers %}<col>{% endfor %}</colgroup>
+        <thead>
+          <tr><th rowspan="2">Credit Range</th><th class="num" colspan="{{ table.tiers | length }}">Deals in last 36 months</th></tr>
+          <tr>{% for tier in table.tiers %}<th class="num">{{ tier }}</th>{% endfor %}</tr>
+        </thead>
+        <tbody>
+          {% for fico, cells in table.rows %}
+            <tr>
+              <td>{{ fico }}</td>
+              {% for ltc, ltv in cells %}
+                <td class="num small"><span class="unit">LTC</span> <span data-key="{{ ltc.key }}" title="{{ ltc.key }}">{{ ltc.value }}</span>{% if not table.placeholder %}{{ tag(ltc.placeholder) }}{% endif %} · <span class="unit">LTV</span> <span data-key="{{ ltv.key }}" title="{{ ltv.key }}">{{ ltv.value }}</span>{% if not table.placeholder %}{{ tag(ltv.placeholder) }}{% endif %}</td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
+  </div>
+{% endmacro %}
+
+{% block content %}
+<div class="defaults">
+<h1>Defaults</h1>
+<p class="lede small">config/glenwood.yaml · config hash <code>{{ config_hash[:12] }}</code></p>
+<p class="small" data-key="placeholders">{{ placeholder_line }}</p>
+
+{% for group in groups %}
+  {% if group.collapsed %}
+    {# closed, its bar says when a placeholder is inside, so the count above adds up #}
+    <details class="panel chart">
+      <summary><h2>{{ group.heading }}</h2>{{ tag(group.leaves | selectattr("placeholder") | list) }}</summary>
+      {{ pairs(group.leaves) }}
+    </details>
+  {% else %}
+    <section class="panel chart">
+      <h2>{{ group.heading }}</h2>
+      {{ pairs(group.leaves) }}
+      {% if group.caps %}
+        <div class="pad">
+          {% for table in group.caps %}{{ caps_table(table) }}{% endfor %}
+        </div>
+      {% endif %}
+    </section>
   {% endif %}
-</section>
 {% endfor %}
+</div>
 {% endblock %}

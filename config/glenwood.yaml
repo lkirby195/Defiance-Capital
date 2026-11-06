@@ -1,10 +1,32 @@
 # GLENWOOD tunables.  # SPEC §10
 #
-# EVERY VALUE IN THIS FILE IS A PLACEHOLDER until GLENWOOD fills it in.
+# The values Defiance has yet to confirm are the ones `placeholders:` names, just below; that
+# list is the one record of them, and the Defaults page tags each one it names.
 # Loaded and validated by config/config.py at startup; a missing key, an unknown key,
 # or an out-of-range value stops the service. The config hash recorded on every
 # screens/underwrites row is computed from the validated values, so comments and
 # key order do not change it.
+
+# By dotted key; a prefix names everything under it (SPEC §10, v0.27). An entry that names
+# no key, or that another entry already covers, is refused at load. Not a tunable: the list
+# is left out of the config hash, so striking a value Defiance has confirmed moves no
+# stored run's hash.
+placeholders:
+  - interest.default_annual_rate
+  - pricing.target_lender_irr
+  - pricing.max_quoted_rate
+  - pricing.borrower_coc_target
+  - pricing.borrower_rate_cushion
+  - pricing.borrower_rate_rounding
+  - rental.takeout_ltv
+  - rental.target_dscr
+  - take_back.foreclosure_months
+  - flags.underwrite_severities.MARKET_RENT_BELOW_REQUIRED
+  - flags.underwrite_severities.TAKEOUT_BELOW_PAYOFF
+  - flags.underwrite_severities.TAKE_BACK_PRICE_ABOVE_PURCHASE
+  - flags.underwrite_severities.BORROWER_COC_BELOW_TARGET
+  - rentcast.monthly_request_budget        # waits on the RentCast plan
+  - leverage_caps
 
 credit:                                   # SPEC §7.1
   floor_tranche: T4                       # below this tranche the screen declines (SPEC §7.5)
@@ -58,8 +80,8 @@ draws:                                    # SPEC §8.3
 interest:                                 # SPEC §8.1, §8.3
   default_annual_rate: 0.125              # the DEFAULT for interest_rate: what a deal is
                                           #   priced at until the team enters its own rate
-                                          #   (SPEC §8.1). PLACEHOLDER; on the sensitivity
-                                          #   grid's first column, so the deal's cell is marked.
+                                          #   (SPEC §8.1). On the sensitivity grid's first
+                                          #   column, so the deal's cell is marked.
   day_count_basis: 30                     # days a whole monthly period counts as, for the
                                           #   final stub period: stub interest is one month's
                                           #   interest x stub days / this. 30 is 30/360.
@@ -76,21 +98,21 @@ sensitivity:                              # SPEC §8.9 - the IRR grid on the dea
   rate_step: 0.01                         # the spacing between columns
 
 pricing:                                  # SPEC §8.10 - the Pricing section and its workbook sheet
-  target_lender_irr: 0.20                 # PLACEHOLDER: the lender XIRR a row's rate must reach
-  max_quoted_rate: 0.18                   # PLACEHOLDER: above this a row is not a quote; it says the rate it needs
+  target_lender_irr: 0.20                 # the lender XIRR a row's rate must reach
+  max_quoted_rate: 0.18                   # above this a row is not a quote; it says the rate it needs
   loan_amount_pct_steps: [0, -0.025, -0.05, -0.075, -0.10] # 0-10% off the request by 2.5%; 0 or less
-  loan_amount_rounding: 1000              # PLACEHOLDER: a stepped row's amount is rounded to the nearest
+  loan_amount_rounding: 1000              # a stepped row's amount is rounded to the nearest
                                           #   multiple of this; the request row is never rounded
-  borrower_coc_target: 0.20               # PLACEHOLDER: the flip's cash-on-cash target (SPEC §8.4); below
+  borrower_coc_target: 0.20               # the flip's cash-on-cash target (SPEC §8.4); below
                                           #   it, BORROWER_COC_BELOW_TARGET
-  borrower_rate_cushion: 0.005            # PLACEHOLDER: added to a row's solved rate before it is shown to
+  borrower_rate_cushion: 0.005            # added to a row's solved rate before it is shown to
                                           #   the borrower (SPEC §4.2); the team's pages keep the solve
-  borrower_rate_rounding: 0.0025          # PLACEHOLDER: the cushioned rate is rounded UP to the next
+  borrower_rate_rounding: 0.0025          # the cushioned rate is rounded UP to the next
                                           #   multiple of this (0.25%) before it is shown
 
 rental:                                   # SPEC §8.5 rental analysis: the takeout
   expenses_pct_of_rent: 0.35              # operating expenses as a share of the monthly rent
-  takeout_ltv: 0.75                       # PLACEHOLDER: the takeout loan is the exit value x this
+  takeout_ltv: 0.75                       # the takeout loan is the exit value x this
   takeout_rate: 0.065                     # the rate a takeout lender would amortize at
   amortization_years: 30
   target_dscr: 1.20                       # required NOI = amortizing debt service x this
@@ -98,7 +120,7 @@ rental:                                   # SPEC §8.5 rental analysis: the take
 take_back:                                # SPEC §8.6 take-back analysis: the lender's downside
   lost_interest_months: 3                 # months the lender collects nothing after the default
   legal_costs_usd: 5000.00
-  foreclosure_months:                     # PLACEHOLDER: months to take the property back, by
+  foreclosure_months:                     # months to take the property back, by
     OK: 6                                 #   state, each carried at the deal's monthly holding
     CO: 4                                 #   cost; every served state needs an entry, and
     OTHER: 8                              #   OTHER stands in for a state outside the footprint
@@ -113,13 +135,13 @@ states:                                   # SPEC §10
 web_intake:                               # SPEC §4.2 — the public borrower form at /apply
   submissions_per_hour_per_ip: 5          # posts from one address in a sliding hour; the
                                           #   next one gets "try again later" and stores nothing
-  thanks_token_hours: 24                  # PLACEHOLDER: how long the thank-you link with the
+  thanks_token_hours: 24                  # how long the thank-you link with the
                                           #   borrower's indicative terms stays live
 
 rentcast:                                 # SPEC §6 - the RentCast property-data adapter
-  cache_days: 30                          # PLACEHOLDER: a second deal at the same address within
+  cache_days: 30                          # a second deal at the same address within
                                           #   this many days reuses the stored pull
-  monthly_request_budget: 50              # PLACEHOLDER: the free tier's requests per calendar
+  monthly_request_budget: 50              # the free tier's requests per calendar
                                           #   month; at it the pull is skipped, not failed
 
 sign_in:                                  # SPEC §11 - the queue's /login (v0.26)
@@ -129,9 +151,9 @@ sign_in:                                  # SPEC §11 - the queue's /login (v0.2
                                           #   failures stop
 
 leverage_caps:                            # SPEC §7.4 — loan structure x credit tranche x experience tier
-  # PLACEHOLDER GRID: every cell carries the same dummy caps so it is obvious nothing is tuned.
-  # GLENWOOD fills this. Each cell: ltc, ltv (fractions of 1). LTV is the commitment over
-  # the estimated sale price (SPEC §7.4); the LTC placeholder is 100%, i.e. no cap yet.
+  # Every cell carries the same dummy caps so it is obvious nothing is tuned; GLENWOOD fills
+  # it. Each cell: ltc, ltv (fractions of 1). LTV is the commitment over the estimated sale
+  # price (SPEC §7.4); an LTC of 100% is no cap at all yet.
   ACQUISITION:                            # 100% at close (SPEC §3)
     T1:
       E0: {ltc: 1.00, ltv: 0.75}

@@ -543,24 +543,24 @@
     <dt>Payoff Date</dt><dd>{{ payoff_date | when }}</dd>
     <dt>Purchase Price</dt><dd>{{ deal.purchase_price | money }}</dd>
     <dt>Rehab Costs</dt><dd>{{ deal.rehab_costs | money }}</dd>
-    <dt>Contingency</dt><dd>{{ values.contingency_pct | pct }}{{ dflt("contingency_pct") }}</dd>
+    <dt>{{ "contingency_pct" | input_title }}</dt><dd>{{ values.contingency_pct | pct }}{{ dflt("contingency_pct") }}</dd>
     {% if result %}
       <dt>Contingency amount</dt><dd>{{ result.economics.contingency | money }}</dd>
       <dt>Rehab + contingency</dt><dd>{{ result.economics.rehab_adj | money }}</dd>
     {% endif %}
-    <dt>Closing Costs</dt><dd>{{ values.closing_costs_usd | money }}{{ dflt("closing_costs_usd") }}</dd>
-    <dt>Holding Costs</dt><dd>{{ values.holding_costs_pct_of_cost | pct }}{{ dflt("holding_costs_pct_of_cost") }}</dd>
+    <dt>{{ "closing_costs_usd" | input_title }}</dt><dd>{{ values.closing_costs_usd | money }}{{ dflt("closing_costs_usd") }}</dd>
+    <dt>{{ "holding_costs_pct_of_cost" | input_title }}</dt><dd>{{ values.holding_costs_pct_of_cost | pct }}{{ dflt("holding_costs_pct_of_cost") }}</dd>
     <dt>Holding Costs (total)</dt>
     <dd>{% if result %}{{ result.economics.holding_costs_total | money }}{% else %}{{ holding_costs_entered | money }}{% endif %}</dd>
     {% if result %}
       <dt>Holding Costs (monthly)</dt><dd>{{ result.economics.holding_costs_monthly | money }}</dd>
     {% endif %}
-    <dt>Origination Fee</dt><dd>{{ values.origination_fee_pct | pct }}{{ dflt("origination_fee_pct") }}</dd>
+    <dt>{{ "origination_fee_pct" | input_title }}</dt><dd>{{ values.origination_fee_pct | pct }}{{ dflt("origination_fee_pct") }}</dd>
     {% if result %}
       <dt>Origination at close</dt><dd>{{ result.economics.origination_at_close | money }}</dd>
       <dt>Origination at payoff</dt><dd>{{ result.economics.origination_at_payoff | money }}</dd>
     {% endif %}
-    <dt>Interest Rate</dt><dd>{{ values.interest_rate | pct }}{{ dflt("interest_rate") }}</dd>
+    <dt>{{ "interest_rate" | input_title }}</dt><dd>{{ values.interest_rate | pct }}{{ dflt("interest_rate") }}</dd>
     <dt>Loan Amount</dt><dd>{{ deal.loan_requested | money }}</dd>
     {% if result %}
       <dt>Commitment</dt><dd>{{ result.economics.commitment | money }}</dd>
@@ -703,12 +703,12 @@
     {% else %}<p class="headline na">Not evaluated</p>{% endif %}
     <span class="headline-label">Net profit</span>
     <dl class="facts small">
-      <dt>Broker selling %</dt><dd>{{ flip.broker_selling_pct | pct }}{{ dflt("broker_selling_pct") }}</dd>
+      <dt>{{ "broker_selling_pct" | input_label }}</dt><dd>{{ flip.broker_selling_pct | pct }}{{ dflt("broker_selling_pct") }}</dd>
     </dl>
     <h3>Profit</h3>
     <dl class="facts small" id="flip-profit">
       <dt>Sale price</dt><dd>{{ flip.estimated_sale_price | money }}</dd>
-      <dt>Broker</dt><dd>{{ less(flip.broker_costs) }}</dd>
+      <dt>{{ "broker_selling_pct" | input_label }}</dt><dd>{{ less(flip.broker_costs) }}</dd>
       <dt>Purchase</dt><dd>{{ less(flip.purchase_price) }}</dd>
       <dt>Closing</dt><dd>{{ less(flip.closing_costs) }}</dd>
       <dt>Rehab</dt><dd>{{ less(flip.rehab_costs) }}</dd>
@@ -823,7 +823,7 @@
       <dt>Foreclosure months</dt><dd>{{ take_back.foreclosure_months | plain }}{% if take_back.foreclosure_months_from is defined and take_back.foreclosure_months_from | plain == "OTHER" %} <span class="dflt">OTHER</span>{% endif %}</dd>
       <dt>Foreclosure carry</dt><dd>{{ take_back.foreclosure_carry | money }}</dd>
       <dt>REO sale month</dt><dd>{{ take_back.sale_month | plain }}</dd>
-      <dt>Broker selling %</dt><dd>{{ take_back.broker_selling_pct | pct }}{{ dflt("broker_selling_pct") }}</dd>
+      <dt>{{ "broker_selling_pct" | input_label }}</dt><dd>{{ take_back.broker_selling_pct | pct }}{{ dflt("broker_selling_pct") }}</dd>
       <dt>Target lender IRR</dt><dd>{{ take_back.target_irr | pct }}</dd>
     </dl>
     <h3>Haircut to target</h3>
@@ -874,11 +874,11 @@
   <form class="stack" method="post" action="/queue/deals/{{ deal.id }}/assumptions">
     {{ csrf.field(csrf_token) }}
     <div class="kv-grid structure" id="assumption-rows">
-      {{ kv_pct("interest_rate", "Interest Rate", form.interest_rate, default=defaults.interest_rate) }}
-      {{ kv_pct("origination_fee_pct", "Origination Fee", form.origination_fee_pct, default=defaults.origination_fee_pct) }}
-      {{ kv_pct("contingency_pct", "Contingency", form.contingency_pct, default=defaults.contingency_pct) }}
-      {{ kv_money("closing_costs_usd", "Closing Costs", form.closing_costs_usd, default=defaults.closing_costs_usd) }}
-      {{ kv_pct("holding_costs_pct_of_cost", "Holding Costs %", form.holding_costs_pct_of_cost,
+      {{ kv_pct("interest_rate", "interest_rate" | input_title, form.interest_rate, default=defaults.interest_rate) }}
+      {{ kv_pct("origination_fee_pct", "origination_fee_pct" | input_title, form.origination_fee_pct, default=defaults.origination_fee_pct) }}
+      {{ kv_pct("contingency_pct", "contingency_pct" | input_title, form.contingency_pct, default=defaults.contingency_pct) }}
+      {{ kv_money("closing_costs_usd", "closing_costs_usd" | input_title, form.closing_costs_usd, default=defaults.closing_costs_usd) }}
+      {{ kv_pct("holding_costs_pct_of_cost", "holding_costs_pct_of_cost" | input_title, form.holding_costs_pct_of_cost,
                 default=defaults.holding_costs_pct_of_cost, note=holding_costs_hint) }}
       {# The team form's own two controls (v0.18): the structure, and on a holdback the rehab
          portion held back - the advance at closing is the rest of the loan, worked out on
@@ -908,7 +908,7 @@
       {{ kv_money("rental_exit_value", "Exit Value", form.rental_exit_value,
                   default=defaults.get("rental_exit_value", "")) }}
       {{ kv_money("monthly_rent", "Monthly Rent", form.monthly_rent) }}
-      {{ kv_pct("broker_selling_pct", "Broker Selling Costs %", form.broker_selling_pct, default=defaults.broker_selling_pct) }}
+      {{ kv_pct("broker_selling_pct", "broker_selling_pct" | input_title, form.broker_selling_pct, default=defaults.broker_selling_pct) }}
       {{ kv_pct("rental_expenses_pct_of_rent", "Rental Expense %", form.rental_expenses_pct_of_rent,
                 default=defaults.rental_expenses_pct_of_rent) }}
       {{ kv_pct("rental_takeout_rate", "Rental Takeout Rate", form.rental_takeout_rate, default=defaults.rental_takeout_rate) }}

@@ -18,6 +18,7 @@ from datetime import date
 from decimal import Decimal
 
 from config.config import Config
+from schema.labels import input_label
 from schema.models import (
     SPLIT_PRODUCTS,
     AnalysisStatus,
@@ -121,7 +122,11 @@ def render_sizing(sizing: SizingResult, config: Config, title: str = "SIZING") -
             money(sizing.rehab_adj),
             f"{pct1(sizing.contingency_pct)} contingency, lender funded",
         ),
-        row("Closing costs", money(sizing.closing_costs), "the lender's, in the LTC denominator"),
+        row(
+            input_label("closing_costs_usd"),
+            money(sizing.closing_costs),
+            "the lender's, in the LTC denominator",
+        ),
         row("Total cost", money(sizing.total_cost)),
         row("Loan amount", money(sizing.loan_requested)),
         row("Commitment", money(sizing.commitment)),
@@ -230,7 +235,7 @@ def render_economics(result: UnderwriteResult) -> list[str]:
             money(economics.contingency),
             f"{pct1(economics.contingency_pct)} of rehab",
         ),
-        row("Closing costs", money(economics.closing_costs)),
+        row(input_label("closing_costs_usd"), money(economics.closing_costs)),
         row(
             "Holding costs (total)",
             money(economics.holding_costs_total),
@@ -239,12 +244,12 @@ def render_economics(result: UnderwriteResult) -> list[str]:
             f"{money(economics.holding_costs_monthly)}/mo over {months(result)}",
         ),
         row(
-            "Origination fee",
+            input_label("origination_fee_pct"),
             pct1(economics.origination_fee_pct),
             f"{money(economics.origination_at_close)} at close, "
             f"{money(economics.origination_at_payoff)} at payoff",
         ),
-        row("Interest rate", pct1(economics.interest_rate), "annual"),
+        row(input_label("interest_rate"), pct1(economics.interest_rate), "annual"),
         row("Loan amount", money(economics.loan_requested)),
         row("Commitment", money(economics.commitment)),
         row("Funded at close", money(economics.funded_at_close)),
@@ -400,7 +405,11 @@ def render_flip(flip: FlipAnalysis) -> list[str]:
     less = "" if flip.broker_costs is None else money(-flip.broker_costs)
     lines += [
         row("Sale price", money(flip.estimated_sale_price)),
-        row("  Broker", less or money(None), pct1(flip.broker_selling_pct)),
+        row(
+            f"  {input_label('broker_selling_pct')}",
+            less or money(None),
+            pct1(flip.broker_selling_pct),
+        ),
         *(
             row(f"  {label}", money(None if flip.net_profit is None else -amount), note)
             for label, amount, note in costs
@@ -577,7 +586,7 @@ def render_take_back(take_back: TakeBackAnalysis | LegacyTakeBackAnalysis) -> li
         row(
             "REO sale month",
             "n/a" if take_back.sale_month is None else str(take_back.sale_month),
-            f"net of {pct1(take_back.broker_selling_pct)} broker",
+            f"net of {pct1(take_back.broker_selling_pct)} sales cost",
         ),
         row("Target lender IRR", pct1(take_back.target_irr), "bisection on the XIRR"),
         "",

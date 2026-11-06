@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.26
+# GLENWOOD Underwriting Platform — SPEC v0.27
 
-Status: **v0.26**, 2026-11-05 (hardening-go-live), engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.27**, 2026-11-06 (defaults-cleanup), engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.27** is the Defaults page and one vocabulary (no engine change, no config value change, no migration; the head stays `0026`). **The Defaults page drops its Key column**: each row's dotted yaml key is the row's hover title and stays its `data-key`. **It is regrouped** into Loan Terms (the four fee defaults, the interest rate, the states served), Exit & Sales (the sales cost, the listing period), Rental Takeout, Take-Back, Pricing & Quotes, Sensitivity, Credit & Experience, Court & Lien Flags (every flag severity, lookback and threshold, and the court-records source per state), Leverage Caps (the tolerance band, then the caps tables) and, collapsed at the bottom, System (the public form's two tunables, RentCast, the sign-in lockout, the day count basis and the closing lead); and every table on it has the same two fixed columns, Variable and Value, so the values line up down the page. **The leverage caps read as a lender reads them**: one table per loan structure, captioned "100% at close" and "Holdback", its rows the FICO ranges (`schema/labels.tranche_label` on `credit.tranche_cutoffs`) and its columns the deal counts the deal page prints (0, 1–2, 3–5, 6+), each cell's keys on hover. **Flags and court sources read as words**: `schema/labels.FLAG_LABELS` words every flag code - court, screen and underwrite, the retired ones too - ("Borrower cash-on-cash below target", "Take-back price above purchase", "Landlord-tenant case as landlord"), and the page labels each severity row with it; the court-record sources read "OSCN" and "Colorado courts" (`COURT_SOURCE_LABELS`). **What is still a placeholder is a list**: a validated top-level `placeholders:` in `config/glenwood.yaml` names each value Defiance has yet to confirm by its dotted key or a prefix of one - fifteen: `interest.default_annual_rate`; `pricing.target_lender_irr`, `pricing.max_quoted_rate`, `pricing.borrower_coc_target`, `pricing.borrower_rate_cushion` and `pricing.borrower_rate_rounding`; `rental.takeout_ltv` and `rental.target_dscr`; `take_back.foreclosure_months`; the four underwrite-flag severities (`flags.underwrite_severities.MARKET_RENT_BELOW_REQUIRED`, `TAKEOUT_BELOW_PAYOFF`, `TAKE_BACK_PRICE_ABOVE_PURCHASE` and `BORROWER_COC_BELOW_TARGET`); `rentcast.monthly_request_budget`, which waits on the RentCast plan; and `leverage_caps`. That is the thirteen the yaml's comments called PLACEHOLDER less the three Logan has confirmed (`pricing.loan_amount_rounding`, `web_intake.thanks_token_hours`, `rentcast.cache_days`), plus the target DSCR and the four severities §10 also called placeholders; the sales cost (6%, confirmed on the Oct 27 partner call) and the submissions per hour (Logan's call) are not on it, and §10 no longer calls them placeholders. An entry that names no key is refused at load, and so is one listed twice or inside another entry. The comments no longer say PLACEHOLDER, so the list is the one source. The list is not a tunable, so it is left out of the config hash: listing a value, or striking one Defiance has confirmed, moves no stored run's hash. The page tags each listed row "placeholder", as the deal page tags a default, each caps table as a whole, and the closed System card's bar while it holds one, under a line that says how many values are placeholders. **One vocabulary for the §8.1 inputs**: `schema/labels.INPUT_LABELS` words the five economics and the sales cost by their `deals` column - "Interest rate", "Origination", "Contingency", "Closing costs", "Holding costs", "Sales cost" - and the Defaults page, the deal page (Deal Economics, the Flip and Take-Back cards, the Assumptions panel), the reset confirmation page, the readiness rows, the workbook and the CLI report read their captions from it, each in its own letter case; the Defaults page alone adds what the holding costs are a share of, "Holding costs (of purchase + rehab)", since a default read away from any deal has to say it. "Broker selling", "Broker" and "Origination fee" are gone from the team's pages and outputs: the sales cost's dollar line in the Flip's profit reads "Sales cost" too, on the deal page, the workbook and the CLI report, and the Take-Back sheet's percentage row with it; the origination's dollar lines keep "Origination at close" and "at payoff", and the borrower's strings (`api/i18n.py`) are unchanged (§8.1, §9, §10).
 
 **v0.26** is the go-live hardening (no engine change, no migration; the head stays `0026`). **The session cookie is `Secure` behind Render's proxy**: `api/security.over_https` is true when `X-Forwarded-Proto` says `https` as well as when the scheme does, reading the header itself the way `api/ratelimit.client_address` reads `X-Forwarded-For` - not uvicorn's `--forwarded-allow-ips='*'`, which would make `request.client` the leftmost `X-Forwarded-For` entry, the one the client writes. **Every response carries five security headers** (`api/main.py`; `/static` and every `/apply` response included): `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy: frame-ancestors 'none'` and nothing more (the Turnstile script loads from challenges.cloudflare.com), `X-Frame-Options: DENY`, and over HTTPS `Strict-Transport-Security: max-age=31536000; includeSubDomains`, no preload. **The API docs are off**: `/docs`, `/redoc` and `/openapi.json` answer 404 unless `GLENWOOD_API_DOCS=1` is set when the app is imported. **A failed sign-in is an audit row and enough of them lock the sign-in** (`services/sign_in.py`, §11): each is one `SIGN_IN_FAILED` row - actor `anonymous`, table `users`, the user's id when the email has an account and `unknown` when it does not, `after` the normalized email (cut at 254 characters) and the client address, never the password - and `sign_in.lockout_failures` (10) of them for one email or from one address inside `sign_in.lockout_minutes` (15), counted on the database clock, turn the next attempt away before any password is hashed: a 429 with `Retry-After` and "Too many sign-in attempts. Try again in N minutes." An attempt made while locked goes to the process log and not to the table, so the lock lifts N minutes after the attacker stops. An email with no account is verified against a decoy hash, so it costs the same PBKDF2 as a wrong password (`services/users.authenticate`). **Cloudflare Turnstile stands in front of `/apply` and Adjust my numbers** when both `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` are set (`api/turnstile.py`; off otherwise, and off under the tests): the widget sits above the submit button and does not hold it off; the server verifies its token after the rate limit and the honeypot and before the form is read; a missing or failed token puts the form back with a 422 and one line, in English or Spanish; and Cloudflare unreachable, timing out, answering anything but 200 or refusing the deployment's own secret key (`missing-input-secret`, `invalid-input-secret`) lets the post through with a warning in the log - a bad key must not turn borrowers away, and the honeypot and the rate limit still stand (§4.2). The docs follow: credit data is encrypted at rest by the database provider, Neon, with column-level encryption arriving with Credco (§11), and the README's deploy is Neon rather than Render Postgres, with the Neon password's rotation, the backups and the Turnstile setup.
 
@@ -205,7 +207,7 @@ line above the button says so, in both languages, and the stored submission reco
 
 **The thank-you page** (v0.14). The submission is sent to `/apply/thanks/<token>`: a random,
 unguessable token stored on the deal (`deals.thanks_token`) and live for
-`web_intake.thanks_token_hours` (§10, placeholder 24); an expired or unknown token, and the
+`web_intake.thanks_token_hours` (§10, 24); an expired or unknown token, and the
 bare `/apply/thanks`, render the plain thank-you. The page says the team will be in touch
 and, when the run it reads allows it, shows one table titled **Indicative terms**, one row
 per pricing step (§8.10) that quotes a rate: Loan amount, Rate, Estimated profit, Project
@@ -683,7 +685,7 @@ never relinks and never pulls.
 
 **Cache.** `properties` is keyed by the normalized address and shared across deals (§5), so the
 property row is the cache key: a deal whose address has an `OK` run inside
-`rentcast.cache_days` (placeholder 30) gets `CACHED` rows of its own - the body copied, the
+`rentcast.cache_days` (30) gets `CACHED` rows of its own - the body copied, the
 original run and its time named in `parsed_result` - and sends nothing; the card says "reused
 from a pull on <date>". Refresh bypasses it; a `cache_days` of 0 turns it off.
 
@@ -893,13 +895,25 @@ the economics above.
 
 | Input | Default | Notes |
 |---|---|---|
-| `broker_selling_pct` | `fees.broker_selling_pct` (6%; 4% before v0.17) | Of the sale price: the flip's cost of selling (§8.4). Labelled **Broker Selling Costs %** |
+| `broker_selling_pct` | `fees.broker_selling_pct` (6%; 4% before v0.17) | Of the sale price: the flip's cost of selling (§8.4). Labelled **Sales cost** (v0.27; **Broker Selling Costs %** before) |
 | `rental_expenses_pct_of_rent` | `rental.expenses_pct_of_rent` (35%) | Operating expenses as a share of the rent: the required rent grosses the required NOI up by it, the market rent nets down by it, and the take-back's hold collects rent net of it (§8.5, §8.6). **Rental Expense %** |
 | `rental_takeout_rate` | `rental.takeout_rate` (6.5%) | The rate a takeout lender amortizes the commitment at (§8.5). **Rental Takeout Rate** |
 | `take_back_legal_costs_usd` | `take_back.legal_costs_usd` (5,000) | The legal bill in the take-back's total cost (§8.6). **Take-Back Legal Costs** |
 | `take_back_lost_interest_months` | `take_back.lost_interest_months` (3) | Months of interest GLENWOOD stops collecting, at the deal's own rate (§8.6). **Take-Back Lost Interest Months**, a whole number |
 
 The takeout LTV, the amortization years, the target DSCR, the foreclosure months by state and the hold periods are config alone (§10).
+
+**One word for each economics input and the sales cost** (v0.27): `schema/labels.INPUT_LABELS`,
+keyed by the `deals` column, has "Interest rate", "Origination", "Contingency", "Closing
+costs", "Holding costs" and "Sales cost", and every team surface that captions one of the
+six reads it - the Defaults page, the deal page, the reset confirmation page, the readiness
+rows, the workbook and the CLI report - in its own letter case (the deal page's Deal
+Economics and Assumptions panel and the reset page are Title Case: "Sales Cost"). The Defaults
+page alone qualifies one: "Holding costs (of purchase + rehab)", because a default read away
+from any deal has to say what it is a share of, where the deal page prints no parenthetical.
+The sales
+cost's dollar line reads "Sales cost" too (it read "Broker"); the origination's dollar lines
+keep "Origination at close" and "at payoff", and the borrower's pages read `api/i18n.py`.
 
 **Every deal is populated with its defaults** (`services/defaults.py`). The five economics
 with a config default — the interest rate, the contingency, the closing costs, the holding
@@ -1359,7 +1373,7 @@ cost so a reader can divide one by the other.
 One row per `pricing.loan_amount_pct_steps` entry (`[0, -0.025, -0.05, -0.075, -0.10]` from
 v0.25, placeholder `[0, -0.05, -0.10]` before it, engine `1.10.0`), each a share of the request that only ever lends less. The row's loan amount is
 the request times `1 + step`, **rounded half-up to the nearest `pricing.loan_amount_rounding`**
-(placeholder $1,000) and never above the request; the request row (step 0) is never rounded,
+($1,000) and never above the request; the request row (step 0) is never rounded,
 so a $195,000 request prices as $195,000, $185,000 (185,250 rounded down) and $176,000
 (175,500 rounded up). Each row is labelled by its step - "Requested", "-5%", "-10%" - and
 carries the dollar change the share came to; the reduction is taken off the advance at
@@ -1510,11 +1524,11 @@ is on the page in this order with the tab row as in-page links:
    the haircut block and the hold-and-rent table, a solve with no solution reading "None
    needed" or "No solution" (§8.6).
 6. **Assumptions** - the **Underwriting Assumptions** panel as a grid of rows, one per box:
-   Interest Rate, Origination Fee, Contingency, Closing Costs, Holding Costs %, the Loan
+   Interest Rate, Origination, Contingency, Closing Costs, Holding Costs (v0.27), the Loan
    Structure radio and the Rehab portion row it reveals on Holdback (the team form's own two
    controls, v0.18; the advance at closing is the rest of the loan), Estimated Sale Price,
    As-Is Value, Exit Value (tagged "default" while it holds the sale price, v0.19), Monthly
-   Rent, Broker Selling Costs %, Rental Expense %, Rental Takeout Rate, Take-Back Legal Costs,
+   Rent, Sales Cost, Rental Expense %, Rental Takeout Rate, Take-Back Legal Costs,
    Take-Back Lost Interest Months and the Version name - the caption on the left, the box on
    the right showing what the deal carries, masked as everywhere else, with its reset link
    beside it and the "default" tag at the right edge while it holds its default; one **Save &
@@ -1666,22 +1680,23 @@ workbook to export.
   - `contingency_default_pct` (0.00)
   - `closing_costs_default_usd` (1,000) — the lender's closing costs, inside the LTC denominator (§7.4, §8.2)
   - `holding_costs_default_pct_of_cost` (2%) — the default for `holding_costs_pct_of_cost`, itself a percentage of `purchase_price + rehab_costs` over the whole hold (§8.1)
-  - `broker_selling_pct` (6%, placeholder; 4% before v0.17) — the flip's cost of selling, the default for the deal's own `broker_selling_pct` (§8.1). Migration `0021` moved every deal still carrying the 4% stand-in to 6%
+  - `broker_selling_pct` (6%, confirmed on the Oct 27 partner call; 4% before v0.17) — the flip's cost of selling, the default for the deal's own `broker_selling_pct` (§8.1). Migration `0021` moved every deal still carrying the 4% stand-in to 6%
 - `draws.listing_months` (3): `rehab_months = term_months − listing_months`, whole periods only
 - `interest.default_annual_rate` (12.5%, placeholder; the sensitivity grid's first column): the **default for `interest_rate`** (§8.1), populated on every deal until the team enters its own
 - `interest.day_count_basis` (30): the days a whole monthly period counts as, for the final stub period's prorated interest (§8.3)
 - `closing.default_lead_days` (14): the **default for `closing_date`** (§8.1) is the last day of the month this many days after the deal came in
 - sensitivity (§8.9): `loan_step_usd` (5,000), `loan_steps` (4), `rate_min` (12.5%), `rate_max` (17.5%), `rate_step` (1%) - the shape of the IRR grid; every cell is a ledger re-run
-- pricing (§8.10): `borrower_coc_target` (20%, placeholder, v0.17; the Flip's cash-on-cash target, §8.4), `target_lender_irr` (20%, placeholder), `max_quoted_rate` (18%, placeholder; above 0, at most 100%), `loan_amount_pct_steps` (`[0, -0.025, -0.05, -0.075, -0.10]` from v0.25; each between -1 and 0, no duplicates, at least one) and `loan_amount_rounding` ($1,000, placeholder; above 0). The old `loan_amount_steps` is refused by name. The borrower's quote (§4.2, v0.22): `borrower_rate_cushion` (0.5%, placeholder; 0 to 100%) added to a row's solved rate before it is shown, and `borrower_rate_rounding` (0.25%, placeholder; above 0, at most 100%), the step the cushioned rate is rounded up to
+- pricing (§8.10): `borrower_coc_target` (20%, placeholder, v0.17; the Flip's cash-on-cash target, §8.4), `target_lender_irr` (20%, placeholder), `max_quoted_rate` (18%, placeholder; above 0, at most 100%), `loan_amount_pct_steps` (`[0, -0.025, -0.05, -0.075, -0.10]` from v0.25; each between -1 and 0, no duplicates, at least one) and `loan_amount_rounding` ($1,000, confirmed; above 0). The old `loan_amount_steps` is refused by name. The borrower's quote (§4.2, v0.22): `borrower_rate_cushion` (0.5%, placeholder; 0 to 100%) added to a row's solved rate before it is shown, and `borrower_rate_rounding` (0.25%, placeholder; above 0, at most 100%), the step the cushioned rate is rounded up to
 - rental takeout (§8.5): `expenses_pct_of_rent` (35%) and `takeout_rate` (6.5%), the defaults for the two per-deal assumptions; `takeout_ltv` (75%, placeholder, v0.19; above 0), `amortization_years` (30) and `target_dscr` (1.20, placeholder; the renamed `dscr_floor`, which is refused by name)
 - take-back (§8.6): `lost_interest_months` (3) and `legal_costs_usd` (5,000), the defaults for the two per-deal assumptions; `foreclosure_months` by state (placeholders OK 6, CO 4, OTHER 8; every served state needs an entry, and `OTHER` stands in for any other state, v0.20) and `hold_months` (`[12, 24, 36]`; distinct, ascending, 1 to 120). The DSCR test's `amortization_years` and `dscr_floor` are refused by name
 - underwrite flag severities: `MARKET_RENT_BELOW_REQUIRED` and `TAKEOUT_BELOW_PAYOFF` (placeholder Soft), `TAKE_BACK_PRICE_ABOVE_PURCHASE` (placeholder Hard), `BORROWER_COC_BELOW_TARGET` (placeholder Soft, v0.17). The informational codes (§8.8) are fixed `Info` in code and the loader refuses to grade them, as it refuses the retired `DSCR_BELOW_FLOOR` and `TAKE_BACK_DSCR_BELOW_FLOOR`
 - states served and court-record adapter per state
-- `web_intake.submissions_per_hour_per_ip` (placeholder 5): posts to the public form from one address in a sliding hour before the next is turned away (§4.2)
-- `web_intake.thanks_token_hours` (placeholder 24): how long a submission's thank-you link, with the borrower's indicative terms on it, stays live (§4.2)
-- `rentcast.cache_days` (placeholder 30; 0 to 365): how long one RentCast pull at an address stands in for the next deal at the same address (§6.2); 0 caches nothing
-- `rentcast.monthly_request_budget` (placeholder 50, the free tier; 0 turns the adapter off): the requests allowed per calendar month; a pull that would pass it is skipped with `MARKET_DATA_BUDGET_EXHAUSTED` (§6.2). The key itself is the `RENTCAST_API_KEY` environment variable, not config - read by `services.market_data.rentcast_api_key`, the environment first and `.env` second, as `DATABASE_URL` is
+- `web_intake.submissions_per_hour_per_ip` (5, Logan's call): posts to the public form from one address in a sliding hour before the next is turned away (§4.2)
+- `web_intake.thanks_token_hours` (24, confirmed): how long a submission's thank-you link, with the borrower's indicative terms on it, stays live (§4.2)
+- `rentcast.cache_days` (30, confirmed; 0 to 365): how long one RentCast pull at an address stands in for the next deal at the same address (§6.2); 0 caches nothing
+- `rentcast.monthly_request_budget` (placeholder 50, the free tier, until the RentCast plan is settled; 0 turns the adapter off): the requests allowed per calendar month; a pull that would pass it is skipped with `MARKET_DATA_BUDGET_EXHAUSTED` (§6.2). The key itself is the `RENTCAST_API_KEY` environment variable, not config - read by `services.market_data.rentcast_api_key`, the environment first and `.env` second, as `DATABASE_URL` is
 - `sign_in.lockout_failures` (10; 1 to 1,000) and `sign_in.lockout_minutes` (15; 1 to 1,440), v0.26: that many failed sign-ins for one email or from one address inside that many minutes lock the next attempt out (§11). The Turnstile keys, like the RentCast key, are environment variables and not config (§4.2)
+- `placeholders` (v0.27): the values Defiance has yet to confirm, by dotted key or a prefix of one (`leverage_caps`, `take_back.foreclosure_months`) - exactly the fifteen this section calls placeholders; the yaml's comments no longer say it, so the list is the one source. An entry that names no key, one listed twice and one inside another are refused at load. It is not a tunable: `config_hash` leaves it out, so striking a value once it is confirmed moves no stored run's hash. Elsewhere this spec still says "placeholder" in its older, looser sense - any value nobody had tuned yet; where the two differ, the list is what counts
 
 Gone with the v0.2 §8, and rejected by the loader if a stale yaml still carries them:
 `returns` (target IRR, rate grid, month window), `takeout` (DSCR takeout LTV, rate,
@@ -1696,10 +1711,21 @@ input), `draws.draw_avg_utilization` (the ledger makes it unnecessary), and — 
 Config is versioned; each `screens`/`underwrites` row records the config hash used.
 
 Every value is shown, read-only, on the **Defaults** page (`/defaults`, signed in, linked from
-the top bar), grouped Economics, Flip, Rental, Take-Back, Pricing, Sensitivity, Screen caps and
-thresholds, Dates, Market data, Sign-in, each beside its dotted key (`fees.origination_default_pct`). The leverage
-caps show as one table per loan type. A test reads the yaml itself and fails on any key the
-page does not show, so a new key has to be placed in a group (`api/defaults_page.py`).
+the top bar), in ten groups (v0.27): Loan Terms, Exit & Sales, Rental Takeout, Take-Back,
+Pricing & Quotes, Sensitivity, Credit & Experience, Court & Lien Flags, Leverage Caps and,
+collapsed at the bottom, System. Every card is a Variable | Value table on the same two
+fixed columns, so the values line up down the page, and each row's dotted key
+(`fees.origination_default_pct`) is its hover title rather than a column; a default for a
+deal's own input is labelled as the deal page captions the input (§8.1), the holding costs
+with "(of purchase + rehab)" after it. The leverage caps
+show under Leverage Caps as one table per loan structure, "100% at close" and "Holdback",
+a row per FICO range and a column per deal count. Each flag's severity row is the flag in
+words (`schema/labels.FLAG_LABELS`, every flag code), and the court-record sources read
+"OSCN" and "Colorado courts". A value `placeholders` names wears a
+"placeholder" tag - a caps table as a whole, and the System bar while it holds one - and a
+line under the title says how many values are placeholders. A test reads the yaml itself
+and fails on any key the page does not show, so a new key has to be placed in a group
+(`api/defaults_page.py`).
 
 ---
 
@@ -1891,6 +1917,17 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
 
 ## 13. Open items
 
+- defaults-cleanup's open questions (v0.27):
+  - **`rentcast.monthly_request_budget` stays a placeholder** (50, the free tier) until
+    Logan's RentCast plan is settled
+  - **Court & Lien Flags holds the underwrite flags' severities too**
+    (`MARKET_RENT_BELOW_REQUIRED` and the rest), since the group takes every `flags.*` key
+  - **Three rows still print a grid code**: Credit floor tranche (`T4`), Repeat borrower
+    minimum tier (`E2`) and the cutoffs (`T1 minimum FICO`); the caps tables no longer do
+  - **The four §8.5-§8.6 assumptions still read differently from surface to surface**
+    ("Operating expenses (of rent)" on the Defaults page, "Rental Expense %" on the panel,
+    "Rental expenses" in the workbook); `INPUT_LABELS` covers the §8.1 economics and the
+    sales cost only
 - hardening-go-live's open questions (v0.26):
   - **Turnstile fails open.** Cloudflare unreachable, slow, answering anything but 200 or
     refusing the deployment's own secret lets a post through, logged; only a token Cloudflare
@@ -2045,14 +2082,14 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
 - Historical deals for fixtures
 - The public form's Spanish (`api/i18n.py`): written for a Latin American audience in the
   `usted` register and pending native-speaker review
-- The public form's rate limit (`web_intake.submissions_per_hour_per_ip`, placeholder 5) and
-  whether the count should survive a restart
+- The public form's rate limit (`web_intake.submissions_per_hour_per_ip`, 5 on Logan's call,
+  v0.27): whether the count should survive a restart
 - `interest.default_annual_rate`, placeholder 12.5% (12% until v0.15): the rate every deal is priced at until the
   team enters one. Two edges of the default rule to confirm: a typed value equal to the
   default reads as the default, and a stored default keeps its number if the config default
   later changes (the deal says `DEFAULT` with the old number; the reset link offers the new)
-- The config placeholders the mechanics walkthrough left open: the contingency, holding-cost
-  and broker percentages, the rental expense ratio, takeout LTV, takeout rate and target DSCR, the
+- The config placeholders the mechanics walkthrough left open: the contingency and
+  holding-cost percentages (the broker's, now the sales cost, was confirmed at 6% in v0.27), the rental expense ratio, takeout LTV, takeout rate and target DSCR, the
   take-back's foreclosure months and hold periods, the
   take-back's lost-interest months and legal costs, and the stub period's day-count basis
   (`interest.day_count_basis`, placeholder 30 — 30/360; a lender who accrues actual/365 sets 365)
@@ -2079,8 +2116,8 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
   under (a usury limit, say); the search itself still runs to 100%, so a row above the cap
   can say what it needs. Rounding is half-up and capped at the request, so a share too small
   to survive the unit prices as the request again; confirm half-up is the rounding wanted
-- The thank-you page's indicative terms (v0.14, §4.2): `web_intake.thanks_token_hours` is a
-  24-hour placeholder; the results shown are the arrival run's (version 1) or the borrower's
+- The thank-you page's indicative terms (v0.14, §4.2): `web_intake.thanks_token_hours` is 24
+  hours, confirmed in v0.27; the results shown are the arrival run's (version 1) or the borrower's
   own edit's (v0.22), never a later team version's, so a team edit inside the window does
   not reach the borrower; a Conditional
   screen shows the table exactly as a Go does; the yield shown is the borrower's cash-on-cash

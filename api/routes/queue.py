@@ -87,6 +87,7 @@ from db.models import Deal
 from db.session import get_session
 from outputs.excel import workbook_bytes
 from schema.dates import payoff_date_for
+from schema.labels import input_label
 from schema.models import (
     PROFILE_ENUMS,
     SPLIT_PRODUCTS,
@@ -236,16 +237,17 @@ COURT_NAMES: tuple[str, ...] = ("court_records_status", "court_records_as_of")
 ASSUMPTION_BOX_NAMES: frozenset[str] = frozenset(ASSUMPTION_NAMES)
 COURT_BOX_NAMES: frozenset[str] = frozenset(COURT_NAMES)
 
-# What the reset confirmation page lists, by the caption the panel uses.
+# What the reset confirmation page lists, by the caption the panel uses (the six inputs
+# ``schema/labels.INPUT_LABELS`` words, Title Case as the panel has them; v0.27).
 RESET_LABELS: tuple[tuple[str, str], ...] = (
-    ("interest_rate", "Interest Rate"),
-    ("origination_fee_pct", "Origination Fee"),
-    ("contingency_pct", "Contingency"),
-    ("closing_costs_usd", "Closing Costs"),
-    ("holding_costs_pct_of_cost", "Holding Costs %"),
+    ("interest_rate", input_label("interest_rate", title=True)),
+    ("origination_fee_pct", input_label("origination_fee_pct", title=True)),
+    ("contingency_pct", input_label("contingency_pct", title=True)),
+    ("closing_costs_usd", input_label("closing_costs_usd", title=True)),
+    ("holding_costs_pct_of_cost", input_label("holding_costs_pct_of_cost", title=True)),
     ("loan_rehab_portion", "Rehab portion"),
     ("rental_exit_value", "Exit Value"),
-    ("broker_selling_pct", "Broker Selling Costs %"),
+    ("broker_selling_pct", input_label("broker_selling_pct", title=True)),
     ("rental_expenses_pct_of_rent", "Rental Expense %"),
     ("rental_takeout_rate", "Rental Takeout Rate"),
     ("take_back_legal_costs_usd", "Take-Back Legal Costs"),

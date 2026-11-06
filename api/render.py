@@ -40,6 +40,7 @@ from db.models import User
 from schema.labels import (
     enum_label,
     experience_label,
+    input_label,
     profile_caption,
     profile_label,
     term_bucket_label,
@@ -194,6 +195,19 @@ def caption(field: str) -> str:
     return profile_caption(field)
 
 
+def input_caption(column: str) -> str:
+    """An input's caption by its ``deals`` column: ``broker_selling_pct`` -> ``Sales cost``.
+
+    # SPEC §8.1 (v0.27). ``input_title`` is the same word Title Case, for the captions that are.
+    """
+    return input_label(column)
+
+
+def input_title(column: str) -> str:
+    """An input's caption, Title Case: ``broker_selling_pct`` -> ``Sales Cost``."""
+    return input_label(column, title=True)
+
+
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.filters.update(
     money=money,
@@ -215,6 +229,8 @@ templates.env.filters.update(
     bucket=bucket,
     profile=profile,
     caption=caption,
+    input_label=input_caption,
+    input_title=input_title,
 )
 # A missing name in a template is a bug in the template, not an empty string on the page.
 templates.env.undefined = jinja2.StrictUndefined
