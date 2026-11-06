@@ -12,7 +12,11 @@
    the submit button that stays off until every required box is filled, and the listing
    link lifting `required` off the address boxes. A browser running none of it posts a
    form the server checks the same way (api/apply_form.py) and answers with the complaint
-   under the box. #}
+   under the box.
+
+   The fourth is Cloudflare Turnstile's widget and its script (v0.26, api/turnstile.py),
+   drawn only when both keys are set. It writes a token into the form and decides nothing:
+   the button does not wait for it, and the server asks Cloudflare about the token. #}
 
 {% from "_apply_fields.html" import text_box, money_box, select_box, choice_group with context %}
 
@@ -85,6 +89,7 @@
       so, right above the button, in the borrower's language. -#}
   <p class="consent">{{ t.consent }}</p>
 
+  {% include "_turnstile.html" %}
   <div class="field">
     <button type="submit" data-requires-all>{{ t.submit }}</button>
     <span class="hint">{{ t.submit_hint }}</span>

@@ -394,7 +394,9 @@ class WebIntakeConfig(_Section):
     Posts to ``/apply`` from one address are counted over a sliding hour, and the post that
     takes the count past ``submissions_per_hour_per_ip`` is turned away with a polite "try
     again later" rather than stored. A honeypot field handles the dumbest bots for free; this
-    is for the rest, and for a person who keeps pressing the button. No CAPTCHA.
+    is for the rest, and for a person who keeps pressing the button. Cloudflare Turnstile
+    stands beside both when its two keys are set (``api/turnstile.py``, v0.26); the keys are
+    environment variables, not config, and nothing here turns it on or off.
 
     ``thanks_token_hours`` is how long the link a submission is sent to - the thank-you page
     with the borrower's indicative terms on it - stays live (placeholder 24). After that, or
@@ -418,6 +420,20 @@ class RentcastConfig(_Section):
 
     cache_days: Annotated[int, Field(ge=0, le=365)]
     monthly_request_budget: Annotated[int, Field(ge=0, le=1_000_000)]
+
+
+class SignInConfig(_Section):
+    """The queue sign-in's lockout.  # SPEC §11 (v0.26)
+
+    ``lockout_failures`` failed sign-ins (``SIGN_IN_FAILED`` audit rows) for one email, or
+    from one client address, inside the last ``lockout_minutes`` lock the sign-in for that
+    email or address: the next attempt is refused before its password is verified
+    (``services/sign_in.py``). An attempt refused that way is not counted, so the lock lifts
+    ``lockout_minutes`` after the failures stop.
+    """
+
+    lockout_failures: Annotated[int, Field(ge=1, le=1000)]
+    lockout_minutes: Annotated[int, Field(ge=1, le=24 * 60)]
 
 
 class StatesConfig(_Section):
@@ -466,6 +482,7 @@ class Config(_Section):
     states: StatesConfig
     web_intake: WebIntakeConfig
     rentcast: RentcastConfig
+    sign_in: SignInConfig
 
     @model_validator(mode="before")
     @classmethod

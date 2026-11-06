@@ -176,6 +176,15 @@ from services.requests import (
     UnderwritingAssumptions,
 )
 from services.runner import load_deal, run_screen, run_underwrite
+from services.sign_in import (
+    ANONYMOUS,
+    EMAIL_LENGTH,
+    UNKNOWN_ACCOUNT,
+    Lockout,
+    lockout,
+    record_failed_sign_in,
+    recorded_email,
+)
 from services.users import (
     authenticate,
     change_password,
@@ -386,4 +395,11 @@ __all__ = [
     "BorrowerChoice",
     "borrower_choices",
     "filter_from",
+    "ANONYMOUS",
+    "EMAIL_LENGTH",
+    "UNKNOWN_ACCOUNT",
+    "Lockout",
+    "lockout",
+    "recorded_email",
+    "record_failed_sign_in",
 ]

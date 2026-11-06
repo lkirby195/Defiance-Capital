@@ -23,6 +23,10 @@ is at <http://127.0.0.1:8000/apply> and needs no sign-in; `/apply?lang=es` is th
 page and `/apply?src=<slug>` records where the link was posted (a flyer, a partner, a
 campaign) on the deal as its source.
 
+FastAPI's own API docs are off; `GLENWOOD_API_DOCS=1 uv run uvicorn api.main:app --reload`
+serves them for that run at <http://127.0.0.1:8000/docs> (it is read from the shell when the
+app starts, not from `.env`).
+
 `SESSION_SECRET` has no default and the app refuses to start a session without one — a
 default would be a signing key every copy of this repository knows. Generate one with:
 
@@ -79,6 +83,14 @@ you care about.
 and every push to `main` deploys: `uv sync --frozen --no-dev`, then `alembic upgrade head`
 against the live database before the new code serves anything, then uvicorn.
 
+**The database is Neon, not Render Postgres.** Render runs the service; the database is the
+Neon project `glenwood`, created at Neon directly, not through a Render or Vercel
+integration. Today the project is in Logan's own Neon organization; it moves to Defiance's in
+Workstream 2 of the go-live plan. The Neon project should be in the same region as the Render
+service: `render.yaml` says `oregon`, so AWS US West (Oregon). `DATABASE_URL` is the only
+credential the service holds for it, and it lives in one place: the service's environment
+variables on Render. It is not in `render.yaml`, not in git, and not in anybody's `.env`.
+
 **Idle connections.** The database pool pings a connection before handing it to a request
 (`db/session.py`, `pool_pre_ping`). Without it, a connection the managed Postgres or the
 network dropped during a quiet spell was served to the next request and failed it with
@@ -89,20 +101,22 @@ comes back, that line in the service log is what to look for, right after the
 
 **First time:**
 
-1. Create a Postgres instance on Render, in the same region as the service.
+1. In the Neon console, open the `glenwood` project and its production branch, press
+   **Connect**, and copy the connection string for the app's database and role. Take the
+   **direct** one (the host without `-pooler`): the service keeps its own connection pool,
+   and `alembic upgrade head` wants a session of its own.
 2. New → Blueprint, point it at this repository. Render reads `render.yaml`.
-3. Set `DATABASE_URL` on the service to the database's **Internal Database URL**. Render hands
-   it out as `postgres://…`; paste it as-is. `db/session.py` names the psycopg driver itself,
-   so the bare prefix that SQLAlchemy would otherwise resolve to an uninstalled driver is not
-   a thing you have to remember.
+3. Set `DATABASE_URL` on the service (Environment) to that string. Neon hands it out as
+   `postgresql://…?sslmode=require`; paste it as-is, `sslmode` and all. `db/session.py` names
+   the psycopg driver itself, so the bare prefix that SQLAlchemy would otherwise resolve to an
+   uninstalled driver is not a thing you have to remember. Put it nowhere else.
 4. Leave `SESSION_SECRET` alone. `generateValue: true` means Render minted one at create time
    and nobody has ever seen it, which is what a signing key wants.
 5. Deploy. The first one runs every migration from empty.
 
-To wire the database in the blueprint instead of by hand, replace the `DATABASE_URL` entry
-with a `fromDatabase` reference and add a `databases:` block — worth doing once the database
-name is settled, and not before, because a blueprint that owns the database can also destroy
-it.
+The blueprint does not own the database and cannot: it is Neon's, outside Render, so the
+`DATABASE_URL` entry stays `sync: false` and is set by hand, and no `render.yaml` change can
+delete it.
 
 `preDeployCommand` is a paid-instance feature. On a free instance, move `alembic upgrade head`
 to the front of `startCommand`; it is idempotent, but it then runs on every boot and two
@@ -144,12 +158,14 @@ uv run glenwood users create --name "Your Name" --email you@example.com
 It prompts for the password, so it does not land in the shell history — and the shell already
 has `DATABASE_URL` in its environment.
 
-**From your machine, against the External Database URL.** Render gives each database an
-external URL for exactly this. Pass it for the one command rather than putting it in `.env`,
-so a later `uv run pytest` or `alembic upgrade` cannot pick up production by accident:
+**From your machine, against Neon.** Neon has no internal and external URL: the connection
+string the service uses (Neon console → `glenwood` → **Connect**) reaches the database from
+anywhere over TLS. Pass it for the one command rather than putting it in `.env`, so a later
+`uv run pytest` or `alembic upgrade` cannot pick up production by accident, and so the one
+credential still lives only on Render:
 
 ```bash
-DATABASE_URL='postgres://user:password@host.oregon-postgres.render.com/glenwood' \
+DATABASE_URL='postgresql://<role>:<password>@<endpoint>.neon.tech/<database>?sslmode=require' \
   uv run glenwood users create --name "Your Name" --email you@example.com
 ```
 
@@ -191,6 +207,85 @@ Two things worth knowing before you do it:
   Rotating the secret to lock one person out is a blunt instrument that also signs out the
   people you did not mean to.
 
+### Rotating the Neon password
+
+`DATABASE_URL` carries the database role's password, and it is the service's only database
+credential. Rotating it changes nothing anybody sees: sessions are signed with
+`SESSION_SECRET`, not the database password, so nobody is signed out.
+
+Rotate when someone who could read Render's environment leaves, if the connection string has
+been pasted anywhere it should not have been (a chat, a ticket, a shell history), or on
+whatever schedule you decide.
+
+1. Neon console → the `glenwood` project → **Branches** → the production branch →
+   **Roles & Databases** → the role in `DATABASE_URL` → **Reset password**. Copy the new
+   connection string (**Connect**, as in "First time").
+2. Render dashboard → the service → Environment → `DATABASE_URL` → paste the new string →
+   **Save and deploy**. The deploy's `alembic upgrade head` is the first thing to use it, so a
+   bad paste shows up as a failed deploy, in the deploy log, before any page does.
+3. Anyone who copied the old string for a one-off command (the first-user step above) now
+   holds a dead one, which is the point.
+
+The old password stops working the moment it is reset. Connections the service already has
+open stay up, but any new one fails until step 2 lands, so do the two steps back to back and
+at a quiet time.
+
+### Backups
+
+**What exists today: Neon's point-in-time restore.** The Launch plan keeps 7 days of history,
+so the database can be put back to any moment in the last week. Nothing has to be switched on
+for it.
+
+To restore:
+
+1. Find the moment to go back to - the `audit_log` rows on either side of whatever went
+   wrong say when it happened.
+2. To look before restoring: Neon console → **Branches** → **New branch** from the production
+   branch at that time, point a one-off `DATABASE_URL` at the new branch's connection string,
+   and read it (`uv run glenwood users list`, `uv run glenwood deals run <deal-id>`). Delete
+   the branch afterwards.
+3. Neon console → **Branches** → the production branch → **Restore** → that date and time →
+   restore. Neon keeps the state it replaced as a backup branch, so a restore can itself be
+   undone.
+
+A restore puts back **everything** to that moment - deals, runs, users, and the audit log
+too - so whatever happened after it is gone from the database unless it is redone by hand.
+The connection string does not change; the service reconnects on its own (`pool_pre_ping`).
+
+**What is planned and not built: a nightly `pg_dump`** to an S3 bucket Defiance owns, so
+there is a copy older than 7 days and one that does not depend on the Neon account. Until it
+lands, take a dump by hand before anything destructive - a migration that deletes rows, a
+`glenwood deals purge` - with a `pg_dump` at least as new as the project's Postgres:
+
+```bash
+pg_dump --format=custom --file "glenwood-$(date +%F).dump" '<the connection string>'
+```
+
+### Turnstile
+
+Cloudflare Turnstile stands in front of `/apply` and Adjust my numbers once both keys are set
+on the service (SPEC §4.2); until then the form has the honeypot and the rate limit and no
+widget. To turn it on:
+
+1. Cloudflare dashboard → **Turnstile** → **Add widget**. Name it for the form, widget mode
+   **Managed**, and add both hostnames: `glenwood-uw.onrender.com` and
+   `app.defiancecapitalco.com`. Create it.
+2. Copy the **Site Key** and the **Secret Key** it shows.
+3. Render dashboard → the service → Environment → set `TURNSTILE_SITE_KEY` and
+   `TURNSTILE_SECRET_KEY` → **Save and deploy**.
+4. Open `/apply` on each hostname: the widget sits above the submit button. Send a test deal
+   and delete it from Home.
+
+It **fails open**: when Cloudflare cannot be reached, times out or answers anything but a
+200, the post goes through and the service log says `turnstile: siteverify …; letting the
+post through` on `glenwood.turnstile`. A refused secret (a mistyped key) goes the same way,
+with its own warning - `turnstile: the secret key was refused …; letting the post through` -
+so until the key is fixed Turnstile checks nothing; check the log after step 3. A hostname
+not on the widget's list shows the widget's own error instead of a challenge, so the form
+carries no token and **every post from that hostname is refused**; add the hostname in
+Cloudflare, or unset the keys until it is. Cloudflare publishes test keys that always pass
+or always fail (the Turnstile docs, "Testing") for trying it on `localhost`.
+
 ## Operational notes
 
 - **Nothing the team reads is public.** Every route but the borrower form is behind a session
@@ -205,6 +300,19 @@ Two things worth knowing before you do it:
   5) turns the next post from one address in an hour away with a polite line. The count is
   per process and starts over on a restart, which is fine for what it protects. Behind a
   proxy the address is the last entry in `X-Forwarded-For`, which is the one the proxy added.
+  With its two keys set, Cloudflare Turnstile is checked after both (see "Turnstile" above).
+- **Failed sign-ins are recorded and lock the sign-in.** Each one is an `audit_log` row
+  (`SIGN_IN_FAILED`, actor `anonymous`, the email and the address, never the password). Ten
+  for one email, or from one address, in 15 minutes (`sign_in.lockout_failures` and
+  `sign_in.lockout_minutes`) turn the next attempt away with "Too many sign-in attempts. Try
+  again in N minutes." There is nothing to reset: the lock lifts 15 minutes after the last
+  failure, because attempts made while locked are not counted. The service log line
+  `sign-in refused while locked` names the email and the address.
+- **Every response carries the security headers** (`nosniff`, `strict-origin-when-cross-origin`,
+  `frame-ancestors 'none'`, `X-Frame-Options: DENY`), HSTS over HTTPS, and the session cookie
+  is `Secure` behind Render's proxy because the app reads `X-Forwarded-Proto` itself. Do not
+  add `--forwarded-allow-ips='*'` to the start command: it would make the client's own first
+  `X-Forwarded-For` entry the address the app believes.
 - **The Spanish on `/apply` is pending native-speaker review.** Every string is in
   `api/i18n.py`; the `es` column is marked there and should be read by a native speaker before
   the link goes on a flyer.

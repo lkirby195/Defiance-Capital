@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from api.main import app
+from api.main import API_DOCS_ENV, api_docs_enabled, app
 from api.security import COOKIE_NAME, SESSION_HOURS, issue, read
 from db.models import AuditLog, User
 from schema.models import AuditAction
@@ -26,8 +26,9 @@ from tests.conftest import USER_EMAIL, USER_PASSWORD, requires_db
 
 pytestmark = requires_db
 
-# Every route the app serves, less the ones FastAPI adds for its own docs. A route that is
-# not in one of these lists is a route nobody decided the access rule for.
+# Every route the app serves. A route that is not in one of these lists is a route nobody
+# decided the access rule for. FastAPI's own docs are not among them: they are off
+# (v0.26) and answer 404, which ``test_the_api_docs_are_not_served`` holds.
 PAGE_ROUTES = [
     ("GET", "/account/password"),
     ("POST", "/account/password"),
@@ -129,10 +130,6 @@ def test_every_route_is_accounted_for() -> None:
             ("GET", "/queue/deals/{deal_id}/versions/{number}/workbook"),
             ("POST", "/queue/deals/{deal_id}/versions/{number}/restore"),
             ("GET", "/deals/{deal_id}"),
-            ("GET", "/openapi.json"),
-            ("GET", "/docs"),
-            ("GET", "/docs/oauth2-redirect"),
-            ("GET", "/redoc"),
             # public, on purpose (SPEC §4.2); tests/test_apply.py is what proves them
             ("GET", "/apply"),
             ("POST", "/apply"),
@@ -164,6 +161,23 @@ def test_every_route_is_accounted_for() -> None:
         | {("POST", f"/deals/{{deal_id}}/{action}") for action in ("screen", "underwrite")}
     )
     assert served == covered
+
+
+DOCS_ROUTES = ["/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"]
+
+
+@pytest.mark.parametrize("path", DOCS_ROUTES)
+def test_the_api_docs_are_not_served(anon_client: TestClient, path: str) -> None:
+    """v0.26: a map of every route is not handed to whoever asks (SPEC §11)."""
+    assert anon_client.get(path, follow_redirects=False).status_code == 404
+
+
+def test_the_api_docs_come_on_only_for_glenwood_api_docs_1() -> None:
+    assert api_docs_enabled({API_DOCS_ENV: "1"})
+    for value in ("", "0", "true", "yes"):
+        assert not api_docs_enabled({API_DOCS_ENV: value}), value
+    assert not api_docs_enabled({})
+    assert app.docs_url is None and app.redoc_url is None and app.openapi_url is None
 
 
 # --- turned away ----------------------------------------------------------------------------------
@@ -278,6 +292,44 @@ def test_a_bad_sign_in_says_the_same_thing_either_way(
     assert response.status_code == 401
     assert "Email or password is wrong" in response.text
     assert COOKIE_NAME not in anon_client.cookies
+
+
+def test_behind_the_proxy_the_session_cookie_is_secure(
+    anon_client: TestClient, queue_user: User, caplog: pytest.LogCaptureFixture
+) -> None:
+    """v0.26: Render ends TLS at its proxy and says so in X-Forwarded-Proto; the app sees
+    http, so the scheme alone never marked the cookie Secure."""
+    caplog.set_level("INFO", logger="glenwood.auth")
+    response = anon_client.post(
+        "/login",
+        data={"email": queue_user.email, "password": USER_PASSWORD},
+        headers={"X-Forwarded-Proto": "https"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    cookie = response.headers["set-cookie"]
+    assert cookie.startswith(f"{COOKIE_NAME}=")
+    attributes = {part.strip().lower() for part in cookie.split(";")}
+    assert {"secure", "httponly", "samesite=lax", "path=/"} <= attributes
+    assert "cookie secure=True" in caplog.text
+
+
+def test_over_plain_http_the_session_cookie_is_not_secure(
+    anon_client: TestClient, queue_user: User, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A local uvicorn over http still signs in; so does a proxy that says http last."""
+    caplog.set_level("INFO", logger="glenwood.auth")
+    for headers in ({}, {"X-Forwarded-Proto": "https, http"}):
+        response = anon_client.post(
+            "/login",
+            data={"email": queue_user.email, "password": USER_PASSWORD},
+            headers=headers,
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        attributes = {part.strip().lower() for part in response.headers["set-cookie"].split(";")}
+        assert "secure" not in attributes, headers
+    assert "cookie secure=False" in caplog.text and "cookie secure=True" not in caplog.text
 
 
 def test_the_sign_in_page_sends_a_signed_in_caller_on(client: TestClient) -> None:

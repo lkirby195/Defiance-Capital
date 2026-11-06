@@ -347,7 +347,8 @@ def test_the_borrower_form_has_no_token_to_carry_either(
     to mint one for. Nor is there anything a forged post could do that an honest one cannot:
     the form writes one kind of row - a new deal - and reads nothing back but a thank-you.
     What stands in front of it is the honeypot and the per-address rate limit
-    (``tests/test_apply.py``), not a token.
+    (``tests/test_apply.py``) and, with its keys set, Turnstile (``tests/test_turnstile.py``),
+    not a token.
     """
     body = anon_client.get("/apply").text
     assert forms_on(body), "the borrower form should still be there"

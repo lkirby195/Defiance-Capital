@@ -51,6 +51,8 @@ def test_the_page_shows_the_groups_in_order_and_some_values(client: QueueClient)
     assert 'data-key="pricing.borrower_coc_target">20.00%<' in body
     assert 'data-key="pricing.borrower_rate_rounding">0.25%<' in body
     assert 'data-key="web_intake.thanks_token_hours">24<' in body
+    assert 'data-key="sign_in.lockout_failures">10<' in body
+    assert 'data-key="sign_in.lockout_minutes">15<' in body
     assert 'data-key="rental.target_dscr">1.20x<' in body
     assert 'data-key="rental.takeout_ltv">75.00%<' in body
     assert 'data-key="take_back.foreclosure_months.OK">6<' in body
@@ -97,8 +99,11 @@ def test_the_groups_the_brief_names() -> None:
         "Screen caps and thresholds",
         "Dates",
         "Market data",
+        "Sign-in",
     ]
     assert group_of("rentcast.cache_days") == "Market data"
+    assert group_of("sign_in.lockout_failures") == "Sign-in"
+    assert group_of("sign_in.lockout_minutes") == "Sign-in"
     assert group_of("fees.origination_default_pct") == "Economics"
     assert group_of("fees.broker_selling_pct") == "Flip"
     assert group_of("interest.day_count_basis") == "Dates"

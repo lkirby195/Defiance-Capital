@@ -1,6 +1,8 @@
-# GLENWOOD Underwriting Platform — SPEC v0.25
+# GLENWOOD Underwriting Platform — SPEC v0.26
 
-Status: **v0.25**, 2026-11-04 (home-pipeline-sections-delete), engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+Status: **v0.26**, 2026-11-05 (hardening-go-live), engine `2.2.0`. Owner: Logan. Client: GLENWOOD (hard money lender, OK + CO).
+
+**v0.26** is the go-live hardening (no engine change, no migration; the head stays `0026`). **The session cookie is `Secure` behind Render's proxy**: `api/security.over_https` is true when `X-Forwarded-Proto` says `https` as well as when the scheme does, reading the header itself the way `api/ratelimit.client_address` reads `X-Forwarded-For` - not uvicorn's `--forwarded-allow-ips='*'`, which would make `request.client` the leftmost `X-Forwarded-For` entry, the one the client writes. **Every response carries five security headers** (`api/main.py`; `/static` and every `/apply` response included): `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy: frame-ancestors 'none'` and nothing more (the Turnstile script loads from challenges.cloudflare.com), `X-Frame-Options: DENY`, and over HTTPS `Strict-Transport-Security: max-age=31536000; includeSubDomains`, no preload. **The API docs are off**: `/docs`, `/redoc` and `/openapi.json` answer 404 unless `GLENWOOD_API_DOCS=1` is set when the app is imported. **A failed sign-in is an audit row and enough of them lock the sign-in** (`services/sign_in.py`, §11): each is one `SIGN_IN_FAILED` row - actor `anonymous`, table `users`, the user's id when the email has an account and `unknown` when it does not, `after` the normalized email (cut at 254 characters) and the client address, never the password - and `sign_in.lockout_failures` (10) of them for one email or from one address inside `sign_in.lockout_minutes` (15), counted on the database clock, turn the next attempt away before any password is hashed: a 429 with `Retry-After` and "Too many sign-in attempts. Try again in N minutes." An attempt made while locked goes to the process log and not to the table, so the lock lifts N minutes after the attacker stops. An email with no account is verified against a decoy hash, so it costs the same PBKDF2 as a wrong password (`services/users.authenticate`). **Cloudflare Turnstile stands in front of `/apply` and Adjust my numbers** when both `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` are set (`api/turnstile.py`; off otherwise, and off under the tests): the widget sits above the submit button and does not hold it off; the server verifies its token after the rate limit and the honeypot and before the form is read; a missing or failed token puts the form back with a 422 and one line, in English or Spanish; and Cloudflare unreachable, timing out, answering anything but 200 or refusing the deployment's own secret key (`missing-input-secret`, `invalid-input-secret`) lets the post through with a warning in the log - a bad key must not turn borrowers away, and the honeypot and the rate limit still stand (§4.2). The docs follow: credit data is encrypted at rest by the database provider, Neon, with column-level encryption arriving with Credco (§11), and the README's deploy is Neon rather than Render Postgres, with the Neon password's rotation, the backups and the Turnstile setup.
 
 **v0.25** is the pipeline on Home, a delete, and a cleaner deal page and Defaults page (migration `0026`, no engine change). **Home has six sections** - Borrower Submissions, DCF New Deals, **Under LOI** (`LOI_SENT`, `HANDED_OFF`), **Closed** (the new `CLOSED` status: the loan closed and funded), On Pause, Dead - and **Progress walks a deal along them**: `SCREENED` → `IN_REVIEW` as before, `IN_REVIEW` or `UNDERWRITING` → `LOI_SENT` (audited `LOI_SENT`; the Phase 5 LOI generation will write the same code), and `LOI_SENT` or `HANDED_OFF` → `CLOSED` (audited `LOAN_CLOSED`) through a confirmation page, as Kill goes through its own; the button's hover names where it goes. A closed loan is not paused, declined, killed, edited or run automatically; `LOI_SENT` reads "Under LOI" wherever a status is shown (§4.6, §9.1). **Delete** - a trash can on every Home row and a Delete on the deal page's Actions, behind a confirmation page - removes the deal, its submissions, runs, versions, enrichment runs, documents and `ma_sync` rows, and its borrower (with any entity only they held) and property when no other deal holds them; the deal's audit trail stays and one `DEAL_DELETED` row is added saying what it was and what went (`services/delete.py`). **Home's search bar is three selects**: Borrower (every borrower with a deal, A to Z, the phone after the name when two read the same) replacing the free-text box, **Commitment Level** (the full-time question, "Full time" / "Part time" / "First time") and Years investing; the other three profile questions are no longer filters, and each answer is still a chip that removes itself. The **pricing matrix** runs 0 to -10% of the request by 2.5% (`pricing.loan_amount_pct_steps`, five rows; the borrower's indicative terms carry the rows that qualify, so up to five). The **deal page** loses the sentence bullets under Pricing, the Shown to borrower record (kept on the deal and the audit trail), the facts list under the leverage table, the Scored as card (kept on the screen row, the CLI and the workbook) and the Status row on every Scenarios card. The **Defaults page** heads its first column "Variable", labels every row in the team's words ("Origination", "Sales cost", "OK foreclosure months"; no "default pct"), and prints every percentage, dollar figure and ratio to two decimals (§10).
 
@@ -292,10 +294,21 @@ a flag, the sensitivity, the pricing target, the maximum quoted rate, the cushio
 rate, an assumption value, a take-back or rental figure, or a team member's name.
 
 What stands between the page and the queue is a honeypot field, which drops a post that
-fills it without a word, and a per-address rate limit
+fills it without a word, a per-address rate limit
 (`web_intake.submissions_per_hour_per_ip`, §10) that turns the next post away with a polite
-line. No CAPTCHA. The page carries no CSRF token: there is no session to bind one to, and
-nothing a forged post could do that an honest one cannot (§11).
+line, and - when both of its keys are set - **Cloudflare Turnstile** (v0.26,
+`api/turnstile.py`). The widget sits above the submit button on the form and on Adjust my
+numbers (`data-action` `apply` and `adjust`, in the page's language) and never holds the
+button off; the server checks its token after the rate limit and the honeypot and before the
+form is read, so a bot the honeypot caught costs no call to Cloudflare. A missing token or one
+Cloudflare does not pass puts the form back with a 422 and the `challenge_failed` line; a
+Cloudflare that cannot be reached, times out or answers anything but 200 lets the post through
+and logs a warning on `glenwood.turnstile`, because a borrower should not be turned away for
+someone else's outage while the honeypot and the rate limit still stand. So does a 200 that
+refuses the deployment's own secret key: that token was never judged, and a bad key would
+otherwise turn every borrower away. Without both keys there is no widget, no script and no
+check. The page carries no CSRF token: there is no session to bind one to, and nothing a
+forged post could do that an honest one cannot (§11).
 
 ### 4.3 SMS handling
 
@@ -1668,6 +1681,7 @@ workbook to export.
 - `web_intake.thanks_token_hours` (placeholder 24): how long a submission's thank-you link, with the borrower's indicative terms on it, stays live (§4.2)
 - `rentcast.cache_days` (placeholder 30; 0 to 365): how long one RentCast pull at an address stands in for the next deal at the same address (§6.2); 0 caches nothing
 - `rentcast.monthly_request_budget` (placeholder 50, the free tier; 0 turns the adapter off): the requests allowed per calendar month; a pull that would pass it is skipped with `MARKET_DATA_BUDGET_EXHAUSTED` (§6.2). The key itself is the `RENTCAST_API_KEY` environment variable, not config - read by `services.market_data.rentcast_api_key`, the environment first and `.env` second, as `DATABASE_URL` is
+- `sign_in.lockout_failures` (10; 1 to 1,000) and `sign_in.lockout_minutes` (15; 1 to 1,440), v0.26: that many failed sign-ins for one email or from one address inside that many minutes lock the next attempt out (§11). The Turnstile keys, like the RentCast key, are environment variables and not config (§4.2)
 
 Gone with the v0.2 §8, and rejected by the loader if a stale yaml still carries them:
 `returns` (target IRR, rate grid, month window), `takeout` (DSCR takeout LTV, rate,
@@ -1683,7 +1697,7 @@ Config is versioned; each `screens`/`underwrites` row records the config hash us
 
 Every value is shown, read-only, on the **Defaults** page (`/defaults`, signed in, linked from
 the top bar), grouped Economics, Flip, Rental, Take-Back, Pricing, Sensitivity, Screen caps and
-thresholds, Dates, Market data, each beside its dotted key (`fees.origination_default_pct`). The leverage
+thresholds, Dates, Market data, Sign-in, each beside its dotted key (`fees.origination_default_pct`). The leverage
 caps show as one table per loan type. A test reads the yaml itself and fails on any key the
 page does not show, so a new key has to be placed in a group (`api/defaults_page.py`).
 
@@ -1691,7 +1705,7 @@ page does not show, so a new key has to be placed in a group (`api/defaults_page
 
 ## 11. Compliance
 
-- **Credit:** no hard pull without a signed borrower authorization on file (`credit_authorization_signed`); intake uses self-reported range only. Credit data is stored encrypted at rest, access logged.
+- **Credit:** no hard pull without a signed borrower authorization on file (`credit_authorization_signed`); intake uses self-reported range only. Credit data is encrypted at rest by the database provider (Neon); column-level encryption arrives with Credco (`adapters/credco.py`). Access is logged.
 - **SMS:** replies only to inbound senders; sent by a human via LinkedPhone; no automated outbound. Opt-out honored.
 - **Listing sites:** address extraction from URLs only; no page scraping.
 - **Business-purpose lending:** intake and LOI language reflect business-purpose loans; no consumer-purpose features.
@@ -1708,6 +1722,20 @@ page does not show, so a new key has to be placed in a group (`api/defaults_page
   Every form post carries a CSRF token bound to the signed-in user and expiring with their
   session; a post without one is refused and writes nothing. Every service write takes an
   actor and records an `audit_log` row, sign-in and sign-out included.
+  A failed sign-in is a row too (v0.26): `SIGN_IN_FAILED`, actor `anonymous`, on `users`
+  under the account's id when the email has one and `unknown` when it does not, carrying the
+  normalized email (cut at 254 characters, the width of `users.email`, wherever a failure is
+  recorded, matched or logged) and the client address and never the password.
+  `sign_in.lockout_failures` such rows for one email, or from one address, inside
+  `sign_in.lockout_minutes` (§10) lock the sign-in: the next attempt is answered 429 with
+  `Retry-After` before any password is verified, and is written to the process log rather
+  than the table, so the lock lifts that many minutes after the attempts stop. An email with
+  no account costs the same PBKDF2 as a wrong password. The session cookie is `Secure`
+  whenever the request arrived over HTTPS, which behind Render's proxy is what
+  `X-Forwarded-Proto` says; every response carries
+  `X-Content-Type-Options`, `Referrer-Policy`, `Content-Security-Policy: frame-ancestors
+  'none'` and `X-Frame-Options`, and an HTTPS one `Strict-Transport-Security`; and the
+  framework's API docs are not served.
 
 ---
 
@@ -1863,6 +1891,23 @@ pricing row carries its de-risk line, most equity first (§3, §8.1, §8.4, §8.
 
 ## 13. Open items
 
+- hardening-go-live's open questions (v0.26):
+  - **Turnstile fails open.** Cloudflare unreachable, slow, answering anything but 200 or
+    refusing the deployment's own secret lets a post through, logged; only a token Cloudflare
+    looked at and refused, or no token, refuses one. The honeypot and the rate limit are what
+    stand during an outage
+  - **The lockout is per email as well as per address**, so anyone who knows a team member's
+    email can keep that account locked for `sign_in.lockout_minutes` at a time by failing ten
+    sign-ins with it; the account's own person is turned away too. The per-address count
+    alone would not stop a slow guesser spread over many addresses, which is the trade
+  - **One address is everyone behind it**: ten failures from an office's shared address lock
+    every sign-in from that office for the window
+  - **A successful sign-in does not clear the count**: the window does. Nine failures and a
+    success leave one failure to go
+  - **The Turnstile token's `action` and `hostname` are not checked** against the page that
+    asked for it; Cloudflare's `success` is the whole of the check
+  - **The Spanish `challenge_failed` line** is pending the same native-speaker review as the
+    rest of `api/i18n.py`
 - 9a-rentcast's open questions (v0.23):
   - **Refresh runs the analysis.** The button pulls and then runs as `system`, on the rule that
     the results on the page are never older than the inputs beside them; the brief named the

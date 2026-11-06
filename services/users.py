@@ -28,7 +28,11 @@ from db.models import User
 from schema.models import AuditAction
 from services.audit import USERS, record_audit
 from services.errors import UserExists, UserNotFound, WrongPassword
-from services.passwords import hash_password, needs_rehash, verify_password
+from services.passwords import decoy_hash, hash_password, needs_rehash, verify_password
+
+# What ``authenticate`` verifies a password against when the email has no account: the
+# current cost, so the miss costs one PBKDF2 like every other failed sign-in.
+NO_ACCOUNT_HASH = decoy_hash()
 
 
 def normalize_email(email: str) -> str:
@@ -155,9 +159,10 @@ def authenticate(session: Session, *, email: str, password: str) -> User | None:
     """The user when the password is right and the account is active; None otherwise.
 
     One answer for every kind of failure - no such user, wrong password, deactivated - so a
-    sign-in page cannot be used to find out which accounts exist. The password is still
-    verified against a deactivated user's hash before the active check, so the two paths cost
-    the same.
+    sign-in page cannot be used to find out which accounts exist, by what it says or by how
+    long it takes to say it. An email with no account is verified against ``NO_ACCOUNT_HASH``
+    and a deactivated user's password against their own hash before the active check, so all
+    three cost one PBKDF2.
 
     A hash below the current cost is upgraded here, in the one place a plaintext password is
     legitimately in hand. The caller owns the transaction, so the rehash lands with the
@@ -165,6 +170,7 @@ def authenticate(session: Session, *, email: str, password: str) -> User | None:
     """
     user = user_by_email(session, email)
     if user is None:
+        verify_password(password, NO_ACCOUNT_HASH)
         return None
     if not verify_password(password, user.password_hash):
         return None

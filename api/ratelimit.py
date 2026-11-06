@@ -4,8 +4,9 @@ A sliding window per client address, in memory. The public form is the one route
 stranger can write through, and the queue it writes into is read by people; a bot that
 posts a thousand junk deals has cost the team an afternoon. The honeypot on the page catches
 the dumbest of those for nothing, and this catches the rest - and a person who keeps pressing
-the button - without a CAPTCHA, which would cost every real borrower something to stop a few
-bots.
+the button. Cloudflare Turnstile stands beside both when its keys are set
+(``api/turnstile.py``, v0.26), and lets a post through when Cloudflare cannot answer, so this
+is what still holds during an outage.
 
 In memory, deliberately. The count survives nothing - a restart or a second process starts
 from zero - and that is the right trade for what it protects: the harm is a flood, and a
