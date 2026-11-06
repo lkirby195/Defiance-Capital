@@ -43,6 +43,7 @@ from schema.models import (
     BORROWER_PROFILE_FIELDS,
     PROFILE_ENUMS,
     ExperienceBucket,
+    ExperienceTier,
     Product,
     ProjectsInProgress,
     Status,
@@ -60,6 +61,17 @@ EXPERIENCE_BUCKET_LABELS: Mapping[ExperienceBucket, str] = {
     ExperienceBucket.ONE_TO_TWO: "1–2",
     ExperienceBucket.THREE_TO_FIVE: "3–5",
     ExperienceBucket.SIX_PLUS: "6+",
+}
+
+# The bucket each experience tier is the caps grid's column for (SPEC §7.3), so a tier reads
+# as the deal count the deal page prints for that bucket: E1 is "1–2". The screen maps the
+# other way (``engine/screen.tier_from_bucket``); ``tests/test_defaults_page.py`` holds the
+# two to each other.
+TIER_BUCKETS: Mapping[ExperienceTier, ExperienceBucket] = {
+    ExperienceTier.E0: ExperienceBucket.ZERO,
+    ExperienceTier.E1: ExperienceBucket.ONE_TO_TWO,
+    ExperienceTier.E2: ExperienceBucket.THREE_TO_FIVE,
+    ExperienceTier.E3: ExperienceBucket.SIX_PLUS,
 }
 
 # The borrower's answer to "how long do you need the loan?" (SPEC §4.1), as they read it.
@@ -197,6 +209,11 @@ def experience_label(bucket: ExperienceBucket | None) -> str:
     if bucket is None:
         return DASH
     return EXPERIENCE_BUCKET_LABELS[bucket]
+
+
+def tier_label(tier: ExperienceTier) -> str:
+    """An experience tier as the deal count it stands for: ``E1`` -> ``1–2``.  # SPEC §7.3"""
+    return EXPERIENCE_BUCKET_LABELS[TIER_BUCKETS[tier]]
 
 
 def profile_label(value: StrEnum | str | None) -> str:

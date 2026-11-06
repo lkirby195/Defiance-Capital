@@ -407,6 +407,21 @@
     form.search .chips:empty { display: none; }
     form.search .chips a.tag { text-decoration: none; }
 
+    /* --- the Defaults page (v0.27) ----------------------------------------------------------
+       Every Variable | Value table on the same two fixed columns, so the values line up down
+       the page whichever card they are in, and a long label wraps rather than pushing its
+       value along. The caps tables are fixed too, and keep a width a phone scrolls across
+       rather than squeezing a cell's two percentages. A "placeholder" tag in a card's title
+       bar reads as it does on a row, not in the bar's capitals. */
+    .defaults table.pairs, .defaults table.caps { table-layout: fixed; width: 100%; }
+    .defaults table.pairs col.variable { width: 45%; }
+    .defaults table.pairs td { overflow-wrap: anywhere; }
+    .defaults table.caps { min-width: 760px; }
+    .defaults table.caps col.credit { width: 16%; }
+    .defaults .chart > :is(h2, h4, summary) .dflt {
+      background: rgba(255,255,255,.18); color: inherit; text-transform: none; letter-spacing: .02em;
+    }
+
     /* --- a phone: one column, every section in the same order ------------------------ */
     @media (max-width: 900px) {
       .deal-head { grid-template-columns: 1fr; }
@@ -441,5 +456,6 @@
       .summary { gap: var(--s2) var(--s4); }
       .summary .v { font-size: 18px; }
       .headline { font-size: 26px; }
+      .defaults table.pairs col.variable { width: 55%; }
     }
   </style>
