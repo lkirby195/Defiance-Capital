@@ -25,6 +25,13 @@ person knows by the words the team form's radio puts on them - "100% at close" a
 team form, the deal page, the borrower's page and Home's filter chips. The public form has
 its own words for both in ``api/i18n.py``, in two languages. The values are unique across
 the five enums, so one flat table serves them all.
+
+``INPUT_LABELS`` (v0.27) is the one word for each SPEC §8.1 economics input and the sales
+cost, by its ``deals`` column: "Origination", not "Origination Fee" here and "Origination fee"
+there; "Sales cost", not "Broker selling %". The Defaults page, the deal page, the reset page,
+the readiness rows, the workbook and the CLI report all caption the input with it, each in its
+own case (``input_label``). The dollar lines an input produces keep their own words -
+"Broker", "Origination at close" - and the borrower reads ``api/i18n.py``.
 """
 
 from __future__ import annotations
@@ -135,6 +142,16 @@ HOME_FILTER_LABELS: Mapping[str, str] = {
 assert set(HOME_FILTER_CAPTIONS) <= set(BORROWER_PROFILE_FIELDS)
 assert set(PROFILE_LABELS) == {m.value for e in PROFILE_ENUMS.values() for m in e}
 
+# The team's word for each §8.1 economics input and the sales cost, by ``deals`` column (v0.27).
+INPUT_LABELS: Mapping[str, str] = {
+    "interest_rate": "Interest rate",
+    "origination_fee_pct": "Origination",
+    "contingency_pct": "Contingency",
+    "closing_costs_usd": "Closing costs",
+    "holding_costs_pct_of_cost": "Holding costs",
+    "broker_selling_pct": "Sales cost",
+}
+
 _TRANCHE_ORDER: tuple[Tranche, ...] = tuple(Tranche)  # T1 (best) .. T5 (worst)  # SPEC §7.1
 
 DASH = "—"
@@ -153,6 +170,19 @@ def enum_label(value: StrEnum | str | None) -> str:
     if known is not None:
         return known
     return code.replace("_", " ").title()
+
+
+def input_label(column: str, *, title: bool = False) -> str:
+    """An input's caption by its ``deals`` column: ``broker_selling_pct`` -> ``Sales cost``.
+
+    ``title`` capitalizes every word, ``Sales Cost``, for the captions that are Title Case: the
+    deal page's Deal Economics and Assumptions panel, and the reset page that lists the
+    panel's boxes. A column with no entry is a bug in the caller and raises.  # SPEC §8.1
+    """
+    label = INPUT_LABELS[column]
+    if not title:
+        return label
+    return " ".join(word[:1].upper() + word[1:] for word in label.split(" "))
 
 
 def product_definition(product: Product | str | None) -> str:

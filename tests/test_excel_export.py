@@ -25,6 +25,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from cli.fixtures import FixtureRun, run_fixture
 from config.config import Config
 from outputs.excel import build_workbook, write_workbook
+from schema.labels import INPUT_LABELS, input_label
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures/synthetic/deals"
 CONFIG = Config.load()
@@ -535,3 +536,23 @@ def test_the_inputs_sheet_says_when_a_number_is_the_borrower_s_own() -> None:
     notes = {row[0].value: row[2].value for row in corrected.iter_rows(min_col=1, max_col=3)}
     assert notes["Estimated sale price"] == "team, by hand"
     assert notes["Monthly rent"] == "borrower, on the public form"
+
+
+def test_the_inputs_are_captioned_as_every_team_surface_captions_them() -> None:
+    """v0.27: the five §8.1 economics and the sales cost read as ``INPUT_LABELS`` words them -
+    "Origination", "Sales cost" - on the Inputs sheet and the Flip sheet alike."""
+    book = book_for(FIXTURE_DIR / "go_holdback_denver.json")
+    result = run(FIXTURE_DIR / "go_holdback_denver.json").underwrite_result
+    assert result is not None
+    for column in INPUT_LABELS:
+        find_row(book["Inputs"], input_label(column))  # raises when the caption is not there
+    sales_cost, number_format = find_row(book["Flip"], "Sales cost")
+    assert D(str(sales_cost)) == result.flip.broker_selling_pct and number_format == "0.0%"
+    assert D(str(find_row(book["Inputs"], "Origination")[0])) == D("0.02")
+    captions = {
+        str(row[0].value)
+        for sheet in book.worksheets
+        for row in sheet.iter_rows(min_col=1, max_col=1)
+        if row[0].value is not None
+    }
+    assert not captions & {"Broker selling", "Origination fee", "Holding costs (% of cost)"}

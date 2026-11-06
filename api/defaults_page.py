@@ -8,7 +8,9 @@ value, so a person who wants a number changed can name exactly the one they mean
 
 Each row is labelled in the team's words (v0.25, ``LABELS``): "Origination", not "Origination
 default pct"; "Sales cost", not "Broker selling pct"; "OK foreclosure months", not a bare
-"OK". The unit is the value's job - ``2.00%``, ``$1,000.00``, ``1.20x`` - so no label carries
+"OK". A default for a deal's own input reads exactly as the deal page captions that input
+(v0.27): ``INPUT_COLUMNS`` names its ``deals`` column and ``schema/labels.INPUT_LABELS`` has
+the word. The unit is the value's job - ``2.00%``, ``$1,000.00``, ``1.20x`` - so no label carries
 "pct" or "usd", and every percentage, dollar figure and ratio prints to two decimals. Counts
 (months, years, FICO points) stay whole. A key ``LABELS`` does not name still gets a label,
 from its last part with those unit words dropped.
@@ -30,7 +32,7 @@ from enum import Enum
 from typing import Any
 
 from config.config import PLACEHOLDERS, Config, flatten
-from schema.labels import enum_label
+from schema.labels import enum_label, input_label
 from schema.models import ExperienceTier, Product, Severity, Tranche
 
 # (group heading, dotted prefixes it claims), in the order the page shows them.
@@ -83,15 +85,21 @@ _MONEY_ENDINGS = ("_usd", "loan_amount_rounding")
 _RATIO_ENDINGS = ("target_dscr",)
 
 
+# The config keys that are the default for a deal's own input, by the ``deals`` column the
+# input lives in: each row reads as the deal page reads the input (``INPUT_LABELS``, v0.27).
+INPUT_COLUMNS: dict[str, str] = {
+    "fees.origination_default_pct": "origination_fee_pct",
+    "fees.contingency_default_pct": "contingency_pct",
+    "fees.closing_costs_default_usd": "closing_costs_usd",
+    "fees.holding_costs_default_pct_of_cost": "holding_costs_pct_of_cost",
+    "interest.default_annual_rate": "interest_rate",
+    "fees.broker_selling_pct": "broker_selling_pct",
+}
+
 # The team's word for each leaf (v0.25), by its dotted key. The flag severities and the
 # per-state entries are worded by ``label_for`` from their last part.
 LABELS: dict[str, str] = {
-    "fees.origination_default_pct": "Origination",
-    "fees.contingency_default_pct": "Rehab contingency",
-    "fees.closing_costs_default_usd": "Closing costs",
-    "fees.holding_costs_default_pct_of_cost": "Holding costs (of purchase + rehab)",
-    "interest.default_annual_rate": "Interest rate",
-    "fees.broker_selling_pct": "Sales cost",
+    **{key: input_label(column) for key, column in INPUT_COLUMNS.items()},
     "rental.expenses_pct_of_rent": "Operating expenses (of rent)",
     "rental.takeout_ltv": "Takeout LTV",
     "rental.takeout_rate": "Takeout rate",

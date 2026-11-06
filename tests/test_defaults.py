@@ -369,7 +369,7 @@ def test_the_deal_page_tags_each_default_and_offers_a_reset(
     for label, value in (
         ("Interest Rate", "12.5%"),
         ("Contingency", "0.0%"),
-        ("Origination Fee", "2.0%"),
+        ("Origination", "2.0%"),  # INPUT_LABELS (v0.27), not "Origination Fee"
         ("Advance at closing", "$147,000.00"),
         ("Rehab portion", "$48,000.00"),
     ):

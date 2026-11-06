@@ -38,7 +38,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from config.config import Config
-from schema.labels import enum_label
+from schema.labels import enum_label, input_label
 from schema.models import (
     SPLIT_PRODUCTS,
     AnalysisStatus,
@@ -182,11 +182,16 @@ def _sheet_inputs(
         ("Rehab months", result.rehab_months, INTEGER, "whole months only"),
         ("Purchase price", economics.purchase_price, MONEY, ""),
         ("Rehab costs", economics.rehab_costs, MONEY, "before contingency"),
-        ("Contingency", economics.contingency_pct, PCT1, "of the rehab costs"),
+        (input_label("contingency_pct"), economics.contingency_pct, PCT1, "of the rehab costs"),
         ("Rehab + contingency", economics.rehab_adj, MONEY, "what the rehab portion is capped at"),
-        ("Closing costs", economics.closing_costs, MONEY, "the lender's; in the LTC denominator"),
         (
-            "Holding costs (% of cost)",
+            input_label("closing_costs_usd"),
+            economics.closing_costs,
+            MONEY,
+            "the lender's; in the LTC denominator",
+        ),
+        (
+            input_label("holding_costs_pct_of_cost"),
             economics.holding_costs_pct_of_cost,
             PCT1,
             "of the purchase price plus the rehab costs",
@@ -203,8 +208,13 @@ def _sheet_inputs(
             MONEY,
             "total / the exact term in months",
         ),
-        ("Origination fee", economics.origination_fee_pct, PCT1, "half at close, half at payoff"),
-        ("Interest rate", economics.interest_rate, PCT1, "annual"),
+        (
+            input_label("origination_fee_pct"),
+            economics.origination_fee_pct,
+            PCT1,
+            "half at close, half at payoff",
+        ),
+        (input_label("interest_rate"), economics.interest_rate, PCT1, "annual"),
         ("Loan amount", economics.loan_requested, MONEY, ""),
         ("Advance at closing", economics.loan_purchase_portion, MONEY, "split products only"),
         ("Rehab portion", economics.loan_rehab_portion, MONEY, "holdback / Tranche A"),
@@ -273,7 +283,7 @@ def _sheet_inputs(
         # carries one, config otherwise - beside the three that are config alone.
         ("ASSUMPTIONS", None, None, ""),
         (
-            "Broker selling",
+            input_label("broker_selling_pct"),
             result.flip.broker_selling_pct,
             PCT1,
             _assumption_note(underwrite_inputs.broker_selling_pct, "flip only"),
@@ -650,7 +660,7 @@ def _sheet_flip(book: Workbook, result: UnderwriteResult) -> None:
     evaluated = flip.net_profit is not None
     rows: list[Row] = [
         ("Status", flip.status.value, None, _flip_note(flip.status)),
-        ("Broker selling", flip.broker_selling_pct, PCT1, "of the sale price"),
+        (input_label("broker_selling_pct"), flip.broker_selling_pct, PCT1, "of the sale price"),
         ("", None, None, ""),
         ("PROFIT", None, None, ""),
         ("Sale price", flip.estimated_sale_price, MONEY, ""),
@@ -680,7 +690,7 @@ def _sheet_flip(book: Workbook, result: UnderwriteResult) -> None:
             "net profit / total deal cost; a project margin, not an annualized return",
         ),
         (
-            "Holding costs (% of cost)",
+            input_label("holding_costs_pct_of_cost"),
             result.economics.holding_costs_pct_of_cost,
             PCT1,
             "of the purchase price plus the rehab costs (SPEC §8.1)",
@@ -786,7 +796,7 @@ def _sheet_take_back(book: Workbook, result: UnderwriteResult) -> None:
     rows: list[Row] = [
         ("Status", take_back.status.value, None, note),
         ("Loan amount", take_back.loan_amount, MONEY, "the commitment"),
-        ("Interest rate", take_back.interest_rate, PCT2, "the deal's own"),
+        (input_label("interest_rate"), take_back.interest_rate, PCT2, "the deal's own"),
         ("Term (months)", take_back.term_months, INTEGER, ""),
         ("Default month", take_back.default_month, INTEGER, "term - listing months, floored at 1"),
         ("Interest received", take_back.interest_received, MONEY, "months 1 to the default"),

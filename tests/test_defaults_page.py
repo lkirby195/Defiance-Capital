@@ -12,8 +12,18 @@ import re
 
 from fastapi.testclient import TestClient
 
-from api.defaults_page import GROUPS, OTHER, display, flatten, group_of, groups, label_for
+from api.defaults_page import (
+    GROUPS,
+    INPUT_COLUMNS,
+    OTHER,
+    display,
+    flatten,
+    group_of,
+    groups,
+    label_for,
+)
 from config.config import DEFAULT_PATH, PLACEHOLDERS, Config, load_yaml
+from schema.labels import INPUT_LABELS
 from tests.conftest import QueueClient, requires_db
 
 CONFIG = Config.load()
@@ -127,6 +137,12 @@ def test_every_row_is_labelled_in_the_team_s_words() -> None:
     assert label_for("fees.origination_default_pct") == "Origination"
     assert label_for("fees.broker_selling_pct") == "Sales cost"
     assert label_for("interest.default_annual_rate") == "Interest rate"
+    # a default for a deal's own input reads as the deal page captions it (v0.27)
+    assert set(INPUT_COLUMNS.values()) == set(INPUT_LABELS)
+    for key, column in INPUT_COLUMNS.items():
+        assert label_for(key) == INPUT_LABELS[column], key
+    assert label_for("fees.contingency_default_pct") == "Contingency"
+    assert label_for("fees.holding_costs_default_pct_of_cost") == "Holding costs"
     assert label_for("take_back.foreclosure_months.OK") == "OK foreclosure months"
     assert label_for("take_back.foreclosure_months.CO") == "CO foreclosure months"
     assert label_for("take_back.foreclosure_months.OTHER") == "Other states foreclosure months"
