@@ -21,9 +21,10 @@ sign-in it happens on issues its cookie after the rehash.
 
 ``SameSite=Lax`` withholds the cookie from cross-site POSTs, which is every state-changing
 route here. ``HttpOnly`` keeps it away from page scripts, of which there is one, and it does
-not touch cookies. ``Secure`` is set whenever the request arrived over HTTPS, so a deployment
-behind TLS marks the cookie correctly without a setting to forget and a local ``uvicorn``
-over plain HTTP still works.
+not touch cookies. ``Secure`` is set whenever the request arrived over HTTPS - the scheme, or
+behind a proxy its ``X-Forwarded-Proto`` (``over_https``) - so a deployment behind TLS marks
+the cookie correctly without a setting to forget and a local ``uvicorn`` over plain HTTP
+still works.
 
 On top of Lax, every form post carries a CSRF token. Lax is a browser default and not a
 guarantee: it is relaxed for top-level GET navigations, it has been shipped differently by
@@ -159,9 +160,24 @@ def read(cookie: str | None, now: datetime | None = None) -> SessionClaim | None
     return SessionClaim(user_id=user_id, expires_at=expires_at, fingerprint=print_text)
 
 
+FORWARDED_PROTO = "x-forwarded-proto"
+
+
 def over_https(request: Request) -> bool:
-    """True when this request arrived over HTTPS, so the cookie is marked ``Secure``."""
-    return request.url.scheme == "https"
+    """True when this request arrived over HTTPS, so the cookie is marked ``Secure``.
+
+    Behind Render the TLS ends at the proxy and the app sees plain http, so the scheme alone
+    would never say so; the proxy's ``X-Forwarded-Proto`` does. The header is read here, as
+    ``api.ratelimit.client_address`` reads ``X-Forwarded-For``, and the last entry is the one
+    believed - the nearest proxy's. Not uvicorn's ``--forwarded-allow-ips='*'``: that would
+    also make ``request.client`` the *leftmost* ``X-Forwarded-For`` entry, which the client
+    writes. A client that sends the header itself on a direct connection gains nothing: it
+    gets a cookie its own plain-http browser will not send back.
+    """
+    if request.url.scheme == "https":
+        return True
+    hops = [hop.strip().lower() for hop in request.headers.get(FORWARDED_PROTO, "").split(",")]
+    return hops[-1] == "https"
 
 
 def attach(response: Response, user: User, *, secure: bool) -> None:

@@ -43,6 +43,8 @@ os.environ.setdefault("SESSION_SECRET", "test-session-secret-not-a-real-one")
 # it did not survive the first signed cookie). The live test lifts the sentinel for its one read.
 RENTCAST_ENV_KEY = os.environ.get("RENTCAST_API_KEY")
 os.environ["RENTCAST_API_KEY"] = ""
+# The API docs are read once, when api.main is imported; the suite holds them to off.
+os.environ.pop("GLENWOOD_API_DOCS", None)
 
 from api.main import app  # noqa: E402
 from api.masks import mask_one  # noqa: E402
