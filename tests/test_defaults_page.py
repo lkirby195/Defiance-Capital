@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import html
 import re
+from typing import get_args
 
 from fastapi.testclient import TestClient
 
@@ -26,10 +27,10 @@ from api.defaults_page import (
     label_for,
     placeholder_line,
 )
-from config.config import DEFAULT_PATH, PLACEHOLDERS, Config, load_yaml
+from config.config import DEFAULT_PATH, PLACEHOLDERS, Config, CourtAdapter, load_yaml
 from engine.screen import tier_from_bucket
-from schema.labels import INPUT_LABELS, TIER_BUCKETS, tier_label
-from schema.models import ExperienceBucket, ExperienceTier
+from schema.labels import COURT_SOURCE_LABELS, FLAG_LABELS, INPUT_LABELS, TIER_BUCKETS, tier_label
+from schema.models import CourtFlag, ExperienceBucket, ExperienceTier, ScreenFlag, UnderwriteFlag
 from tests.conftest import QueueClient, requires_db
 
 CONFIG = Config.load()
@@ -89,6 +90,13 @@ def test_the_page_shows_the_groups_in_order_and_some_values(client: QueueClient)
     assert '<tr title="take_back.foreclosure_months.OTHER">' in body
     # the one input word this page qualifies (the deal page keeps "Holding Costs")
     assert "<td>Holding costs (of purchase + rehab)</td>" in body
+    # flags and court sources in words, not codes (v0.27)
+    for code in [*CONFIG.flags.severities, *CONFIG.flags.underwrite_severities]:
+        assert f"<td>{html.escape(FLAG_LABELS[code])}</td>" in body, code
+    assert "<td>Borrower cash-on-cash below target</td>" in body and "Borrower coc" not in body
+    assert 'data-key="states.court_adapter.OK">OSCN<' in body
+    assert 'data-key="states.court_adapter.CO">Colorado courts<' in body
+    assert ">oscn<" not in body and ">colorado_courts<" not in body
 
 
 @requires_db
@@ -314,3 +322,26 @@ def test_system_is_collapsed_at_the_bottom(client: QueueClient) -> None:
     system = body.index("<summary><h2>System</h2>")
     assert body.index("<h2>Leverage Caps</h2>") < system
     assert "<section" not in body[system:]  # nothing after it
+
+
+def test_every_flag_code_has_words_and_every_court_source_a_name() -> None:
+    """v0.27: ``FLAG_LABELS`` covers every code of the three flag enums, retired ones too, and
+    ``COURT_SOURCE_LABELS`` every source config accepts."""
+    codes = [flag.value for enum in (CourtFlag, ScreenFlag, UnderwriteFlag) for flag in enum]
+    assert len(codes) == len(set(codes))  # no code in two enums, so one flat table serves
+    assert set(FLAG_LABELS) == set(codes)
+    for code, words in FLAG_LABELS.items():
+        assert words and "_" not in words and words != words.upper(), code
+    assert set(COURT_SOURCE_LABELS) == set(get_args(CourtAdapter))
+    # the brief's three, through the page's own labeller
+    assert label_for("flags.underwrite_severities.BORROWER_COC_BELOW_TARGET") == (
+        "Borrower cash-on-cash below target"
+    )
+    assert label_for("flags.underwrite_severities.TAKE_BACK_PRICE_ABOVE_PURCHASE") == (
+        "Take-back price above purchase"
+    )
+    assert label_for("flags.severities.LANDLORD_TENANT_AS_LANDLORD") == (
+        "Landlord-tenant case as landlord"
+    )
+    assert display("states.court_adapter.OK", "oscn") == "OSCN"
+    assert display("states.court_adapter.CO", "colorado_courts") == "Colorado courts"

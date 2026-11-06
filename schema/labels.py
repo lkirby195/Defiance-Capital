@@ -33,6 +33,13 @@ the readiness rows, the workbook and the CLI report all caption the input with i
 own case (``input_label``). The sales cost's dollar line reads "Sales cost" too, not
 "Broker"; the origination's dollar lines keep "Origination at close" and "at payoff"; and the
 borrower reads ``api/i18n.py``.
+
+``FLAG_LABELS`` (v0.27) is every flag code - court, screen and underwrite - in words:
+``BORROWER_COC_BELOW_TARGET`` is "Borrower cash-on-cash below target", which title-casing the
+code cannot make. The Defaults page labels each flag's severity row with it; the code stays
+what a row stores and a config key is spelled with. ``COURT_SOURCE_LABELS`` is the court-record
+sources a state's ``states.court_adapter`` names, as a person reads them: "OSCN", "Colorado
+courts".
 """
 
 from __future__ import annotations
@@ -43,14 +50,17 @@ from enum import StrEnum
 from schema.models import (
     BORROWER_PROFILE_FIELDS,
     PROFILE_ENUMS,
+    CourtFlag,
     ExperienceBucket,
     ExperienceTier,
     Product,
     ProjectsInProgress,
+    ScreenFlag,
     Status,
     Strategy,
     TermBucket,
     Tranche,
+    UnderwriteFlag,
     WorkCrew,
     WorkStatus,
     YearsInvesting,
@@ -165,6 +175,64 @@ INPUT_LABELS: Mapping[str, str] = {
     "broker_selling_pct": "Sales cost",
 }
 
+# Every flag code in words (v0.27), by the code; ``tests/test_defaults_page.py`` holds it to
+# every member of the three flag enums, the retired DSCR codes included, since a stored row
+# may still name one.
+FLAG_LABELS: Mapping[str, str] = {
+    # the court search (SPEC §7.2)
+    CourtFlag.BANKRUPTCY_IN_LOOKBACK.value: "Bankruptcy in the lookback period",
+    CourtFlag.ACTIVE_FORECLOSURE_AS_OWNER.value: "Active foreclosure as owner",
+    CourtFlag.UNSATISFIED_JUDGMENT_OVER_THRESHOLD.value: "Unsatisfied judgments over threshold",
+    CourtFlag.OPEN_TAX_LIEN.value: "Open tax lien",
+    CourtFlag.ACTIVE_CIVIL_LITIGATION_AS_DEFENDANT.value: "Active civil litigation as defendant",
+    CourtFlag.SATISFIED_JUDGMENT_OR_RELEASED_LIEN_IN_LOOKBACK.value: (
+        "Satisfied judgment or released lien in the lookback period"
+    ),
+    CourtFlag.LANDLORD_TENANT_AS_LANDLORD.value: "Landlord-tenant case as landlord",
+    CourtFlag.SUBJECT_PROPERTY_LIEN_OR_LIS_PENDENS.value: (
+        "Lien or lis pendens on the subject property"
+    ),
+    # the screen (SPEC §7.5)
+    ScreenFlag.CREDIT_BELOW_FLOOR.value: "Credit below floor",
+    ScreenFlag.LTC_OVER_CAP.value: "LTC over cap",
+    ScreenFlag.LTV_OVER_CAP.value: "LTV over cap",
+    ScreenFlag.ESTIMATED_SALE_PRICE_MISSING.value: "Estimated sale price missing",
+    ScreenFlag.STATE_NOT_SERVED.value: "State not served",
+    ScreenFlag.CREDIT_MISMATCH.value: "Credit mismatch",
+    ScreenFlag.EXPERIENCE_MISMATCH.value: "Experience mismatch",
+    ScreenFlag.REPEAT_BORROWER_MISMATCH.value: "Repeat borrower mismatch",
+    ScreenFlag.REPEAT_BORROWER_OVERRIDE_APPLIED.value: "Repeat borrower override applied",
+    ScreenFlag.REPEAT_BORROWER_UNVERIFIED.value: "Repeat borrower unverified",
+    ScreenFlag.REPEAT_BORROWER_PAYOFF_NOT_CLEAN.value: "Repeat borrower payoff not clean",
+    ScreenFlag.COURT_RECORDS_NOT_CHECKED.value: "Court records not checked",
+    ScreenFlag.TEAM_SOURCED_VALUES.value: "Team-sourced values",
+    ScreenFlag.BORROWER_SOURCED_VALUES.value: "Borrower-sourced values",
+    ScreenFlag.COMMITMENT_BELOW_REQUEST.value: "Commitment below the request",
+    ScreenFlag.REHAB_PORTION_EXCEEDS_BUDGET.value: "Rehab portion exceeds the rehab budget",
+    ScreenFlag.SALE_PRICE_ABOVE_AVM_RANGE.value: "Sale price above the AVM range",
+    ScreenFlag.MARKET_DATA_BUDGET_EXHAUSTED.value: "Market data budget exhausted",
+    # the underwrite (SPEC §8.8)
+    UnderwriteFlag.MARKET_RENT_BELOW_REQUIRED.value: "Market rent below required rent",
+    UnderwriteFlag.TAKEOUT_BELOW_PAYOFF.value: "Takeout loan below payoff",
+    UnderwriteFlag.TAKE_BACK_PRICE_ABOVE_PURCHASE.value: "Take-back price above purchase",
+    UnderwriteFlag.BORROWER_COC_BELOW_TARGET.value: "Borrower cash-on-cash below target",
+    UnderwriteFlag.MONTHLY_RENT_MISSING.value: "Monthly rent missing",
+    UnderwriteFlag.SALE_PRICE_MISSING.value: "Sale price missing",
+    UnderwriteFlag.NO_REHAB_PERIOD.value: "No rehab period",
+    UnderwriteFlag.FORECLOSURE_MONTHS_MISSING.value: "Foreclosure months missing",
+    UnderwriteFlag.DSCR_BELOW_FLOOR.value: "DSCR below floor",
+    UnderwriteFlag.TAKE_BACK_DSCR_BELOW_FLOOR.value: "Take-back DSCR below floor",
+}
+
+# The court-record source a state's ``states.court_adapter`` names, as a person reads it
+# (v0.27). ``config.config.CourtAdapter`` is the list; schema cannot import config, so
+# ``tests/test_defaults_page.py`` holds the two to each other.
+COURT_SOURCE_LABELS: Mapping[str, str] = {
+    "oscn": "OSCN",
+    "colorado_courts": "Colorado courts",
+    "manual": "Entered by hand",
+}
+
 _TRANCHE_ORDER: tuple[Tranche, ...] = tuple(Tranche)  # T1 (best) .. T5 (worst)  # SPEC §7.1
 
 DASH = "—"
@@ -210,6 +278,17 @@ def experience_label(bucket: ExperienceBucket | None) -> str:
     if bucket is None:
         return DASH
     return EXPERIENCE_BUCKET_LABELS[bucket]
+
+
+def flag_label(code: StrEnum | str) -> str:
+    """A flag code in words: ``LANDLORD_TENANT_AS_LANDLORD`` -> ``Landlord-tenant case as
+    landlord``. A code with no entry is a bug in the caller and raises.  # SPEC §7.2, §8.8"""
+    return FLAG_LABELS[str(getattr(code, "value", code))]
+
+
+def court_source_label(source: str) -> str:
+    """A court-record source as a person reads it: ``oscn`` -> ``OSCN``.  # SPEC §6, §10"""
+    return COURT_SOURCE_LABELS[source]
 
 
 def tier_label(tier: ExperienceTier) -> str:

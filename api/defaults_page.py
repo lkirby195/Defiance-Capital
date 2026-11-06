@@ -41,7 +41,14 @@ from enum import Enum
 from typing import Any
 
 from config.config import PLACEHOLDERS, Config, flatten
-from schema.labels import enum_label, input_label, tier_label, tranche_label
+from schema.labels import (
+    court_source_label,
+    enum_label,
+    flag_label,
+    input_label,
+    tier_label,
+    tranche_label,
+)
 from schema.models import ExperienceTier, Product, Severity, Tranche
 
 CAPS = "leverage_caps"
@@ -126,8 +133,8 @@ QUALIFIED: dict[str, str] = {
     ),
 }
 
-# The team's word for each leaf (v0.25), by its dotted key. The flag severities and the
-# per-state entries are worded by ``label_for`` from their last part.
+# The team's word for each leaf (v0.25), by its dotted key. The flag severities read
+# ``FLAG_LABELS`` and the per-state entries are worded by ``label_for`` from their last part.
 LABELS: dict[str, str] = {
     **{key: input_label(column) for key, column in INPUT_COLUMNS.items()},
     **QUALIFIED,
@@ -176,6 +183,10 @@ _PER_ENTRY: dict[str, str] = {
     "states.court_adapter": "court records source",
     "credit.tranche_cutoffs": "minimum FICO",
 }
+# The two maps keyed by flag code, whose rows read ``schema/labels.FLAG_LABELS``, and the
+# map whose values are court-record sources, read ``COURT_SOURCE_LABELS`` (v0.27).
+FLAG_SEVERITIES = ("flags.severities", "flags.underwrite_severities")
+COURT_SOURCES = "states.court_adapter"
 # Unit words a fallback label drops: the value says them.
 _UNIT_WORDS = frozenset({"default", "pct", "usd", "of", "cost", "rent"})
 
@@ -227,6 +238,8 @@ def group_of(key: str) -> str:
 
 
 def _one(key: str, value: Any) -> str:
+    if key.startswith(COURT_SOURCES + "."):
+        return court_source_label(str(value))  # oscn -> OSCN (v0.27)
     if isinstance(value, Severity):
         return enum_label(value)  # HARD -> Hard, as the deal page's chips read
     if isinstance(value, Enum):
@@ -253,7 +266,7 @@ def display(key: str, value: Any) -> str:
 
 def label_for(key: str) -> str:
     """A leaf's label in the team's words: ``LABELS`` when it names the key; a per-state or
-    per-tranche entry as ``OK foreclosure months``; a flag code sentence-cased; else the
+    per-tranche entry as ``OK foreclosure months``; a flag by ``FLAG_LABELS``; else the
     last part of the key without its unit words (``closing_costs_default_usd`` -> ``Closing
     costs``)."""
     if key in LABELS:
@@ -261,9 +274,8 @@ def label_for(key: str) -> str:
     parent, last = key.rsplit(".", 1) if "." in key else ("", key)
     if parent in _PER_ENTRY:
         return f"{'Other states' if last == 'OTHER' else last} {_PER_ENTRY[parent]}"
-    if last.isupper():
-        words = last.replace("_", " ").lower()
-        return words[:1].upper() + words[1:]
+    if parent in FLAG_SEVERITIES:
+        return flag_label(last)  # the code in words, not title-cased (v0.27)
     kept = [word for word in last.split("_") if word not in _UNIT_WORDS] or last.split("_")
     words = " ".join(kept)
     return words[:1].upper() + words[1:]
