@@ -87,6 +87,8 @@ def test_the_page_shows_the_groups_in_order_and_some_values(client: QueueClient)
     assert "<code>fees.origination_default_pct</code>" not in body
     assert '<tr title="fees.origination_default_pct">' in body
     assert '<tr title="take_back.foreclosure_months.OTHER">' in body
+    # the one input word this page qualifies (the deal page keeps "Holding Costs")
+    assert "<td>Holding costs (of purchase + rehab)</td>" in body
 
 
 @requires_db
@@ -177,12 +179,19 @@ def test_every_row_is_labelled_in_the_team_s_words() -> None:
     assert label_for("fees.origination_default_pct") == "Origination"
     assert label_for("fees.broker_selling_pct") == "Sales cost"
     assert label_for("interest.default_annual_rate") == "Interest rate"
-    # a default for a deal's own input reads as the deal page captions it (v0.27)
+    # a default for a deal's own input reads as the deal page captions it (v0.27)...
     assert set(INPUT_COLUMNS.values()) == set(INPUT_LABELS)
     for key, column in INPUT_COLUMNS.items():
-        assert label_for(key) == INPUT_LABELS[column], key
+        assert label_for(key).startswith(INPUT_LABELS[column]), key
     assert label_for("fees.contingency_default_pct") == "Contingency"
-    assert label_for("fees.holding_costs_default_pct_of_cost") == "Holding costs"
+    # ...and the holding costs say what they are a share of, on this page alone
+    assert label_for("fees.holding_costs_default_pct_of_cost") == (
+        "Holding costs (of purchase + rehab)"
+    )
+    assert INPUT_LABELS["holding_costs_pct_of_cost"] == "Holding costs"
+    assert [key for key in INPUT_COLUMNS if label_for(key) != INPUT_LABELS[INPUT_COLUMNS[key]]] == [
+        "fees.holding_costs_default_pct_of_cost"
+    ]
     assert label_for("take_back.foreclosure_months.OK") == "OK foreclosure months"
     assert label_for("take_back.foreclosure_months.CO") == "CO foreclosure months"
     assert label_for("take_back.foreclosure_months.OTHER") == "Other states foreclosure months"

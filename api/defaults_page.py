@@ -9,9 +9,11 @@ name exactly the one they mean.
 
 Each row is labelled in the team's words (v0.25, ``LABELS``): "Origination", not "Origination
 default pct"; "Sales cost", not "Broker selling pct"; "OK foreclosure months", not a bare
-"OK". A default for a deal's own input reads exactly as the deal page captions that input
-(v0.27): ``INPUT_COLUMNS`` names its ``deals`` column and ``schema/labels.INPUT_LABELS`` has
-the word. The unit is the value's job - ``2.00%``, ``$1,000.00``, ``1.20x`` - so no label
+"OK". A default for a deal's own input reads as the deal page captions that input (v0.27):
+``INPUT_COLUMNS`` names its ``deals`` column and ``schema/labels.INPUT_LABELS`` has the word.
+The holding costs add what they are a share of, "(of purchase + rehab)" (``QUALIFIED``): the
+deal page prints no parenthetical, but a default read here, away from any deal, has to say
+it. The unit is the value's job - ``2.00%``, ``$1,000.00``, ``1.20x`` - so no label
 carries "pct" or "usd", and every percentage, dollar figure and ratio prints to two
 decimals. Counts (months, years, FICO points) stay whole. A key ``LABELS`` does not name still
 gets a label, from its last part with those unit words dropped.
@@ -116,10 +118,19 @@ INPUT_COLUMNS: dict[str, str] = {
     "fees.broker_selling_pct": "broker_selling_pct",
 }
 
+# /defaults only: an input's word with what it is a share of, which a default read away from
+# any deal needs and the deal page, with the deal in front of it, does not.
+QUALIFIED: dict[str, str] = {
+    "fees.holding_costs_default_pct_of_cost": (
+        f"{input_label('holding_costs_pct_of_cost')} (of purchase + rehab)"
+    ),
+}
+
 # The team's word for each leaf (v0.25), by its dotted key. The flag severities and the
 # per-state entries are worded by ``label_for`` from their last part.
 LABELS: dict[str, str] = {
     **{key: input_label(column) for key, column in INPUT_COLUMNS.items()},
+    **QUALIFIED,
     "rental.expenses_pct_of_rent": "Operating expenses (of rent)",
     "rental.takeout_ltv": "Takeout LTV",
     "rental.takeout_rate": "Takeout rate",
