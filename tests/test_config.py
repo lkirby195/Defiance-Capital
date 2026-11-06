@@ -38,6 +38,8 @@ def test_placeholder_yaml_loads() -> None:
     assert cfg.take_back.foreclosure_months[State.OK] == 6
     assert cfg.take_back.hold_months == [12, 24, 36]
     assert cfg.states.served == [State.OK, State.CO]
+    # SPEC §11 (v0.26): the sign-in lockout
+    assert (cfg.sign_in.lockout_failures, cfg.sign_in.lockout_minutes) == (10, 15)
     assert list(cfg.leverage_caps) == [Product.ACQUISITION, Product.ACQUISITION_REHAB]
     cell = cfg.leverage_caps[Product.ACQUISITION_REHAB][Tranche.T5][ExperienceTier.E3]
     # SPEC §7.4: two caps and no more, and the LTC placeholder is no cap at all yet.
@@ -103,6 +105,9 @@ def test_unknown_key_fails(data: dict[str, Any]) -> None:
         (("fees", "closing_costs_default_usd"), Decimal("-1")),
         (("flags", "thresholds", "unsatisfied_judgments_aggregate_usd"), Decimal("-0.01")),
         (("draws", "listing_months"), 61),
+        (("sign_in", "lockout_failures"), 0),
+        (("sign_in", "lockout_minutes"), 0),
+        (("sign_in", "lockout_minutes"), 24 * 60 + 1),
     ],
 )
 def test_out_of_range_fails(data: dict[str, Any], path: tuple[str, ...], value: Any) -> None:

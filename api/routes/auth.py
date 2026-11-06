@@ -20,6 +20,14 @@ Both writes record an ``audit_log`` row. SPEC §11 requires access to be logged,
 is the access: every deal action after it carries the same actor, so the trail runs from the
 sign-in through what the person then did.
 
+So does a failed sign-in (v0.26): one ``SIGN_IN_FAILED`` row, as ``anonymous``, with the email
+and the client address (``services/sign_in.py``). Enough of them for one email or from one
+address lock the sign-in, and the lock is checked first - before the password is verified, so
+an attempt that cannot get in anyway costs no PBKDF2. A locked attempt is answered 429 with
+``Retry-After`` and is written to the process log, not the table, so it does not keep the
+lock going. The address is always ``api.ratelimit.client_address``: the last
+``X-Forwarded-For`` hop, the one Render's proxy wrote, never ``request.client``.
+
 The sign-in also writes two lines to the process log, one when the credentials are accepted
 and one when the cookie goes out with the redirect. They are there for the deploy's own
 logs: a 500 that lands on the request *after* a sign-in has nothing on the deal page to say
@@ -37,6 +45,7 @@ from sqlalchemy.orm import Session
 from starlette.responses import HTMLResponse, RedirectResponse
 
 from api.forms import FormDep, fields, safe_next
+from api.ratelimit import client_address
 from api.render import page, redirect
 from api.security import (
     MaybeUser,
@@ -49,7 +58,17 @@ from api.security import (
 )
 from db.session import get_session
 from schema.models import AuditAction
-from services import USERS, WeakPassword, WrongPassword, authenticate, change_password, record_audit
+from services import (
+    USERS,
+    WeakPassword,
+    WrongPassword,
+    authenticate,
+    change_password,
+    lockout,
+    normalize_email,
+    record_audit,
+    record_failed_sign_in,
+)
 from services.passwords import MIN_LENGTH
 
 router = APIRouter(tags=["auth"])
@@ -62,6 +81,11 @@ WRONG = "Email or password is wrong, or the account is no longer active."
 MISMATCH = "The two new passwords do not match."
 WRONG_CURRENT = "The current password is wrong."
 CHANGED = "Password changed. Every other session on your account has been signed out."
+
+
+def locked_out(minutes: int) -> str:
+    """What a locked sign-in is told: how long, and nothing about which count locked it."""
+    return f"Too many sign-in attempts. Try again in {minutes} minute{'' if minutes == 1 else 's'}."
 
 
 @router.get("/login", response_class=HTMLResponse, response_model=None)
@@ -84,12 +108,38 @@ def sign_in_page(request: Request, user: MaybeUser) -> HTMLResponse | RedirectRe
 def sign_in(
     request: Request, form: FormDep, session: SessionDep
 ) -> HTMLResponse | RedirectResponse:
-    """Check the credentials, set the session cookie, record the access."""
+    """Check the lock, then the credentials; set the session cookie, record the access.
+
+    A refusal records a ``SIGN_IN_FAILED`` row and commits it here, the route owning the
+    transaction as it does for the ``SIGNED_IN`` row.
+    """
     submitted = fields(form)
     email = submitted.get("email", "")
     target = safe_next(submitted.get("next"), QUEUE_PATH)
+    address = client_address(request)
+    lock = lockout(session, email=email, address=address)
+    if lock is not None:
+        log.warning(
+            "sign-in refused while locked for %s from %s (by email=%s, by address=%s); "
+            "lifts in %ss; not recorded",
+            normalize_email(email),
+            address,
+            lock.by_email,
+            lock.by_address,
+            lock.seconds,
+        )
+        refused = page(
+            request,
+            "login.html",
+            {"email": email, "next_url": target, "problems": [locked_out(lock.minutes)]},
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+        refused.headers["Retry-After"] = str(lock.seconds)
+        return refused
     user = authenticate(session, email=email, password=submitted.get("password", ""))
     if user is None:
+        record_failed_sign_in(session, email=email, address=address)
+        session.commit()
         return page(
             request,
             "login.html",

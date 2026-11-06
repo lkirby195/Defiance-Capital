@@ -365,6 +365,10 @@ class AuditAction(StrEnum):
     ``THANKS_TOKEN_ISSUED`` is the thank-you link a web submission was sent to (its expiry,
     never the token), and ``INDICATIVE_TERMS_SHOWN`` is the one time that page showed the
     borrower their indicative terms, the rows it showed in ``after`` (SPEC §4.2).
+
+    ``SIGN_IN_FAILED`` is a sign-in that did not get in (v0.26): actor ``anonymous``, the
+    account's id or ``unknown``, the email and the client address in ``after`` and never
+    the password. Enough of them lock the sign-in (``services/sign_in.py``, SPEC §11).
     """
 
     # Deals
@@ -404,6 +408,7 @@ class AuditAction(StrEnum):
     USER_PASSWORD_RESET = "USER_PASSWORD_RESET"  # by an admin, from the command line
     SIGNED_IN = "SIGNED_IN"
     SIGNED_OUT = "SIGNED_OUT"
+    SIGN_IN_FAILED = "SIGN_IN_FAILED"  # SPEC §11 (v0.26): actor anonymous; counts to the lockout
 
 
 # What the screen tests each court code on (SPEC §7.2), so a team-entered matter can be

@@ -65,6 +65,20 @@ def hash_password(password: str, iterations: int = ITERATIONS) -> str:
     return f"{ALGORITHM}${iterations}${_b64(salt)}${_b64(_derive(password, salt, iterations))}"
 
 
+def decoy_hash(iterations: int = ITERATIONS) -> str:
+    """A well-formed hash at the given cost that no password verifies against.
+
+    A random salt and a random key rather than a derived one: verifying against it derives
+    a key exactly as a real verify does and then fails the comparison, so it costs what a
+    real verify costs without anything having been hashed to make it. A password matching it
+    would have to produce 32 given random bytes. ``services.users.authenticate`` verifies
+    against one when an email has no account, so that failure and a wrong password take the
+    same time.
+    """
+    salt, key = secrets.token_bytes(SALT_BYTES), secrets.token_bytes(KEY_BYTES)
+    return f"{ALGORITHM}${iterations}${_b64(salt)}${_b64(key)}"
+
+
 def verify_password(password: str, encoded: str) -> bool:
     """True when ``password`` produces ``encoded``; False for anything else.
 

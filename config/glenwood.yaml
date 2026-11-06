@@ -122,6 +122,12 @@ rentcast:                                 # SPEC §6 - the RentCast property-dat
   monthly_request_budget: 50              # PLACEHOLDER: the free tier's requests per calendar
                                           #   month; at it the pull is skipped, not failed
 
+sign_in:                                  # SPEC §11 - the queue's /login (v0.26)
+  lockout_failures: 10                    # failed sign-ins for one email, or from one address,
+                                          #   inside the window that lock the next attempt out
+  lockout_minutes: 15                     # the window; the lock lifts this long after the
+                                          #   failures stop
+
 leverage_caps:                            # SPEC §7.4 — loan structure x credit tranche x experience tier
   # PLACEHOLDER GRID: every cell carries the same dummy caps so it is obvious nothing is tuned.
   # GLENWOOD fills this. Each cell: ltc, ltv (fractions of 1). LTV is the commitment over

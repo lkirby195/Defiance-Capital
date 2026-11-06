@@ -420,6 +420,20 @@ class RentcastConfig(_Section):
     monthly_request_budget: Annotated[int, Field(ge=0, le=1_000_000)]
 
 
+class SignInConfig(_Section):
+    """The queue sign-in's lockout.  # SPEC §11 (v0.26)
+
+    ``lockout_failures`` failed sign-ins (``SIGN_IN_FAILED`` audit rows) for one email, or
+    from one client address, inside the last ``lockout_minutes`` lock the sign-in for that
+    email or address: the next attempt is refused before its password is verified
+    (``services/sign_in.py``). An attempt refused that way is not counted, so the lock lifts
+    ``lockout_minutes`` after the failures stop.
+    """
+
+    lockout_failures: Annotated[int, Field(ge=1, le=1000)]
+    lockout_minutes: Annotated[int, Field(ge=1, le=24 * 60)]
+
+
 class StatesConfig(_Section):
     """States served and the court-record adapter per state.  # SPEC §6, §10"""
 
@@ -466,6 +480,7 @@ class Config(_Section):
     states: StatesConfig
     web_intake: WebIntakeConfig
     rentcast: RentcastConfig
+    sign_in: SignInConfig
 
     @model_validator(mode="before")
     @classmethod

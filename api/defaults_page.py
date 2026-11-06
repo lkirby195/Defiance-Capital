@@ -56,6 +56,7 @@ GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     ("Dates", ("closing", "interest.day_count_basis", "draws.listing_months")),
     ("Market data", ("rentcast",)),
+    ("Sign-in", ("sign_in",)),
 )
 OTHER = "Other"
 
@@ -126,6 +127,8 @@ LABELS: dict[str, str] = {
     "closing.default_lead_days": "Closing lead (days)",
     "rentcast.cache_days": "RentCast cache (days)",
     "rentcast.monthly_request_budget": "RentCast monthly request budget",
+    "sign_in.lockout_failures": "Failed sign-ins before lockout",
+    "sign_in.lockout_minutes": "Lockout window (minutes)",
 }
 
 # A leaf under one of these, keyed by a state or a tranche, reads "<that> <words>".
