@@ -12,7 +12,10 @@ from db.session import database_url
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Not disable_existing_loggers: run in-process (the migration tests), the default would
+    # silence every logger already made - glenwood.auth, glenwood.turnstile - for the rest of
+    # the process, and a test reading their warnings afterwards would read nothing.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # configparser interpolation: a literal % in the URL must be doubled.
 config.set_main_option("sqlalchemy.url", database_url().replace("%", "%%"))
